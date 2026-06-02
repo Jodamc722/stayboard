@@ -1,25 +1,56 @@
-import {
-  Reservation,
-  Listing,
-  CustomFieldDefinition,
-  CustomFieldValue,
-  Conversation,
-  Message
-} from '@/types/guesty'
+// Guesty Open API client — token persisted in Supabase + sync helpers.
+//
+// Architecture:
+//   token()       → reads cached OAuth token from Supabase, refreshes if expired
+//   api()         → authed fetch helper; surfaces 429/4xx as readable errors
+//   sync*()       → pull paginated data from Guesty and upsert into Supabase
+//   listings/reservations/etc helpers below are LOCAL reads from Supabase, not Guesty.
+import 'server-only'
+import { supabaseAdmin } from './supabase-admin'
 
-// Runtime-evaluated (server-side only). Set GUESTY_MOCK_MODE=true on Vercel to force mocks; default is live.
-const MOCK = process.env.GUESTY_MOCK_MODE === 'true' || (!process.env.GUESTY_CLIENT_ID && !process.env.GUESTY_CLIENT_SECRET)
-const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
-// Token endpoint lives at the auth root, NOT under /v1
+const BASE      = process.env.GUESTY_BASE_URL  || 'https://open-api.guesty.com/v1'
 const TOKEN_URL = process.env.GUESTY_TOKEN_URL || 'https://open-api.guesty.com/oauth2/token'
-const CID  = process.env.GUESTY_CLIENT_ID
-const CSEC = process.env.GUESTY_CLIENT_SECRET
+const CID       = process.env.GUESTY_CLIENT_ID
+const CSEC      = process.env.GUESTY_CLIENT_SECRET
 
-let cachedToken: { token: string; expiresAt: number } | null = null
+// ─────────────────────────────────────────────────────────────────
+// Token cache (Supabase-backed so all serverless instances share one)
+// ─────────────────────────────────────────────────────────────────
+type CachedToken = { access_token: string; expires_at: string }
 
-async function token(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token
-  if (!CID || !CSEC) throw new Error('Guesty credentials not set')
+async function readCachedToken(): Promise<CachedToken | null> {
+  const sb = supabaseAdmin()
+  const { data, error } = await sb
+    .from('guesty_tokens')
+    .select('access_token, expires_at')
+    .eq('id', 'singleton')
+    .maybeSingle()
+  if (error) {
+    console.error('[guesty] read token error', error.message)
+    return null
+  }
+  return data as CachedToken | null
+}
+
+async function writeCachedToken(access_token: string, expires_in_sec: number) {
+  const expires_at = new Date(Date.now() + expires_in_sec * 1000).toISOString()
+  const sb = supabaseAdmin()
+  const { error } = await sb
+    .from('guesty_tokens')
+    .upsert({ id: 'singleton', access_token, expires_at, updated_at: new Date().toISOString() })
+  if (error) console.error('[guesty] write token error', error.message)
+}
+
+export async function getToken(force = false): Promise<string> {
+  if (!CID || !CSEC) throw new Error('GUESTY_CLIENT_ID / GUESTY_CLIENT_SECRET not set')
+  if (!force) {
+    const cached = await readCachedToken()
+    if (cached) {
+      const expiresAt = new Date(cached.expires_at).getTime()
+      // Refresh 5 minutes before expiry
+      if (expiresAt > Date.now() + 5 * 60_000) return cached.access_token
+    }
+  }
   const r = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -32,296 +63,271 @@ async function token(): Promise<string> {
   })
   if (!r.ok) {
     const body = await r.text().catch(() => '')
-    throw new Error(`Guesty auth ${r.status}: ${body.slice(0, 200)}`)
+    throw new Error(`Guesty auth ${r.status}: ${body.slice(0, 300)}`)
   }
   const d = await r.json() as { access_token: string; expires_in: number }
-  cachedToken = { token: d.access_token, expiresAt: Date.now() + d.expires_in * 1000 }
-  return cachedToken.token
-}
-
-async function api<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, {
-    headers: { Authorization: `Bearer ${await token()}`, Accept: 'application/json' },
-    cache: 'no-store'
-  })
-  if (!r.ok) {
-    const body = await r.text().catch(() => '')
-    throw new Error(`Guesty ${path} ${r.status}: ${body.slice(0, 200)}`)
-  }
-  return r.json() as Promise<T>
-}
-
-// Last-known error surfaced to UI when a Guesty call fails (so page degrades, not crashes)
-export let lastGuestyError: string | null = null
-function setError(e: unknown) {
-  lastGuestyError = e instanceof Error ? e.message : String(e)
-  console.error('[guesty]', lastGuestyError)
+  await writeCachedToken(d.access_token, d.expires_in)
+  return d.access_token
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Custom Field Definitions
-// (Guesty: GET /custom-fields — system + account-defined fields)
+// Authed fetch with retry on 401 (token rotation) and pause on 429
 // ─────────────────────────────────────────────────────────────────
-export async function listCustomFieldDefinitions(target: 'reservation' | 'listing' | 'guest' = 'reservation'): Promise<CustomFieldDefinition[]> {
-  if (MOCK) return mockCustomFieldDefs().filter(d => d.target === target)
-  const data = await api<{ results: any[] } | any[]>(`/custom-fields?target=${target}`)
-  const arr = Array.isArray(data) ? data : (data.results || [])
-  return arr.map(toCustomFieldDef).filter(d => d.target === target)
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Reservations (with custom field values inlined when requested)
-// ─────────────────────────────────────────────────────────────────
-export async function listReservations(limit = 30): Promise<Reservation[]> {
-  if (MOCK) return mockReservations(limit)
-  try {
-    const data = await api<{ results: any[] }>(
-      `/reservations?limit=${limit}&fields=${encodeURIComponent('status guest listing checkIn checkOut nights money source customFields confirmationCode createdAt note')}`
-    )
-    return data.results.map(toReservation)
-  } catch (e) { setError(e); return [] }
-}
-
-export async function getReservation(id: string): Promise<Reservation | null> {
-  if (MOCK) {
-    const all = mockReservations(40)
-    return all.find(r => r.id === id) ?? null
-  }
-  try {
-    const r = await api<any>(`/reservations/${encodeURIComponent(id)}`)
-    return toReservation(r)
-  } catch {
-    return null
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Listings
-// ─────────────────────────────────────────────────────────────────
-export async function listListings(): Promise<Listing[]> {
-  if (MOCK) return mockListings()
-  try {
-    const data = await api<{ results: any[] }>('/listings?limit=200')
-    return data.results.map(toListing)
-  } catch (e) { setError(e); return [] }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Conversations + messages (for AI message-review)
-// (Guesty: GET /communication/conversations, GET /communication/conversations/:id/posts)
-// ─────────────────────────────────────────────────────────────────
-export async function listConversations(limit = 50): Promise<Conversation[]> {
-  if (MOCK) return mockConversations(limit)
-  try {
-    const data = await api<{ results: any[] }>(`/communication/conversations?limit=${limit}`)
-    return data.results.map(toConversation)
-  } catch (e) { setError(e); return [] }
-}
-
-export async function listMessages(conversationId: string, limit = 200): Promise<Message[]> {
-  if (MOCK) return mockMessages(conversationId)
-  try {
-    const data = await api<{ results: any[] }>(
-      `/communication/conversations/${encodeURIComponent(conversationId)}/posts?limit=${limit}`
-    )
-    return data.results.map((m: any) => toMessage(conversationId, m))
-  } catch (e) { setError(e); return [] }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Mappers
-// ─────────────────────────────────────────────────────────────────
-function toCustomFieldDef(d: any): CustomFieldDefinition {
-  return {
-    id: d._id || d.id,
-    name: d.fieldName || d.name || '',
-    type: (d.type || 'text').toLowerCase(),
-    target: (d.objectType || d.target || 'reservation').toLowerCase().replace(/s$/, ''),
-    options: d.options || d.values,
-    required: !!d.required
-  }
-}
-
-function toCustomFieldValue(v: any): CustomFieldValue {
-  return {
-    fieldId: v.fieldId || v._id || v.id || '',
-    fieldName: v.fieldName || v.name || v.label || '',
-    type: (v.type || 'text').toLowerCase(),
-    value: v.value === undefined ? null : v.value
-  }
-}
-
-function toReservation(r: any): Reservation {
-  return {
-    id: r._id || r.id,
-    listingId: r.listingId || r.listing?._id || r.listing?.id || '',
-    listingName: r.listing?.nickname || r.listing?.title || r.listingName || '',
-    guest: {
-      id: r.guest?._id || r.guest?.id,
-      name: r.guest?.fullName || r.guest?.firstName || 'Unknown',
-      email: r.guest?.email,
-      phone: r.guest?.phone
-    },
-    checkIn: r.checkIn,
-    checkOut: r.checkOut,
-    status: (r.status || 'confirmed').toLowerCase(),
-    nights: r.nightsCount || r.nights || 0,
-    money: {
-      totalPaid: r.money?.totalPaid || 0,
-      balanceDue: r.money?.balanceDue || 0,
-      currency: r.money?.currency || 'USD'
-    },
-    source: (r.source || 'direct').toLowerCase(),
-    confirmationCode: r.confirmationCode,
-    notes: r.note || r.notes,
-    createdAt: r.createdAt,
-    customFields: Array.isArray(r.customFields) ? r.customFields.map(toCustomFieldValue) : [],
-    conversationId: r.conversation?._id || r.conversationId
-  }
-}
-
-function toListing(l: any): Listing {
-  return {
-    id: l._id || l.id,
-    title: l.title,
-    nickname: l.nickname,
-    address: { full: l.address?.full || '', city: l.address?.city || '', state: l.address?.state || '' },
-    bedrooms: l.bedrooms || 0,
-    bathrooms: l.bathrooms || 0,
-    beds: l.beds || 0,
-    maxOccupancy: l.accommodates || 0,
-    status: l.active ? 'active' : 'inactive',
-    pictures: (l.pictures || []).map((p: any) => p.original || p.regular || p),
-    amenities: l.amenities || []
-  }
-}
-
-function toConversation(c: any): Conversation {
-  return {
-    id: c._id || c.id,
-    reservationId: c.reservationId || c.reservation?._id,
-    listingId: c.listingId || c.listing?._id,
-    guestName: c.guest?.fullName || c.lastMessage?.from?.fullName || 'Guest',
-    channel: (c.channel || c.lastMessage?.module || 'other').toLowerCase(),
-    lastMessageAt: c.lastMessageAt || c.updatedAt || c.createdAt,
-    lastMessagePreview: c.lastMessage?.body?.slice(0, 140) || '',
-    unreadCount: c.unreadCount || 0
-  }
-}
-
-function toMessage(conversationId: string, m: any): Message {
-  return {
-    id: m._id || m.id,
-    conversationId,
-    sender: (m.module === 'system' ? 'system' : m.from?.type === 'guest' ? 'guest' : 'host'),
-    senderName: m.from?.fullName || m.from?.firstName || (m.module === 'system' ? 'System' : 'Host'),
-    body: m.body || m.text || '',
-    sentAt: m.createdAt || m.sentAt,
-    attachments: (m.attachments || []).map((a: any) => ({ url: a.url, kind: a.kind || 'file' }))
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Mocks (delete or ignore once GUESTY_CLIENT_ID is live)
-// ─────────────────────────────────────────────────────────────────
-function mockCustomFieldDefs(): CustomFieldDefinition[] {
-  return [
-    { id: 'cf_welcome',    name: 'Welcome Call',     type: 'boolean', target: 'reservation' },
-    { id: 'cf_verified',   name: 'Guest Verified',   type: 'boolean', target: 'reservation' },
-    { id: 'cf_sensitive',  name: 'Sensitive Guest',  type: 'boolean', target: 'reservation' },
-    { id: 'cf_idsubmitted',name: 'ID Submitted',     type: 'boolean', target: 'reservation' },
-    { id: 'cf_signed',     name: 'Rental Agreement Signed', type: 'boolean', target: 'reservation' },
-    { id: 'cf_arrival',    name: 'Estimated Arrival',type: 'text',    target: 'reservation' },
-    { id: 'cf_riskscore',  name: 'AI Risk Score',    type: 'select',  target: 'reservation', options: ['low', 'medium', 'high'] }
-  ]
-}
-
-function mockListings(): Listing[] {
-  return [
-    { id: 'L1', title: '17 West – Penthouse', nickname: '17West', address: { full: '1700 W Ave, Miami', city: 'Miami', state: 'FL' }, bedrooms: 3, bathrooms: 2, beds: 4, maxOccupancy: 8, status: 'active', pictures: [], amenities: ['Pool', 'WiFi'] },
-    { id: 'L2', title: 'Rustic 10 – Beachfront', nickname: 'Rustic10', address: { full: '10 Rustic Rd, Fort Lauderdale', city: 'Fort Lauderdale', state: 'FL' }, bedrooms: 4, bathrooms: 3, beds: 5, maxOccupancy: 10, status: 'active', pictures: [], amenities: ['Pool', 'Hot tub', 'WiFi'] },
-    { id: 'L3', title: 'Eden – Pool House', nickname: 'Eden', address: { full: '42 Eden Way, Miami', city: 'Miami', state: 'FL' }, bedrooms: 2, bathrooms: 2, beds: 3, maxOccupancy: 6, status: 'active', pictures: [], amenities: ['Pool', 'BBQ', 'WiFi'] },
-    { id: 'L4', title: 'Lucerne 4 – Studio', nickname: 'Lucerne4', address: { full: '4 Lucerne Ave, Miami', city: 'Miami', state: 'FL' }, bedrooms: 1, bathrooms: 1, beds: 1, maxOccupancy: 2, status: 'active', pictures: [], amenities: ['WiFi'] }
-  ]
-}
-
-function mockReservations(n: number): Reservation[] {
-  const listings = mockListings()
-  const guests = ['Sarah Chen', 'Marcus Williams', 'Priya Patel', 'James OConnor', 'Sofia Lopez', 'Aiden Park', 'Lena Bauer', 'Carlos Vega']
-  const sources: Reservation['source'][] = ['airbnb', 'vrbo', 'booking', 'direct']
-  const today = new Date()
-  return Array.from({ length: n }).map((_, i) => {
-    const list = listings[i % listings.length]
-    const days = (i % 14) - 7
-    const ci = new Date(today); ci.setDate(today.getDate() + days)
-    const co = new Date(ci);   co.setDate(ci.getDate() + 2 + (i % 5))
-    const status: Reservation['status'] =
-      days < 0 ? 'checked_out' : days === 0 ? 'checked_in' : 'confirmed'
-    return {
-      id: `R${i + 1}`,
-      listingId: list.id,
-      listingName: list.nickname,
-      guest: {
-        id: `G${i + 1}`,
-        name: guests[i % guests.length],
-        email: `${guests[i % guests.length].toLowerCase().replace(' ', '.')}@example.com`,
-        phone: `+1305555${String(1000 + i).slice(-4)}`
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  let attempt = 0
+  while (true) {
+    attempt++
+    const token = await getToken(attempt > 1)
+    const r = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        ...(init?.headers || {}),
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
       },
-      checkIn: ci.toISOString(),
-      checkOut: co.toISOString(),
-      status,
-      nights: Math.round((co.getTime() - ci.getTime()) / 86400000),
-      money: { totalPaid: 200 + (i * 37) % 800, balanceDue: 0, currency: 'USD' },
-      source: sources[i % sources.length],
-      confirmationCode: `HM${String(100000 + i).slice(-6)}`,
-      createdAt: new Date(today.getTime() - i * 3600000).toISOString(),
-      customFields: [
-        { fieldId: 'cf_welcome',    fieldName: 'Welcome Call',     type: 'boolean', value: i % 3 !== 0 },
-        { fieldId: 'cf_verified',   fieldName: 'Guest Verified',   type: 'boolean', value: i % 4 !== 0 },
-        { fieldId: 'cf_sensitive',  fieldName: 'Sensitive Guest',  type: 'boolean', value: i % 7 === 0 },
-        { fieldId: 'cf_idsubmitted',fieldName: 'ID Submitted',     type: 'boolean', value: i % 5 !== 0 },
-        { fieldId: 'cf_signed',     fieldName: 'Rental Agreement Signed', type: 'boolean', value: i % 3 === 0 },
-        { fieldId: 'cf_arrival',    fieldName: 'Estimated Arrival',type: 'text',    value: i % 2 === 0 ? '3:00 PM' : '6:30 PM' },
-        { fieldId: 'cf_riskscore',  fieldName: 'AI Risk Score',    type: 'select',  value: i % 8 === 0 ? 'high' : i % 3 === 0 ? 'medium' : 'low' }
-      ],
-      conversationId: `C${i + 1}`
+      cache: 'no-store'
+    })
+    if (r.status === 401 && attempt === 1) continue                  // force refresh + retry once
+    if (r.status === 429 && attempt < 4) {                            // backoff on rate limit
+      const wait = Math.min(2000 * attempt, 8000)
+      await new Promise(res => setTimeout(res, wait))
+      continue
     }
+    if (!r.ok) {
+      const body = await r.text().catch(() => '')
+      throw new Error(`Guesty ${path} ${r.status}: ${body.slice(0, 300)}`)
+    }
+    return r.json() as Promise<T>
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Field mappers (Guesty raw → Supabase schema)
+// ─────────────────────────────────────────────────────────────────
+function nightsBetween(ci?: string, co?: string): number | null {
+  if (!ci || !co) return null
+  const a = new Date(ci).getTime(); const b = new Date(co).getTime()
+  if (isNaN(a) || isNaN(b)) return null
+  return Math.round((b - a) / 86_400_000)
+}
+
+function num(v: any): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v); return isNaN(n) ? null : n
+}
+
+function mapReservation(r: any) {
+  const m = r.money || {}
+  return {
+    id:                r._id || r.id,
+    listing_id:        r.listingId || r.listing?._id || r.listing?.id || null,
+    listing_name:      r.listing?.nickname || r.listing?.title || null,
+    guest_id:          r.guest?._id || r.guest?.id || r.guestId || null,
+    guest_name:        r.guest?.fullName || [r.guest?.firstName, r.guest?.lastName].filter(Boolean).join(' ') || null,
+    guest_email:       r.guest?.email || null,
+    guest_phone:       r.guest?.phone || null,
+    check_in:          r.checkIn  ? new Date(r.checkIn).toISOString().slice(0, 10)  : null,
+    check_out:         r.checkOut ? new Date(r.checkOut).toISOString().slice(0, 10) : null,
+    nights:            r.nightsCount ?? r.nights ?? nightsBetween(r.checkIn, r.checkOut),
+    status:            (r.status || '').toLowerCase() || null,
+    source:            (r.source || r.channel || '').toLowerCase() || null,
+    confirmation_code: r.confirmationCode || r.confirmation_code || null,
+    money_total:       num(m.hostPayout ?? m.totalPaid ?? m.fareAccommodation ?? m.netIncome),
+    money_paid:        num(m.totalPaid),
+    money_balance:     num(m.balanceDue),
+    money_currency:    m.currency || 'USD',
+    notes:             r.note || r.notes || null,
+    custom_fields:     Array.isArray(r.customFields) ? r.customFields : null,
+    conversation_id:   r.conversation?._id || r.conversationId || null,
+    created_at:        r.createdAt || null,
+    raw:               r
+  }
+}
+
+function parseBuilding(nick?: string, title?: string): { building: string | null; unit: string | null; room_type: string | null } {
+  const name = nick || title || ''
+  // Examples: "17WEST - 406 - 3B LOFT", "Elser 3707 - Studio", "Oasis Bamboo - Stu"
+  const parts = name.split(/\s*-\s*/).map(s => s.trim()).filter(Boolean)
+  if (parts.length >= 3) return { building: parts[0], unit: parts[1], room_type: parts.slice(2).join(' - ') }
+  if (parts.length === 2) {
+    // Could be "Elser 3707" + "Studio" — building+unit before the dash, room_type after
+    const m = parts[0].match(/^(.+?)\s+(\d+\w*)$/)
+    if (m) return { building: m[1].trim(), unit: m[2], room_type: parts[1] }
+    return { building: parts[0], unit: null, room_type: parts[1] }
+  }
+  return { building: parts[0] || null, unit: null, room_type: null }
+}
+
+function mapListing(l: any) {
+  const addr = l.address || {}
+  const tags = Array.isArray(l.tags) ? l.tags : []
+  const { building, unit, room_type } = parseBuilding(l.nickname, l.title)
+  return {
+    id:            l._id || l.id,
+    title:         l.title || null,
+    nickname:      l.nickname || null,
+    building, unit, room_type,
+    tags,
+    address_full:  addr.full || null,
+    address_city:  addr.city || null,
+    address_state: addr.state || null,
+    bedrooms:      l.bedrooms ?? null,
+    bathrooms:     l.bathrooms ?? null,
+    beds:          l.beds ?? null,
+    max_occupancy: l.accommodates ?? l.personCapacity ?? null,
+    status:        l.active === false ? 'inactive' : 'active',
+    pictures:      Array.isArray(l.pictures) ? l.pictures.map((p: any) => p.original || p.regular || p.thumbnail || p).filter(Boolean) : [],
+    amenities:     Array.isArray(l.amenities) ? l.amenities : [],
+    raw:           l
+  }
+}
+
+function mapConversation(c: any) {
+  return {
+    id:                   c._id || c.id,
+    reservation_id:       c.reservationId || c.reservation?._id || null,
+    listing_id:           c.listingId || c.listing?._id || null,
+    guest_name:           c.guest?.fullName || c.lastMessage?.from?.fullName || null,
+    channel:              (c.channel || c.lastMessage?.module || 'other').toLowerCase(),
+    last_message_at:      c.lastMessageAt || c.updatedAt || c.createdAt || null,
+    last_message_preview: (c.lastMessage?.body || '').slice(0, 200) || null,
+    unread_count:         c.unreadCount ?? 0,
+    raw:                  c
+  }
+}
+
+function mapMessage(conversationId: string, m: any) {
+  const sender = m.module === 'system' ? 'system' : (m.from?.type === 'guest' ? 'guest' : 'host')
+  return {
+    id:              m._id || m.id,
+    conversation_id: conversationId,
+    sender,
+    sender_name:     m.from?.fullName || (sender === 'system' ? 'System' : null),
+    body:            m.body || m.text || null,
+    sent_at:         m.createdAt || m.sentAt || null,
+    attachments:     Array.isArray(m.attachments) ? m.attachments : null,
+    raw:             m
+  }
+}
+
+function mapCustomField(c: any) {
+  return {
+    id:      c._id || c.id,
+    name:    c.fieldName || c.name || '',
+    type:    (c.type || 'text').toLowerCase(),
+    target:  String(c.objectType || c.target || 'reservation').toLowerCase().replace(/s$/, ''),
+    options: c.options || c.values || null
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Sync — paginated pulls + upsert to Supabase
+// ─────────────────────────────────────────────────────────────────
+async function recordSync(entity: string, items_synced: number, last_error: string | null = null) {
+  const sb = supabaseAdmin()
+  await sb.from('guesty_sync_status').upsert({
+    entity,
+    last_sync_at: new Date().toISOString(),
+    last_error,
+    items_synced,
+    updated_at: new Date().toISOString()
   })
 }
 
-function mockConversations(limit: number): Conversation[] {
-  const res = mockReservations(Math.min(limit, 30))
-  const channels: Conversation['channel'][] = ['airbnb', 'vrbo', 'booking', 'sms', 'email']
-  const previews = [
-    'Hi! Just checking in — what time can we arrive?',
-    'Could we get an extra towel set sent up?',
-    'The AC stopped working in the master bedroom.',
-    'Thanks again, the place was amazing!',
-    'Quick question about parking — is it included?',
-    'We have a small dog, is that OK?',
-    'Running late, will be there around 11 PM.',
-    'Code for the front door doesn\'t work.'
-  ]
-  return res.map((r, i) => ({
-    id: r.conversationId || `C${i + 1}`,
-    reservationId: r.id,
-    listingId: r.listingId,
-    guestName: r.guest.name,
-    channel: channels[i % channels.length],
-    lastMessageAt: new Date(Date.now() - i * 3.6e6).toISOString(),
-    lastMessagePreview: previews[i % previews.length],
-    unreadCount: i % 4 === 0 ? (i % 3) + 1 : 0
-  }))
+const FIELDS = encodeURIComponent('status guest listing checkIn checkOut nightsCount money source customFields confirmationCode createdAt note')
+
+export async function syncReservations(maxPages = 40): Promise<number> {
+  const sb = supabaseAdmin()
+  let total = 0
+  for (let page = 0; page < maxPages; page++) {
+    const skip = page * 100
+    const data = await api<{ results: any[]; count?: number }>(
+      `/reservations?limit=100&skip=${skip}&fields=${FIELDS}`
+    )
+    const rows = (data.results || []).map(mapReservation)
+    if (rows.length === 0) break
+    const { error } = await sb.from('guesty_reservations').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`upsert reservations: ${error.message}`)
+    total += rows.length
+    if (rows.length < 100) break
+  }
+  await recordSync('reservations', total)
+  return total
 }
 
-function mockMessages(conversationId: string): Message[] {
-  const guestName = 'Guest'
-  const base = Date.now() - 6 * 3600_000
-  return [
-    { id: 'm1', conversationId, sender: 'guest', senderName: guestName, body: 'Hi! Looking forward to the stay. What time can we check in?', sentAt: new Date(base).toISOString() },
-    { id: 'm2', conversationId, sender: 'host',  senderName: 'Stay Hospitality', body: 'Hi there! Standard check-in is 4 PM. We can try for 3 PM if the unit is ready.', sentAt: new Date(base + 600_000).toISOString() },
-    { id: 'm3', conversationId, sender: 'guest', senderName: guestName, body: 'Perfect. Also, we have a small dog — is that OK?', sentAt: new Date(base + 1200_000).toISOString() },
-    { id: 'm4', conversationId, sender: 'host',  senderName: 'Stay Hospitality', body: 'Pet fee is $75. I can add it to the reservation if that works.', sentAt: new Date(base + 1700_000).toISOString() },
-    { id: 'm5', conversationId, sender: 'guest', senderName: guestName, body: 'Sounds good, please add it. See you soon!', sentAt: new Date(base + 2200_000).toISOString() }
-  ]
+export async function syncListings(maxPages = 20): Promise<number> {
+  const sb = supabaseAdmin()
+  let total = 0
+  for (let page = 0; page < maxPages; page++) {
+    const skip = page * 100
+    const data = await api<{ results: any[] }>(`/listings?limit=100&skip=${skip}`)
+    const rows = (data.results || []).map(mapListing)
+    if (rows.length === 0) break
+    const { error } = await sb.from('guesty_listings').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`upsert listings: ${error.message}`)
+    total += rows.length
+    if (rows.length < 100) break
+  }
+  await recordSync('listings', total)
+  return total
+}
+
+export async function syncCustomFields(): Promise<number> {
+  const sb = supabaseAdmin()
+  const data = await api<{ results?: any[] } | any[]>(`/custom-fields`)
+  const arr = Array.isArray(data) ? data : (data.results || [])
+  const rows = arr.map(mapCustomField).filter((r: any) => r.id && r.name)
+  if (rows.length) {
+    const { error } = await sb.from('guesty_custom_fields').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`upsert custom_fields: ${error.message}`)
+  }
+  await recordSync('custom_fields', rows.length)
+  return rows.length
+}
+
+export async function syncConversations(maxPages = 10): Promise<number> {
+  const sb = supabaseAdmin()
+  let total = 0
+  for (let page = 0; page < maxPages; page++) {
+    const skip = page * 100
+    const data = await api<{ results: any[] }>(`/communication/conversations?limit=100&skip=${skip}&sort=-lastMessageAt`)
+    const rows = (data.results || []).map(mapConversation)
+    if (rows.length === 0) break
+    const { error } = await sb.from('guesty_conversations').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`upsert conversations: ${error.message}`)
+    total += rows.length
+    if (rows.length < 100) break
+  }
+  await recordSync('conversations', total)
+  return total
+}
+
+export async function syncMessages(conversationId: string): Promise<number> {
+  const sb = supabaseAdmin()
+  const data = await api<{ results: any[] }>(
+    `/communication/conversations/${encodeURIComponent(conversationId)}/posts?limit=200`
+  )
+  const rows = (data.results || []).map((m: any) => mapMessage(conversationId, m))
+  if (rows.length) {
+    const { error } = await sb.from('guesty_messages').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`upsert messages (${conversationId}): ${error.message}`)
+  }
+  return rows.length
+}
+
+export async function runFullSync(): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; errors: string[] }> {
+  const errors: string[] = []
+  const result = { reservations: 0, listings: 0, custom_fields: 0, conversations: 0, errors }
+  async function safe<T>(label: string, fn: () => Promise<T>, set: (v: T) => void) {
+    try { set(await fn()) } catch (e: any) {
+      const msg = `${label}: ${e.message || e}`
+      errors.push(msg)
+      await recordSync(label, 0, msg).catch(() => {})
+    }
+  }
+  await safe('custom_fields', syncCustomFields,  v => result.custom_fields = v)
+  await safe('listings',      syncListings,      v => result.listings      = v)
+  await safe('reservations',  syncReservations,  v => result.reservations  = v)
+  await safe('conversations', syncConversations, v => result.conversations = v)
+  return result
 }

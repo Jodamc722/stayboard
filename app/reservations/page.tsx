@@ -2,8 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
-import { listReservations, lastGuestyError } from '@/lib/guesty'
-import type { CustomFieldValue } from '@/types/guesty'
+import { SyncNowButton } from '@/components/SyncNowButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,8 +20,17 @@ export default async function ReservationsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const rows = await listReservations(40)
-  const err = lastGuestyError
+  const [{ data: rows }, { data: sync }] = await Promise.all([
+    supabase
+      .from('guesty_reservations')
+      .select('id, listing_name, guest_name, check_in, check_out, nights, status, source, money_total, money_currency, custom_fields')
+      .order('check_in', { ascending: false })
+      .limit(200),
+    supabase.from('guesty_sync_status').select('last_sync_at, last_error').eq('entity', 'reservations').maybeSingle()
+  ])
+
+  const list = rows ?? []
+  const lastSync = sync?.last_sync_at ? new Date(sync.last_sync_at) : null
 
   return (
     <Shell>
@@ -30,87 +38,93 @@ export default async function ReservationsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reservations</h1>
           <p className="text-sm text-slate-500">
-            Live from Guesty {process.env.GUESTY_MOCK_MODE === 'true' && (
-              <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 ring-1 ring-amber-600/20">mock mode</span>
+            {lastSync
+              ? <>Last synced from Guesty {timeAgo(lastSync)}</>
+              : <>Not synced yet — click "Sync now"</>}
+            {sync?.last_error && (
+              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-rose-50 text-rose-700 ring-1 ring-rose-600/20">
+                last sync error
+              </span>
             )}
           </p>
         </div>
-        <span className="text-xs text-slate-400">{rows.length} loaded</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-400">{list.length} loaded</span>
+          <SyncNowButton />
+        </div>
       </header>
 
-      {err && (
-        <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm">
-          <strong>Guesty error:</strong> <code className="font-mono text-xs">{err}</code>
+      {list.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <p className="text-slate-500">No reservations in Supabase yet. Click <strong>Sync now</strong> to pull from Guesty.</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                {['Guest', 'Listing', 'Check-in', 'Check-out', 'Nights', 'Status', 'Flags', 'Source', 'Total'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {list.map((r: any) => (
+                <tr key={r.id} className="hover:bg-slate-50 transition">
+                  <td className="px-4 py-3 text-sm font-medium">
+                    <Link href={`/reservations/${r.id}`} className="text-slate-900 hover:text-brand-600">{r.guest_name || 'Unknown'}</Link>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-700">{r.listing_name || '—'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{fmtDate(r.check_in)}</td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{fmtDate(r.check_out)}</td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{r.nights ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ring-1 ring-inset ${STATUS_STYLES[r.status] || 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
+                      {(r.status || '').replace('_', ' ') || '—'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs"><FlagChips fields={r.custom_fields ?? []} /></td>
+                  <td className="px-4 py-3 text-xs text-slate-500 uppercase">{r.source || '—'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-900 font-medium text-right">
+                    {r.money_total != null ? `${r.money_currency || 'USD'} ${Number(r.money_total).toLocaleString()}` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              {['Guest', 'Listing', 'Check-in', 'Check-out', 'Nights', 'Status', 'Flags', 'Source', 'Total'].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No reservations.</td></tr>
-            ) : rows.map(r => (
-              <tr key={r.id} className="hover:bg-slate-50 transition">
-                <td className="px-4 py-3 text-sm font-medium">
-                  <Link href={`/reservations/${r.id}`} className="text-slate-900 hover:text-brand-600">
-                    {r.guest.name}
-                  </Link>
-                </td>
-                <td className="px-4 py-3 text-sm text-slate-700">{r.listingName}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{fmt(r.checkIn)}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{fmt(r.checkOut)}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{r.nights}</td>
-                <td className="px-4 py-3 text-sm">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ring-1 ring-inset ${STATUS_STYLES[r.status] || ''}`}>
-                    {r.status.replace('_', ' ')}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  <FlagChips fields={r.customFields ?? []} />
-                </td>
-                <td className="px-4 py-3 text-xs text-slate-500 uppercase">{r.source}</td>
-                <td className="px-4 py-3 text-sm text-slate-900 font-medium text-right">${r.money.totalPaid.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </Shell>
   )
 }
 
-function FlagChips({ fields }: { fields: CustomFieldValue[] }) {
-  const find = (slug: string) => fields.find(f => f.fieldName.toLowerCase().includes(slug))
+function FlagChips({ fields }: { fields: any[] }) {
+  if (!Array.isArray(fields) || fields.length === 0) return <span className="text-slate-300">—</span>
+  // Find by fuzzy name match (case-insensitive contains)
+  const find = (slug: string) => fields.find((f: any) =>
+    (f.fieldName || f.name || '').toLowerCase().includes(slug))
+  const truthy = (v: any) => v === true || v === 'true' || (typeof v === 'string' && v.trim().length > 0)
+
   const welcome   = find('welcome')
   const verified  = find('verified')
   const sensitive = find('sensitive')
-  const risk      = fields.find(f => f.fieldName.toLowerCase().includes('risk'))
+  const risk      = find('risk')
+  const idsub     = find('id submit') || find('id submitted')
   return (
     <div className="flex flex-wrap gap-1">
-      <Chip on={!!welcome?.value}   label="Welcome"   />
-      <Chip on={!!verified?.value}  label="Verified"  />
-      {sensitive?.value && <Chip on tone="rose" label="Sensitive" />}
-      {risk?.value === 'high' && <Chip on tone="rose" label="High risk" />}
-      {risk?.value === 'medium' && <Chip on tone="amber" label="Med risk" />}
+      {welcome   && truthy(welcome.value)   && <Chip tone="green"  label="Welcome"   />}
+      {verified  && truthy(verified.value)  && <Chip tone="green"  label="Verified"  />}
+      {idsub     && truthy(idsub.value)     && <Chip tone="green"  label="ID"        />}
+      {sensitive && truthy(sensitive.value) && <Chip tone="rose"   label="Sensitive" />}
+      {risk && String(risk.value).toLowerCase() === 'high'   && <Chip tone="rose"  label="High risk" />}
+      {risk && String(risk.value).toLowerCase() === 'medium' && <Chip tone="amber" label="Med risk"  />}
     </div>
   )
 }
-function Chip({ on, label, tone }: { on: boolean; label: string; tone?: 'rose' | 'amber' }) {
-  if (!on) return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 text-slate-400 ring-1 ring-slate-200">
-      <span className="w-1 h-1 rounded-full bg-slate-300"/>{label}
-    </span>
-  )
-  const cls = tone === 'rose' ? 'bg-rose-50 text-rose-700 ring-rose-600/20'
+function Chip({ tone, label }: { tone: 'green' | 'rose' | 'amber'; label: string }) {
+  const cls = tone === 'rose'  ? 'bg-rose-50 text-rose-700 ring-rose-600/20'
             : tone === 'amber' ? 'bg-amber-50 text-amber-700 ring-amber-600/20'
-            : 'bg-emerald-50 text-emerald-700 ring-emerald-600/20'
+            :                    'bg-emerald-50 text-emerald-700 ring-emerald-600/20'
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset ${cls}`}>
       <span className="w-1 h-1 rounded-full bg-current"/>{label}
@@ -118,6 +132,16 @@ function Chip({ on, label, tone }: { on: boolean; label: string; tone?: 'rose' |
   )
 }
 
-function fmt(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+function fmtDate(d?: string | null) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+function timeAgo(d: Date) {
+  const diff = Date.now() - d.getTime()
+  const m = Math.floor(diff / 60_000)
+  if (m < 1)  return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
 }
