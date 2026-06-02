@@ -7,7 +7,8 @@ import {
   Message
 } from '@/types/guesty'
 
-const MOCK = process.env.NEXT_PUBLIC_GUESTY_MOCK_MODE === 'true'
+// Runtime-evaluated (server-side only). Set GUESTY_MOCK_MODE=true on Vercel to force mocks; default is live.
+const MOCK = process.env.GUESTY_MOCK_MODE === 'true' || (!process.env.GUESTY_CLIENT_ID && !process.env.GUESTY_CLIENT_SECRET)
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const CID  = process.env.GUESTY_CLIENT_ID
 const CSEC = process.env.GUESTY_CLIENT_SECRET

@@ -29,7 +29,7 @@ export default async function ReservationsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reservations</h1>
           <p className="text-sm text-slate-500">
-            Live from Guesty {process.env.NEXT_PUBLIC_GUESTY_MOCK_MODE === 'true' && (
+            Live from Guesty {process.env.GUESTY_MOCK_MODE === 'true' && (
               <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 ring-1 ring-amber-600/20">mock mode</span>
             )}
           </p>
