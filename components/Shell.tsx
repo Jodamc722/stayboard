@@ -5,9 +5,10 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 
 const NAV = [
-  { to: '/', label: 'Home', icon: '🏠' },
+  { to: '/',             label: 'Home',         icon: '🏠' },
   { to: '/reservations', label: 'Reservations', icon: '📅' },
-  { to: '/listings', label: 'Listings', icon: '🏘️' }
+  { to: '/messages',     label: 'Messages',     icon: '💬' },
+  { to: '/listings',     label: 'Listings',     icon: '🏘️' }
 ]
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -34,7 +35,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex flex-col gap-1">
           {NAV.map(item => {
-            const active = path === item.to
+            const active = path === item.to || (item.to !== '/' && path?.startsWith(item.to))
             return (
               <Link
                 key={item.to}
