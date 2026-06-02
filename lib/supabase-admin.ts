@@ -10,7 +10,8 @@ let _admin: SupabaseClient<any, any, any> | null = null
 export function supabaseAdmin(): SupabaseClient<any, any, any> {
   if (_admin) return _admin
   const url  = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key  = process.env.SUPABASE_SERVICE_ROLE_KEY
+  // Read SUPABASE_SERVICE_ROLE_KEY1 first (Jon's current working slot), fall back to plain name.
+  const key  = process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw new Error('Supabase admin env vars not set')
   _admin = createClient<any, any, any>(url, key, {
     auth: { autoRefreshToken: false, persistSession: false }
