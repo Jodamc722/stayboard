@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
-import { listReservations } from '@/lib/guesty'
+import { listReservations, lastGuestyError } from '@/lib/guesty'
 import type { CustomFieldValue } from '@/types/guesty'
 
 export const dynamic = 'force-dynamic'
@@ -22,6 +22,7 @@ export default async function ReservationsPage() {
   if (!user) redirect('/login')
 
   const rows = await listReservations(40)
+  const err = lastGuestyError
 
   return (
     <Shell>
@@ -36,6 +37,12 @@ export default async function ReservationsPage() {
         </div>
         <span className="text-xs text-slate-400">{rows.length} loaded</span>
       </header>
+
+      {err && (
+        <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm">
+          <strong>Guesty error:</strong> <code className="font-mono text-xs">{err}</code>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <table className="min-w-full divide-y divide-slate-200">

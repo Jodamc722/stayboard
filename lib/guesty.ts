@@ -10,6 +10,8 @@ import {
 // Runtime-evaluated (server-side only). Set GUESTY_MOCK_MODE=true on Vercel to force mocks; default is live.
 const MOCK = process.env.GUESTY_MOCK_MODE === 'true' || (!process.env.GUESTY_CLIENT_ID && !process.env.GUESTY_CLIENT_SECRET)
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+// Token endpoint lives at the auth root, NOT under /v1
+const TOKEN_URL = process.env.GUESTY_TOKEN_URL || 'https://open-api.guesty.com/oauth2/token'
 const CID  = process.env.GUESTY_CLIENT_ID
 const CSEC = process.env.GUESTY_CLIENT_SECRET
 
@@ -18,9 +20,9 @@ let cachedToken: { token: string; expiresAt: number } | null = null
 async function token(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token
   if (!CID || !CSEC) throw new Error('Guesty credentials not set')
-  const r = await fetch(`${BASE}/oauth2/token`, {
+  const r = await fetch(TOKEN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: new URLSearchParams({
       grant_type: 'client_credentials',
       scope: 'open-api',
@@ -28,7 +30,10 @@ async function token(): Promise<string> {
       client_secret: CSEC
     })
   })
-  if (!r.ok) throw new Error(`Guesty auth failed: ${r.status}`)
+  if (!r.ok) {
+    const body = await r.text().catch(() => '')
+    throw new Error(`Guesty auth ${r.status}: ${body.slice(0, 200)}`)
+  }
   const d = await r.json() as { access_token: string; expires_in: number }
   cachedToken = { token: d.access_token, expiresAt: Date.now() + d.expires_in * 1000 }
   return cachedToken.token
@@ -39,8 +44,18 @@ async function api<T>(path: string): Promise<T> {
     headers: { Authorization: `Bearer ${await token()}`, Accept: 'application/json' },
     cache: 'no-store'
   })
-  if (!r.ok) throw new Error(`Guesty ${path} → ${r.status}`)
+  if (!r.ok) {
+    const body = await r.text().catch(() => '')
+    throw new Error(`Guesty ${path} ${r.status}: ${body.slice(0, 200)}`)
+  }
   return r.json() as Promise<T>
+}
+
+// Last-known error surfaced to UI when a Guesty call fails (so page degrades, not crashes)
+export let lastGuestyError: string | null = null
+function setError(e: unknown) {
+  lastGuestyError = e instanceof Error ? e.message : String(e)
+  console.error('[guesty]', lastGuestyError)
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -59,11 +74,12 @@ export async function listCustomFieldDefinitions(target: 'reservation' | 'listin
 // ─────────────────────────────────────────────────────────────────
 export async function listReservations(limit = 30): Promise<Reservation[]> {
   if (MOCK) return mockReservations(limit)
-  // `fields` param tells Guesty to expand customFields into the response
-  const data = await api<{ results: any[] }>(
-    `/reservations?limit=${limit}&fields=${encodeURIComponent('status guest listing checkIn checkOut nights money source customFields confirmationCode createdAt note')}`
-  )
-  return data.results.map(toReservation)
+  try {
+    const data = await api<{ results: any[] }>(
+      `/reservations?limit=${limit}&fields=${encodeURIComponent('status guest listing checkIn checkOut nights money source customFields confirmationCode createdAt note')}`
+    )
+    return data.results.map(toReservation)
+  } catch (e) { setError(e); return [] }
 }
 
 export async function getReservation(id: string): Promise<Reservation | null> {
@@ -84,8 +100,10 @@ export async function getReservation(id: string): Promise<Reservation | null> {
 // ─────────────────────────────────────────────────────────────────
 export async function listListings(): Promise<Listing[]> {
   if (MOCK) return mockListings()
-  const data = await api<{ results: any[] }>('/listings?limit=200')
-  return data.results.map(toListing)
+  try {
+    const data = await api<{ results: any[] }>('/listings?limit=200')
+    return data.results.map(toListing)
+  } catch (e) { setError(e); return [] }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -94,16 +112,20 @@ export async function listListings(): Promise<Listing[]> {
 // ─────────────────────────────────────────────────────────────────
 export async function listConversations(limit = 50): Promise<Conversation[]> {
   if (MOCK) return mockConversations(limit)
-  const data = await api<{ results: any[] }>(`/communication/conversations?limit=${limit}`)
-  return data.results.map(toConversation)
+  try {
+    const data = await api<{ results: any[] }>(`/communication/conversations?limit=${limit}`)
+    return data.results.map(toConversation)
+  } catch (e) { setError(e); return [] }
 }
 
 export async function listMessages(conversationId: string, limit = 200): Promise<Message[]> {
   if (MOCK) return mockMessages(conversationId)
-  const data = await api<{ results: any[] }>(
-    `/communication/conversations/${encodeURIComponent(conversationId)}/posts?limit=${limit}`
-  )
-  return data.results.map((m: any) => toMessage(conversationId, m))
+  try {
+    const data = await api<{ results: any[] }>(
+      `/communication/conversations/${encodeURIComponent(conversationId)}/posts?limit=${limit}`
+    )
+    return data.results.map((m: any) => toMessage(conversationId, m))
+  } catch (e) { setError(e); return [] }
 }
 
 // ─────────────────────────────────────────────────────────────────
