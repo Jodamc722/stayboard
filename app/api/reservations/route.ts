@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
-import { listReservations } from '@/lib/guesty'
+import { createClient } from '@/lib/supabase-server'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
-  const limit = Number(searchParams.get('limit') || 30)
-  try {
-    const data = await listReservations(limit)
-    return NextResponse.json({ results: data })
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 })
-  }
+  const limit = Number(searchParams.get('limit') || 100)
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('guesty_reservations')
+    .select('*')
+    .order('check_in', { ascending: false })
+    .limit(limit)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ results: data })
 }
