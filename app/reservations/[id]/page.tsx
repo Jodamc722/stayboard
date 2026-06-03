@@ -39,8 +39,10 @@ export default async function ReservationDetail({ params }: { params: { id: stri
           </p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold text-slate-900">
-            {r.money_total != null ? `${r.money_currency || 'USD'} ${Number(r.money_total).toLocaleString()}` : '—'}
+          <div className="text-2xl font-bold text-slate-900 whitespace-nowrap">
+            {r.money_total != null
+              ? new Intl.NumberFormat('en-US', { style: 'currency', currency: r.money_currency || 'USD', maximumFractionDigits: 0 }).format(Number(r.money_total))
+              : '—'}
           </div>
           <div className="text-xs uppercase text-slate-500">{r.source}</div>
         </div>
@@ -49,18 +51,30 @@ export default async function ReservationDetail({ params }: { params: { id: stri
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <section className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <h2 className="text-sm font-semibold text-slate-900 mb-3">Tracking</h2>
-          {Array.isArray(r.custom_fields) && r.custom_fields.length > 0 ? (
-            <dl className="space-y-2">
-              {r.custom_fields.map((cf: any, i: number) => (
-                <div key={i} className="flex items-start justify-between gap-3 text-sm">
-                  <dt className="text-slate-500">{cf.fieldName || cf.name || '—'}</dt>
-                  <dd><CFValue cf={cf} /></dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="text-xs text-slate-400">No custom fields on this reservation.</p>
-          )}
+          {(() => {
+            const cleaned = (Array.isArray(r.custom_fields) ? r.custom_fields : [])
+              .filter((cf: any) => {
+                const label = cf.fieldName || cf.name
+                if (!label || !label.trim() || label.trim() === '—') return false
+                const v = cf.value
+                if (v === null || v === undefined || v === '' || v === false) return false
+                if (typeof v === 'string' && !v.trim()) return false
+                return true
+              })
+            if (cleaned.length === 0) {
+              return <p className="text-xs text-slate-400">No tracking fields set yet.</p>
+            }
+            return (
+              <dl className="space-y-2">
+                {cleaned.map((cf: any, i: number) => (
+                  <div key={i} className="flex items-start justify-between gap-3 text-sm">
+                    <dt className="text-slate-500">{cf.fieldName || cf.name}</dt>
+                    <dd className="text-right"><CFValue cf={cf} /></dd>
+                  </div>
+                ))}
+              </dl>
+            )
+          })()}
 
           <h2 className="text-sm font-semibold text-slate-900 mt-6 mb-3">Guest</h2>
           <dl className="space-y-2 text-sm">
@@ -106,7 +120,9 @@ function CFValue({ cf }: { cf: any }) {
       : <span className="text-slate-400">—</span>
   }
   if (v === null || v === undefined || v === '') return <span className="text-slate-400">—</span>
-  return <span className="text-slate-800">{String(v)}</span>
+  // Clean trailing whitespace and newline literals
+  const text = String(v).replace(/[↵\n\r]+/g, ' ').trim()
+  return <span className="text-slate-800 break-words">{text}</span>
 }
 function Row({ label, value }: { label: string; value?: string | null }) {
   return <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">{label}</dt><dd className="text-slate-900">{value || '—'}</dd></div>

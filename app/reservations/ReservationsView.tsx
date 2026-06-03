@@ -122,7 +122,7 @@ export function ReservationsView({
             : 'No reservations match the current filters.'}
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-100">
             <thead className="bg-slate-50/50">
               <tr>
@@ -193,9 +193,14 @@ function FlagChips({ fields }: { fields: any[] }) {
 function fmtRange(ci?: string | null, co?: string | null) {
   if (!ci) return '—'
   const a = new Date(ci), b = co ? new Date(co) : null
-  const sameYear = b && a.getFullYear() === b.getFullYear()
-  const left  = a.toLocaleDateString(undefined, sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: '2-digit' })
-  const right = b ? b.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : ''
+  const thisYear = new Date().getFullYear()
+  const sameYear = b ? a.getFullYear() === b.getFullYear() : false
+  const showYear = !sameYear || a.getFullYear() !== thisYear
+  const opts: Intl.DateTimeFormatOptions = showYear
+    ? { month: 'short', day: 'numeric', year: '2-digit' }
+    : { month: 'short', day: 'numeric' }
+  const left  = a.toLocaleDateString(undefined, opts)
+  const right = b ? b.toLocaleDateString(undefined, opts) : ''
   return right ? `${left} → ${right}` : left
 }
 
