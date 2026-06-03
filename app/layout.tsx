@@ -1,5 +1,13 @@
 import './globals.css'
 import type { Metadata, Viewport } from 'next'
+import { Inter } from 'next/font/google'
+
+const inter = Inter({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-inter',
+  display: 'swap'
+})
 
 export const metadata: Metadata = {
   title: 'STAYBOARD',
@@ -8,18 +16,13 @@ export const metadata: Metadata = {
 }
 export const viewport: Viewport = {
   width: 'device-width', initialScale: 1, viewportFit: 'cover',
-  themeColor: '#1f2937'
+  themeColor: '#0f172a'
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      </head>
-      <body className="bg-slate-50 text-slate-900 antialiased">{children}</body>
+    <html lang="en" className={inter.variable}>
+      <body className="bg-app text-ink antialiased font-sans">{children}</body>
     </html>
   )
 }

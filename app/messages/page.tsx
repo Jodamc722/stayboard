@@ -7,7 +7,7 @@ import { SyncNowButton } from '@/components/SyncNowButton'
 export const dynamic = 'force-dynamic'
 
 const CHANNEL_LABELS: Record<string, string> = {
-  airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', booking: 'Booking.com', 'booking.com': 'Booking.com',
+  airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', booking: 'Booking', 'booking.com': 'Booking',
   sms: 'SMS', email: 'Email', whatsapp: 'WhatsApp', other: 'Other'
 }
 
@@ -29,48 +29,59 @@ export default async function MessagesPage() {
 
   return (
     <Shell>
-      <header className="flex items-end justify-between mb-4">
+      <header className="flex items-start justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Messages</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="text-3xl font-bold text-ink tracking-tight">Messages</h1>
+          <p className="text-sm text-muted mt-1">
             {sync?.last_sync_at ? `Last synced ${timeAgo(new Date(sync.last_sync_at))} · ` : ''}
-            {list.length} threads
+            <strong className="text-ink/80">{list.length}</strong> threads
           </p>
         </div>
         <SyncNowButton />
       </header>
 
       {list.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-500">
-          No conversations cached yet. Click <strong>Sync now</strong>.
+        <div className="bg-white rounded-2xl border border-line p-16 text-center text-muted shadow-soft">
+          No conversations cached yet. Click <strong>Sync now</strong> above.
         </div>
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-line shadow-soft divide-y divide-line/60 overflow-hidden">
           {list.map((c: any) => (
-            <Link key={c.id} href={`/messages/${c.id}`} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 transition">
-              <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center font-semibold flex-shrink-0">
-                {(c.guest_name || 'G').split(' ').map((n: string) => n[0]).slice(0, 2).join('')}
-              </div>
+            <Link key={c.id} href={`/messages/${c.id}`} className="flex items-start gap-3 px-5 py-3 hover:bg-app/40 transition-colors">
+              <Avatar name={c.guest_name} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-medium text-slate-900 truncate">{c.guest_name || 'Guest'}</span>
-                    <span className="text-xs text-slate-400 uppercase tracking-wide flex-shrink-0">{CHANNEL_LABELS[c.channel] || c.channel}</span>
+                    <span className="font-medium text-ink truncate">{c.guest_name || 'Guest'}</span>
+                    <span className="text-[10px] text-muted uppercase tracking-[0.08em] font-semibold flex-shrink-0">{CHANNEL_LABELS[c.channel] || c.channel}</span>
                   </div>
-                  <span className="text-xs text-slate-400 flex-shrink-0">{c.last_message_at ? rel(c.last_message_at) : ''}</span>
+                  <span className="text-xs text-muted flex-shrink-0">{c.last_message_at ? rel(c.last_message_at) : ''}</span>
                 </div>
-                <p className={`text-sm truncate mt-0.5 ${c.unread_count > 0 ? 'text-slate-900 font-medium' : 'text-slate-500'}`}>
-                  {c.last_message_preview || <span className="italic text-slate-400">(no preview)</span>}
+                <p className={`text-sm truncate mt-0.5 ${c.unread_count > 0 ? 'text-ink font-medium' : 'text-muted'}`}>
+                  {c.last_message_preview || <span className="italic text-line">(no preview)</span>}
                 </p>
               </div>
               {c.unread_count > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-brand-500 text-white text-xs font-semibold flex-shrink-0">{c.unread_count}</span>
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-brand-500 text-white text-[10px] font-semibold flex-shrink-0">{c.unread_count}</span>
               )}
             </Link>
           ))}
         </div>
       )}
     </Shell>
+  )
+}
+
+function Avatar({ name }: { name: string | null }) {
+  const init = (name || 'G').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+  let h = 0
+  for (const c of (name || 'G')) h = (h * 31 + c.charCodeAt(0)) % 360
+  const bg = `hsl(${h}, 55%, 92%)`
+  const fg = `hsl(${h}, 45%, 32%)`
+  return (
+    <div className="w-10 h-10 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0" style={{ background: bg, color: fg }}>
+      {init}
+    </div>
   )
 }
 
