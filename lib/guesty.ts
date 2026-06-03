@@ -7,6 +7,7 @@
 //   listings/reservations/etc helpers below are LOCAL reads from Supabase, not Guesty.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { parseListing } from './parse-listing'
 
 const BASE      = process.env.GUESTY_BASE_URL  || 'https://open-api.guesty.com/v1'
 const TOKEN_URL = process.env.GUESTY_TOKEN_URL || 'https://open-api.guesty.com/oauth2/token'
@@ -144,24 +145,12 @@ function mapReservation(r: any) {
   }
 }
 
-function parseBuilding(nick?: string, title?: string): { building: string | null; unit: string | null; room_type: string | null } {
-  const name = nick || title || ''
-  // Examples: "17WEST - 406 - 3B LOFT", "Elser 3707 - Studio", "Oasis Bamboo - Stu"
-  const parts = name.split(/\s*-\s*/).map(s => s.trim()).filter(Boolean)
-  if (parts.length >= 3) return { building: parts[0], unit: parts[1], room_type: parts.slice(2).join(' - ') }
-  if (parts.length === 2) {
-    // Could be "Elser 3707" + "Studio" — building+unit before the dash, room_type after
-    const m = parts[0].match(/^(.+?)\s+(\d+\w*)$/)
-    if (m) return { building: m[1].trim(), unit: m[2], room_type: parts[1] }
-    return { building: parts[0], unit: null, room_type: parts[1] }
-  }
-  return { building: parts[0] || null, unit: null, room_type: null }
-}
+// (parseListing moved to lib/parse-listing.ts so the Listings page can re-parse client-side)
 
 function mapListing(l: any) {
   const addr = l.address || {}
   const tags = Array.isArray(l.tags) ? l.tags : []
-  const { building, unit, room_type } = parseBuilding(l.nickname, l.title)
+  const { building, unit, room_type } = parseListing(l.nickname, l.title)
   return {
     id:            l._id || l.id,
     title:         l.title || null,

@@ -5,7 +5,7 @@ import { ListingsView } from './ListingsView'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ListingsPage({ searchParams }: { searchParams: { tag?: string; q?: string } }) {
+export default async function ListingsPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -14,20 +14,13 @@ export default async function ListingsPage({ searchParams }: { searchParams: { t
     supabase
       .from('guesty_listings')
       .select('id, title, nickname, building, unit, room_type, tags, address_city, address_state, bedrooms, bathrooms, max_occupancy, status, amenities')
-      .order('building', { ascending: true, nullsFirst: false })
-      .order('nickname', { ascending: true })
-      .limit(500),
+      .limit(1000),
     supabase.from('guesty_sync_status').select('last_sync_at').eq('entity', 'listings').maybeSingle()
   ])
 
   return (
     <Shell>
-      <ListingsView
-        listings={rows ?? []}
-        lastSync={sync?.last_sync_at ?? null}
-        selectedTag={searchParams.tag ?? null}
-        query={searchParams.q ?? ''}
-      />
+      <ListingsView listings={rows ?? []} lastSync={sync?.last_sync_at ?? null} />
     </Shell>
   )
 }

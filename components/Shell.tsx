@@ -7,8 +7,8 @@ import { createClient } from '@/lib/supabase-browser'
 const NAV = [
   { to: '/',             label: 'Home',         icon: '🏠' },
   { to: '/reservations', label: 'Reservations', icon: '📅' },
-  { to: '/messages',     label: 'Messages',     icon: '💬' },
-  { to: '/listings',     label: 'Listings',     icon: '🏘️' }
+  { to: '/listings',     label: 'Properties',   icon: '🏘️' },
+  { to: '/messages',     label: 'Messages',     icon: '💬' }
 ]
 
 export function Shell({ children }: { children: React.ReactNode }) {
