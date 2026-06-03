@@ -3,14 +3,15 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
-import { Home, CalendarDays, Building2, MessageSquare, ClipboardList, LogOut, RefreshCw } from 'lucide-react'
+import { Home, CalendarDays, Building2, MessageSquare, ClipboardList, Sliders, LogOut, RefreshCw } from 'lucide-react'
 
 const NAV = [
-  { to: '/',             label: 'Home',         Icon: Home,           section: 'main' },
-  { to: '/reservations', label: 'Reservations', Icon: CalendarDays,   section: 'main' },
-  { to: '/listings',     label: 'Properties',   Icon: Building2,      section: 'main' },
-  { to: '/messages',     label: 'Messages',     Icon: MessageSquare,  section: 'main' },
-  { to: '/requests',     label: 'Requests',     Icon: ClipboardList,  section: 'ops' }
+  { to: '/',                        label: 'Home',          Icon: Home,           section: 'main' },
+  { to: '/reservations',            label: 'Reservations',  Icon: CalendarDays,   section: 'main' },
+  { to: '/listings',                label: 'Properties',    Icon: Building2,      section: 'main' },
+  { to: '/messages',                label: 'Messages',      Icon: MessageSquare,  section: 'main' },
+  { to: '/requests',                label: 'Requests',      Icon: ClipboardList,  section: 'ops' },
+  { to: '/settings/custom-fields',  label: 'Custom Fields', Icon: Sliders,        section: 'settings' }
 ]
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -51,6 +52,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
           })}
           <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">Ops</div>
           {NAV.filter(n => n.section === 'ops').map(({ to, label, Icon }) => {
+            const active = path === to || (to !== '/' && path?.startsWith(to))
+            return (
+              <Link key={to} href={to} prefetch
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
+                {label}
+              </Link>
+            )
+          })}
+          <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">Settings</div>
+          {NAV.filter(n => n.section === 'settings').map(({ to, label, Icon }) => {
             const active = path === to || (to !== '/' && path?.startsWith(to))
             return (
               <Link key={to} href={to} prefetch
