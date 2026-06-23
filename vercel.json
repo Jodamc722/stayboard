@@ -3,10 +3,5 @@
   "buildCommand": "next build",
   "devCommand": "next dev",
   "installCommand": "npm install",
-  "crons": [
-    {
-      "path": "/api/sync/guesty",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  "crons": []
 }
