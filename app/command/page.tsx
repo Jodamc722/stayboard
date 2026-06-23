@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { PendingRow } from './ApprovalActions'
+import { ReviewsPanel } from './ReviewsPanel'
 import {
   ArrowUpRight, CheckCircle2, Clock, AlertTriangle, LogIn, LogOut, Users,
   ClipboardCheck, ListTodo, Gauge, CalendarClock
@@ -164,6 +165,8 @@ export default async function CommandCenterPage() {
             </ul>
           )}
         </Section>
+
+        <ReviewsPanel />
       </div>
 
       <p className="text-xs text-muted mt-6 text-center">
