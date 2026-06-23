@@ -4,8 +4,8 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { PendingRow } from './ApprovalActions'
 import {
-  ArrowUpRight, CheckCircle2, Clock, AlertTriangle, LogIn, Users,
-  ClipboardCheck, ListTodo, Gauge
+  ArrowUpRight, CheckCircle2, Clock, AlertTriangle, LogIn, LogOut, Users,
+  ClipboardCheck, ListTodo, Gauge, CalendarClock
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -17,6 +17,8 @@ const PRIORITY: Record<string, { c: string; l: string }> = {
   low:    { c: 'bg-slate-100 text-slate-600', l: 'Low' },
 }
 
+function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10) }
+
 export default async function CommandCenterPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -24,6 +26,7 @@ export default async function CommandCenterPage() {
 
   const today = new Date()
   const todayStr = today.toISOString().slice(0, 10)
+  const in7 = addDays(today, 7)
 
   const [
     { data: pending },
@@ -31,8 +34,11 @@ export default async function CommandCenterPage() {
     { count: pendingCount },
     { count: openCount },
     { count: checkInsToday },
+    { count: checkOutsToday },
     { count: activeNow },
+    { count: arrivals7 },
     { data: arrivals },
+    { data: departures },
   ] = await Promise.all([
     supabase.from('field_requests').select('id,title,type,priority,building,unit,vendor,amount_usd,due_at,created_at,status')
       .eq('status', 'pending').order('created_at', { ascending: false }).limit(20),
@@ -41,8 +47,11 @@ export default async function CommandCenterPage() {
     supabase.from('field_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('field_requests').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress']),
     supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_in', todayStr),
+    supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_out', todayStr),
     supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).lte('check_in', todayStr).gt('check_out', todayStr),
-    supabase.from('guesty_reservations').select('id,guest_name,listing_name,nights').eq('check_in', todayStr).order('listing_name').limit(10),
+    supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).gt('check_in', todayStr).lte('check_in', in7),
+    supabase.from('guesty_reservations').select('id,guest_name,listing_name,nights,money_total,money_currency').eq('check_in', todayStr).order('listing_name').limit(10),
+    supabase.from('guesty_reservations').select('id,guest_name,listing_name').eq('check_out', todayStr).order('listing_name').limit(10),
   ])
 
   const overdue = (openWork ?? []).filter((r: any) => r.due_at && r.due_at < todayStr)
@@ -61,12 +70,13 @@ export default async function CommandCenterPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-7">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-7">
         <Stat label="Awaiting approval" value={pendingCount ?? 0} accent="indigo" Icon={ClipboardCheck} />
         <Stat label="Overdue" value={overdue.length} accent={overdue.length ? 'red' : undefined} Icon={AlertTriangle} />
         <Stat label="Open work" value={openCount ?? 0} Icon={ListTodo} />
         <Stat label="Check-ins today" value={checkInsToday ?? 0} Icon={LogIn} />
-        <Stat label="Active stays" value={activeNow ?? 0} Icon={Users} />
+        <Stat label="Check-outs today" value={checkOutsToday ?? 0} Icon={LogOut} />
+        <Stat label="Arrivals · next 7d" value={arrivals7 ?? 0} accent="indigo" Icon={CalendarClock} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -80,26 +90,49 @@ export default async function CommandCenterPage() {
           )}
         </Section>
 
-        <Section title="Today · Arrivals" count={arrivals?.length ?? 0}>
-          {(arrivals ?? []).length === 0 ? (
-            <Empty>No check-ins today.</Empty>
-          ) : (
-            <ul className="divide-y divide-line/70">
-              {(arrivals ?? []).map((r: any) => (
-                <li key={r.id}>
-                  <Link href={`/reservations/${r.id}`} className="group flex items-center gap-3 px-4 py-2.5 hover:bg-app transition-colors">
-                    <Avatar name={r.guest_name} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-ink truncate text-sm">{r.guest_name || 'Guest'}</div>
-                      <div className="text-xs text-muted truncate">{r.listing_name} · {r.nights ?? '—'} nts</div>
-                    </div>
-                    <ArrowUpRight size={14} className="text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
+        <div className="flex flex-col gap-4">
+          <Section title="Today · Arrivals" count={arrivals?.length ?? 0}>
+            {(arrivals ?? []).length === 0 ? (
+              <Empty>No check-ins today.</Empty>
+            ) : (
+              <ul className="divide-y divide-line/70">
+                {(arrivals ?? []).map((r: any) => (
+                  <li key={r.id}>
+                    <Link href={`/reservations/${r.id}`} className="group flex items-center gap-3 px-4 py-2.5 hover:bg-app transition-colors">
+                      <Avatar name={r.guest_name} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-ink truncate text-sm">{r.guest_name || 'Guest'}</div>
+                        <div className="text-xs text-muted truncate">{r.listing_name} · {r.nights ?? '—'} nts</div>
+                      </div>
+                      <ArrowUpRight size={14} className="text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          <Section title="Today · Departures" count={departures?.length ?? 0}>
+            {(departures ?? []).length === 0 ? (
+              <Empty>No check-outs today.</Empty>
+            ) : (
+              <ul className="divide-y divide-line/70">
+                {(departures ?? []).map((r: any) => (
+                  <li key={r.id}>
+                    <Link href={`/reservations/${r.id}`} className="group flex items-center gap-3 px-4 py-2.5 hover:bg-app transition-colors">
+                      <Avatar name={r.guest_name} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-ink truncate text-sm">{r.guest_name || 'Guest'}</div>
+                        <div className="text-xs text-muted truncate">{r.listing_name}</div>
+                      </div>
+                      <ArrowUpRight size={14} className="text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        </div>
 
         <Section title="Open work" subtitle="Soonest due first" count={openWork?.length ?? 0} className="lg:col-span-3">
           {(openWork ?? []).length === 0 ? (
