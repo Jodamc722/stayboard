@@ -1,5 +1,5 @@
 // Live reviews feed — pulls from Guesty Open API using the existing cached OAuth token.
-// No new table / no migration: fetched on demand and joined to listing names from Supabase.
+// No new table / no migration. Retries on Guesty 429 (rate limit) so the panel rides through.
 import { NextResponse } from 'next/server'
 import { getToken } from '@/lib/guesty'
 import { createClient } from '@/lib/supabase-server'
@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 export async function GET() {
   const supabase = createClient()
@@ -14,18 +15,27 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   try {
-    const token = await getToken()
-    const r = await fetch(`${BASE}/reviews?limit=60&sort=-createdAt`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      cache: 'no-store'
-    })
-    if (!r.ok) {
-      const body = await r.text().catch(() => '')
-      return NextResponse.json({ reviews: [], error: `Guesty reviews ${r.status}: ${body.slice(0, 160)}` })
+    let d: any = null
+    let lastErr = ''
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const token = await getToken(attempt > 2) // force-refresh token on later attempts
+        const r = await fetch(`${BASE}/reviews?limit=60&sort=-createdAt`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          cache: 'no-store'
+        })
+        if (r.status === 429) { lastErr = 'rate-limited'; await sleep(1200 * attempt); continue }
+        if (!r.ok) { lastErr = `Guesty reviews ${r.status}`; break }
+        d = await r.json(); break
+      } catch (e: any) {
+        lastErr = e?.message || String(e)
+        if (lastErr.includes('429')) { await sleep(1200 * attempt); continue }
+        break
+      }
     }
-    const d: any = await r.json()
-    const arr: any[] = Array.isArray(d) ? d : (d.results || d.data || d.reviews || [])
+    if (!d) return NextResponse.json({ reviews: [], error: lastErr || 'no data', retry: true })
 
+    const arr: any[] = Array.isArray(d) ? d : (d.results || d.data || d.reviews || [])
     const reviews = arr.map((v: any) => {
       const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? null
       const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
