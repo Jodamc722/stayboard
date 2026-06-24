@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, X, Sparkles } from 'lucide-react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, X, Sparkles, MessageSquare } from 'lucide-react'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string }
 
 const SIGN = '— Stay Hospitality'
 
@@ -56,6 +56,7 @@ export function ReviewsPanel() {
   const [ai, setAi] = useState(false)
   const [posted, setPosted] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState<string | null>(null)
+  const [tab, setTab] = useState<'needs' | 'replied'>('needs')
 
   useEffect(() => {
     fetch('/api/reviews').then(r => r.json())
@@ -66,6 +67,8 @@ export function ReviewsPanel() {
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
   // Only reviews that still need a host reply — once replied (in Guesty or just now), they drop off.
   const needs = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 25)
+  // Reviews we've already responded to — replied in Guesty, or just posted from here.
+  const replied = (s.reviews || []).filter(r => r.hasReply || posted[r.id]).slice(0, 50)
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
   function openDraft(r: Review) {
@@ -101,17 +104,54 @@ export function ReviewsPanel() {
 
   return (
     <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden lg:col-span-3">
-      <div className="px-4 py-3 border-b border-line flex items-center justify-between">
-        <div>
-          <h2 className="font-semibold text-ink text-sm flex items-center gap-1.5"><MessageSquareWarning size={14} className="text-brand-600" /> Reviews — needs a reply</h2>
-          <p className="text-[11px] text-muted mt-0.5">Live from Guesty · low-rated or no host response · draft &amp; post replies here</p>
+      <div className="px-4 py-3 border-b border-line">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-ink text-sm flex items-center gap-1.5"><MessageSquareWarning size={14} className="text-brand-600" /> Reviews</h2>
+          <span className="text-[11px] text-muted">Live from Guesty</span>
         </div>
-        <span className="text-xs font-semibold text-muted bg-app px-2 py-0.5 rounded-full">{s.loading ? '…' : needs.length}</span>
+        <div className="flex items-center gap-1 mt-2">
+          <button onClick={() => setTab('needs')}
+            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'needs' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
+            <MessageSquareWarning size={12} /> Needs a reply <span className={`ml-0.5 px-1 rounded ${tab === 'needs' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : needs.length}</span>
+          </button>
+          <button onClick={() => setTab('replied')}
+            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'replied' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
+            <CheckCircle2 size={12} /> Replied <span className={`ml-0.5 px-1 rounded ${tab === 'replied' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : replied.length}</span>
+          </button>
+        </div>
       </div>
       {s.loading ? (
         <div className="px-4 py-8 text-center text-sm text-muted">Loading reviews from Guesty…</div>
       ) : s.error ? (
         <div className="px-4 py-6 text-center text-sm text-muted">Couldn’t load reviews ({String(s.error).slice(0, 80)}). Reload to retry.</div>
+      ) : tab === 'replied' ? (
+        replied.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted">No replied reviews yet.</div>
+        ) : (
+          <ul className="divide-y divide-line/70">
+            {replied.map(r => (
+              <li key={r.id} className="px-4 py-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <Star size={11} /> {fmtRating(r.rating)}
+                  </span>
+                  <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>
+                  {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Replied</span>
+                </div>
+                {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+                {r.reply ? (
+                  <div className="mt-2 flex gap-1.5 text-xs text-ink bg-app border border-line rounded-lg p-2">
+                    <MessageSquare size={12} className="text-brand-600 shrink-0 mt-0.5" />
+                    <span className="line-clamp-4">{r.reply}</span>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted mt-1.5 italic">Reply posted (text not returned by the channel).</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )
       ) : needs.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-muted">All caught up on reviews. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
       ) : (
