@@ -1,6 +1,7 @@
 import './globals.css'
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
+import { BrainChat } from '@/components/BrainChat'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -22,7 +23,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={inter.variable}>
-      <body className="bg-app text-ink antialiased font-sans">{children}</body>
+      <body className="bg-app text-ink antialiased font-sans">
+        {children}
+        <BrainChat />
+      </body>
     </html>
   )
 }
