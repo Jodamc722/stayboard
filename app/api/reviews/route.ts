@@ -74,6 +74,19 @@ export async function GET() {
     }
     reviews.forEach((x: any) => { (x as any).listing_name = names[x.listingId] || x.listingId || 'Unknown listing' })
 
+    if (!reviews.length) {
+      return NextResponse.json({
+        reviews: [],
+        _shape: {
+          topKeys: Object.keys(d || {}),
+          dataType: Array.isArray(d?.data) ? 'array' : typeof d?.data,
+          dataLen: Array.isArray(d?.data) ? d.data.length : undefined,
+          dataKeys: d?.data && !Array.isArray(d.data) ? Object.keys(d.data) : undefined,
+          sample: JSON.stringify(d).slice(0, 800)
+        }
+      })
+    }
+
     return NextResponse.json({ reviews })
   } catch (e: any) {
     return NextResponse.json({ reviews: [], error: e?.message || String(e) })
