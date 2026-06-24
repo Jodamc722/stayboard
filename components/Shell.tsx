@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
-import { Home, CalendarDays, Building2, MessageSquare, ClipboardList, Sliders, LogOut, RefreshCw, Gauge } from 'lucide-react'
+import { Home, CalendarDays, Building2, MessageSquare, ClipboardList, ListChecks, Sliders, LogOut, RefreshCw, Gauge } from 'lucide-react'
 
 const NAV = [
   { to: '/command',                 label: 'Command Center', Icon: Gauge,         section: 'main' },
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/reservations',            label: 'Reservations',  Icon: CalendarDays,   section: 'main' },
   { to: '/listings',                label: 'Properties',    Icon: Building2,      section: 'main' },
   { to: '/messages',                label: 'Messages',      Icon: MessageSquare,  section: 'main' },
+  { to: '/plan',                    label: 'Ops Plans',     Icon: ListChecks,     section: 'ops' },
   { to: '/requests',                label: 'Requests',      Icon: ClipboardList,  section: 'ops' },
   { to: '/settings/custom-fields',  label: 'Custom Fields', Icon: Sliders,        section: 'settings' }
 ]
