@@ -85,13 +85,20 @@ export async function GET() {
       const guest =
         v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ??
         rr.reviewer_name ?? rr.reviewer?.name ?? null
+      // The actual host reply text (from a flat field or the reviewReplies[] array), for the "Replied" view.
+      const replyText =
+        (typeof reply === 'string' && reply.trim()) ? reply
+        : (Array.isArray(replies)
+            ? (replies.map((x: any) => x?.reply ?? x?.text ?? x?.reviewReply ?? x?.body ?? '').find((s: any) => s && String(s).trim()) || '')
+            : '')
       return {
         id: v._id ?? v.id ?? v.externalReviewId ?? Math.random().toString(36).slice(2),
         rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
         content: String(typeof content === 'string' ? content : '').slice(0, 400),
         channel, listingId, guest,
         created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
-        hasReply: repliedViaArr || !!(reply && String(reply).trim())
+        hasReply: repliedViaArr || !!(reply && String(reply).trim()),
+        reply: String(replyText || '').slice(0, 500)
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
 
