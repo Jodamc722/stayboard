@@ -164,6 +164,10 @@ export function ReviewsPanel() {
                 className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
                 <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all with AI'}
               </button>
+              <button onClick={() => setSelected(needs.every(r => selected[r.id]) ? {} : Object.fromEntries(needs.map(r => [r.id, true])))}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app">
+                {needs.every(r => selected[r.id]) ? <CheckSquare size={12} /> : <Square size={12} />} {needs.every(r => selected[r.id]) ? 'Clear' : 'Select all'}
+              </button>
             </div>
           )}
         </div>
@@ -171,12 +175,15 @@ export function ReviewsPanel() {
       </div>
 
       {tab === 'needs' && selectedIds.length > 0 && (
-        <div className="px-4 py-2 bg-brand-50 border-b border-brand-200 flex items-center justify-between">
-          <span className="text-xs font-semibold text-brand-800">{selectedIds.length} selected</span>
-          <button onClick={postSelected} disabled={bulkBusy}
-            className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-            <Send size={12} /> {bulkBusy ? 'Posting…' : `Approve & post ${selectedIds.length}`}
-          </button>
+        <div className="px-4 py-2.5 bg-brand-600 flex items-center justify-between sticky top-0 z-10">
+          <span className="text-xs font-semibold text-white inline-flex items-center gap-1.5"><CheckSquare size={14} /> {selectedIds.length} selected</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected({})} className="text-xs font-medium text-white/80 hover:text-white">Clear</button>
+            <button onClick={postSelected} disabled={bulkBusy}
+              className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-white text-brand-700 hover:bg-brand-50 disabled:opacity-50">
+              <Send size={12} /> {bulkBusy ? 'Posting…' : `Approve & post ${selectedIds.length}`}
+            </button>
+          </div>
         </div>
       )}
 
@@ -217,10 +224,11 @@ export function ReviewsPanel() {
       ) : (
         <ul className="divide-y divide-line/70">
           {needs.map(r => (
-            <li key={r.id} className="px-4 py-3">
+            <li key={r.id} className={`px-4 py-3 border-l-[3px] transition-colors ${selected[r.id] ? 'bg-brand-50/70 border-brand-500' : 'border-transparent'}`}>
               <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))} className="text-muted hover:text-brand-600">
-                  {selected[r.id] ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} />}
+                <button onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))}
+                  className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${selected[r.id] ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
+                  {selected[r.id] ? <CheckSquare size={14} /> : <Square size={14} />} {selected[r.id] ? 'Selected' : 'Select'}
                 </button>
                 <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
                   <Star size={11} /> {fmtRating(r.rating)}
