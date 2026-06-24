@@ -49,6 +49,7 @@ function draftReply(r: Review): string {
 }
 
 const ratingFrac = (n: number | null) => n == null ? -1 : (n <= 5 ? n / 5 : n / 10)
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
 
 export function ReviewsPanel() {
   const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; error?: string }>({ loading: true })
@@ -69,10 +70,7 @@ export function ReviewsPanel() {
       .then(d => {
         const reviews: Review[] = d.reviews || []
         setS({ loading: false, reviews, error: d.error })
-        // Pre-write a draft for every review that needs a reply, so it's ready to review.
-        const seed: Record<string, string> = {}
-        reviews.filter(r => !r.hasReply).forEach(r => { seed[r.id] = draftReply(r) })
-        setDrafts(seed)
+        // No template placeholders — drafts stay empty until the AI writes the real one.
       })
       .catch(e => setS({ loading: false, error: String(e) }))
   }, [])
@@ -81,10 +79,10 @@ export function ReviewsPanel() {
   const didAutoDraft = useRef(false)
   useEffect(() => {
     if (didAutoDraft.current || s.loading) return
-    const list = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 25)
+    const list = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 12)
     if (!list.length) return
     didAutoDraft.current = true
-    ;(async () => { setAllAi(true); for (const r of list) { await rewriteAI(r) } setAllAi(false) })()
+    ;(async () => { setAllAi(true); for (let i = 0; i < list.length; i++) { await rewriteAI(list[i]); if (i < list.length - 1) await sleep(13000) } setAllAi(false) })()
   }, [s.loading, s.reviews])
 
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
@@ -106,20 +104,25 @@ export function ReviewsPanel() {
   async function rewriteAI(r: Review, instruction?: string) {
     setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
-      const res = await fetch('/api/reviews/draft', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction })
-      })
-      const d = await res.json()
-      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      if (d.draft) setDraft(r.id, d.draft)
+      // Retry on the org's 5-req/min rate limit with a backoff so drafts still land.
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const res = await fetch('/api/reviews/draft', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction })
+        })
+        const d = await res.json()
+        if (res.ok && d.draft) { setDraft(r.id, d.draft); return }
+        const msg = d.error || `HTTP ${res.status}`
+        if (/429|rate limit/i.test(msg) && attempt < 3) { await sleep(15000); continue }
+        throw new Error(msg)
+      }
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setAiBusy(b => ({ ...b, [r.id]: false })) }
   }
 
   async function draftAllAI() {
     setAllAi(true); setErr(null)
-    for (const r of needs) { await rewriteAI(r) }   // sequential to stay within rate limits
+    for (let i = 0; i < needs.length; i++) { await rewriteAI(needs[i]); if (i < needs.length - 1) await sleep(13000) }   // ~5/min org limit
     setAllAi(false)
   }
 
@@ -257,6 +260,7 @@ export function ReviewsPanel() {
 
               <div className="mt-2">
                 <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={4}
+                  placeholder={aiBusy[r.id] ? 'Writing the AI reply…' : 'No AI draft yet — hit “Rewrite with AI”, or “Draft all with AI” up top.'}
                   className="w-full text-xs text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
                   <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy || !(drafts[r.id] || '').trim()}
