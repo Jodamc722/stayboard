@@ -1,5 +1,5 @@
-// Live reviews feed — reuses the SHARED cached Guesty token (maintained by the 15-min sync)
-// so it never hits Guesty's rate-limited OAuth endpoint. No new table / no migration.
+// Live reviews feed — reuses the SHARED cached Guesty token (maintained by the sync)
+// so it never hits Guesty's rate-limited OAuth endpoint.
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -25,8 +25,7 @@ export async function GET() {
       return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing — reload in a moment.' })
     }
 
-    // Guesty Open API /reviews returns results already sorted descending by last update.
-    // It does NOT accept a `sort` param (sending one returns 400). Valid params: limit, skip, channelId, listingId, etc.
+    // Guesty /reviews is already sorted desc by last update; it does NOT accept a `sort` param.
     const r = await fetch(`${BASE}/reviews?limit=100`, {
       headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' },
       cache: 'no-store'
@@ -42,26 +41,33 @@ export async function GET() {
     }
 
     const d: any = await r.json()
-    // Response shape: { isRawResponse, data, skip, limit }. Reviews live under data (array or .results/.reviews).
-    const dd: any = d?.data ?? d
-    const arr: any[] =
-      (Array.isArray(dd) ? dd : null) ||
-      dd?.reviews || dd?.results || dd?.data ||
-      d?.results || d?.reviews || []
+    const arr: any[] = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : (d?.data?.reviews || d?.results || d?.reviews || []))
 
     const reviews = (Array.isArray(arr) ? arr : []).map((v: any) => {
-      const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? v.privateReview?.rating ?? null
-      const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
-      const channel = String(v.channelId ?? v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '').toLowerCase()
-      const reply = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? v.replies?.[0]?.text ?? null
-      const listingId = v.listingId ?? v.listing?._id ?? v.listing?.id ?? null
-      const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? v.reservation?.guest?.fullName ?? null
+      // Guesty wraps the channel's native review in `rawReview`; ratings/text live there.
+      const rr = v.rawReview || v.raw || {}
+      const rating =
+        v.rating ?? v.overallRating ??
+        rr.overall_rating ?? rr.overallRating ?? rr.rating ?? rr.score ?? rr.average_score ??
+        v.publicReview?.rating ?? null
+      const content =
+        rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
+        rr.positive ?? rr.review_text ?? rr.content ??
+        v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
+      const channel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? '').toLowerCase()
+      const reply =
+        rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
+        v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? null
+      const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? null
+      const guest =
+        v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ??
+        rr.reviewer_name ?? rr.reviewer?.name ?? null
       return {
-        id: v._id ?? v.id ?? Math.random().toString(36).slice(2),
-        rating: typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null),
+        id: v._id ?? v.id ?? v.externalReviewId ?? Math.random().toString(36).slice(2),
+        rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
         content: String(typeof content === 'string' ? content : '').slice(0, 400),
         channel, listingId, guest,
-        created_at: v.createdAt ?? v.updatedAt ?? v.date ?? v.submittedAt ?? null,
+        created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
         hasReply: !!(reply && String(reply).trim())
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
@@ -73,19 +79,6 @@ export async function GET() {
       ;(ls || []).forEach((l: any) => { names[l.id] = l.nickname || l.title || l.id })
     }
     reviews.forEach((x: any) => { (x as any).listing_name = names[x.listingId] || x.listingId || 'Unknown listing' })
-
-    if (!reviews.length) {
-      return NextResponse.json({
-        reviews: [],
-        _shape: {
-          topKeys: Object.keys(d || {}),
-          dataType: Array.isArray(d?.data) ? 'array' : typeof d?.data,
-          dataLen: Array.isArray(d?.data) ? d.data.length : undefined,
-          dataKeys: d?.data && !Array.isArray(d.data) ? Object.keys(d.data) : undefined,
-          sample: JSON.stringify(d).slice(0, 800)
-        }
-      })
-    }
 
     return NextResponse.json({ reviews })
   } catch (e: any) {
