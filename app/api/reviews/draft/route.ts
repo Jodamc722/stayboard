@@ -13,6 +13,7 @@ const SYSTEM = `You write short public replies to guest reviews on behalf of "St
 - For criticism: thank them, empathize briefly, note the feedback has been shared with the team to keep improving, and warmly invite them back. Do NOT promise refunds, compensation, discounts, or specific fixes.
 - For praise: be genuinely appreciative and reference what they liked.
 - No emojis. No excessive exclamation points. No defensiveness or arguing. No legal or financial commitments. Do not mention this is AI-generated.
+- NEVER mention or reference the unit number, listing name, room number, building name, or any specific property identifier in the reply. Keep it free of any unit/room references.
 - End with exactly this signature on the same line or a new line: — Stay Hospitality
 Output ONLY the reply text, ready to post. No preamble, no quotes around it.`
 
@@ -24,11 +25,10 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured — add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
 
-  const { content, rating, listing_name, guest, channel, instruction } = await req.json().catch(() => ({} as any))
+  const { content, rating, guest, channel, instruction } = await req.json().catch(() => ({} as any))
 
   const userMsg =
     `Channel: ${channel || 'unknown'}\n` +
-    `Listing: ${listing_name || 'unknown'}\n` +
     `Guest: ${guest || 'the guest'}\n` +
     `Rating: ${rating == null ? 'n/a' : rating}\n` +
     `Guest review:\n"""${(content || '').slice(0, 1500)}"""\n\n` +
