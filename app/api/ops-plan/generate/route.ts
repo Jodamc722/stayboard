@@ -51,11 +51,12 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) { /* minimal context */ }
 
-  const SYSTEM = `You are the operations planner for Stay Hospitality (South Florida short-term rentals). Teams: "miami" and "broward". From the live snapshot, produce a concise, actionable daily operations plan as STRICT JSON only (no prose, no markdown), shaped exactly:
-{"title": string, "summary": string, "items": [{"team": "miami"|"broward", "building": string, "title": string, "detail": string, "source": "feedback"|"reservation"|"breezeway"|"kpi"|"other", "priority": 1|2|3}]}
+  const SYSTEM = `You are the operations planner for Stay Hospitality (South Florida short-term rentals). Teams: "ccs" (central guest communications & customer service - handles guest messaging, reviews, and customer service across all markets), "miami" (field/turnover/maintenance team for the Miami market), and "broward" (field/turnover/maintenance team for the Broward market). From the live snapshot, produce a concise, actionable daily operations plan as STRICT JSON only (no prose, no markdown), shaped exactly:
+{"title": string, "summary": string, "items": [{"team": "ccs"|"miami"|"broward", "building": string, "title": string, "detail": string, "source": "feedback"|"reservation"|"breezeway"|"kpi"|"other", "priority": 1|2|3}]}
 Rules:
-- 6-14 items total. Prioritize turnovers for today/tomorrow check-ins, overdue work, approvals, and guest-impacting issues.
-- Assign each item to the most likely team by building/market. If a building's market is unknown, make your best guess and note it in detail.
+- 6-16 items total. Prioritize turnovers for today/tomorrow check-ins, overdue work, approvals, and guest-impacting issues.
+- Route guest-messaging, review-response, and customer-service items to "ccs". Route field/turnover/cleaning/maintenance items to "miami" or "broward" by the building's market.
+- If a building's market is unknown, make your best guess and note it in detail.
 - priority 1 = urgent/guest-impacting, 2 = normal, 3 = nice-to-have.
 - Be specific and operational ("Stage early check-in cleaning for ...", "Confirm door code works for arrival ..."). Never invent guest names or numbers not in the snapshot.
 - Output ONLY the JSON object.`
@@ -95,7 +96,7 @@ Rules:
 
     const rows = items.slice(0, 30).map((it: any) => ({
       plan_id: plan.id,
-      team: (String(it.team || '').toLowerCase() === 'broward') ? 'broward' : 'miami',
+      team: ['ccs', 'miami', 'broward'].includes(String(it.team || '').toLowerCase()) ? String(it.team).toLowerCase() : 'miami',
       building: String(it.building || '').slice(0, 120) || null,
       title: String(it.title || 'Action').slice(0, 200),
       detail: String(it.detail || '').slice(0, 600) || null,
