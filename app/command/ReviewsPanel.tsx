@@ -13,6 +13,11 @@ function draftReply(r: Review): string {
   const first = (r.guest || '').trim().split(/\s+/)[0]
   const hi = first ? `Hi ${first}, ` : ''
 
+  // Sensitive allegations (bed bugs / pests / intrusion / someone walking in): NEVER affirm or name them.
+  if (/bed.?bug|bedbug|\bbugs?\b|roach|cockroach|\binsect|\bpest|rodent|\bmice\b|\brat\b|intrud|broke in|broke into|let themselves in|someone (came|walked|enter)|unauthorized|barged|walked in on/.test(t)) {
+    return `${hi}thank you for sharing your feedback. We take concerns like this seriously and have taken corrective action to ensure we keep delivering the experience our guests deserve. We'd welcome the opportunity to host you again. ${SIGN}`
+  }
+
   if (!low) {
     const pos: string[] = []
     if (/clean|spotless|tidy|immaculate/.test(t)) pos.push('the spotless space')
