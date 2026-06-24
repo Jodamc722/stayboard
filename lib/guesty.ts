@@ -1,9 +1,9 @@
-// Guesty Open API client — token persisted in Supabase + sync helpers.
+// Guesty Open API client - token persisted in Supabase + sync helpers.
 //
 // Architecture:
-//   token()       → reads cached OAuth token from Supabase, refreshes if expired
-//   api()         → authed fetch helper; surfaces 429/4xx as readable errors
-//   sync*()       → pull paginated data from Guesty and upsert into Supabase
+//   token()       -> reads cached OAuth token from Supabase, refreshes if expired
+//   api()         -> authed fetch helper; surfaces 429/4xx as readable errors
+//   sync*()       -> pull paginated data from Guesty and upsert into Supabase
 //   listings/reservations/etc helpers below are LOCAL reads from Supabase, not Guesty.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
@@ -13,10 +13,11 @@ const BASE      = process.env.GUESTY_BASE_URL  || 'https://open-api.guesty.com/v
 const TOKEN_URL = process.env.GUESTY_TOKEN_URL || 'https://open-api.guesty.com/oauth2/token'
 const CID       = process.env.GUESTY_CLIENT_ID
 const CSEC      = process.env.GUESTY_CLIENT_SECRET
+const ACCOUNT_ID = process.env.GUESTY_ACCOUNT_ID || '68af6c6fc3307ffd38a1c2b6'
 
-// ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
 // Token cache (Supabase-backed so all serverless instances share one)
-// ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
 type CachedToken = { access_token: string; expires_at: string }
 
 async function readCachedToken(): Promise<CachedToken | null> {
@@ -71,9 +72,9 @@ export async function getToken(force = false): Promise<string> {
   return d.access_token
 }
 
-// ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
 // Authed fetch with retry on 401 (token rotation) and pause on 429
-// ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   let attempt = 0
   while (true) {
@@ -102,9 +103,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Field mappers (Guesty raw → Supabase schema)
-// ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
+// Field mappers (Guesty raw -> Supabase schema)
+// ------------------------------------------------------------
 function nightsBetween(ci?: string, co?: string): number | null {
   if (!ci || !co) return null
   const a = new Date(ci).getTime(); const b = new Date(co).getTime()
@@ -178,7 +179,7 @@ function mapConversation(c: any) {
     listing_id:           c.listingId || c.listing?._id || null,
     guest_name:           c.guest?.fullName || c.lastMessage?.from?.fullName || null,
     channel:              (c.channel || c.lastMessage?.module || 'other').toLowerCase(),
-    last_message_at:      c.lastMessageAt || c.updatedAt || c.createdAt || null,
+    last_message_at:      c.lastMessageAt || c.lastMessageReceivedAt || c.updatedAt || c.createdAt || null,
     last_message_preview: (c.lastMessage?.body || '').slice(0, 200) || null,
     unread_count:         c.unreadCount ?? 0,
     raw:                  c
@@ -209,9 +210,9 @@ function mapCustomField(c: any) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Sync — paginated pulls + upsert to Supabase
-// ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
+// Sync - paginated pulls + upsert to Supabase
+// ------------------------------------------------------------
 async function recordSync(entity: string, items_synced: number, last_error: string | null = null) {
   const sb = supabaseAdmin()
   await sb.from('guesty_sync_status').upsert({
@@ -263,8 +264,9 @@ export async function syncListings(maxPages = 20): Promise<number> {
 
 export async function syncCustomFields(): Promise<number> {
   const sb = supabaseAdmin()
-  const data = await api<{ results?: any[] } | any[]>(`/custom-fields`)
-  const arr = Array.isArray(data) ? data : (data.results || [])
+  // Correct Open API path is account-scoped: /accounts/{id}/custom-fields (NOT /custom-fields).
+  const data = await api<{ results?: any[]; data?: any[]; fields?: any[] } | any[]>(`/accounts/${ACCOUNT_ID}/custom-fields`)
+  const arr: any[] = Array.isArray(data) ? data : ((data as any).results || (data as any).data || (data as any).fields || [])
   const rows = arr.map(mapCustomField).filter((r: any) => r.id && r.name)
   if (rows.length) {
     const { error } = await sb.from('guesty_custom_fields').upsert(rows, { onConflict: 'id' })
@@ -274,21 +276,18 @@ export async function syncCustomFields(): Promise<number> {
   return rows.length
 }
 
-export async function syncConversations(maxPages = 10): Promise<number> {
+export async function syncConversations(): Promise<number> {
   const sb = supabaseAdmin()
-  let total = 0
-  for (let page = 0; page < maxPages; page++) {
-    const skip = page * 100
-    const data = await api<{ results: any[] }>(`/communication/conversations?limit=100&skip=${skip}&sort=-lastMessageAt`)
-    const rows = (data.results || []).map(mapConversation)
-    if (rows.length === 0) break
+  // Guesty's inbox endpoint does NOT accept `skip`; pull the 100 most-recently-active conversations.
+  const data = await api<{ results?: any[]; data?: any[] } | any[]>(`/communication/conversations?limit=100&sort=-lastMessageAt`)
+  const list: any[] = Array.isArray(data) ? data : ((data as any).results || (data as any).data || [])
+  const rows = list.map(mapConversation)
+  if (rows.length) {
     const { error } = await sb.from('guesty_conversations').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert conversations: ${error.message}`)
-    total += rows.length
-    if (rows.length < 100) break
   }
-  await recordSync('conversations', total)
-  return total
+  await recordSync('conversations', rows.length)
+  return rows.length
 }
 
 export async function syncMessages(conversationId: string): Promise<number> {
@@ -308,9 +307,7 @@ export async function runFullSync(): Promise<{ reservations: number; listings: n
   const errors: string[] = []
   const result = { reservations: 0, listings: 0, custom_fields: 0, conversations: 0, errors }
   // Warm the shared token ONCE up front. If Guesty's auth endpoint is throttled (429),
-  // abort the whole sync instead of letting each entity hammer the token endpoint —
-  // that 4x-ing is what keeps re-tripping the rate limit. Once a token caches, all
-  // entity syncs below reuse it with zero extra token requests.
+  // abort the whole sync instead of letting each entity hammer the token endpoint.
   try {
     await getToken()
   } catch (e: any) {
