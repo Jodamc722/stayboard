@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string }
@@ -62,6 +62,7 @@ export function ReviewsPanel() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [allAi, setAllAi] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     fetch('/api/reviews').then(r => r.json())
@@ -76,24 +77,38 @@ export function ReviewsPanel() {
       .catch(e => setS({ loading: false, error: String(e) }))
   }, [])
 
+  // Auto-write the AI draft for every review that needs a reply, the moment they load — no clicking.
+  const didAutoDraft = useRef(false)
+  useEffect(() => {
+    if (didAutoDraft.current || s.loading) return
+    const list = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 25)
+    if (!list.length) return
+    didAutoDraft.current = true
+    ;(async () => { setAllAi(true); for (const r of list) { await rewriteAI(r) } setAllAi(false) })()
+  }, [s.loading, s.reviews])
+
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
+  // Filter by building / unit / channel via the search box (matches the listing name + channel).
+  const q = query.trim().toLowerCase()
+  const matchQ = (r: Review) => !q || `${r.listing_name || ''} ${r.channel || ''}`.toLowerCase().includes(q)
   const needs = (s.reviews || [])
-    .filter(r => !r.hasReply && !posted[r.id])
+    .filter(r => !r.hasReply && !posted[r.id] && matchQ(r))
     .sort((a, b) => sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating))
-    .slice(0, 50)
-  const replied = (s.reviews || []).filter(r => r.hasReply || posted[r.id]).slice(0, 50)
+  const replied = (s.reviews || [])
+    .filter(r => (r.hasReply || posted[r.id]) && matchQ(r))
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
   const selectedIds = needs.filter(r => selected[r.id])
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
 
-  async function rewriteAI(r: Review) {
+  async function rewriteAI(r: Review, instruction?: string) {
     setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
       const res = await fetch('/api/reviews/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel })
+        body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction })
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
@@ -171,6 +186,8 @@ export function ReviewsPanel() {
             </div>
           )}
         </div>
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by building, unit, or channel… (e.g. Capri, 214, airbnb)"
+          className="mt-2 w-full text-xs text-ink bg-app border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         {err && <p className="text-[11px] text-red-600 mt-1.5">{err}</p>}
       </div>
 
@@ -249,6 +266,11 @@ export function ReviewsPanel() {
                   <button onClick={() => rewriteAI(r)} disabled={aiBusy[r.id] || rowBusy[r.id]}
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
                     <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
+                  </button>
+                  <button onClick={() => { const i = window.prompt('How should the AI rephrase this reply? (e.g. warmer, shorter, more apologetic, more professional)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
+                    disabled={aiBusy[r.id] || rowBusy[r.id]}
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
+                    Rephrase…
                   </button>
                   <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>
