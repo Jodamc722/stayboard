@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, X, Sparkles, MessageSquare } from 'lucide-react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string }
 
@@ -48,35 +48,48 @@ function draftReply(r: Review): string {
   return `${hi}thank you for taking the time to share this, and we're sorry to hear about ${list}. That's genuinely not the experience we aim to provide, and we've shared your feedback directly with our team so we can make it right. We'd welcome the chance to host you again and show you the stay you should have had. ${SIGN}`
 }
 
+const ratingFrac = (n: number | null) => n == null ? -1 : (n <= 5 ? n / 5 : n / 10)
+
 export function ReviewsPanel() {
   const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; error?: string }>({ loading: true })
-  const [openId, setOpenId] = useState<string | null>(null)
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [ai, setAi] = useState(false)
-  const [posted, setPosted] = useState<Record<string, boolean>>({})
-  const [err, setErr] = useState<string | null>(null)
   const [tab, setTab] = useState<'needs' | 'replied'>('needs')
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [posted, setPosted] = useState<Record<string, boolean>>({})
+  const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({})
+  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({})
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [allAi, setAllAi] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/reviews').then(r => r.json())
-      .then(d => setS({ loading: false, reviews: d.reviews || [], error: d.error }))
+      .then(d => {
+        const reviews: Review[] = d.reviews || []
+        setS({ loading: false, reviews, error: d.error })
+        // Pre-write a draft for every review that needs a reply, so it's ready to review.
+        const seed: Record<string, string> = {}
+        reviews.filter(r => !r.hasReply).forEach(r => { seed[r.id] = draftReply(r) })
+        setDrafts(seed)
+      })
       .catch(e => setS({ loading: false, error: String(e) }))
   }, [])
 
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
-  // Only reviews that still need a host reply — once replied (in Guesty or just now), they drop off.
-  const needs = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 25)
-  // Reviews we've already responded to — replied in Guesty, or just posted from here.
-  const replied = (s.reviews || []).filter(r => r.hasReply || posted[r.id]).slice(0, 50)
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
-  function openDraft(r: Review) {
-    // Show an instant template placeholder, then let AI write the real draft.
-    setErr(null); setOpenId(r.id); setText(draftReply(r)); rewriteAI(r)
-  }
+  const needs = (s.reviews || [])
+    .filter(r => !r.hasReply && !posted[r.id])
+    .sort((a, b) => sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating))
+    .slice(0, 50)
+  const replied = (s.reviews || []).filter(r => r.hasReply || posted[r.id]).slice(0, 50)
+  const selectedIds = needs.filter(r => selected[r.id])
+
+  function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
+
   async function rewriteAI(r: Review) {
-    setAi(true); setErr(null)
+    setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
       const res = await fetch('/api/reviews/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -84,22 +97,45 @@ export function ReviewsPanel() {
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      if (d.draft) setText(d.draft)
+      if (d.draft) setDraft(r.id, d.draft)
     } catch (e: any) { setErr(e?.message || String(e)) }
-    finally { setAi(false) }
+    finally { setAiBusy(b => ({ ...b, [r.id]: false })) }
   }
+
+  async function draftAllAI() {
+    setAllAi(true); setErr(null)
+    for (const r of needs) { await rewriteAI(r) }   // sequential to stay within rate limits
+    setAllAi(false)
+  }
+
+  async function postOne(r: Review): Promise<boolean> {
+    const text = (drafts[r.id] || '').trim()
+    if (!text) return false
+    const res = await fetch('/api/reviews/reply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewId: r.id, reviewReply: text })
+    })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+    return true
+  }
+
   async function post(r: Review) {
-    setBusy(true); setErr(null)
+    setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
+    try { await postOne(r); setPosted(p => ({ ...p, [r.id]: true })) }
+    catch (e: any) { setErr(e?.message || String(e)) }
+    finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
+  }
+
+  async function postSelected() {
+    if (!selectedIds.length) return
+    setBulkBusy(true); setErr(null)
+    const done: Record<string, boolean> = {}
     try {
-      const res = await fetch('/api/reviews/reply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewId: r.id, reviewReply: text })
-      })
-      const d = await res.json()
-      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      setPosted(p => ({ ...p, [r.id]: true })); setOpenId(null)
-    } catch (e: any) { setErr(e?.message || String(e)) }
-    finally { setBusy(false) }
+      for (const r of selectedIds) { try { if (await postOne(r)) done[r.id] = true } catch (e: any) { setErr(e?.message || String(e)) } }
+    } finally {
+      setPosted(p => ({ ...p, ...done })); setSelected({}); setBulkBusy(false)
+    }
   }
 
   return (
@@ -109,7 +145,7 @@ export function ReviewsPanel() {
           <h2 className="font-semibold text-ink text-sm flex items-center gap-1.5"><MessageSquareWarning size={14} className="text-brand-600" /> Reviews</h2>
           <span className="text-[11px] text-muted">Live from Guesty</span>
         </div>
-        <div className="flex items-center gap-1 mt-2">
+        <div className="flex items-center gap-1 mt-2 flex-wrap">
           <button onClick={() => setTab('needs')}
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'needs' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
             <MessageSquareWarning size={12} /> Needs a reply <span className={`ml-0.5 px-1 rounded ${tab === 'needs' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : needs.length}</span>
@@ -118,8 +154,32 @@ export function ReviewsPanel() {
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'replied' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
             <CheckCircle2 size={12} /> Replied <span className={`ml-0.5 px-1 rounded ${tab === 'replied' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : replied.length}</span>
           </button>
+          {tab === 'needs' && !s.loading && needs.length > 0 && (
+            <div className="ml-auto flex items-center gap-1.5">
+              <button onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app">
+                {sortDir === 'desc' ? <ArrowDownWideNarrow size={12} /> : <ArrowUpNarrowWide size={12} />} {sortDir === 'desc' ? 'High → Low' : 'Low → High'}
+              </button>
+              <button onClick={draftAllAI} disabled={allAi}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
+                <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all with AI'}
+              </button>
+            </div>
+          )}
         </div>
+        {err && <p className="text-[11px] text-red-600 mt-1.5">{err}</p>}
       </div>
+
+      {tab === 'needs' && selectedIds.length > 0 && (
+        <div className="px-4 py-2 bg-brand-50 border-b border-brand-200 flex items-center justify-between">
+          <span className="text-xs font-semibold text-brand-800">{selectedIds.length} selected</span>
+          <button onClick={postSelected} disabled={bulkBusy}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+            <Send size={12} /> {bulkBusy ? 'Posting…' : `Approve & post ${selectedIds.length}`}
+          </button>
+        </div>
+      )}
+
       {s.loading ? (
         <div className="px-4 py-8 text-center text-sm text-muted">Loading reviews from Guesty…</div>
       ) : s.error ? (
@@ -159,45 +219,32 @@ export function ReviewsPanel() {
           {needs.map(r => (
             <li key={r.id} className="px-4 py-3">
               <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))} className="text-muted hover:text-brand-600">
+                  {selected[r.id] ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} />}
+                </button>
                 <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
                   <Star size={11} /> {fmtRating(r.rating)}
                 </span>
                 <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>
                 {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
-                {posted[r.id] ? (
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Reply posted</span>
-                ) : !r.hasReply ? (
-                  <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">No reply yet</span>
-                ) : null}
               </div>
               {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
 
-              {openId === r.id ? (
-                <div className="mt-2">
-                  <textarea value={text} onChange={e => setText(e.target.value)} rows={4}
-                    className="w-full text-xs text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-                  {err && <p className="text-[11px] text-red-600 mt-1">{err}</p>}
-                  <div className="flex items-center gap-2 mt-2">
-                    <button onClick={() => post(r)} disabled={busy || !text.trim()}
-                      className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-                      <Send size={12} /> {busy ? 'Posting…' : 'Approve & post reply'}
-                    </button>
-                    <button onClick={() => rewriteAI(r)} disabled={ai || busy}
-                      className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
-                      <Sparkles size={12} /> {ai ? 'Writing…' : 'Rewrite with AI'}
-                    </button>
-                    <button onClick={() => { setOpenId(null); setErr(null) }} disabled={busy}
-                      className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app">
-                      <X size={12} /> Cancel
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-muted mt-1.5">Posts publicly to {r.channel || 'the channel'} via Guesty. Airbnb/Booking allow one reply per review.</p>
+              <div className="mt-2">
+                <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={4}
+                  className="w-full text-xs text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy || !(drafts[r.id] || '').trim()}
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                    <Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}
+                  </button>
+                  <button onClick={() => rewriteAI(r)} disabled={aiBusy[r.id] || rowBusy[r.id]}
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
+                    <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
+                  </button>
+                  <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>
-              ) : !posted[r.id] ? (
-                <div className="mt-2">
-                  <button onClick={() => openDraft(r)} className="inline-flex items-center gap-1 text-[11px] text-brand-700 font-semibold hover:underline"><Sparkles size={11} /> Draft a reply with AI →</button>
-                </div>
-              ) : null}
+              </div>
             </li>
           ))}
         </ul>
