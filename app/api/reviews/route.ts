@@ -1,11 +1,23 @@
-// Live reviews feed — reuses the SHARED cached Guesty token (maintained by the sync)
-// so it never hits Guesty's rate-limited OAuth endpoint.
+// Live reviews feed - reuses the SHARED cached Guesty token (maintained by the sync)
+// so it never hits Guesty's rate-limited OAuth endpoint. Pulls the FULL review
+// backlog via skip-pagination (not just the newest page).
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+
+function pickArray(d: any): any[] {
+  const dd = d?.data ?? d
+  if (Array.isArray(dd)) return dd
+  if (Array.isArray(dd?.reviews)) return dd.reviews
+  if (Array.isArray(dd?.results)) return dd.results
+  if (Array.isArray(d?.results)) return d.results
+  if (Array.isArray(d?.reviews)) return d.reviews
+  return []
+}
 
 export async function GET() {
   const supabase = createClient()
@@ -22,29 +34,36 @@ export async function GET() {
 
     const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
     if (!valid) {
-      return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing — reload in a moment.' })
+      return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing - reload in a moment.' })
     }
+    const token = tok!.access_token
 
-    // Guesty /reviews is already sorted desc by last update; it does NOT accept a `sort` param.
-    const r = await fetch(`${BASE}/reviews?limit=100`, {
-      headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' },
-      cache: 'no-store'
-    })
-    if (!r.ok) {
-      const body = await r.text().catch(() => '')
-      const warming = r.status === 429 || r.status === 401
-      return NextResponse.json({
-        reviews: [],
-        warming,
-        error: warming ? 'Guesty is busy — reload in a moment.' : `Guesty reviews ${r.status}: ${body.slice(0, 160)}`
+    // Pull the full backlog: paginate by skip until a short page (Guesty /reviews has no `sort` param).
+    let raw: any[] = []
+    for (let page = 0; page < 12; page++) {
+      const r = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        cache: 'no-store'
       })
+      if (!r.ok) {
+        if (page === 0) {
+          const body = await r.text().catch(() => '')
+          const warming = r.status === 429 || r.status === 401
+          return NextResponse.json({
+            reviews: [],
+            warming,
+            error: warming ? 'Guesty is busy - reload in a moment.' : `Guesty reviews ${r.status}: ${body.slice(0, 160)}`
+          })
+        }
+        break
+      }
+      const batch = pickArray(await r.json())
+      if (!batch.length) break
+      raw = raw.concat(batch)
+      if (batch.length < 100) break
     }
 
-    const d: any = await r.json()
-    const arr: any[] = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : (d?.data?.reviews || d?.results || d?.reviews || []))
-
-    const reviews = (Array.isArray(arr) ? arr : []).map((v: any) => {
-      // Guesty wraps the channel's native review in `rawReview`; ratings/text live there.
+    const reviews = raw.map((v: any) => {
       const rr = v.rawReview || v.raw || {}
       const rating =
         v.rating ?? v.overallRating ??
@@ -80,7 +99,7 @@ export async function GET() {
     }
     reviews.forEach((x: any) => { (x as any).listing_name = names[x.listingId] || x.listingId || 'Unknown listing' })
 
-    return NextResponse.json({ reviews })
+    return NextResponse.json({ reviews, count: reviews.length })
   } catch (e: any) {
     return NextResponse.json({ reviews: [], error: e?.message || String(e) })
   }
