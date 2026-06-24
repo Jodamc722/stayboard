@@ -25,7 +25,9 @@ export async function GET() {
       return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing — reload in a moment.' })
     }
 
-    const r = await fetch(`${BASE}/reviews?limit=60&sort=-createdAt`, {
+    // Guesty Open API /reviews returns results already sorted descending by last update.
+    // It does NOT accept a `sort` param (sending one returns 400). Valid params: limit, skip, channelId, listingId, etc.
+    const r = await fetch(`${BASE}/reviews?limit=100`, {
       headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' },
       cache: 'no-store'
     })
@@ -40,21 +42,26 @@ export async function GET() {
     }
 
     const d: any = await r.json()
-    const arr: any[] = Array.isArray(d) ? d : (d.results || d.data || d.reviews || [])
+    // Response shape: { isRawResponse, data, skip, limit }. Reviews live under data (array or .results/.reviews).
+    const dd: any = d?.data ?? d
+    const arr: any[] =
+      (Array.isArray(dd) ? dd : null) ||
+      dd?.reviews || dd?.results || dd?.data ||
+      d?.results || d?.reviews || []
 
-    const reviews = arr.map((v: any) => {
-      const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? null
+    const reviews = (Array.isArray(arr) ? arr : []).map((v: any) => {
+      const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? v.privateReview?.rating ?? null
       const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
-      const channel = String(v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '').toLowerCase()
-      const reply = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
+      const channel = String(v.channelId ?? v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '').toLowerCase()
+      const reply = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? v.replies?.[0]?.text ?? null
       const listingId = v.listingId ?? v.listing?._id ?? v.listing?.id ?? null
-      const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? null
+      const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? v.reservation?.guest?.fullName ?? null
       return {
         id: v._id ?? v.id ?? Math.random().toString(36).slice(2),
         rating: typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null),
         content: String(typeof content === 'string' ? content : '').slice(0, 400),
         channel, listingId, guest,
-        created_at: v.createdAt ?? v.date ?? v.submittedAt ?? null,
+        created_at: v.createdAt ?? v.updatedAt ?? v.date ?? v.submittedAt ?? null,
         hasReply: !!(reply && String(reply).trim())
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
