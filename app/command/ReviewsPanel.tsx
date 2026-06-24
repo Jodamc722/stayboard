@@ -64,7 +64,8 @@ export function ReviewsPanel() {
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
   function openDraft(r: Review) {
-    setErr(null); setOpenId(r.id); setText(draftReply(r))
+    // Show an instant template placeholder, then let AI write the real draft.
+    setErr(null); setOpenId(r.id); setText(draftReply(r)); rewriteAI(r)
   }
   async function rewriteAI(r: Review) {
     setAi(true); setErr(null)
@@ -149,7 +150,7 @@ export function ReviewsPanel() {
                 </div>
               ) : !posted[r.id] ? (
                 <div className="mt-2">
-                  <button onClick={() => openDraft(r)} className="text-[11px] text-brand-700 font-semibold hover:underline">Draft a reply →</button>
+                  <button onClick={() => openDraft(r)} className="inline-flex items-center gap-1 text-[11px] text-brand-700 font-semibold hover:underline"><Sparkles size={11} /> Draft a reply with AI →</button>
                 </div>
               ) : null}
             </li>
