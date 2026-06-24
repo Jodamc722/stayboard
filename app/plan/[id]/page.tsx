@@ -6,7 +6,7 @@ import { MapPin } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
-const TEAMS = [{ k: 'miami', l: 'Miami Team' }, { k: 'broward', l: 'Broward Team' }]
+const TEAMS = [{ k: 'ccs', l: 'CCS' }, { k: 'miami', l: 'Miami Team' }, { k: 'broward', l: 'Broward Team' }]
 const PRI: Record<number, { c: string; l: string }> = {
   1: { c: 'bg-red-100 text-red-700', l: 'Urgent' },
   2: { c: 'bg-amber-100 text-amber-700', l: 'Normal' },
@@ -31,7 +31,7 @@ export default async function PlanDetail({ params }: { params: { id: string } })
         <p className="text-[11px] text-muted mt-1">{new Date(plan.created_at).toLocaleString()} - share this page link with the team - supervisors close items.</p>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-3">
         {TEAMS.map(team => {
           const list = byTeam(team.k)
           return (
