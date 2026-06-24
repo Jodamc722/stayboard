@@ -279,8 +279,16 @@ export async function syncCustomFields(): Promise<number> {
 export async function syncConversations(): Promise<number> {
   const sb = supabaseAdmin()
   // Guesty's inbox endpoint does NOT accept `skip`; pull the 100 most-recently-active conversations.
-  const data = await api<{ results?: any[]; data?: any[] } | any[]>(`/communication/conversations?limit=100&sort=-lastMessageAt`)
-  const list: any[] = Array.isArray(data) ? data : ((data as any).results || (data as any).data || [])
+  const data: any = await api<any>(`/communication/conversations?limit=100&sort=-lastMessageAt`)
+  // Response shape varies; find the first array anywhere in the payload.
+  const list: any[] =
+    Array.isArray(data) ? data
+    : Array.isArray(data?.results) ? data.results
+    : Array.isArray(data?.data) ? data.data
+    : Array.isArray(data?.data?.conversations) ? data.data.conversations
+    : Array.isArray(data?.conversations) ? data.conversations
+    : Array.isArray(data?.data?.results) ? data.data.results
+    : []
   const rows = list.map(mapConversation)
   if (rows.length) {
     const { error } = await sb.from('guesty_conversations').upsert(rows, { onConflict: 'id' })
