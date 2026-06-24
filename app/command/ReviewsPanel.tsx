@@ -4,12 +4,43 @@ import { Star, MessageSquareWarning, CheckCircle2, Send, X } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean }
 
+const SIGN = '— Stay Hospitality'
+
+// Build a reply tailored to what the guest actually mentioned (no fault admission, warm, specific).
 function draftReply(r: Review): string {
+  const t = (r.content || '').toLowerCase()
   const low = r.rating != null && (r.rating <= 3 || (r.rating > 5 && r.rating <= 7))
-  if (low) {
-    return `Thank you for taking the time to share your feedback. We're sorry to hear your stay didn't fully meet expectations. We take every guest comment seriously and are always working to improve the experience. We'd genuinely welcome the chance to host you again. — Stay Hospitality`
+  const first = (r.guest || '').trim().split(/\s+/)[0]
+  const hi = first ? `Hi ${first}, ` : ''
+
+  if (!low) {
+    const pos: string[] = []
+    if (/clean|spotless|tidy|immaculate/.test(t)) pos.push('the spotless space')
+    if (/location|located|walk|beach|close|near|convenient/.test(t)) pos.push('the location')
+    if (/host|communicat|responsive|helpful|check.?in/.test(t)) pos.push('a smooth, responsive experience')
+    if (/comfort|cozy|spacious|view|pool/.test(t)) pos.push('the comfort of the space')
+    const ref = pos.length ? ` We're so glad ${pos.slice(0, 2).join(' and ')} stood out.` : ''
+    return `${hi}thank you so much for the wonderful review!${ref} It was a pleasure hosting you, and we'd love to welcome you back anytime. ${SIGN}`
   }
-  return `Thank you so much for the kind words — we're thrilled you enjoyed your stay! It was a pleasure hosting you, and we'd love to welcome you back anytime. — Stay Hospitality`
+
+  const issues: string[] = []
+  if (/clean|dirty|stain|hair|dust|filth|sheet|towel/.test(t)) issues.push('the cleanliness not meeting our usual standard')
+  if (/smell|odor|odour|sewer|musty|sewage/.test(t)) issues.push('the odor you noticed')
+  if (/\bac\b|a\/c|air.?condition|\bhot\b|\bcold\b|temperature|stuffy/.test(t)) issues.push('the comfort and temperature')
+  if (/check.?in|door.?code|\bcode\b|lock|lockout|access|\bkey\b|entry/.test(t)) issues.push('the trouble getting in')
+  if (/noise|loud|noisy|thin wall|hear/.test(t)) issues.push('the noise')
+  if (/wifi|wi-fi|internet|\btv\b|connection/.test(t)) issues.push('the connectivity issues')
+  if (/parking|\bpark\b|garage|valet/.test(t)) issues.push('the parking confusion')
+  if (/bed|mattress|pillow|sofa|couch|furniture|broke|broken|damag/.test(t)) issues.push('the issue with the furnishings')
+  if (/photo|picture|looked|different|advertise|not as|misleading|motel/.test(t)) issues.push('the gap between what was shown and your experience')
+  if (/pool|hot tub|amenit/.test(t)) issues.push('the amenities falling short')
+  if (/staff|reception|front.?desk|rude|service/.test(t)) issues.push('the service experience')
+
+  const list = issues.length === 0 ? 'parts of your stay falling short'
+    : issues.length === 1 ? issues[0]
+    : issues.slice(0, 3).slice(0, -1).join(', ') + ' and ' + issues.slice(0, 3).slice(-1)
+
+  return `${hi}thank you for taking the time to share this, and we're sorry to hear about ${list}. That's genuinely not the experience we aim to provide, and we've shared your feedback directly with our team so we can make it right. We'd welcome the chance to host you again and show you the stay you should have had. ${SIGN}`
 }
 
 export function ReviewsPanel() {
@@ -27,7 +58,8 @@ export function ReviewsPanel() {
   }, [])
 
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
-  const needs = (s.reviews || []).filter(r => isLow(r.rating) || !r.hasReply).slice(0, 20)
+  // Only reviews that still need a host reply — once replied (in Guesty or just now), they drop off.
+  const needs = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 25)
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
   function openDraft(r: Review) {
