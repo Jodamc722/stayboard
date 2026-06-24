@@ -77,6 +77,10 @@ export async function GET() {
       const reply =
         rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
         v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? null
+      // Guesty stores posted replies in a reviewReplies[] array (status PENDING/COMPLETED) — treat any as replied.
+      const replies = v.reviewReplies ?? rr.reviewReplies ?? rr.review_replies ?? rr.replies ?? null
+      const repliedViaArr = Array.isArray(replies) && replies.some((x: any) =>
+        !x?.status || ['COMPLETED', 'PENDING', 'PUBLISHED', 'SENT', 'DONE'].includes(String(x.status).toUpperCase()))
       const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? null
       const guest =
         v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ??
@@ -87,7 +91,7 @@ export async function GET() {
         content: String(typeof content === 'string' ? content : '').slice(0, 400),
         channel, listingId, guest,
         created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
-        hasReply: !!(reply && String(reply).trim())
+        hasReply: repliedViaArr || !!(reply && String(reply).trim())
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
 
