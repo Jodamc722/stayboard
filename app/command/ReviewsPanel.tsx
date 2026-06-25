@@ -4,7 +4,7 @@ import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string }
 
-const SIGN = 'â Stay Hospitality'
+const SIGN = '— Stay Hospitality'
 
 // Build a reply tailored to what the guest actually mentioned (no fault admission, warm, specific).
 function draftReply(r: Review): string {
@@ -71,7 +71,7 @@ export function ReviewsPanel() {
       .then(d => {
         const reviews: Review[] = d.reviews || []
         setS({ loading: false, reviews, error: d.error })
-        // No template placeholders â drafts stay empty until the AI writes the real one.
+        // No template placeholders — drafts stay empty until the AI writes the real one.
       })
       .catch(e => setS({ loading: false, error: String(e) }))
   }, [])
@@ -79,7 +79,7 @@ export function ReviewsPanel() {
   // Auto-drafting disabled: drafts are written on demand via the AI buttons below.
 
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
-  const fmtRating = (n: number | null) => n == null ? 'â' : (n <= 5 ? `${n}/5` : `${n}/10`)
+  const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
   // Filter by building / unit / channel via the search box (matches the listing name + channel).
   const q = query.trim().toLowerCase()
@@ -162,21 +162,21 @@ export function ReviewsPanel() {
         <div className="flex items-center gap-1 mt-2 flex-wrap">
           <button onClick={() => setTab('needs')}
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'needs' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
-            <MessageSquareWarning size={12} /> Needs a reply <span className={`ml-0.5 px-1 rounded ${tab === 'needs' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? 'â¦' : needs.length}</span>
+            <MessageSquareWarning size={12} /> Needs a reply <span className={`ml-0.5 px-1 rounded ${tab === 'needs' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : needs.length}</span>
           </button>
           <button onClick={() => setTab('replied')}
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'replied' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
-            <CheckCircle2 size={12} /> Replied <span className={`ml-0.5 px-1 rounded ${tab === 'replied' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? 'â¦' : replied.length}</span>
+            <CheckCircle2 size={12} /> Replied <span className={`ml-0.5 px-1 rounded ${tab === 'replied' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : replied.length}</span>
           </button>
           {tab === 'needs' && !s.loading && needs.length > 0 && (
             <div className="ml-auto flex items-center gap-1.5">
               <button onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
                 className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app">
-                {sortDir === 'desc' ? <ArrowDownWideNarrow size={12} /> : <ArrowUpNarrowWide size={12} />} {sortDir === 'desc' ? 'High â Low' : 'Low â High'}
+                {sortDir === 'desc' ? <ArrowDownWideNarrow size={12} /> : <ArrowUpNarrowWide size={12} />} {sortDir === 'desc' ? 'High → Low' : 'Low → High'}
               </button>
               <button onClick={draftAllAI} disabled={allAi}
                 className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
-                <Sparkles size={12} /> {allAi ? 'Draftingâ¦' : 'Draft all with AI'}
+                <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all with AI'}
               </button>
               <button onClick={() => setSelected(needs.every(r => selected[r.id]) ? {} : Object.fromEntries(needs.map(r => [r.id, true])))}
                 className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app">
@@ -185,7 +185,7 @@ export function ReviewsPanel() {
             </div>
           )}
         </div>
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by building, unit, or channelâ¦ (e.g. Capri, 214, airbnb)"
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by building, unit, or channel… (e.g. Capri, 214, airbnb)"
           className="mt-2 w-full text-xs text-ink bg-app border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         {err && <p className="text-[11px] text-red-600 mt-1.5">{err}</p>}
       </div>
@@ -197,16 +197,16 @@ export function ReviewsPanel() {
             <button onClick={() => setSelected({})} className="text-xs font-medium text-white/80 hover:text-white">Clear</button>
             <button onClick={postSelected} disabled={bulkBusy}
               className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-white text-brand-700 hover:bg-brand-50 disabled:opacity-50">
-              <Send size={12} /> {bulkBusy ? 'Postingâ¦' : `Approve & post ${selectedIds.length}`}
+              <Send size={12} /> {bulkBusy ? 'Posting…' : `Approve & post ${selectedIds.length}`}
             </button>
           </div>
         </div>
       )}
 
       {s.loading ? (
-        <div className="px-4 py-8 text-center text-sm text-muted">Loading reviews from Guestyâ¦</div>
+        <div className="px-4 py-8 text-center text-sm text-muted">Loading reviews from Guesty…</div>
       ) : s.error ? (
-        <div className="px-4 py-6 text-center text-sm text-muted">Couldnât load reviews ({String(s.error).slice(0, 80)}). Reload to retry.</div>
+        <div className="px-4 py-6 text-center text-sm text-muted">Couldn’t load reviews ({String(s.error).slice(0, 80)}). Reload to retry.</div>
       ) : tab === 'replied' ? (
         replied.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted">No replied reviews yet.</div>
@@ -256,21 +256,21 @@ export function ReviewsPanel() {
 
               <div className="mt-2">
                 <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={4}
-                  placeholder={aiBusy[r.id] ? 'Writing the AI replyâ¦' : 'No AI draft yet â hit âRewrite with AIâ, or âDraft all with AIâ up top.'}
+                  placeholder={aiBusy[r.id] ? 'Writing the AI reply…' : 'No AI draft yet — hit “Rewrite with AI”, or “Draft all with AI” up top.'}
                   className="w-full text-xs text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
                   <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy || !(drafts[r.id] || '').trim()}
                     className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-                    <Send size={12} /> {rowBusy[r.id] ? 'Postingâ¦' : 'Approve & post'}
+                    <Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}
                   </button>
                   <button onClick={() => rewriteAI(r)} disabled={aiBusy[r.id] || rowBusy[r.id]}
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
-                    <Sparkles size={12} /> {aiBusy[r.id] ? 'Writingâ¦' : 'Rewrite with AI'}
+                    <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
                   </button>
                   <button onClick={() => { const i = window.prompt('How should the AI rephrase this reply? (e.g. warmer, shorter, more apologetic, more professional)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
                     disabled={aiBusy[r.id] || rowBusy[r.id]}
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
-                    Rephraseâ¦
+                    Rephrase…
                   </button>
                   <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>
