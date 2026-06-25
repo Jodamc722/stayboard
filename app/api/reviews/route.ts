@@ -46,7 +46,7 @@ export async function GET(req: Request) {
       .from('guesty_reviews')
       .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply')
       .order('created_at', { ascending: false })
-      .limit(500)
+      .limit(2000)
 
     if (!error && rows && rows.length) {
       // Join guesty_listings for status/building filtering + listing_name.
