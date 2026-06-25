@@ -128,8 +128,10 @@ function mapReservation(r: any) {
     guest_name:        r.guest?.fullName || [r.guest?.firstName, r.guest?.lastName].filter(Boolean).join(' ') || null,
     guest_email:       r.guest?.email || null,
     guest_phone:       r.guest?.phone || null,
-    check_in:          r.checkIn  ? new Date(r.checkIn).toISOString().slice(0, 10)  : null,
-    check_out:         r.checkOut ? new Date(r.checkOut).toISOString().slice(0, 10) : null,
+    // Use Guesty's authoritative LOCAL calendar dates (timezone-proof). Fall back to the
+    // date prefix of the timestamp (no UTC conversion) only if the localized field is absent.
+    check_in:          r.checkInDateLocalized  || (r.checkIn  ? String(r.checkIn).slice(0, 10)  : null),
+    check_out:         r.checkOutDateLocalized || (r.checkOut ? String(r.checkOut).slice(0, 10) : null),
     nights:            r.nightsCount ?? r.nights ?? nightsBetween(r.checkIn, r.checkOut),
     status:            (r.status || '').toLowerCase() || null,
     source:            (r.source || r.channel || '').toLowerCase() || null,
@@ -242,7 +244,7 @@ function sinceFilter(iso: string): string {
   return `&filters=${encodeURIComponent(JSON.stringify(f))}`
 }
 
-const FIELDS = encodeURIComponent('status guest listing checkIn checkOut nightsCount money source customFields confirmationCode createdAt note')
+const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount money source customFields confirmationCode createdAt note')
 
 export async function syncReservations(maxPages = 40, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
