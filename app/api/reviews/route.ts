@@ -1,22 +1,26 @@
-// Live reviews feed - reuses the SHARED cached Guesty token (maintained by the sync)
-// so it never hits Guesty's rate-limited OAuth endpoint. Pulls the FULL review
-// backlog via skip-pagination (not just the newest page).
+// Reviews feed — reads the persisted guesty_reviews table FIRST (fast, no Guesty call).
+// The 15-min sync (lib/guesty.ts → syncReviews) keeps that table fresh. If the table is
+// empty or errors (e.g. before the SQL migration has been run), we FALL BACK to the live
+// Guesty pull so nothing breaks. Response shape is preserved exactly for ReviewsPanel.
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
-function pickArray(d: any): any[] {
-  const dd = d?.data ?? d
-  if (Array.isArray(dd)) return dd
-  if (Array.isArray(dd?.reviews)) return dd.reviews
-  if (Array.isArray(dd?.results)) return dd.results
-  if (Array.isArray(d?.results)) return d.results
-  if (Array.isArray(d?.reviews)) return d.reviews
-  return []
+// Listings whose status marks them as dead — filtered out of the feed.
+const DEAD_STATUSES = new Set(['inactive', 'disabled', 'archived', 'deleted'])
+
+function cleanChannel(raw: string): string {
+  const c = String(raw || '').toLowerCase()
+  if (/airbnb/.test(c)) return 'Airbnb'
+  if (/booking/.test(c)) return 'Booking.com'
+  if (/vrbo|homeaway/.test(c)) return 'Vrbo'
+  if (/expedia/.test(c)) return 'Expedia'
+  if (/direct|manual|owner/.test(c)) return 'Direct'
+  const t = String(raw || '').trim()
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Other'
 }
 
 export async function GET() {
@@ -24,8 +28,67 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
+  const sb = supabaseAdmin()
+
+  // ── 1. Try the persisted table first ────────────────────────────
   try {
-    const sb = supabaseAdmin()
+    const { data: rows, error } = await sb
+      .from('guesty_reviews')
+      .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply')
+      .order('created_at', { ascending: false })
+      .limit(500)
+
+    if (!error && rows && rows.length) {
+      // Join guesty_listings for status/building filtering + listing_name.
+      const ids = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
+      const meta: Record<string, { name: string; status: string; building: string | null }> = {}
+      if (ids.length) {
+        const { data: ls } = await sb
+          .from('guesty_listings')
+          .select('id, nickname, title, status, building')
+          .in('id', ids as string[])
+        ;(ls || []).forEach((l: any) => {
+          meta[l.id] = {
+            name: l.nickname || l.title || l.id,
+            status: String(l.status || '').toLowerCase(),
+            building: l.building || null
+          }
+        })
+      }
+
+      const reviews = rows
+        .filter((r: any) => {
+          const m = r.listing_id ? meta[r.listing_id] : null
+          if (m) {
+            if (DEAD_STATUSES.has(m.status)) return false
+            if (m.building && String(m.building).toLowerCase() === 'waves') return false
+          }
+          return true
+        })
+        .map((r: any) => {
+          const m = r.listing_id ? meta[r.listing_id] : null
+          return {
+            id: r.id,
+            rating: r.rating != null ? Number(r.rating) : null,
+            content: String(r.content || '').slice(0, 400),
+            channel: r.channel || '',
+            listingId: r.listing_id,
+            guest: r.guest_name,
+            created_at: r.created_at,
+            hasReply: !!r.has_reply,
+            reply: r.reply || null,
+            listing_name: m?.name || r.listing_id || 'Unknown listing'
+          }
+        })
+
+      return NextResponse.json({ reviews })
+    }
+  } catch {
+    // fall through to live pull
+  }
+
+  // ── 2. Fallback: live Guesty pull (table empty / not yet created) ─
+  try {
     const { data: tok } = await sb
       .from('guesty_tokens')
       .select('access_token, expires_at')
@@ -34,15 +97,14 @@ export async function GET() {
 
     const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
     if (!valid) {
-      return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing - reload in a moment.' })
+      return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing — reload in a moment.' })
     }
-    const token = tok!.access_token
 
-    // Pull the full backlog: paginate by skip until a short page (Guesty /reviews has no `sort` param).
+    // Paginate the full backlog (skip-pagination) so all channels are pulled, not just the newest page.
     let raw: any[] = []
     for (let page = 0; page < 12; page++) {
-      const r = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      const r = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}&sort=-createdAt`, {
+        headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' },
         cache: 'no-store'
       })
       if (!r.ok) {
@@ -52,77 +114,56 @@ export async function GET() {
           return NextResponse.json({
             reviews: [],
             warming,
-            error: warming ? 'Guesty is busy - reload in a moment.' : `Guesty reviews ${r.status}: ${body.slice(0, 160)}`
+            error: warming ? 'Guesty is busy — reload in a moment.' : `Guesty reviews ${r.status}: ${body.slice(0, 160)}`
           })
         }
         break
       }
-      const batch = pickArray(await r.json())
+      const d: any = await r.json()
+      const batch: any[] = Array.isArray(d) ? d : (d.results || d.data || d.reviews || [])
       if (!batch.length) break
       raw = raw.concat(batch)
       if (batch.length < 100) break
     }
 
     const reviews = raw.map((v: any) => {
-      const rr = v.rawReview || v.raw || {}
-      const rating =
-        v.rating ?? v.overallRating ??
-        rr.overall_rating ?? rr.overallRating ?? rr.rating ?? rr.score ?? rr.average_score ??
-        v.publicReview?.rating ?? null
-      const content =
-        rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
-        rr.positive ?? rr.review_text ?? rr.content ??
-        v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
-      const rawChannel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? '').toLowerCase()
-      // Map Guesty's raw channel codes (e.g. "airbnb2") to clean OTA labels.
-      const channel =
-        /airbnb/.test(rawChannel) ? 'Airbnb'
-        : /booking/.test(rawChannel) ? 'Booking.com'
-        : /vrbo|homeaway/.test(rawChannel) ? 'Vrbo'
-        : /expedia/.test(rawChannel) ? 'Expedia'
-        : /direct|manual|website|owner/.test(rawChannel) ? 'Direct'
-        : (rawChannel ? rawChannel.charAt(0).toUpperCase() + rawChannel.slice(1) : 'Other')
-      const reply =
-        rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
-        v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? null
-      // Guesty stores posted replies in a reviewReplies[] array (status PENDING/COMPLETED) — treat any as replied.
-      const replies = v.reviewReplies ?? rr.reviewReplies ?? rr.review_replies ?? rr.replies ?? null
-      const repliedViaArr = Array.isArray(replies) && replies.some((x: any) =>
-        !x?.status || ['COMPLETED', 'PENDING', 'PUBLISHED', 'SENT', 'DONE'].includes(String(x.status).toUpperCase()))
-      const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? null
-      const guest =
-        v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ??
-        rr.reviewer_name ?? rr.reviewer?.name ?? null
-      // The actual host reply text (from a flat field or the reviewReplies[] array), for the "Replied" view.
-      const replyText =
-        (typeof reply === 'string' && reply.trim()) ? reply
-        : (Array.isArray(replies)
-            ? (replies.map((x: any) => x?.reply ?? x?.text ?? x?.reviewReply ?? x?.body ?? '').find((s: any) => s && String(s).trim()) || '')
-            : '')
+      const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? null
+      const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
+      const channel = cleanChannel(String(v.channelId ?? v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? ''))
+      const reply = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
+      const listingId = v.listingId ?? v.listing?._id ?? v.listing?.id ?? null
+      const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? null
       return {
-        id: v._id ?? v.id ?? v.externalReviewId ?? Math.random().toString(36).slice(2),
-        rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
+        id: v._id ?? v.id ?? Math.random().toString(36).slice(2),
+        rating: typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null),
         content: String(typeof content === 'string' ? content : '').slice(0, 400),
         channel, listingId, guest,
-        created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
-        hasReply: repliedViaArr || !!(reply && String(reply).trim()),
-        reply: String(replyText || '').slice(0, 500)
+        created_at: v.createdAt ?? v.date ?? v.submittedAt ?? null,
+        hasReply: !!(reply && String(reply).trim()),
+        reply: reply ? String(reply) : null
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
 
+    // Join listings for name + status/building so we can drop dead listings + Waves.
     const ids = Array.from(new Set(reviews.map(x => x.listingId).filter(Boolean)))
-    const names: Record<string, string> = {}
-    const bmap: Record<string, string> = {}
-    const inactive: Record<string, boolean> = {}
-    const SKIP_BUILDINGS = ['waves'] // deactivated buildings — no replies needed
+    const meta: Record<string, { name: string; status: string; building: string | null }> = {}
     if (ids.length) {
-      const { data: ls } = await sb.from('guesty_listings').select('id,nickname,title,building,status').in('id', ids as string[])
-      ;(ls || []).forEach((l: any) => { names[l.id] = l.nickname || l.title || l.id; bmap[l.id] = (l.building || '').trim(); inactive[l.id] = ['inactive','disabled','archived','deleted'].includes(String(l.status || '').toLowerCase()) })
+      const { data: ls } = await sb.from('guesty_listings').select('id, nickname, title, status, building').in('id', ids as string[])
+      ;(ls || []).forEach((l: any) => {
+        meta[l.id] = { name: l.nickname || l.title || l.id, status: String(l.status || '').toLowerCase(), building: l.building || null }
+      })
     }
-    reviews.forEach((x: any) => { (x as any).listing_name = names[x.listingId] || x.listingId || 'Unknown listing' })
+    const visible = reviews.filter((x: any) => {
+      const m = x.listingId ? meta[x.listingId] : null
+      if (m) {
+        if (DEAD_STATUSES.has(m.status)) return false
+        if (m.building && String(m.building).toLowerCase() === 'waves') return false
+      }
+      return true
+    })
+    visible.forEach((x: any) => { (x as any).listing_name = (x.listingId && meta[x.listingId]?.name) || x.listingId || 'Unknown listing' })
 
-    const visible = reviews.filter((x: any) => !inactive[x.listingId] && !SKIP_BUILDINGS.includes((bmap[x.listingId] || '').toLowerCase()))
-    return NextResponse.json({ reviews: visible, count: visible.length })
+    return NextResponse.json({ reviews: visible })
   } catch (e: any) {
     return NextResponse.json({ reviews: [], error: e?.message || String(e) })
   }
