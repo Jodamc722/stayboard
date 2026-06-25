@@ -33,6 +33,41 @@ export async function POST(req: NextRequest) {
   const params = new URL(req.url).searchParams
 
   try {
+    // ── READ-ONLY probe: confirmed check-in & check-out counts (+status breakdown) for a day ──
+    if (params.get('probe') === 'day') {
+      const day = params.get('day') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+      const sb = supabaseAdmin()
+      const { data: tok } = await sb.from('guesty_tokens').select('access_token').eq('id', 'singleton').maybeSingle()
+      const token = tok?.access_token
+      if (!token) return NextResponse.json({ error: 'no token' }, { status: 503 })
+      const CONFIRMED = ['confirmed', 'checked_in', 'checked_out']
+      const fields = encodeURIComponent('guest checkIn checkOut checkInDateLocalized checkOutDateLocalized status source')
+      async function pull(field: string) {
+        const filters = encodeURIComponent(JSON.stringify([{ field, operator: '$gte', value: `${day}T00:00:00.000Z` }]))
+        const all: any[] = []
+        for (let p = 0; p < 8; p++) {
+          const r = await fetch(`${BASE}/reservations?limit=100&skip=${p * 100}&fields=${fields}&sort=${field}&filters=${filters}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' })
+          if (!r.ok) break
+          const d: any = await r.json(); const res: any[] = d.results || []
+          for (const x of res) all.push(x)
+          if (res.length < 100) break
+          const last = res[res.length - 1]
+          const lk = field === 'checkIn' ? (last.checkInDateLocalized || last.checkIn) : (last.checkOutDateLocalized || last.checkOut)
+          if (String(lk || '').slice(0, 10) > day) break
+        }
+        const dk = field === 'checkIn' ? 'checkInDateLocalized' : 'checkOutDateLocalized'
+        const rk = field === 'checkIn' ? 'checkIn' : 'checkOut'
+        const onDay = all.filter((x: any) => String(x[dk] || x[rk] || '').slice(0, 10) === day)
+        const byStatus: Record<string, number> = {}
+        onDay.forEach((x: any) => { const s = String(x.status || '?').toLowerCase(); byStatus[s] = (byStatus[s] || 0) + 1 })
+        const confirmed = onDay.filter((x: any) => CONFIRMED.includes(String(x.status || '').toLowerCase())).length
+        return { total: onDay.length, confirmed, byStatus }
+      }
+      const checkins = await pull('checkIn')
+      const checkouts = await pull('checkOut')
+      return NextResponse.json({ day, checkins, checkouts })
+    }
+
     // ── READ-ONLY probe: what does Guesty itself return for checkouts on `day`? ──
     if (params.get('probe') === 'checkouts') {
       const day = params.get('day') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
