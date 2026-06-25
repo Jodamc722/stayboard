@@ -36,7 +36,6 @@ const SECTIONS: {
     items: [
       { to: '/buildings', label: 'Buildings',  Icon: Layers },
       { to: '/listings',  label: 'Properties', Icon: Building2 },
-      { to: '/optimize',  label: 'Optimize',   Icon: Sparkles },
     ],
   },
   {
