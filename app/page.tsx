@@ -38,10 +38,10 @@ export default async function HomePage() {
   if (!user) redirect('/login')
 
   const today = new Date()
-  const todayStr = today.toISOString().slice(0, 10)
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(today)
   const nowIso = today.toISOString()
   const in7 = new Date(today.getTime() + 7 * 86_400_000)
-  const in7Str = in7.toISOString().slice(0, 10)
+  const in7Str = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(in7)
 
   const [
     { count: checkInsToday },
