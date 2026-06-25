@@ -103,7 +103,7 @@ export async function GET() {
     // Paginate the full backlog (skip-pagination) so all channels are pulled, not just the newest page.
     let raw: any[] = []
     for (let page = 0; page < 12; page++) {
-      const r = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}&sort=-createdAt`, {
+      const r = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}`, {
         headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' },
         cache: 'no-store'
       })
