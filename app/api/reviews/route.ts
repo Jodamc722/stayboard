@@ -44,7 +44,7 @@ export async function GET(req: Request) {
   try {
     const { data: rows, error } = await sb
       .from('guesty_reviews')
-      .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, raw')
+      .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply')
       .order('created_at', { ascending: false })
       .limit(2000)
 
@@ -87,9 +87,7 @@ export async function GET(req: Request) {
             created_at: r.created_at,
             hasReply: !!r.has_reply,
             reply: r.reply || null,
-            listing_name: m?.name || r.listing_id || 'Unknown listing',
-            _rr: (r.raw && (r.raw.reviewReplies || (r.raw.rawReview && r.raw.rawReview.reviewReplies))) || null,
-            _stored: !!r.has_reply
+            listing_name: m?.name || r.listing_id || 'Unknown listing'
           }
         })
 
