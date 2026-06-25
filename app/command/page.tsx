@@ -18,7 +18,7 @@ export default async function CommandCenterPage() {
 
   const now = new Date()
   const nowIso = now.toISOString()
-  const todayStr = now.toISOString().slice(0, 10)
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
 
   const [
     { count: unansweredReviews },
