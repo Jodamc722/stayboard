@@ -73,7 +73,15 @@ export async function GET() {
         rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
         rr.positive ?? rr.review_text ?? rr.content ??
         v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
-      const channel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? '').toLowerCase()
+      const rawChannel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? '').toLowerCase()
+      // Map Guesty's raw channel codes (e.g. "airbnb2") to clean OTA labels.
+      const channel =
+        /airbnb/.test(rawChannel) ? 'Airbnb'
+        : /booking/.test(rawChannel) ? 'Booking.com'
+        : /vrbo|homeaway/.test(rawChannel) ? 'Vrbo'
+        : /expedia/.test(rawChannel) ? 'Expedia'
+        : /direct|manual|website|owner/.test(rawChannel) ? 'Direct'
+        : (rawChannel ? rawChannel.charAt(0).toUpperCase() + rawChannel.slice(1) : 'Other')
       const reply =
         rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
         v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? null
