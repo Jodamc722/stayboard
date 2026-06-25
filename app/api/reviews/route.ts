@@ -104,13 +104,17 @@ export async function GET() {
 
     const ids = Array.from(new Set(reviews.map(x => x.listingId).filter(Boolean)))
     const names: Record<string, string> = {}
+    const bmap: Record<string, string> = {}
+    const inactive: Record<string, boolean> = {}
+    const SKIP_BUILDINGS = ['waves'] // deactivated buildings — no replies needed
     if (ids.length) {
-      const { data: ls } = await sb.from('guesty_listings').select('id,nickname,title').in('id', ids as string[])
-      ;(ls || []).forEach((l: any) => { names[l.id] = l.nickname || l.title || l.id })
+      const { data: ls } = await sb.from('guesty_listings').select('id,nickname,title,building,status').in('id', ids as string[])
+      ;(ls || []).forEach((l: any) => { names[l.id] = l.nickname || l.title || l.id; bmap[l.id] = (l.building || '').trim(); inactive[l.id] = ['inactive','disabled','archived','deleted'].includes(String(l.status || '').toLowerCase()) })
     }
     reviews.forEach((x: any) => { (x as any).listing_name = names[x.listingId] || x.listingId || 'Unknown listing' })
 
-    return NextResponse.json({ reviews, count: reviews.length })
+    const visible = reviews.filter((x: any) => !inactive[x.listingId] && !SKIP_BUILDINGS.includes((bmap[x.listingId] || '').toLowerCase()))
+    return NextResponse.json({ reviews: visible, count: visible.length })
   } catch (e: any) {
     return NextResponse.json({ reviews: [], error: e?.message || String(e) })
   }
