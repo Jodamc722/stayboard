@@ -223,7 +223,7 @@ function forbiddenIn(s: string): string[] {
   if (/[\w.-]+@[\w.-]+\.\w+/.test(s)) out.push('an email address')
   if (/https?:\/\/|www\.|\b[\w-]+\.(com|net|org|io|co)\b/i.test(s)) out.push('a URL')
   if (/(?:\+?\d[\s().-]?){7,}/.test(s)) out.push('a phone number')
-  if (/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(s)) out.push('an emoji')
+  if (/[☀-➿←-⇿⬀-⯿]|[\uD83C-\uDBFF][\uDC00-\uDFFF]/.test(s)) out.push('an emoji')
   if (/[!*#]{2,}/.test(s)) out.push('repeated symbols (!!! / ***)')
   if (/\b[A-Z]{4,}\b/.test(s)) out.push('an ALL-CAPS word')
   return out
