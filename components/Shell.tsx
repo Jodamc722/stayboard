@@ -3,20 +3,62 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
-import { Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList, ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star } from 'lucide-react'
+import {
+  Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
+  ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star,
+  Share2, Sparkles
+} from 'lucide-react'
 
-const NAV = [
-  { to: '/command',                 label: 'Command Center', Icon: Gauge,         section: 'main' },
-  { to: '/',                        label: 'Home',          Icon: Home,           section: 'main' },
-  { to: '/reservations',            label: 'Reservations',  Icon: CalendarDays,   section: 'main' },
-  { to: '/buildings',               label: 'Buildings',     Icon: Layers,        section: 'main' },
-  { to: '/listings',                label: 'Properties',    Icon: Building2,      section: 'main' },
-  { to: '/health',                  label: 'Health Score',  Icon: Activity,       section: 'main' },
-  { to: '/reviews',                 label: 'Reviews',       Icon: Star,           section: 'main' },
-  { to: '/messages',                label: 'Messages',      Icon: MessageSquare,  section: 'main' },
-  { to: '/plan',                    label: 'Ops Plans',     Icon: ListChecks,     section: 'ops' },
-  { to: '/requests',                label: 'Requests',      Icon: ClipboardList,  section: 'ops' },
-  { to: '/settings/custom-fields',  label: 'Custom Fields', Icon: Sliders,        section: 'settings' }
+// Cleaner information architecture: a small set of clearly-named groups,
+// ordered the way a GM actually moves through the day —
+// command → guests → portfolio → performance → ops → settings.
+const SECTIONS: {
+  title: string | null
+  items: { to: string; label: string; Icon: any }[]
+}[] = [
+  {
+    title: null,
+    items: [
+      { to: '/command', label: 'Command Center', Icon: Gauge },
+      { to: '/',        label: 'Home',           Icon: Home },
+    ],
+  },
+  {
+    title: 'Guests',
+    items: [
+      { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
+      { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
+      { to: '/reviews',      label: 'Reviews',      Icon: Star },
+    ],
+  },
+  {
+    title: 'Portfolio',
+    items: [
+      { to: '/buildings', label: 'Buildings',  Icon: Layers },
+      { to: '/listings',  label: 'Properties', Icon: Building2 },
+      { to: '/optimize',  label: 'Optimize',   Icon: Sparkles },
+    ],
+  },
+  {
+    title: 'Performance',
+    items: [
+      { to: '/health',   label: 'Health Score', Icon: Activity },
+      { to: '/channels', label: 'Channels',     Icon: Share2 },
+    ],
+  },
+  {
+    title: 'Ops',
+    items: [
+      { to: '/plan',     label: 'Ops Plans', Icon: ListChecks },
+      { to: '/requests', label: 'Requests',  Icon: ClipboardList },
+    ],
+  },
+  {
+    title: 'Settings',
+    items: [
+      { to: '/settings/custom-fields', label: 'Custom Fields', Icon: Sliders },
+    ],
+  },
 ]
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -36,6 +78,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const initials = (email || 'U').split('@')[0].split('.').map(s => s[0]?.toUpperCase()).slice(0, 2).join('') || 'U'
 
+  const isActive = (to: string) => path === to || (to !== '/' && path?.startsWith(to))
+
   return (
     <div className="min-h-screen flex bg-app">
       {/* Sidebar */}
@@ -44,39 +88,24 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm">S</div>
           <span className="font-bold text-[15px] tracking-tight text-ink">STAYBOARD</span>
         </div>
-        <nav className="flex-1 px-2 py-2 space-y-0.5">
-          {NAV.filter(n => n.section === 'main').map(({ to, label, Icon }) => {
-            const active = path === to || (to !== '/' && path?.startsWith(to))
-            return (
-              <Link key={to} href={to} prefetch
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
-                <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
-                {label}
-              </Link>
-            )
-          })}
-          <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">Ops</div>
-          {NAV.filter(n => n.section === 'ops').map(({ to, label, Icon }) => {
-            const active = path === to || (to !== '/' && path?.startsWith(to))
-            return (
-              <Link key={to} href={to} prefetch
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
-                <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
-                {label}
-              </Link>
-            )
-          })}
-          <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">Settings</div>
-          {NAV.filter(n => n.section === 'settings').map(({ to, label, Icon }) => {
-            const active = path === to || (to !== '/' && path?.startsWith(to))
-            return (
-              <Link key={to} href={to} prefetch
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
-                <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
-                {label}
-              </Link>
-            )
-          })}
+        <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
+          {SECTIONS.map((section, si) => (
+            <div key={si}>
+              {section.title && (
+                <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">{section.title}</div>
+              )}
+              {section.items.map(({ to, label, Icon }) => {
+                const active = isActive(to)
+                return (
+                  <Link key={to} href={to} prefetch
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                    <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
+                    {label}
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
         </nav>
         <div className="border-t border-line p-3">
           <div className="flex items-center gap-2.5 px-1.5 py-1.5">
