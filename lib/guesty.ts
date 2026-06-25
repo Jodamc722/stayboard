@@ -224,38 +224,55 @@ async function recordSync(entity: string, items_synced: number, last_error: stri
   })
 }
 
+async function getSince(entity: string): Promise<string | null> {
+  const sb = supabaseAdmin()
+  const { data, error } = await sb.from('guesty_sync_status').select('last_sync_at, last_error').eq('entity', entity).maybeSingle()
+  if (error || !data || data.last_error || !data.last_sync_at) return null
+  return new Date(new Date(data.last_sync_at).getTime() - 5 * 60_000).toISOString()
+}
+function sinceFilter(iso: string): string {
+  const f = [{ field: 'lastUpdatedAt', operator: '$gte', value: iso }]
+  return `&filters=${encodeURIComponent(JSON.stringify(f))}`
+}
+
 const FIELDS = encodeURIComponent('status guest listing checkIn checkOut nightsCount money source customFields confirmationCode createdAt note')
 
-export async function syncReservations(maxPages = 40): Promise<number> {
+export async function syncReservations(maxPages = 40, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
+  const filter = since ? sinceFilter(since) : ''
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
     const data = await api<{ results: any[]; count?: number }>(
-      `/reservations?limit=100&skip=${skip}&fields=${FIELDS}`
+      `/reservations?limit=100&skip=${skip}&fields=${FIELDS}&sort=-lastUpdatedAt${filter}`
     )
-    const rows = (data.results || []).map(mapReservation)
+    const results = data.results || []
+    const rows = results.map(mapReservation)
     if (rows.length === 0) break
     const { error } = await sb.from('guesty_reservations').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert reservations: ${error.message}`)
     total += rows.length
+    if (since && results.some((r: any) => (r.lastUpdatedAt || r.updatedAt) && new Date(r.lastUpdatedAt || r.updatedAt).getTime() < new Date(since).getTime())) break
     if (rows.length < 100) break
   }
   await recordSync('reservations', total)
   return total
 }
 
-export async function syncListings(maxPages = 20): Promise<number> {
+export async function syncListings(maxPages = 20, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
+  const filter = since ? sinceFilter(since) : ''
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
-    const data = await api<{ results: any[] }>(`/listings?limit=100&skip=${skip}`)
-    const rows = (data.results || []).map(mapListing)
+    const data = await api<{ results: any[] }>(`/listings?limit=100&skip=${skip}&sort=-lastUpdatedAt${filter}`)
+    const results = data.results || []
+    const rows = results.map(mapListing)
     if (rows.length === 0) break
     const { error } = await sb.from('guesty_listings').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert listings: ${error.message}`)
     total += rows.length
+    if (since && results.some((l: any) => (l.lastUpdatedAt || l.updatedAt) && new Date(l.lastUpdatedAt || l.updatedAt).getTime() < new Date(since).getTime())) break
     if (rows.length < 100) break
   }
   await recordSync('listings', total)
@@ -359,7 +376,7 @@ export async function syncReviews(maxPages = 12): Promise<number> {
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
     const data = await api<{ results?: any[]; data?: any[]; reviews?: any[] } | any[]>(
-      `/reviews?limit=100&skip=${skip}&sort=-createdAt`
+      `/reviews?limit=100&skip=${skip}`
     )
     const arr: any[] = Array.isArray(data) ? data : (data.results || data.data || data.reviews || [])
     const rows = arr.map(mapReview).filter((r: any) => r.id && (r.content || r.rating != null))
@@ -393,7 +410,7 @@ export async function syncRecentMessages(maxConversations = 150): Promise<number
 }
 
 
-export async function runFullSync(): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; reviews: number; messages: number; errors: string[] }> {
+export async function runFullSync(full = false): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; reviews: number; messages: number; errors: string[] }> {
   const errors: string[] = []
   const result = { reservations: 0, listings: 0, custom_fields: 0, conversations: 0, reviews: 0, messages: 0, errors }
   // Warm the shared token ONCE up front. If Guesty's auth endpoint is throttled (429),
@@ -413,9 +430,11 @@ export async function runFullSync(): Promise<{ reservations: number; listings: n
       await recordSync(label, 0, msg).catch(() => {})
     }
   }
+  const resSince = full ? null : await getSince('reservations')
+  const lstSince = full ? null : await getSince('listings')
   await safe('custom_fields', syncCustomFields,  v => result.custom_fields = v)
-  await safe('listings',      syncListings,      v => result.listings      = v)
-  await safe('reservations',  syncReservations,  v => result.reservations  = v)
+  await safe('listings',      () => syncListings(20, lstSince),      v => result.listings      = v)
+  await safe('reservations',  () => syncReservations(40, resSince),  v => result.reservations  = v)
   await safe('conversations', syncConversations, v => result.conversations = v)
   await safe('reviews', syncReviews, v => result.reviews = v)
   await safe('messages', () => syncRecentMessages(150), v => result.messages = v)
