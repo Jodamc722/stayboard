@@ -50,7 +50,7 @@ export function BrainConsole() {
           <span className="w-6 h-6 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white">
             <Sparkles size={13} />
           </span>
-          The Brain
+          Eve
         </span>
         <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Command console</span>
       </div>
@@ -62,7 +62,7 @@ export function BrainConsole() {
             <span className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white shadow-soft">
               <Wand2 size={22} />
             </span>
-            <h3 className="mt-4 text-lg font-bold text-ink tracking-tight">Hey Jon — I&apos;m the Brain.</h3>
+            <h3 className="mt-4 text-lg font-bold text-ink tracking-tight">Hey Jon — I&apos;m Eve, your hospitality concierge.</h3>
             <p className="mt-1.5 text-sm text-muted max-w-md">
               I can see your reviews, messages, reservations and open work. Ask me what needs attention, who&apos;s arriving, or have me draft replies and plans.
             </p>
@@ -121,7 +121,7 @@ export function BrainConsole() {
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
           rows={1}
-          placeholder="Ask the Brain anything…"
+          placeholder="Ask Eve anything…"
           className="flex-1 resize-none text-sm text-ink bg-app border border-line rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200 max-h-32"
         />
         <button
