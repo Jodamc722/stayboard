@@ -166,7 +166,7 @@ function computeKpis(msgs: Msg[], convos: any[]): Kpis {
   let lastIsGuestConvos = 0
   let convosWithThreads = 0
 
-  for (const [cid, arrDesc] of byConvo) {
+  for (const [cid, arrDesc] of Array.from(byConvo.entries())) {
     const arr = arrDesc.slice().sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime())
     if (arr.length === 0) continue
     convosWithThreads++
@@ -280,7 +280,8 @@ function ScoreKpi({ value }: { value: number | null }) {
 function Avatar({ name }: { name: string | null }) {
   const init = (name || 'G').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
   let h = 0
-  for (const c of (name || 'G')) h = (h * 31 + c.charCodeAt(0)) % 360
+  const seed = name || 'G'
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360
   const bg = `hsl(${h}, 55%, 92%)`
   const fg = `hsl(${h}, 45%, 32%)`
   return (
