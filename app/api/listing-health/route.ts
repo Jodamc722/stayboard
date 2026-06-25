@@ -1,27 +1,16 @@
 // Per-listing Health / Ranking score.
-// Pulls the live Guesty review backlog (reusing the shared cached token), joins it
-// with guesty_listings (content completeness) and field_requests (operational load),
-// then scores every unit 0-100 on the signals we actually have data for today.
+// Reads the PERSISTED guesty_reviews table (kept fresh by the 15-min sync) instead of
+// live-pulling Guesty on every request — so the page loads instantly and never depends
+// on the Guesty token being warm. Joins reviews with guesty_listings (content
+// completeness) and field_requests (operational load), then scores every unit 0-100.
 // Factors still pending deeper Guesty integration (conversion, price-vs-comps, calendar
-// openness, badges, host-cancellation rate) are surfaced as "dataPending" so the model
-// can grow into the full OTA-visibility weighting later.
+// openness, badges, host-cancellation rate) are surfaced as "dataPending".
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
-const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
-
-function pickArray(d: any): any[] {
-  const dd = d?.data ?? d
-  if (Array.isArray(dd)) return dd
-  if (Array.isArray(dd?.reviews)) return dd.reviews
-  if (Array.isArray(dd?.results)) return dd.results
-  if (Array.isArray(d?.results)) return d.results
-  if (Array.isArray(d?.reviews)) return d.reviews
-  return []
-}
+export const maxDuration = 30
 
 // Guesty channels rate on different scales (Airbnb 1-5, Booking 1-10, some 1-100).
 // Normalise everything to a 0-5 scale so ratings are comparable across listings.
@@ -51,65 +40,27 @@ export async function GET() {
 
   try {
     const sb = supabaseAdmin()
-    const { data: tok } = await sb
-      .from('guesty_tokens')
-      .select('access_token, expires_at')
-      .eq('id', 'singleton')
-      .maybeSingle()
 
-    const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
-
-    // Pull the live review backlog (skip-paginated). If the token is warming we still
-    // return listing scores built on the non-review signals so the page is never empty.
-    let raw: any[] = []
-    if (valid) {
-      const token = tok!.access_token
-      for (let page = 0; page < 12; page++) {
-        const r = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-          cache: 'no-store',
-        })
-        if (!r.ok) break
-        const batch = pickArray(await r.json())
-        if (!batch.length) break
-        raw = raw.concat(batch)
-        if (batch.length < 100) break
-      }
-    }
-
-    type Rev = { listingId: string | null; rating: number | null; content: string; created_at: string | null; hasReply: boolean }
-    const reviews: Rev[] = raw.map((v: any) => {
-      const rr = v.rawReview || v.raw || {}
-      const rating =
-        v.rating ?? v.overallRating ??
-        rr.overall_rating ?? rr.overallRating ?? rr.rating ?? rr.score ?? rr.average_score ??
-        v.publicReview?.rating ?? null
-      const content =
-        rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
-        rr.positive ?? rr.review_text ?? rr.content ??
-        v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
-      const reply =
-        rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
-        v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? null
-      const replies = v.reviewReplies ?? rr.reviewReplies ?? rr.review_replies ?? rr.replies ?? null
-      const repliedViaArr = Array.isArray(replies) && replies.some((x: any) =>
-        !x?.status || ['COMPLETED', 'PENDING', 'PUBLISHED', 'SENT', 'DONE'].includes(String(x.status).toUpperCase()))
-      return {
-        listingId: v.listingId ?? v.listing?._id ?? rr.listing_id ?? null,
-        rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
-        content: String(typeof content === 'string' ? content : '').slice(0, 600),
-        created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
-        hasReply: repliedViaArr || !!(reply && String(reply).trim()),
-      }
-    }).filter((x) => x.listingId)
-
-    // Listings + operational load.
-    const [{ data: listings }, { data: work }] = await Promise.all([
+    // Reviews come from the persisted table now — fast and Guesty-independent.
+    // Listings + operational load loaded in parallel.
+    const [{ data: revRows }, { data: listings }, { data: work }] = await Promise.all([
+      sb.from('guesty_reviews')
+        .select('listing_id, rating, content, has_reply, created_at')
+        .limit(5000),
       sb.from('guesty_listings')
         .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, address_city')
         .limit(2000),
       sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
     ])
+
+    type Rev = { listingId: string | null; rating: number | null; content: string; created_at: string | null; hasReply: boolean }
+    const reviews: Rev[] = (revRows ?? []).map((r: any) => ({
+      listingId: r.listing_id ?? null,
+      rating: r.rating != null && r.rating !== '' ? Number(r.rating) : null,
+      content: String(r.content || '').slice(0, 600),
+      created_at: r.created_at ?? null,
+      hasReply: !!r.has_reply,
+    })).filter((x) => x.listingId)
 
     const openByBuilding: Record<string, number> = {}
     ;(work ?? []).forEach((w: any) => {
@@ -129,8 +80,8 @@ export async function GET() {
 
     const now = Date.now()
     const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
-
     const SKIP_BUILDINGS = ['waves'] // deactivated buildings
+
     const scored = (listings ?? [])
       .filter((l: any) => !DEAD.includes(String(l.status || '').toLowerCase()) && !SKIP_BUILDINGS.includes(String(l.building || '').trim().toLowerCase()))
       .map((l: any) => {
@@ -152,7 +103,7 @@ export async function GET() {
         const replied = revs.filter((r) => r.hasReply).length
         const respRate = revs.length ? replied / revs.length : null
 
-        // Recurring-issue scan on negative reviews (normalised rating <= 3.5, or no rating but negative words).
+        // Recurring-issue scan on negative reviews.
         const themeHits: Record<string, number> = {}
         revs.forEach((r) => {
           const n = norm5(r.rating)
@@ -161,7 +112,6 @@ export async function GET() {
           const negative = (n != null && n <= 3.5)
           for (const [theme, kws] of Object.entries(THEMES)) {
             if (kws.some((k) => text.includes(k))) {
-              // Count strongly on low-rated reviews; ignore positive-only mentions.
               if (negative) themeHits[theme] = (themeHits[theme] || 0) + 1
             }
           }
@@ -170,17 +120,13 @@ export async function GET() {
         const singles = Object.entries(themeHits).filter(([, c]) => c === 1).map(([t]) => t)
         const topIssue = Object.entries(themeHits).sort((a, b) => b[1] - a[1])[0]?.[0] || null
 
-        // ---- Subscores ----
-        // Components only score when there is real data to justify them. With no reviews the
-        // review / response / issue signals are EXCLUDED (no phantom positive credit) so the
-        // listing reads NEUTRAL rather than artificially healthy.
+        // ---- Subscores (only score where there's real data; no phantom credit) ----
         const hasReviews = revs.length > 0
         const reviewSub = (hasReviews && avg != null) ? Math.max(0, Math.min(1, (avg - 4.0) / 1.0)) * 40 : 0
         const volumeSub = hasReviews ? Math.min(1, revs.length / 20) * 15 : 0
         const respSub = (hasReviews && respRate != null) ? respRate * 15 : 0
         const penalty = Math.min(15, recurring.length * 5 + singles.length * 1.5)
         const glitchSub = hasReviews ? 15 - penalty : 0
-        // Content completeness (10): always measurable from listing fields.
         const amen = Array.isArray(l.amenities) ? l.amenities.length : 0
         const checks = [
           !!(l.title || l.nickname),
@@ -192,7 +138,6 @@ export async function GET() {
           !!l.building,
         ]
         const contentSub = (checks.filter(Boolean).length / checks.length) * 10
-        // Operational load (5): inverse of weighted open work on the building.
         const openW = l.building ? (openByBuilding[(l.building || '').trim()] || 0) : 0
         const opsSub = Math.max(0, 5 - Math.min(5, openW))
         const score: number | null = hasReviews
@@ -235,7 +180,7 @@ export async function GET() {
           },
         }
       })
-      .sort((a, b) => (a.score == null ? 1 : 0) - (b.score == null ? 1 : 0) || (a.score ?? 0) - (b.score ?? 0)) // worst rated first, unranked last
+      .sort((a, b) => (a.score == null ? 1 : 0) - (b.score == null ? 1 : 0) || (a.score ?? 0) - (b.score ?? 0))
 
     const withReviews = scored.filter((s) => s.reviewCount > 0)
     const summary = {
@@ -248,7 +193,7 @@ export async function GET() {
       unrated: scored.filter((s) => s.unrated).length,
       avgResponse: withReviews.length ? Math.round(withReviews.reduce((s, x) => s + (x.responseRate || 0), 0) / withReviews.length) : null,
       reviewsAnalyzed: reviews.length,
-      warming: !valid,
+      warming: false,
     }
 
     const dataPending = ['Conversion / CTR', 'Price vs. comps', 'Calendar openness', 'OTA badges', 'Host-cancellation rate']
