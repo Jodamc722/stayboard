@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       const byChannel: Record<string, number> = {}
       const rawSamples: string[] = []
       const seen = new Set<string>()
+      const examples: Record<string, any> = {}
       let sampleKeys: string[] = []
       let total = 0, withReply = 0, apiCount: number | null = null
       const sortQ = params.get('sort') ? `&sort=${encodeURIComponent(params.get('sort') as string)}` : ''
@@ -63,13 +64,16 @@ export async function POST(req: NextRequest) {
           const rr = v.rawReview || v.raw || {}
           const raw = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? 'unknown')
           byChannel[raw] = (byChannel[raw] || 0) + 1
+          if (!examples[raw]) examples[raw] = v
           if (rawSamples.length < 8 && rawSamples.indexOf(raw) < 0) rawSamples.push(raw)
           const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : (Array.isArray(rr.reviewReplies) ? rr.reviewReplies : [])
           const hostResp = rr.host_response ?? rr.hostResponse ?? v.hostResponse ?? (replies[0] && (replies[0].reply ?? replies[0].text ?? replies[0].reviewReply))
           if (hostResp && String(hostResp).trim()) withReply++
         }
       }
-      return NextResponse.json({ apiCount, distinct: seen.size, total, withReply, needsReply: total - withReply, byChannel, rawSamples, sampleKeys })
+      const exTrunc: Record<string, string> = {}
+      for (const k of Object.keys(examples)) exTrunc[k] = JSON.stringify(examples[k]).slice(0, 1500)
+      return NextResponse.json({ apiCount, distinct: seen.size, total, withReply, needsReply: total - withReply, byChannel, rawSamples, sampleKeys, examples: exTrunc })
     }
 
     if (params.get('probe') === 'day') {
