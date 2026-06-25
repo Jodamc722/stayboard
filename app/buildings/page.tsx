@@ -8,6 +8,21 @@ export const dynamic = 'force-dynamic'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 
+// Roll unit-level building names up to their parent property.
+// e.g. "Botanica 6108" → "Botanica", "Oasis Mahogany" → "Oasis", "Arya 1704" → "Arya".
+const PARENTS = ['Botanica', 'Oasis', 'Arya']
+const OASIS_UNITS = ['mahogany', 'royal palm', 'bougainvillea', 'bamboo', 'sapodilla', 'jasmine']
+function rollupBuilding(raw?: string | null): string {
+  const b = (raw || '').trim()
+  if (!b) return 'Unassigned'
+  const lower = b.toLowerCase()
+  for (const p of PARENTS) {
+    if (lower === p.toLowerCase() || lower.startsWith(p.toLowerCase() + ' ')) return p
+  }
+  if (OASIS_UNITS.some(u => lower === u || lower.startsWith(u + ' '))) return 'Oasis'
+  return b
+}
+
 export default async function BuildingsPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -23,15 +38,15 @@ export default async function BuildingsPage() {
   // Count open work per building (field_requests.building).
   const workByBuilding: Record<string, number> = {}
   ;(work ?? []).forEach((w: any) => {
-    const b = (w.building || '').trim()
-    if (b) workByBuilding[b] = (workByBuilding[b] || 0) + 1
+    const b = rollupBuilding(w.building)
+    if (b && b !== 'Unassigned') workByBuilding[b] = (workByBuilding[b] || 0) + 1
   })
 
   // Group listings by building.
   type B = { name: string; city?: string; units: any[]; beds: number; sleeps: number; active: number }
   const map = new Map<string, B>()
   ;(listings ?? []).forEach((l: any) => {
-    const name = (l.building || '').trim() || 'Unassigned'
+    const name = rollupBuilding(l.building)
     if (!map.has(name)) map.set(name, { name, city: l.address_city || undefined, units: [], beds: 0, sleeps: 0, active: 0 })
     const b = map.get(name)!
     b.units.push(l)
@@ -45,6 +60,16 @@ export default async function BuildingsPage() {
   const totalUnits = (listings ?? []).length
 
   const unitLabel = (l: any) => (l.unit || l.nickname || l.title || '').toString().replace(/^.*?([#]?\s*\d+\w*)$/, '$1') || (l.nickname || l.title || 'Unit')
+  // For rolled-up properties, show the distinguishing sub-name (e.g. "Mahogany", "6108").
+  const subLabel = (l: any) => {
+    const raw = (l.building || '').trim()
+    const parent = rollupBuilding(raw)
+    if (raw && parent !== raw && raw.toLowerCase().startsWith(parent.toLowerCase())) {
+      const rem = raw.slice(parent.length).trim()
+      if (rem) return rem
+    }
+    return unitLabel(l)
+  }
 
   return (
     <Shell>
@@ -89,7 +114,7 @@ export default async function BuildingsPage() {
                     return (
                       <span key={l.id} title={l.title || l.nickname}
                         className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${dead ? 'bg-app text-muted line-through' : 'bg-brand-50 text-brand-700'}`}>
-                        {unitLabel(l)}
+                        {subLabel(l)}
                       </span>
                     )
                   })}
