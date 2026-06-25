@@ -43,15 +43,22 @@ export async function POST(req: NextRequest) {
       const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
       const byChannel: Record<string, number> = {}
       const rawSamples: string[] = []
+      const seen = new Set<string>()
+      let sampleKeys: string[] = []
       let total = 0, withReply = 0, apiCount: number | null = null
-      for (let page = 0; page < 20; page++) {
-        const resp = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+      const sortQ = params.get('sort') ? `&sort=${encodeURIComponent(params.get('sort') as string)}` : ''
+      for (let page = 0; page < 30; page++) {
+        const resp = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}${sortQ}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
         if (!resp.ok) return NextResponse.json({ error: `Guesty ${resp.status}`, body: (await resp.text()).slice(0, 200) }, { status: 502 })
         const j: any = await resp.json().catch(() => ({}))
         if (apiCount == null) apiCount = j?.count ?? j?.total ?? j?.pagination?.total ?? null
         const arr: any[] = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : Array.isArray(j?.results) ? j.results : Array.isArray(j?.reviews) ? j.reviews : []
         if (!arr.length) break
         for (const v of arr) {
+          const id = String(v._id ?? v.id ?? JSON.stringify(v).slice(0, 40))
+          if (seen.has(id)) continue
+          seen.add(id)
+          if (!sampleKeys.length) sampleKeys = Object.keys(v)
           total++
           const rr = v.rawReview || v.raw || {}
           const raw = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? 'unknown')
@@ -62,7 +69,7 @@ export async function POST(req: NextRequest) {
           if (hostResp && String(hostResp).trim()) withReply++
         }
       }
-      return NextResponse.json({ apiCount, total, withReply, needsReply: total - withReply, byChannel, rawSamples })
+      return NextResponse.json({ apiCount, distinct: seen.size, total, withReply, needsReply: total - withReply, byChannel, rawSamples, sampleKeys })
     }
 
     if (params.get('probe') === 'day') {
