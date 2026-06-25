@@ -397,7 +397,7 @@ function mapReview(v: any) {
 }
 
 // Reviews — paginate /reviews and upsert into the dedicated guesty_reviews table.
-export async function syncReviews(maxPages = 12): Promise<number> {
+export async function syncReviews(maxPages = 40): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
   for (let page = 0; page < maxPages; page++) {
