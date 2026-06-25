@@ -33,12 +33,30 @@ function cleanChannel(raw: string): string {
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Other'
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const sb = supabaseAdmin()
+
+  // Temporary diagnostic: /api/reviews?debug=1 returns the raw Guesty response.
+  if (new URL(req.url).searchParams.get('debug')) {
+    const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
+    const exp = tok?.expires_at ? new Date(tok.expires_at).toISOString() : null
+    const probes: any = { token_expires_at: exp, has_token: !!tok?.access_token }
+    for (const url of [`${BASE}/reviews?limit=5`, `${BASE}/reviews?limit=5&skip=0`]) {
+      try {
+        const rr = await fetch(url, { headers: { Authorization: `Bearer ${tok?.access_token}`, Accept: 'application/json' }, cache: 'no-store' })
+        const body = await rr.text()
+        let keys: any = null; try { const j = JSON.parse(body); keys = Array.isArray(j) ? `array(${j.length})` : Object.keys(j) } catch {}
+        probes[url] = { status: rr.status, keys, body: body.slice(0, 300) }
+      } catch (e: any) { probes[url] = { err: String(e) } }
+    }
+    const { count } = await sb.from('guesty_reviews').select('*', { count: 'exact', head: true })
+    probes.table_rows = count
+    return NextResponse.json(probes)
+  }
 
   // ── 1. Try the persisted table first ────────────────────────────
   try {
