@@ -218,7 +218,7 @@ export function ReviewsPanel() {
                   <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
                     <Star size={11} /> {fmtRating(r.rating)}
                   </span>
-                  <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>
+                  <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                   {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Replied</span>
                 </div>
@@ -249,7 +249,7 @@ export function ReviewsPanel() {
                 <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
                   <Star size={11} /> {fmtRating(r.rating)}
                 </span>
-                <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>
+                <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                 {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
               </div>
               {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
