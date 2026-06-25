@@ -1,23 +1,25 @@
-// Sync route — pulls reservations / listings / custom fields / conversations from Guesty
-// and upserts into Supabase.
+// Sync route — pulls reservations / listings / custom fields / conversations / reviews /
+// messages from Guesty and upserts into Supabase.
 //
-// Triggered by:
-//   1. Vercel cron (every 15 min) — Authorization: Bearer ${CRON_SECRET}
-//   2. Manual button in the UI from authenticated users
-//
-// In all cases, this code runs server-side so it can use the service-role key.
+// Query modes:
+//   (none)                          → incremental sync (default cron behaviour)
+//   ?full=1                         → full, non-incremental reconcile
+//   ?only=reservations              → sync ONLY reservations (fast; returns the count)
+//   ?probe=checkouts&day=YYYY-MM-DD → READ-ONLY diagnostic: ask Guesty directly which
+//                                     reservations check out on that day (no upsert).
 import { NextRequest, NextResponse } from 'next/server'
-import { runFullSync } from '@/lib/guesty'
+import { runFullSync, syncReservations } from '@/lib/guesty'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+
 async function authorize(req: NextRequest): Promise<{ ok: true } | { ok: false; reason: string }> {
-  // Vercel cron sends Authorization: Bearer ${CRON_SECRET}
   const auth = req.headers.get('authorization') || ''
   if (process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`) return { ok: true }
-  // Otherwise require a logged-in Supabase user
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (user) return { ok: true }
@@ -28,18 +30,55 @@ export async function POST(req: NextRequest) {
   const auth = await authorize(req)
   if (!auth.ok) return NextResponse.json({ error: auth.reason }, { status: 401 })
   const started = Date.now()
+  const params = new URL(req.url).searchParams
+
   try {
-    const full = new URL(req.url).searchParams.get('full') === '1'
+    // ── READ-ONLY probe: what does Guesty itself return for checkouts on `day`? ──
+    if (params.get('probe') === 'checkouts') {
+      const day = params.get('day') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+      const sb = supabaseAdmin()
+      const { data: tok } = await sb.from('guesty_tokens').select('access_token').eq('id', 'singleton').maybeSingle()
+      const token = tok?.access_token
+      if (!token) return NextResponse.json({ error: 'no token' }, { status: 503 })
+      const filters = encodeURIComponent(JSON.stringify([{ field: 'checkOut', operator: '$gte', value: `${day}T00:00:00.000Z` }]))
+      const fields = encodeURIComponent('guest checkIn checkOut checkOutDateLocalized status source confirmationCode')
+      const all: any[] = []
+      let pages = 0
+      for (let p = 0; p < 8; p++) {
+        pages++
+        const r = await fetch(`${BASE}/reservations?limit=100&skip=${p * 100}&fields=${fields}&sort=checkOut&filters=${filters}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store'
+        })
+        if (!r.ok) { all.push({ _err: `${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}` }); break }
+        const d: any = await r.json()
+        const res: any[] = d.results || []
+        for (const x of res) all.push(x)
+        if (res.length < 100) break
+        const last = res[res.length - 1]
+        const lastDate = String(last?.checkOutDateLocalized || last?.checkOut || '').slice(0, 10)
+        if (lastDate > day) break
+      }
+      const onDay = all.filter((x: any) => String(x.checkOutDateLocalized || x.checkOut || '').slice(0, 10) === day)
+      return NextResponse.json({
+        day, pages,
+        guestyCheckoutsOnDay: onDay.length,
+        totalScanned: all.length,
+        guests: onDay.map((x: any) => ({ guest: x.guest?.fullName || null, listing: x.listingId || null, checkOut: x.checkOutDateLocalized || x.checkOut, status: x.status, source: x.source })),
+      })
+    }
+
+    if (params.get('only') === 'reservations') {
+      const n = await syncReservations(80, null)
+      return NextResponse.json({ ok: true, reservationsOnly: n, elapsed_ms: Date.now() - started })
+    }
+
+    const full = params.get('full') === '1'
     const result = await runFullSync(full)
-    return NextResponse.json({
-      ok: true,
-      elapsed_ms: Date.now() - started,
-      ...result
-    })
+    return NextResponse.json({ ok: true, elapsed_ms: Date.now() - started, ...result })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e.message || String(e) }, { status: 500 })
   }
 }
 
-// Allow GET for Vercel cron (which sends GET requests)
+// Vercel cron sends GET
 export const GET = POST
