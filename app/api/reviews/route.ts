@@ -12,6 +12,16 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 // Listings whose status marks them as dead — filtered out of the feed.
 const DEAD_STATUSES = new Set(['inactive', 'disabled', 'archived', 'deleted'])
 
+function pickArray(d: any): any[] {
+  const dd = d?.data ?? d
+  if (Array.isArray(dd)) return dd
+  if (Array.isArray(dd?.reviews)) return dd.reviews
+  if (Array.isArray(dd?.results)) return dd.results
+  if (Array.isArray(d?.results)) return d.results
+  if (Array.isArray(d?.reviews)) return d.reviews
+  return []
+}
+
 function cleanChannel(raw: string): string {
   const c = String(raw || '').toLowerCase()
   if (/airbnb/.test(c)) return 'Airbnb'
@@ -120,7 +130,7 @@ export async function GET() {
         break
       }
       const d: any = await r.json()
-      const batch: any[] = Array.isArray(d) ? d : (d.results || d.data || d.reviews || [])
+      const batch: any[] = pickArray(d)
       if (!batch.length) break
       raw = raw.concat(batch)
       if (batch.length < 100) break
