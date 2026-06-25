@@ -95,14 +95,16 @@ export default async function ReservationsPage() {
   // Upcoming first (>= today, ascending), then past (descending). Pull two sets to support tabbed UI.
   const [{ data: upcoming }, { data: past }, { data: sync }] = await Promise.all([
     supabase
-      .from('guesty_reservations').in('status', ['confirmed', 'checked_in', 'checked_out'])
+      .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .gte('check_out', todayStr)
       .order('check_in', { ascending: true })
       .limit(3000),
     supabase
-      .from('guesty_reservations').in('status', ['confirmed', 'checked_in', 'checked_out'])
+      .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .lt('check_out', todayStr)
       .order('check_in', { ascending: false })
       .limit(3000),
