@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       if (!token) return NextResponse.json({ error: 'no token' }, { status: 503 })
       const CONFIRMED = ['confirmed', 'checked_in', 'checked_out']
       const fields = encodeURIComponent('guest checkIn checkOut checkInDateLocalized checkOutDateLocalized status source')
-      async function pull(field: string) {
+      const pull = async (field: string) => {
         const filters = encodeURIComponent(JSON.stringify([{ field, operator: '$gte', value: `${day}T00:00:00.000Z` }]))
         const all: any[] = []
         for (let p = 0; p < 8; p++) {
