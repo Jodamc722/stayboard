@@ -40,31 +40,6 @@ export async function GET(req: Request) {
 
   const sb = supabaseAdmin()
 
-  // Temporary diagnostic: /api/reviews?debug=1 returns the raw Guesty response.
-  if (new URL(req.url).searchParams.get('debug')) {
-    const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
-    const exp = tok?.expires_at ? new Date(tok.expires_at).toISOString() : null
-    const probes: any = { token_expires_at: exp, has_token: !!tok?.access_token }
-    for (const url of [`${BASE}/reviews?limit=5`, `${BASE}/reviews?limit=5&skip=0`]) {
-      try {
-        const rr = await fetch(url, { headers: { Authorization: `Bearer ${tok?.access_token}`, Accept: 'application/json' }, cache: 'no-store' })
-        const body = await rr.text()
-        let keys: any = null; try { const j = JSON.parse(body); keys = Array.isArray(j) ? `array(${j.length})` : Object.keys(j) } catch {}
-        probes[url] = { status: rr.status, keys, body: body.slice(0, 300) }
-      } catch (e: any) { probes[url] = { err: String(e) } }
-    }
-    const { count } = await sb.from('guesty_reviews').select('*', { count: 'exact', head: true })
-    probes.table_rows = count
-    // Trace the live pipeline on page 0.
-    try {
-      const rr = await fetch(`${BASE}/reviews?limit=100&skip=0`, { headers: { Authorization: `Bearer ${tok?.access_token}`, Accept: 'application/json' }, cache: 'no-store' })
-      const d: any = await rr.json()
-      const arr = pickArray(d)
-      probes.pipeline = { httpOk: rr.ok, rawCount: arr.length, firstHasId: !!(arr[0]?._id || arr[0]?.id), firstHasListing: arr[0]?.listingId ?? arr[0]?.listing?._id ?? null, firstRating: arr[0]?.rating ?? arr[0]?.publicReview?.rating ?? arr[0]?.overallRating ?? null }
-    } catch (e: any) { probes.pipeline = { err: String(e) } }
-    return NextResponse.json(probes)
-  }
-
   // ── 1. Try the persisted table first ────────────────────────────
   try {
     const { data: rows, error } = await sb
@@ -162,20 +137,33 @@ export async function GET(req: Request) {
     }
 
     const reviews = raw.map((v: any) => {
-      const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? null
-      const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
-      const channel = cleanChannel(String(v.channelId ?? v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? ''))
-      const reply = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
-      const listingId = v.listingId ?? v.listing?._id ?? v.listing?.id ?? null
-      const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? null
+      const rr = v.rawReview || v.raw || {}
+      const rating =
+        v.rating ?? v.overallRating ??
+        rr.overall_rating ?? rr.overallRating ?? rr.rating ?? rr.score ?? rr.average_score ??
+        v.publicReview?.rating ?? null
+      const content =
+        rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
+        rr.positive ?? rr.review_text ?? rr.content ??
+        v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
+      const channel = cleanChannel(String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? ''))
+      const replyFlat =
+        rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
+        v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? null
+      const replies = v.reviewReplies ?? rr.reviewReplies ?? rr.review_replies ?? rr.replies ?? null
+      const repliedArr = Array.isArray(replies) && replies.some((x: any) => !x?.status || ['COMPLETED','PENDING','PUBLISHED','SENT','DONE'].includes(String(x.status).toUpperCase()))
+      const replyText = (typeof replyFlat === 'string' && replyFlat.trim()) ? replyFlat
+        : (Array.isArray(replies) ? (replies.map((x: any) => x?.reply ?? x?.text ?? x?.reviewReply ?? x?.body ?? '').find((s: any) => s && String(s).trim()) || '') : '')
+      const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? null
+      const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? null
       return {
-        id: v._id ?? v.id ?? Math.random().toString(36).slice(2),
-        rating: typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null),
+        id: v._id ?? v.id ?? v.externalReviewId ?? Math.random().toString(36).slice(2),
+        rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
         content: String(typeof content === 'string' ? content : '').slice(0, 400),
         channel, listingId, guest,
-        created_at: v.createdAt ?? v.date ?? v.submittedAt ?? null,
-        hasReply: !!(reply && String(reply).trim()),
-        reply: reply ? String(reply) : null
+        created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
+        hasReply: repliedArr || !!(replyFlat && String(replyFlat).trim()),
+        reply: String(replyText || '').slice(0, 500) || null
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
 
