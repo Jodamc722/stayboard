@@ -43,10 +43,19 @@ export async function GET() {
 
     // Reviews come from the persisted table now — fast and Guesty-independent.
     // Listings + operational load loaded in parallel.
+    // Supabase caps a single query at 1000 rows; paginate to read ALL reviews (full set for health).
+    const fetchAllReviews = async () => {
+      let all: any[] = []
+      for (let from = 0; from < 20000; from += 1000) {
+        const { data } = await sb.from('guesty_reviews').select('listing_id, rating, content, has_reply, created_at').range(from, from + 999)
+        if (!data || data.length === 0) break
+        all = all.concat(data)
+        if (data.length < 1000) break
+      }
+      return { data: all }
+    }
     const [{ data: revRows }, { data: listings }, { data: work }] = await Promise.all([
-      sb.from('guesty_reviews')
-        .select('listing_id, rating, content, has_reply, created_at')
-        .limit(5000),
+      fetchAllReviews(),
       sb.from('guesty_listings')
         .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, address_city')
         .limit(2000),
