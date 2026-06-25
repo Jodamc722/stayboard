@@ -1,9 +1,9 @@
-// AI listing optimizer -> Guesty master content. Generates an optimized title +
-// all six Guesty publicDescription sections (summary, space, access, neighborhood,
-// transit, notes), grounded ONLY in a single guesty_listings row's verified data and
-// its current content. This is the MASTER content Guesty syncs to every channel, so it
-// is written to Airbnb's stricter, highest-converting standard. Generate-only here;
-// the human approves and pushes via /api/listing-content. Requires ANTHROPIC_API_KEY.
+// AI listing optimizer -> Guesty master content. Generates an optimized title + all six
+// Guesty publicDescription sections (summary, space, access, neighborhood, transit, notes),
+// grounded ONLY in a single listing's verified data, its current content, its real guest-review
+// signal, and its booking settings. This is the MASTER content Guesty syncs to every channel, so
+// it is written to Airbnb's stricter, highest-converting standard for maximum visibility and to set
+// great, honest expectations. Generate-only here; the human approves + pushes via /api/listing-content.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -11,17 +11,18 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
 
-// The six Guesty publicDescription sections, in display order.
 const SECTION_DEFS: { key: string; label: string; guide: string }[] = [
-  { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (this maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, real perk (e.g. "5-min walk to the sand"); state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. This is the single most important field.' },
-  { key: 'space', label: 'The space', guide: 'Room-by-room layout and standout features: bedrooms + bed types, bathrooms, kitchen, living areas, outdoor space, square feel, views. Concrete and scannable. ~600-1200 characters.' },
-  { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building access, self check-in if applicable. Do NOT include real codes, addresses, phone, or URLs. ~300-700 characters.' },
-  { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and what is nearby: walkability, beach/downtown proximity (quantified when in the data), dining/shops, vibe. Roughly 90% of guests want surrounding-area info. ~400-900 characters.' },
+  { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, real perk (e.g. "5-min walk to the sand"); state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. Most important field.' },
+  { key: 'space', label: 'The space', guide: 'Room-by-room layout and standout features in short labeled lines or tight paragraphs (this is the 17 West house style): bedrooms + bed types, bathrooms, kitchen, living areas, outdoor space, views, building amenities (pool, gym, parking). Concrete and scannable. ~700-1300 characters.' },
+  { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if applicable. NEVER include real codes, full addresses, phone, or URLs. ~300-700 characters.' },
+  { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the listing city/area: name real, well-known nearby beaches, dining/nightlife districts, attractions and walkable spots with quantified proximity where the data supports it. Roughly 90% of guests want surrounding-area info, and it is a strong visibility/expectation signal. ~500-1000 characters.' },
   { key: 'transit', label: 'Getting around', guide: 'Transport and orientation: parking, distance/time to the beach or key spots, airport proximity, whether a car is useful, rideshare/walkability. ~250-600 characters.' },
-  { key: 'notes', label: 'Other notes', guide: 'Anything else that helps the guest decide or sets expectations honestly: who it suits, building amenities, quiet-enjoyment notes. Keep positive and factual. ~200-600 characters.' },
+  { key: 'notes', label: 'Other notes', guide: 'Anything else that sets honest expectations and prevents bad surprises: who it suits best, building/HOA notes, quiet-enjoyment, the booking/cancellation flexibility if known. Keep positive and factual. ~250-700 characters.' },
 ]
 
 const TITLE_MAX = 50
+
+function str(v: any): string { return typeof v === 'string' ? v : '' }
 
 export async function POST(req: NextRequest) {
   const supabase = createClient()
@@ -35,26 +36,46 @@ export async function POST(req: NextRequest) {
   const listingId = body?.listingId
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
 
-  const { data: listing, error } = await supabaseAdmin()
-    .from('guesty_listings')
-    .select('id, title, nickname, building, unit, room_type, tags, address_city, address_state, bedrooms, bathrooms, max_occupancy, amenities, status, raw')
-    .eq('id', listingId)
-    .single()
-
+  const sb = supabaseAdmin()
+  const [{ data: listing, error }, { data: reviewRows }] = await Promise.all([
+    sb.from('guesty_listings')
+      .select('id, title, nickname, building, unit, room_type, tags, address_city, address_state, bedrooms, bathrooms, max_occupancy, amenities, status, raw')
+      .eq('id', listingId).single(),
+    sb.from('guesty_reviews').select('rating, content').eq('listing_id', listingId).order('created_at', { ascending: false }).limit(40),
+  ])
   if (error || !listing) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
 
   const raw: any = (listing as any).raw || {}
   const pub: any = raw.publicDescription || raw.publicDescriptions || {}
-  const get = (k: string) => (typeof pub?.[k] === 'string' ? pub[k] : '')
+  const get = (k: string) => str(pub?.[k])
 
-  // Current content (what is on Guesty today) so the model improves on it, not blind.
   const current = {
     title: listing.title || raw.title || listing.nickname || '',
     summary: get('summary'), space: get('space'), access: get('access'),
     neighborhood: get('neighborhood'), transit: get('transit'), notes: get('notes'),
   }
 
-  // Verified fact sheet - the model may ONLY use these facts.
+  // Booking settings / "scoring" inputs - flexible policies and clear terms lift conversion + visibility.
+  const terms = raw.terms || {}
+  const settings = {
+    minNights: terms.minNights ?? raw.defaultCheckInTime ?? null,
+    maxNights: terms.maxNights ?? null,
+    cancellationPolicy: str(raw.cancellationPolicy || raw?.prices?.cancellation || raw?.cancellation || '') || null,
+    checkInTime: raw.defaultCheckInTime ?? null,
+    checkOutTime: raw.defaultCheckOutTime ?? null,
+    instantBookable: raw.instantBookable ?? null,
+  }
+
+  // Guest-review signal: what guests actually praise (lean in) + overall rating, to set great honest expectations.
+  const reviews = Array.isArray(reviewRows) ? reviewRows : []
+  const rated = reviews.map(r => Number(r.rating)).filter(n => Number.isFinite(n))
+  const avgRating = rated.length ? Math.round((rated.reduce((a, b) => a + b, 0) / rated.length) * 10) / 10 : null
+  const praise = reviews
+    .filter(r => (Number(r.rating) >= 4 || r.rating == null) && str(r.content).trim().length > 12)
+    .map(r => str(r.content).replace(/\s+/g, ' ').trim().slice(0, 220))
+    .slice(0, 8)
+  const reviewSignal = { count: reviews.length, avgRating, guestPraiseSamples: praise }
+
   const facts = {
     currentTitle: current.title || null,
     nickname: listing.nickname || null,
@@ -68,40 +89,46 @@ export async function POST(req: NextRequest) {
     sleeps: listing.max_occupancy ?? null,
     amenities: Array.isArray(listing.amenities) ? listing.amenities.slice(0, 80) : (listing.amenities ?? null),
     tags: Array.isArray(listing.tags) ? listing.tags.slice(0, 30) : (listing.tags ?? null),
+    bookingSettings: settings,
   }
 
   const sectionSpec = SECTION_DEFS.map(s => `- "${s.key}" (${s.label}): ${s.guide}`).join('\n')
 
   const SYSTEM = `You are a senior short-term-rental listing copywriter for Stay Hospitality, a South Florida property manager (Miami Beach / Fort Lauderdale / Broward). You write the MASTER listing content stored in Guesty, which syncs out to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard so it is excellent everywhere.
 
-YOUR JOB
-Rewrite this listing's TITLE and ALL SIX description sections so they are complete, vivid, accurate, keyword-smart, and conversion-focused. Every section must be filled — never leave one blank. Improve on the current content; do not simply copy it.
+YOUR TWO GOALS
+1) MAXIMIZE VISIBILITY: OTAs rank complete, specific, keyword-rich, high-converting listings. Fill every section fully; use real searchable terms; quantify; lead with the strongest differentiators.
+2) SET GREAT, HONEST EXPECTATIONS: guests rate against expectations. Lean into what guests genuinely praise (see the review signal), and never over-promise. Accurate, vivid, complete copy earns better reviews and ranking over time.
+
+HOUSE STYLE (model the strong "17 West" formatting)
+- Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest point. Vivid but never flowery or padded.
+- Use the listing's CITY/AREA to name real, well-known nearby things to do (beaches, dining/nightlife districts, attractions, walkable spots) in the Neighborhood section. It is fine to reference the area and landmarks; never include the exact street address, codes, phone, email, or URLs.
 
 TITLE RULES
-- Hard limit ${TITLE_MAX} characters including spaces. Mobile search cards truncate near 32 chars, so FRONT-LOAD the strongest differentiators first.
-- Title Case. No emoji, no repeated symbols (!!! ***), no ALL-CAPS words (proper nouns/abbreviations OK), no phone/email/URLs (two words joined by a dot read as a URL and fail to publish).
-- Do not waste characters on the city or bed count if the platform already shows them; lead with what makes THIS place special.
+- Hard limit ${TITLE_MAX} characters including spaces. Mobile cards truncate near 32 chars, so FRONT-LOAD the strongest differentiators. Title Case. No emoji, no repeated symbols, no ALL-CAPS words (proper nouns OK), no phone/email/URLs.
 
 SECTION RULES (Guesty publicDescription fields)
 ${sectionSpec}
 
 SOUTH FLORIDA KEYWORD GUIDANCE
-- Use high-value, real searchable terms only when the data supports them: "ocean view", "walk to the beach", "pool", "hot tub", "free parking", "king bed", specific neighborhoods (e.g. "Miami Beach", "South Pointe", "Las Olas", "Fort Lauderdale Beach"), and specific property types ("penthouse", "villa", "condo"). Quantify location ("5-min walk to the sand") rather than vague ("close to beach").
+- Use high-value, real searchable terms ONLY when the data supports them: "ocean view", "walk to the beach", "pool", "hot tub", "free parking", "king bed", neighborhoods ("Miami Beach", "South Pointe", "Las Olas", "Fort Lauderdale Beach"), property types ("penthouse", "villa", "condo"). Quantify location ("5-min walk to the sand") rather than vague ("close to beach").
 
 HONESTY (CRITICAL)
-- You may ONLY use facts present in the listing JSON below. NEVER invent amenities, room counts, views, distances, codes, or features. If a fact is missing, write around it honestly — do not guess. This copy goes onto a live listing.
-- Never include phone numbers, emails, URLs, street addresses, or door/lock codes in any field.
+- Use ONLY facts present in the listing JSON below (data, current content, review signal, booking settings). NEVER invent amenities, room counts, views, distances, codes, or features. If a fact is missing, write around it honestly. Never include phone numbers, emails, URLs, street addresses, or door/lock codes in any field.
+- The guest-review samples are signal for what to emphasize and the tone guests respond to; do not quote them verbatim or invent specifics from them.
 
 OUTPUT FORMAT
 Return STRICT, minified JSON and nothing else (no markdown, no code fences, no commentary). Exactly this shape:
 {"title":"...","summary":"...","space":"...","access":"...","neighborhood":"...","transit":"...","notes":"...","rationale":"..."}
-- Every section is a non-empty string.
-- "rationale": 1-2 sentences on why this version converts better.`
+- Every section is a non-empty string. "rationale": 1-2 sentences on why this version wins on visibility and expectation-setting.`
 
   const USER = `Rewrite the master content for this listing.
 
 VERIFIED FACTS (use ONLY these):
 ${JSON.stringify(facts)}
+
+GUEST REVIEW SIGNAL (lean into what guests praise; set honest expectations; do not quote verbatim):
+${JSON.stringify(reviewSignal)}
 
 CURRENT GUESTY CONTENT (improve on this; it may be thin or empty):
 ${JSON.stringify(current)}`
@@ -110,12 +137,7 @@ ${JSON.stringify(current)}`
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2200,
-        system: SYSTEM,
-        messages: [{ role: 'user', content: USER }],
-      }),
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
@@ -150,6 +172,8 @@ ${JSON.stringify(current)}`
       sections: SECTION_DEFS.map(s => ({ key: s.key, label: s.label })),
       current,
       proposed,
+      reviewSignal,
+      bookingSettings: settings,
       rationale: String(parsed.rationale || '').trim(),
       warnings,
     })
