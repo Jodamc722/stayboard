@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
+import { DateFilter } from '@/components/DateFilter'
 import { CalendarDays, LogIn, LogOut, Users, DollarSign, Clock, RefreshCw, AlertTriangle } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -83,14 +84,19 @@ function statusStyle(s?: string | null): string {
   return STATUS_STYLE[k] || 'bg-app text-muted'
 }
 
-export default async function ReservationsPage() {
+export default async function ReservationsPage({ searchParams }: { searchParams?: { date?: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
   // "Today" in the property's local timezone (Miami / America/New_York), NOT UTC — otherwise
   // every check-in/checkout count is off by a day during evening hours.
-  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  const realToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  // Selected day drives the whole page (defaults to today). Lets Jon filter to any date.
+  const dateParam = (searchParams?.date || '').trim()
+  const todayStr = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(dateParam) ? dateParam : realToday
+  const viewingToday = todayStr === realToday
+  const dl = viewingToday ? 'today' : new Date(todayStr + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
   // Upcoming first (>= today, ascending), then past (descending). Pull two sets to support tabbed UI.
   const [{ data: upcoming }, { data: past }, { data: sync }] = await Promise.all([
@@ -115,8 +121,8 @@ export default async function ReservationsPage() {
   const pastRows = past ?? []
 
   // ── KPIs derived only from queried columns ────────────────────────────────
-  const in7 = new Date(); in7.setDate(in7.getDate() + 7)
-  const in7Str = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(in7)
+  const in7d = new Date(todayStr + 'T12:00:00Z'); in7d.setUTCDate(in7d.getUTCDate() + 7)
+  const in7Str = in7d.toISOString().slice(0, 10)
   const isCanceled = (s?: string | null) => /cancel|declin/i.test(s || '')
 
   const checkInsToday = up.filter(r => r.check_in === todayStr && !isCanceled(r.status)).length
@@ -138,9 +144,9 @@ export default async function ReservationsPage() {
   const staying = live.filter(r => r.check_in && r.check_out && r.check_in < todayStr && r.check_out > todayStr && !todayIds.has(r.id))
 
   const sections: { key: string; title: string; Icon: any; accent: string; rows: any[] }[] = [
-    { key: 'arr', title: 'Arriving today', Icon: LogIn, accent: 'text-emerald-600', rows: arrivingToday },
-    { key: 'dep', title: 'Departing today', Icon: LogOut, accent: 'text-rose-600', rows: departingToday },
-    { key: 'stay', title: 'In-house now', Icon: Users, accent: 'text-brand-600', rows: staying },
+    { key: 'arr', title: `Arriving ${dl}`, Icon: LogIn, accent: 'text-emerald-600', rows: arrivingToday },
+    { key: 'dep', title: `Departing ${dl}`, Icon: LogOut, accent: 'text-rose-600', rows: departingToday },
+    { key: 'stay', title: 'In-house', Icon: Users, accent: 'text-brand-600', rows: staying },
     { key: 'soon', title: 'Upcoming arrivals', Icon: CalendarDays, accent: 'text-brand-600', rows: futureArrivals },
   ].filter(s => s.rows.length > 0)
 
@@ -153,6 +159,7 @@ export default async function ReservationsPage() {
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><CalendarDays size={13} /> Bookings</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Reservations</h1>
+          <div className="mt-3"><DateFilter selected={todayStr} isToday={viewingToday} /></div>
           <p className="text-sm text-muted mt-1">{up.length} active · {pastRows.length} past · upcoming arrivals first.</p>
         </div>
         <div className="text-[11px] text-muted flex items-center gap-1.5">
@@ -168,9 +175,9 @@ export default async function ReservationsPage() {
 
       {/* KPI band */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-        <Kpi label="Check-ins today" value={checkInsToday} Icon={LogIn} accent />
-        <Kpi label="Check-outs today" value={checkOutsToday} Icon={LogOut} />
-        <Kpi label="In-house now" value={inHouse} Icon={Users} />
+        <Kpi label={`Check-ins ${dl}`} value={checkInsToday} Icon={LogIn} accent />
+        <Kpi label={`Check-outs ${dl}`} value={checkOutsToday} Icon={LogOut} />
+        <Kpi label={`In-house ${viewingToday ? 'now' : 'on ' + dl}`} value={inHouse} Icon={Users} />
         <Kpi label="Arrivals next 7d" value={arrivals7Count} Icon={CalendarDays} />
         <Kpi label="Booked rev · 7d" value={fmtMoney(revenue7, currency)} Icon={DollarSign} />
       </div>
