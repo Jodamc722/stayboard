@@ -61,7 +61,7 @@ export default async function CommandCenterPage() {
         </p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Mission Control</h1>
         <p className="text-sm text-muted mt-1">
-          Ask the Brain anything, {firstName} — it sees your reviews, messages, reservations and open work.
+          Ask Eve anything, {firstName} — she sees your reviews, messages, reservations and open work.
         </p>
       </header>
 
@@ -73,7 +73,7 @@ export default async function CommandCenterPage() {
         </div>
       </div>
 
-      {/* HERO — the Brain console */}
+      {/* HERO — Eve console */}
       <BrainConsole />
 
       {/* Quick actions */}
