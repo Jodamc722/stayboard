@@ -29,7 +29,8 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.reason }, { status: 401 })
   const started = Date.now()
   try {
-    const result = await runFullSync()
+    const full = new URL(req.url).searchParams.get('full') === '1'
+    const result = await runFullSync(full)
     return NextResponse.json({
       ok: true,
       elapsed_ms: Date.now() - started,
