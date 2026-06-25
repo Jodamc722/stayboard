@@ -8,7 +8,7 @@
 //   ?probe=checkouts&day=YYYY-MM-DD → READ-ONLY diagnostic: ask Guesty directly which
 //                                     reservations check out on that day (no upsert).
 import { NextRequest, NextResponse } from 'next/server'
-import { runFullSync, syncReservations } from '@/lib/guesty'
+import { runFullSync, syncReservations, syncReviews } from '@/lib/guesty'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -136,6 +136,11 @@ export async function POST(req: NextRequest) {
     if (params.get('only') === 'reservations') {
       const n = await syncReservations(80, null)
       return NextResponse.json({ ok: true, reservationsOnly: n, elapsed_ms: Date.now() - started })
+    }
+
+    if (params.get('only') === 'reviews') {
+      const n = await syncReviews(40)
+      return NextResponse.json({ ok: true, reviewsOnly: n, elapsed_ms: Date.now() - started })
     }
 
     const full = params.get('full') === '1'
