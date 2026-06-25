@@ -34,6 +34,37 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── READ-ONLY probe: confirmed check-in & check-out counts (+status breakdown) for a day ──
+    // READ-ONLY probe: audit Guesty reviews -- total, channel distribution, reply coverage.
+    if (params.get('probe') === 'reviews') {
+      const sb = supabaseAdmin()
+      const { data: tok } = await sb.from('guesty_tokens').select('access_token').eq('id', 'singleton').maybeSingle()
+      const token = tok?.access_token
+      if (!token) return NextResponse.json({ error: 'no token' }, { status: 503 })
+      const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+      const byChannel: Record<string, number> = {}
+      const rawSamples: string[] = []
+      let total = 0, withReply = 0, apiCount: number | null = null
+      for (let page = 0; page < 20; page++) {
+        const resp = await fetch(`${BASE}/reviews?limit=100&skip=${page * 100}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+        if (!resp.ok) return NextResponse.json({ error: `Guesty ${resp.status}`, body: (await resp.text()).slice(0, 200) }, { status: 502 })
+        const j: any = await resp.json().catch(() => ({}))
+        if (apiCount == null) apiCount = j?.count ?? j?.total ?? j?.pagination?.total ?? null
+        const arr: any[] = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : Array.isArray(j?.results) ? j.results : Array.isArray(j?.reviews) ? j.reviews : []
+        if (!arr.length) break
+        for (const v of arr) {
+          total++
+          const rr = v.rawReview || v.raw || {}
+          const raw = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? 'unknown')
+          byChannel[raw] = (byChannel[raw] || 0) + 1
+          if (rawSamples.length < 8 && rawSamples.indexOf(raw) < 0) rawSamples.push(raw)
+          const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : (Array.isArray(rr.reviewReplies) ? rr.reviewReplies : [])
+          const hostResp = rr.host_response ?? rr.hostResponse ?? v.hostResponse ?? (replies[0] && (replies[0].reply ?? replies[0].text ?? replies[0].reviewReply))
+          if (hostResp && String(hostResp).trim()) withReply++
+        }
+      }
+      return NextResponse.json({ apiCount, total, withReply, needsReply: total - withReply, byChannel, rawSamples })
+    }
+
     if (params.get('probe') === 'day') {
       const day = params.get('day') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
       const sb = supabaseAdmin()
