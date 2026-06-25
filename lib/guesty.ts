@@ -249,11 +249,17 @@ const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkIn
 export async function syncReservations(maxPages = 40, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
-  const filter = since ? sinceFilter(since) : ''
+  // FULL sync (since=null) pulls the complete CURRENT window — every reservation checking out
+  // from 45 days ago onward — sorted by check-in, so current/upcoming bookings are ALWAYS captured
+  // regardless of when they were last updated (a stale in-house booking would otherwise be pushed
+  // past the page cap by more-recently-updated records). Incremental keeps using lastUpdatedAt.
+  const windowIso = new Date(Date.now() - 45 * 86_400_000).toISOString()
+  const filter = since ? sinceFilter(since) : `&filters=${encodeURIComponent(JSON.stringify([{ field: 'checkOut', operator: '$gte', value: windowIso }]))}`
+  const sort = since ? '-lastUpdatedAt' : 'checkIn'
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
     const data = await api<{ results: any[]; count?: number }>(
-      `/reservations?limit=100&skip=${skip}&fields=${FIELDS}&sort=-lastUpdatedAt${filter}`
+      `/reservations?limit=100&skip=${skip}&fields=${FIELDS}&sort=${sort}${filter}`
     )
     const results = data.results || []
     const rows = results.map(mapReservation)
