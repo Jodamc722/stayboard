@@ -55,6 +55,13 @@ export async function GET(req: Request) {
     }
     const { count } = await sb.from('guesty_reviews').select('*', { count: 'exact', head: true })
     probes.table_rows = count
+    // Trace the live pipeline on page 0.
+    try {
+      const rr = await fetch(`${BASE}/reviews?limit=100&skip=0`, { headers: { Authorization: `Bearer ${tok?.access_token}`, Accept: 'application/json' }, cache: 'no-store' })
+      const d: any = await rr.json()
+      const arr = pickArray(d)
+      probes.pipeline = { httpOk: rr.ok, rawCount: arr.length, firstHasId: !!(arr[0]?._id || arr[0]?.id), firstHasListing: arr[0]?.listingId ?? arr[0]?.listing?._id ?? null, firstRating: arr[0]?.rating ?? arr[0]?.publicReview?.rating ?? arr[0]?.overallRating ?? null }
+    } catch (e: any) { probes.pipeline = { err: String(e) } }
     return NextResponse.json(probes)
   }
 
