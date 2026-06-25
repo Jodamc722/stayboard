@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         }
       }
       const exTrunc: Record<string, string> = {}
-      for (const k of Object.keys(examples)) exTrunc[k] = JSON.stringify(examples[k]).slice(0, 1500)
+      for (const k of Object.keys(examples)) exTrunc[k] = JSON.stringify(examples[k]).slice(0, 4000)
       return NextResponse.json({ apiCount, distinct: seen.size, total, withReply, needsReply: total - withReply, byChannel, rawSamples, sampleKeys, examples: exTrunc })
     }
 
