@@ -122,10 +122,11 @@ export default async function ChannelsPage() {
   }
 
   const totalBookings = reservations.length
-  const totalRevenue = [...agg.values()].reduce((s, a) => s + a.revenue, 0)
+  const aggValues = Array.from(agg.values())
+  const totalRevenue = aggValues.reduce((s, a) => s + a.revenue, 0)
 
   // Relative ADR baseline = portfolio-wide ADR (revenue / nights across active channels)
-  const totalNights = [...agg.values()].reduce((s, a) => s + a.nights, 0)
+  const totalNights = aggValues.reduce((s, a) => s + a.nights, 0)
   const portfolioADR = totalNights > 0 ? totalRevenue / totalNights : 0
 
   const currency = reservations.find(r => r.money_currency)?.money_currency || 'USD'
@@ -134,9 +135,9 @@ export default async function ChannelsPage() {
   // Revenue share 30 · Booking volume 20 · Relative ADR 15 · Low cancellation 15
   // Review rating 12 · Reply rate 8.  Where no reviews exist (e.g. Airbnb-only today),
   // the review portion is rebased onto the operational signals so the channel isn't penalised.
-  const maxBookings = Math.max(1, ...[...agg.values()].map(a => a.bookings))
+  const maxBookings = Math.max(1, ...aggValues.map(a => a.bookings))
 
-  const rows: Row[] = [...agg.entries()].map(([channel, a]) => {
+  const rows: Row[] = Array.from(agg.entries()).map(([channel, a]) => {
     const adr = a.nights > 0 ? a.revenue / a.nights : 0
     const shareBookings = totalBookings > 0 ? (a.bookings / totalBookings) * 100 : 0
     const shareRevenue = totalRevenue > 0 ? (a.revenue / totalRevenue) * 100 : 0
