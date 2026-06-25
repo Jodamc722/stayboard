@@ -88,7 +88,9 @@ export default async function ReservationsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const todayStr = new Date().toISOString().slice(0, 10)
+  // "Today" in the property's local timezone (Miami / America/New_York), NOT UTC — otherwise
+  // every check-in/checkout count is off by a day during evening hours.
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 
   // Upcoming first (>= today, ascending), then past (descending). Pull two sets to support tabbed UI.
   const [{ data: upcoming }, { data: past }, { data: sync }] = await Promise.all([
@@ -112,7 +114,7 @@ export default async function ReservationsPage() {
 
   // ── KPIs derived only from queried columns ────────────────────────────────
   const in7 = new Date(); in7.setDate(in7.getDate() + 7)
-  const in7Str = in7.toISOString().slice(0, 10)
+  const in7Str = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(in7)
   const isCanceled = (s?: string | null) => /cancel|declin/i.test(s || '')
 
   const checkInsToday = up.filter(r => r.check_in === todayStr && !isCanceled(r.status)).length
