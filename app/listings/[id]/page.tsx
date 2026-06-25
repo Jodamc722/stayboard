@@ -20,6 +20,28 @@ const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 /* ---------------- helpers: defensive extraction from raw ---------------- */
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
+// Pull ONLY the host's PUBLIC reply to a review from the raw Guesty object.
+// The stored `reply` column is unreliable (it sometimes captured the guest's PRIVATE
+// feedback). The host's public response lives in reviewReplies[] (or an explicit
+// host-response field) — guest private feedback is NEVER read here.
+function hostReplyFromRaw(raw: any): string | null {
+  if (!raw || typeof raw !== 'object') return null
+  const rr = raw.rawReview || raw.raw || {}
+  const arrays = [raw.reviewReplies, rr.reviewReplies, raw.review_replies, rr.review_replies].filter(Array.isArray)
+  for (const arr of arrays) {
+    for (const x of arr) {
+      const txt = x?.reply ?? x?.text ?? x?.body ?? x?.response ?? x?.reviewReply
+      const status = String(x?.status || '').toUpperCase()
+      if (txt && String(txt).trim() && (!x?.status || ['COMPLETED', 'PUBLISHED', 'SENT', 'DONE', 'APPROVED'].includes(status))) {
+        return String(txt).trim()
+      }
+    }
+  }
+  // Explicit host-response scalar fields only — deliberately excludes any private/guest field.
+  const hr = rr.host_response ?? rr.hostResponse ?? rr.owner_response ?? rr.ownerResponse ?? raw.hostResponse ?? raw.ownerResponse ?? null
+  return hr && String(hr).trim() ? String(hr).trim() : null
+}
+
 // Cancellation-policy friendliness: flexible/moderate convert + rank better than strict.
 function cancellationInfo(raw: any): { label: string; tier: 'flex' | 'mod' | 'strict' | 'unknown' } {
   const candidates = [
@@ -182,11 +204,15 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   // Reviews behind the health signal (the data points).
   const { data: revRows } = await sb
     .from('guesty_reviews')
-    .select('id, rating, content, channel, guest_name, created_at, has_reply, reply')
+    .select('id, rating, content, channel, guest_name, created_at, raw')
     .eq('listing_id', params.id)
     .order('created_at', { ascending: false })
     .limit(40)
-  const reviews = revRows ?? []
+  // Derive the genuine host PUBLIC reply from raw (never the guest's private feedback).
+  const reviews = (revRows ?? []).map((r: any) => {
+    const hostReply = hostReplyFromRaw(r.raw)
+    return { ...r, hostReply, has_reply: !!hostReply }
+  })
   const rated = reviews.filter((r: any) => r.rating != null)
   const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + Number(r.rating), 0) / rated.length) * 100) / 100 : null
 
@@ -279,10 +305,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${r.has_reply ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{r.has_reply ? 'Replied' : 'No reply'}</span>
                     </div>
                     {r.content && <div className="text-[13px] text-ink mt-1 leading-snug">{String(r.content).slice(0, 280)}</div>}
-                    {r.reply && String(r.reply).trim() && (
+                    {r.hostReply && (
                       <div className="mt-2 pl-2.5 border-l-2 border-brand-200 bg-brand-50/40 rounded-r py-1.5 pr-2">
-                        <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-0.5 inline-flex items-center gap-1"><MessageSquare size={10} /> Your response</div>
-                        <div className="text-[12px] text-ink leading-snug">{String(r.reply).slice(0, 400)}</div>
+                        <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-0.5 inline-flex items-center gap-1"><MessageSquare size={10} /> Your public response</div>
+                        <div className="text-[12px] text-ink leading-snug">{String(r.hostReply).slice(0, 400)}</div>
                       </div>
                     )}
                   </div>
