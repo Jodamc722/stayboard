@@ -378,7 +378,13 @@ export async function syncReviews(maxPages = 12): Promise<number> {
     const data = await api<{ results?: any[]; data?: any[]; reviews?: any[] } | any[]>(
       `/reviews?limit=100&skip=${skip}`
     )
-    const arr: any[] = Array.isArray(data) ? data : (data.results || data.data || data.reviews || [])
+    const dd: any = (data as any)?.data ?? data
+    const arr: any[] = Array.isArray(dd) ? dd
+      : Array.isArray(dd?.results) ? dd.results
+      : Array.isArray(dd?.reviews) ? dd.reviews
+      : Array.isArray((data as any)?.results) ? (data as any).results
+      : Array.isArray((data as any)?.reviews) ? (data as any).reviews
+      : []
     const rows = arr.map(mapReview).filter((r: any) => r.id && (r.content || r.rating != null))
     if (rows.length === 0) break
     const { error } = await sb.from('guesty_reviews').upsert(rows, { onConflict: 'id' })
