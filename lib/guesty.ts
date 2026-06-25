@@ -360,9 +360,10 @@ function mapReview(v: any) {
     rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
     rr.positive ?? rr.review_text ?? rr.content ??
     v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
+  // Host PUBLIC response ONLY — never the guest's private feedback or ambiguous guest fields.
   const replyText =
-    rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
-    v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
+    rr.host_response ?? rr.hostResponse ?? rr.owner_response ?? rr.ownerResponse ??
+    v.hostResponse ?? v.ownerResponse ?? null
   const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? v.listing?.id ?? null
   const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? v.from?.fullName ?? null
   const rawChannel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '')
@@ -370,8 +371,8 @@ function mapReview(v: any) {
   const replyFromArray = replies.length
     ? (replies[0]?.reply ?? replies[0]?.text ?? replies[0]?.reviewReply ?? replies[0]?.body ?? replies[0]?.response ?? null)
     : null
-  const finalReply = (replyText && String(replyText).trim()) ? replyText : replyFromArray
-  const hasReply = (Array.isArray(replies) && replies.length > 0) || !!(finalReply && String(finalReply).trim())
+  const finalReply = (replyFromArray && String(replyFromArray).trim()) ? replyFromArray : replyText
+  const hasReply = !!(finalReply && String(finalReply).trim())
   return {
     id:          v._id ?? v.id ?? v.externalReviewId ?? null,
     listing_id:  listingId,
