@@ -45,6 +45,7 @@ export async function GET(req: Request) {
     const { data: rows, error } = await sb
       .from('guesty_reviews')
       .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply')
+      .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString())
       .order('created_at', { ascending: false })
       .limit(2000)
 
