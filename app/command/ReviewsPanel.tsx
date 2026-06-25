@@ -57,6 +57,7 @@ export function ReviewsPanel() {
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [posted, setPosted] = useState<Record<string, boolean>>({})
+  const [postedAt, setPostedAt] = useState<Record<string, number>>({})
   const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({})
   const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
@@ -88,7 +89,7 @@ export function ReviewsPanel() {
     .sort((a, b) => sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating))
   const replied = (s.reviews || [])
     .filter(r => (r.hasReply || posted[r.id]) && matchQ(r))
-    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    .sort((a, b) => (postedAt[b.id] || 0) - (postedAt[a.id] || 0) || (b.created_at || '').localeCompare(a.created_at || ''))
   const selectedIds = needs.filter(r => selected[r.id])
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
@@ -132,7 +133,7 @@ export function ReviewsPanel() {
 
   async function post(r: Review) {
     setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
-    try { await postOne(r); setPosted(p => ({ ...p, [r.id]: true })) }
+    try { await postOne(r); setPosted(p => ({ ...p, [r.id]: true })); setPostedAt(pa => ({ ...pa, [r.id]: Date.now() })) }
     catch (e: any) { setErr(e?.message || String(e)) }
     finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
   }
@@ -144,7 +145,7 @@ export function ReviewsPanel() {
     try {
       for (const r of selectedIds) { try { if (await postOne(r)) done[r.id] = true } catch (e: any) { setErr(e?.message || String(e)) } }
     } finally {
-      setPosted(p => ({ ...p, ...done })); setSelected({}); setBulkBusy(false)
+      setPosted(p => ({ ...p, ...done })); setPostedAt(pa => ({ ...pa, ...Object.fromEntries(Object.keys(done).map(id => [id, Date.now()])) })); setSelected({}); setBulkBusy(false)
     }
   }
 
