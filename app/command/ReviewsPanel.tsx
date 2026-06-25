@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string }
@@ -75,15 +75,7 @@ export function ReviewsPanel() {
       .catch(e => setS({ loading: false, error: String(e) }))
   }, [])
 
-  // Auto-write the AI draft for every review that needs a reply, the moment they load — no clicking.
-  const didAutoDraft = useRef(false)
-  useEffect(() => {
-    if (didAutoDraft.current || s.loading) return
-    const list = (s.reviews || []).filter(r => !r.hasReply && !posted[r.id]).slice(0, 12)
-    if (!list.length) return
-    didAutoDraft.current = true
-    ;(async () => { setAllAi(true); for (let i = 0; i < list.length; i++) { await rewriteAI(list[i]); if (i < list.length - 1) await sleep(13000) } setAllAi(false) })()
-  }, [s.loading, s.reviews])
+  // Auto-drafting disabled: drafts are written on demand via the AI buttons below.
 
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
