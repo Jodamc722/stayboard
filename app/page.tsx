@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 
 // Roll unit-level building names up to their parent property.
-// e.g. "Botanica 6108" → "Botanica", "Oasis Mahogany" → "Oasis", "Arya 1704" → "Arya".
+// e.g. "Botanica 6108" â "Botanica", "Oasis Mahogany" â "Oasis", "Arya 1704" â "Arya".
 const PARENTS = ['Botanica', 'Oasis', 'Arya']
 const OASIS_UNITS = ['mahogany', 'royal palm', 'bougainvillea', 'bamboo', 'sapodilla', 'jasmine']
 function rollupBuilding(raw?: string | null): string {
@@ -55,24 +55,26 @@ export default async function HomePage() {
     { data: convos },
     { data: syncStatus },
   ] = await Promise.all([
-    supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_in', todayStr),
-    supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_out', todayStr),
-    // All listings — compute active using the "dead set" rule in app code.
+    supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_in', todayStr),
+    supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_out', todayStr),
+    // All listings â compute active using the "dead set" rule in app code.
     supabase.from('guesty_listings').select('id, status').limit(2000),
     // In-house now: check_in <= today < check_out.
     supabase.from('guesty_reservations')
       .select('id, status')
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .lte('check_in', todayStr).gt('check_out', todayStr)
       .limit(2000),
     supabase.from('guesty_reservations')
       .select('id, guest_name, listing_name, nights, status, money_total, money_currency')
-      .eq('check_in', todayStr).order('listing_name').limit(50),
+      .in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_in', todayStr).order('listing_name').limit(50),
     supabase.from('guesty_reservations')
       .select('id, guest_name, listing_name, nights, status, money_total, money_currency')
-      .eq('check_out', todayStr).order('listing_name').limit(50),
+      .in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_out', todayStr).order('listing_name').limit(50),
     // Revenue: reservations arriving in the next 7 days.
     supabase.from('guesty_reservations')
       .select('money_total, status, check_in')
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .gte('check_in', todayStr).lte('check_in', in7Str)
       .limit(2000),
     // Open work (open + in_progress).
@@ -161,7 +163,7 @@ export default async function HomePage() {
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Command home</h1>
           <p className="text-sm text-muted mt-1 flex items-center gap-1.5 flex-wrap">
             <span>{dateLabel}</span>
-            <span className="text-line">·</span>
+            <span className="text-line">Â·</span>
             <span className="inline-flex items-center gap-1">
               <Activity size={12} className="text-muted/70" /> Last sync {lastSyncLabel}
             </span>
@@ -170,7 +172,7 @@ export default async function HomePage() {
         <SyncNowButton />
       </header>
 
-      {/* Hero KPI band — 6 cards */}
+      {/* Hero KPI band â 6 cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-7">
         <Kpi label="Active units"     value={activeUnits}  Icon={Building2} />
         <Kpi label="In-house now"     value={inHouseNow}    Icon={Users} accent />
@@ -194,7 +196,7 @@ export default async function HomePage() {
                     <Avatar name={r.guest_name} />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-ink truncate text-sm">{r.guest_name || 'Guest'}</div>
-                      <div className="text-xs text-muted truncate">{r.listing_name} · {r.nights ?? '—'} nights</div>
+                      <div className="text-xs text-muted truncate">{r.listing_name} Â· {r.nights ?? 'â'} nights</div>
                     </div>
                     {r.money_total != null && (
                       <span className="text-sm font-semibold text-ink whitespace-nowrap tabular-nums">{money(r.money_total, r.money_currency)}</span>
@@ -219,7 +221,7 @@ export default async function HomePage() {
                     <Avatar name={r.guest_name} />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-ink truncate text-sm">{r.guest_name || 'Guest'}</div>
-                      <div className="text-xs text-muted truncate">{r.listing_name} · {r.nights ?? '—'} nights</div>
+                      <div className="text-xs text-muted truncate">{r.listing_name} Â· {r.nights ?? 'â'} nights</div>
                     </div>
                     {r.money_total != null && (
                       <span className="text-sm font-semibold text-ink whitespace-nowrap tabular-nums">{money(r.money_total, r.money_currency)}</span>
@@ -238,10 +240,10 @@ export default async function HomePage() {
             <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white/10 blur-2xl" />
             <div className="relative">
               <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold text-white/80">
-                <TrendingUp size={13} /> Revenue · next 7 days
+                <TrendingUp size={13} /> Revenue Â· next 7 days
               </div>
               <div className="text-4xl font-bold mt-2 leading-none tracking-tight tabular-nums">{compactMoney(rev7)}</div>
-              <div className="text-[11px] mt-2 text-white/75">Arriving {todayStr} → {in7Str}</div>
+              <div className="text-[11px] mt-2 text-white/75">Arriving {todayStr} â {in7Str}</div>
             </div>
           </div>
 
@@ -270,7 +272,7 @@ export default async function HomePage() {
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-ink truncate text-sm">{w.title || w.type || 'Request'}</div>
                       <div className="text-xs text-muted truncate flex items-center gap-1.5">
-                        <span>{rollupBuilding(w.building)}{w.unit ? ` · ${w.unit}` : ''}</span>
+                        <span>{rollupBuilding(w.building)}{w.unit ? ` Â· ${w.unit}` : ''}</span>
                         {w.due_at && (
                           <span className="inline-flex items-center gap-0.5">
                             <Clock size={10} /> {dueLabel(w.due_at)}
@@ -316,7 +318,7 @@ export default async function HomePage() {
                           <span className={`truncate text-sm ${unread ? 'font-semibold text-ink' : 'font-medium text-ink'}`}>{c.guest_name || 'Guest'}</span>
                           {c.channel && <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">{c.channel}</span>}
                         </div>
-                        <div className={`text-xs truncate ${unread ? 'text-ink' : 'text-muted'}`}>{c.last_message_preview || '—'}</div>
+                        <div className={`text-xs truncate ${unread ? 'text-ink' : 'text-muted'}`}>{c.last_message_preview || 'â'}</div>
                       </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         {c.last_message_at && <span className="text-[10px] text-muted whitespace-nowrap">{timeAgo(new Date(c.last_message_at))}</span>}
@@ -444,7 +446,7 @@ function Avatar({ name }: { name: string | null }) {
 /* ---------- Helpers ---------- */
 
 function money(v: any, currency?: string | null) {
-  const n = Number(v); if (isNaN(n)) return '—'
+  const n = Number(v); if (isNaN(n)) return 'â'
   try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 0 }).format(n) }
   catch { return `$${n.toLocaleString()}` }
 }
