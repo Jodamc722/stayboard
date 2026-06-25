@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     .eq('id', 'singleton')
     .maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
-  if (!valid) return NextResponse.json({ error: 'Guesty token is refreshing — try again in a moment.' }, { status: 503 })
+  if (!valid) return NextResponse.json({ error: 'Guesty token is refreshing â try again in a moment.' }, { status: 503 })
 
   const r = await fetch(`${BASE}/reviews/${encodeURIComponent(reviewId)}/reply`, {
     method: 'PUT',
@@ -37,5 +37,10 @@ export async function POST(req: NextRequest) {
   })
   const body = await r.text().catch(() => '')
   if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${body.slice(0, 200)}` }, { status: 502 })
-  return NextResponse.json({ ok: true })
+
+  // Persist the reply locally so it shows immediately and review counts stay accurate,
+  // regardless of whether Guesty echoes the reply text back on the next sync.
+  await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true }).eq('id', reviewId)
+
+  return NextResponse.json({ ok: true, reply: String(reviewReply) })
 }
