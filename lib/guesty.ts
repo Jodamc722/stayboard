@@ -370,7 +370,7 @@ function mapReview(v: any) {
     v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
   // Host PUBLIC response ONLY — never the guest's private feedback or ambiguous guest fields.
   const replyText =
-    rr.host_response ?? rr.hostResponse ?? rr.owner_response ?? rr.ownerResponse ??
+    rr.host_response ?? rr.hostResponse ?? rr.owner_response ?? rr.ownerResponse ?? rr.response ?? rr.management_response ??
     v.hostResponse ?? v.ownerResponse ?? null
   const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? v.listing?.id ?? null
   const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? v.from?.fullName ?? null
@@ -381,11 +381,30 @@ function mapReview(v: any) {
     : null
   const finalReply = (replyFromArray && String(replyFromArray).trim()) ? replyFromArray : replyText
   const hasReply = !!(finalReply && String(finalReply).trim())
+  // Channel-specific extraction: Booking.com nests content under content.{headline,positive,negative}
+  // and rating under scoring.review_score (1-10). Vrbo uses body.value + starRatingOverall (1-5).
+  let contentStr: string = (typeof content === 'string' && content.trim()) ? content : ''
+  if (!contentStr && rr.content && typeof rr.content === 'object') {
+    contentStr = [rr.content.headline, rr.content.positive, rr.content.negative].filter((x: any) => x && String(x).trim()).join(' - ')
+  }
+  if (!contentStr) {
+    const vBody = rr.body && typeof rr.body === 'object' ? rr.body.value : rr.body
+    const vTitle = rr.title && typeof rr.title === 'object' ? rr.title.value : rr.title
+    contentStr = [typeof vTitle === 'string' ? vTitle : '', typeof vBody === 'string' ? vBody : ''].filter((x: any) => x && String(x).trim()).join(': ')
+  }
+  let ratingNum: number | null = typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null)
+  if (ratingNum == null) {
+    if (rr.scoring?.review_score != null) ratingNum = Number(rr.scoring.review_score) / 2
+    else { const alt = rr.starRatingOverall ?? rr.starRating ?? rr.overallSatisfaction ?? null; ratingNum = alt != null ? Number(alt) : null }
+  }
+  if (ratingNum != null && Number.isNaN(ratingNum)) ratingNum = null
+  if (ratingNum != null) ratingNum = Math.round(ratingNum * 10) / 10
+
   return {
     id:          v._id ?? v.id ?? v.externalReviewId ?? null,
     listing_id:  listingId,
-    rating:      typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null),
-    content:     String(typeof content === 'string' ? content : '').slice(0, 600),
+    rating:      ratingNum,
+    content:     String(contentStr || '').slice(0, 600),
     channel:     cleanChannel(rawChannel),
     channel_raw: rawChannel || null,
     guest_name:  guest,
