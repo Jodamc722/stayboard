@@ -97,13 +97,13 @@ export default async function ReservationsPage() {
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
       .gte('check_out', todayStr)
       .order('check_in', { ascending: true })
-      .limit(500),
+      .limit(3000),
     supabase
       .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
       .lt('check_out', todayStr)
       .order('check_in', { ascending: false })
-      .limit(500),
+      .limit(3000),
     supabase.from('guesty_sync_status').select('last_sync_at, last_error, items_synced').eq('entity', 'reservations').maybeSingle()
   ])
 
