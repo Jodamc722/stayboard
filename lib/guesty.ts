@@ -187,14 +187,21 @@ function mapConversation(c: any) {
 }
 
 function mapMessage(conversationId: string, m: any) {
-  const sender = m.module === 'system' ? 'system' : (m.from?.type === 'guest' ? 'guest' : 'host')
+  const fromType = (m.from?.type || m.author?.type || '').toLowerCase()
+  const sender =
+    (m.module === 'system' || fromType === 'system') ? 'system'
+    : (fromType === 'guest' || m.isIncoming === true) ? 'guest'
+    : 'host'
+  const body = m.body ?? m.text ?? m.message ?? m.content ?? m.rawMessage?.text ?? ''
+  const sentAt = m.createdAt ?? m.sentAt ?? m.timestamp ?? m.date ?? null
+  const id = m._id ?? m.id ?? `${conversationId}:${sentAt ?? ''}:${String(body || '').slice(0, 40)}`
   return {
-    id:              m._id || m.id,
+    id,
     conversation_id: conversationId,
     sender,
-    sender_name:     m.from?.fullName || (sender === 'system' ? 'System' : null),
-    body:            m.body || m.text || null,
-    sent_at:         m.createdAt || m.sentAt || null,
+    sender_name:     m.from?.fullName ?? m.author?.fullName ?? (sender === 'system' ? 'System' : null),
+    body:            body || null,
+    sent_at:         sentAt,
     attachments:     Array.isArray(m.attachments) ? m.attachments : null,
     raw:             m
   }
@@ -317,10 +324,12 @@ export async function syncConversations(): Promise<number> {
 
 export async function syncMessages(conversationId: string): Promise<number> {
   const sb = supabaseAdmin()
-  const data = await api<{ results: any[] }>(
+  const data = await api<any>(
     `/communication/conversations/${encodeURIComponent(conversationId)}/posts?limit=200`
   )
-  const rows = (data.results || []).map((m: any) => mapMessage(conversationId, m))
+  const dd = data?.data ?? data
+  const arr: any[] = Array.isArray(dd) ? dd : (dd?.results ?? dd?.posts ?? data?.results ?? data?.posts ?? [])
+  const rows = arr.map((m: any) => mapMessage(conversationId, m))
   if (rows.length) {
     const { error } = await sb.from('guesty_messages').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert messages (${conversationId}): ${error.message}`)
@@ -359,10 +368,10 @@ function mapReview(v: any) {
   const rawChannel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '')
   const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : (Array.isArray(rr.reviewReplies) ? rr.reviewReplies : (Array.isArray(rr.review_replies) ? rr.review_replies : []))
   const replyFromArray = replies.length
-    ? (replies[0]?.text ?? replies[0]?.body ?? replies[0]?.response ?? null)
+    ? (replies[0]?.reply ?? replies[0]?.text ?? replies[0]?.reviewReply ?? replies[0]?.body ?? replies[0]?.response ?? null)
     : null
   const finalReply = (replyText && String(replyText).trim()) ? replyText : replyFromArray
-  const hasReply = !!(finalReply && String(finalReply).trim())
+  const hasReply = (Array.isArray(replies) && replies.length > 0) || !!(finalReply && String(finalReply).trim())
   return {
     id:          v._id ?? v.id ?? v.externalReviewId ?? null,
     listing_id:  listingId,
