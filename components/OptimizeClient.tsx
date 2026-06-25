@@ -1,7 +1,8 @@
 'use client'
 import { useMemo, useState } from 'react'
 import {
-  Search, Sparkles, Wand2, Copy, Check, Building2, BedDouble, Bath, Users, AlertTriangle,
+  Search, Sparkles, Wand2, Copy, Check, Building2, BedDouble, Bath, Users,
+  AlertTriangle, ListChecks, Info,
 } from 'lucide-react'
 
 type Listing = {
@@ -19,11 +20,38 @@ type Listing = {
   status: string | null
 }
 
+type Section = { label: string; text: string }
 type Suggestion = {
+  platform: 'airbnb' | 'vrbo' | 'expedia' | 'booking'
+  platformLabel: string
+  mode: 'copy' | 'structured'
+  titleField: string
+  titleMax: number
+  descField: string
+  descMax: number
   title: string
   description: string
+  sections: Section[]
   bullets: string[]
+  checklist: string[]
   rationale: string
+  warnings: string[]
+}
+
+type PlatformKey = 'airbnb' | 'vrbo' | 'expedia' | 'booking'
+const PLATFORMS: { key: PlatformKey; label: string }[] = [
+  { key: 'airbnb', label: 'Airbnb' },
+  { key: 'vrbo', label: 'Vrbo' },
+  { key: 'expedia', label: 'Expedia' },
+  { key: 'booking', label: 'Booking.com' },
+]
+
+// Honest, per-platform context shown under the picker.
+const PLATFORM_NOTE: Record<PlatformKey, string> = {
+  airbnb: 'Title capped at 50 characters; the description summary at 500. I also draft Airbnb’s “The space”, “Guest access” and “Neighborhood” sections.',
+  vrbo: 'Headline 20–80 characters; description 400–10,000. No URLs, phone, email or addresses — Vrbo rejects them.',
+  expedia: 'For a Guesty-connected manager, your Expedia listing is your Vrbo listing (syndicated via Expedia’s network), so it follows Vrbo’s rules.',
+  booking: 'Booking.com auto-generates descriptions from structured fields — you can’t push prose. So I optimize the property name and give you a content-completeness checklist instead.',
 }
 
 function nameOf(l: Listing) {
@@ -33,6 +61,7 @@ function nameOf(l: Listing) {
 export function OptimizeClient({ listings }: { listings: Listing[] }) {
   const [q, setQ] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [platform, setPlatform] = useState<PlatformKey>('airbnb')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
@@ -60,6 +89,12 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
     setError(null)
   }
 
+  function choosePlatform(p: PlatformKey) {
+    setPlatform(p)
+    setSuggestion(null)
+    setError(null)
+  }
+
   async function optimize() {
     if (!selected || busy) return
     setBusy(true); setError(null); setSuggestion(null)
@@ -67,7 +102,7 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
       const res = await fetch('/api/optimize-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId: selected.id }),
+        body: JSON.stringify({ listingId: selected.id, platform }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
@@ -133,12 +168,12 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
             </span>
             <h3 className="mt-4 text-lg font-bold text-ink tracking-tight">Pick a listing to optimize</h3>
             <p className="mt-1.5 text-sm text-muted max-w-md mx-auto">
-              Choose any active listing on the left. I&apos;ll suggest an OTA-optimized title and description using only that listing&apos;s real data.
+              Choose any active listing, then a target OTA. I&apos;ll write copy tuned to that platform&apos;s real rules — using only the listing&apos;s real data.
             </p>
           </div>
         ) : (
           <div className="space-y-5">
-            {/* Current listing card */}
+            {/* Current listing card + platform picker */}
             <div className="rounded-2xl border border-line bg-white p-5">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
@@ -160,6 +195,28 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                   {busy ? 'Optimizing…' : 'Optimize with AI'}
                 </button>
               </div>
+
+              {/* Target OTA picker */}
+              <div className="mt-4 pt-4 border-t border-line">
+                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Target OTA</div>
+                <div className="inline-flex flex-wrap gap-1.5">
+                  {PLATFORMS.map(p => {
+                    const active = p.key === platform
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => choosePlatform(p.key)}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink hover:border-brand-200'}`}
+                      >
+                        {p.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-[12px] text-muted mt-2 flex items-start gap-1.5 max-w-2xl">
+                  <Info size={13} className="mt-0.5 flex-shrink-0" /> {PLATFORM_NOTE[platform]}
+                </p>
+              </div>
             </div>
 
             {error && (
@@ -170,65 +227,129 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
 
             {busy && !suggestion && (
               <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">
-                Writing an OTA-optimized title &amp; description…
+                Optimizing for {PLATFORMS.find(p => p.key === platform)?.label}…
               </div>
             )}
 
-            {suggestion && (
-              <div className="space-y-4">
-                {/* Title before/after */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="rounded-2xl border border-line bg-white p-4">
-                    <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">Before</div>
-                    <div className="text-sm text-ink break-words">{nameOf(selected)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1"><Sparkles size={11} /> Optimized title</div>
-                      <CopyBtn label="title" text={suggestion.title} copied={copied} onCopy={copy} />
-                    </div>
-                    <div className="text-sm font-semibold text-ink break-words">{suggestion.title || '—'}</div>
-                    <div className="text-[11px] text-muted mt-1">{suggestion.title.length} chars</div>
-                  </div>
-                </div>
-
-                {/* Description */}
-                <div className="rounded-2xl border border-brand-200 bg-white p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1"><Sparkles size={11} /> Optimized description</div>
-                    <CopyBtn label="description" text={suggestion.description} copied={copied} onCopy={copy} />
-                  </div>
-                  <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{suggestion.description || '—'}</div>
-                </div>
-
-                {/* Bullets */}
-                {suggestion.bullets.length > 0 && (
-                  <div className="rounded-2xl border border-line bg-white p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Highlight bullets</div>
-                      <CopyBtn label="bullets" text={suggestion.bullets.map(b => `• ${b}`).join('\n')} copied={copied} onCopy={copy} />
-                    </div>
-                    <ul className="space-y-1">
-                      {suggestion.bullets.map((b, i) => (
-                        <li key={i} className="text-sm text-ink flex items-start gap-1.5">
-                          <span className="text-brand-600 mt-0.5">▸</span> {b}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Rationale */}
-                {suggestion.rationale && (
-                  <div className="rounded-xl border border-line bg-app/50 px-4 py-3 text-[12px] text-muted">
-                    <span className="font-semibold text-ink">Why this is stronger: </span>{suggestion.rationale}
-                  </div>
-                )}
-              </div>
-            )}
+            {suggestion && <SuggestionView s={suggestion} before={nameOf(selected)} copied={copied} onCopy={copy} />}
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function SuggestionView({ s, before, copied, onCopy }: {
+  s: Suggestion; before: string; copied: string | null; onCopy: (l: string, t: string) => void
+}) {
+  const titleOver = s.title.length > s.titleMax
+  return (
+    <div className="space-y-4">
+      {/* Warnings */}
+      {s.warnings.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800">
+          <div className="font-semibold flex items-center gap-1.5 mb-1"><AlertTriangle size={14} /> Before you publish</div>
+          <ul className="space-y-0.5">
+            {s.warnings.map((w, i) => <li key={i} className="flex items-start gap-1.5"><span className="mt-0.5">•</span> {w}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* Title before/after */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">Before</div>
+          <div className="text-sm text-ink break-words">{before}</div>
+        </div>
+        <div className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1">
+              <Sparkles size={11} /> {s.platformLabel} {s.titleField.toLowerCase()}
+            </div>
+            <CopyBtn label="title" text={s.title} copied={copied} onCopy={onCopy} />
+          </div>
+          <div className="text-sm font-semibold text-ink break-words">{s.title || '—'}</div>
+          <div className={`text-[11px] mt-1 ${titleOver ? 'text-rose-600 font-semibold' : 'text-muted'}`}>
+            {s.title.length} / {s.titleMax} chars{titleOver ? ' · over limit' : ''}
+          </div>
+        </div>
+      </div>
+
+      {/* Description (copy mode) */}
+      {s.mode === 'copy' && (
+        <div className="rounded-2xl border border-brand-200 bg-white p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1">
+              <Sparkles size={11} /> {s.platformLabel} {s.descField.toLowerCase()}
+            </div>
+            <CopyBtn label="description" text={s.description} copied={copied} onCopy={onCopy} />
+          </div>
+          <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{s.description || '—'}</div>
+          {s.descMax > 0 && (
+            <div className={`text-[11px] mt-2 ${s.description.length > s.descMax ? 'text-rose-600 font-semibold' : 'text-muted'}`}>
+              {s.description.length} / {s.descMax} chars
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Airbnb structured sections */}
+      {s.sections.length > 0 && (
+        <div className="grid grid-cols-1 gap-3">
+          {s.sections.map((sec, i) => (
+            <div key={i} className="rounded-2xl border border-line bg-white p-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{sec.label}</div>
+                <CopyBtn label={`sec-${i}`} text={sec.text} copied={copied} onCopy={onCopy} />
+              </div>
+              <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{sec.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Booking.com content checklist (structured mode) */}
+      {s.mode === 'structured' && s.checklist.length > 0 && (
+        <div className="rounded-2xl border border-brand-200 bg-white p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1">
+              <ListChecks size={12} /> Content-completeness checklist
+            </div>
+            <CopyBtn label="checklist" text={s.checklist.map(b => `• ${b}`).join('\n')} copied={copied} onCopy={onCopy} />
+          </div>
+          <ul className="space-y-1.5">
+            {s.checklist.map((b, i) => (
+              <li key={i} className="text-sm text-ink flex items-start gap-2">
+                <span className="mt-0.5 text-brand-600 flex-shrink-0"><Check size={14} /></span> {b}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Highlight bullets */}
+      {s.bullets.length > 0 && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Highlight bullets</div>
+            <CopyBtn label="bullets" text={s.bullets.map(b => `• ${b}`).join('\n')} copied={copied} onCopy={onCopy} />
+          </div>
+          <ul className="space-y-1">
+            {s.bullets.map((b, i) => (
+              <li key={i} className="text-sm text-ink flex items-start gap-1.5">
+                <span className="text-brand-600 mt-0.5">▸</span> {b}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Rationale */}
+      {s.rationale && (
+        <div className="rounded-xl border border-line bg-app/50 px-4 py-3 text-[12px] text-muted">
+          <span className="font-semibold text-ink">Why this is stronger: </span>{s.rationale}
+        </div>
+      )}
     </div>
   )
 }
