@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
-import { Building2, BedDouble, Bath, Users, MapPin, Tag } from 'lucide-react'
+import { Building2, BedDouble, Bath, Users, MapPin, Tag, ArrowRight } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -82,7 +83,9 @@ export default async function ListingsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {sorted.map((l: any) => (
-            <PropertyCard key={l.id} l={l} />
+            <Link key={l.id} href={`/listings/${l.id}`} prefetch={false} className="block focus:outline-none focus:ring-2 focus:ring-brand-200 rounded-2xl">
+              <PropertyCard l={l} />
+            </Link>
           ))}
         </div>
       )}
@@ -101,7 +104,7 @@ function PropertyCard({ l }: { l: any }) {
   const amenities: string[] = Array.isArray(l.amenities) ? l.amenities : []
 
   return (
-    <section className={`rounded-2xl border border-line bg-white overflow-hidden flex flex-col ${dead ? 'opacity-70' : ''}`}>
+    <section className={`group rounded-2xl border border-line bg-white overflow-hidden flex flex-col h-full transition-all hover:border-brand-300 hover:shadow-soft ${dead ? 'opacity-70' : ''}`}>
       <div className="px-4 py-3 border-b border-line">
         <div className="flex items-start justify-between gap-2">
           <h2 className={`font-semibold text-ink text-sm leading-snug ${dead ? 'line-through text-muted' : ''}`}>
@@ -160,6 +163,12 @@ function PropertyCard({ l }: { l: any }) {
             )}
           </div>
         )}
+      </div>
+
+      {/* Footer affordance */}
+      <div className="px-4 py-2 border-t border-line flex items-center justify-between text-[11px] font-medium text-muted group-hover:text-brand-700 transition-colors">
+        <span>Content, scores & settings</span>
+        <ArrowRight size={13} className="group-hover:translate-x-0.5 transition-transform" />
       </div>
     </section>
   )
