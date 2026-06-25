@@ -342,13 +342,22 @@ function cleanChannel(rawChannel: string): string {
 }
 
 function mapReview(v: any) {
-  const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? null
-  const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
-  const replyText = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
-  const listingId = v.listingId ?? v.listing?._id ?? v.listing?.id ?? null
-  const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? null
-  const rawChannel = String(v.channelId ?? v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '')
-  const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : []
+  const rr = v.rawReview || v.raw || {}
+  const rating =
+    v.rating ?? v.overallRating ??
+    rr.overall_rating ?? rr.overallRating ?? rr.rating ?? rr.score ?? rr.average_score ??
+    v.publicReview?.rating ?? null
+  const content =
+    rr.public_review ?? rr.publicReview ?? rr.comments ?? rr.review ?? rr.text ??
+    rr.positive ?? rr.review_text ?? rr.content ??
+    v.publicReview?.text ?? v.content ?? v.text ?? v.comments ?? ''
+  const replyText =
+    rr.host_response ?? rr.response ?? rr.owner_response ?? rr.reply ?? rr.private_feedback ??
+    v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
+  const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? v.listing?.id ?? null
+  const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? v.from?.fullName ?? null
+  const rawChannel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '')
+  const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : (Array.isArray(rr.reviewReplies) ? rr.reviewReplies : (Array.isArray(rr.review_replies) ? rr.review_replies : []))
   const replyFromArray = replies.length
     ? (replies[0]?.text ?? replies[0]?.body ?? replies[0]?.response ?? null)
     : null
@@ -362,7 +371,7 @@ function mapReview(v: any) {
     channel:     cleanChannel(rawChannel),
     channel_raw: rawChannel || null,
     guest_name:  guest,
-    created_at:  v.createdAt ?? v.date ?? v.submittedAt ?? null,
+    created_at:  v.createdAt ?? rr.created_at ?? v.date ?? v.submittedAt ?? null,
     has_reply:   hasReply,
     reply:       finalReply ? String(finalReply) : null,
     raw:         v
