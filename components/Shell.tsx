@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase-browser'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star,
-  Share2, Sparkles
+  Share2, Sparkles, TrendingUp
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -43,6 +43,7 @@ const SECTIONS: {
     items: [
       { to: '/health',   label: 'Health Score', Icon: Activity },
       { to: '/channels', label: 'Channels',     Icon: Share2 },
+      { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
     ],
   },
   {
