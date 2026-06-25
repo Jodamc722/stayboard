@@ -397,7 +397,7 @@ function mapReview(v: any) {
 }
 
 // Reviews — paginate /reviews and upsert into the dedicated guesty_reviews table.
-export async function syncReviews(maxPages = 40): Promise<number> {
+export async function syncReviews(maxPages = 50): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
   for (let page = 0; page < maxPages; page++) {
@@ -413,10 +413,12 @@ export async function syncReviews(maxPages = 40): Promise<number> {
       : Array.isArray((data as any)?.reviews) ? (data as any).reviews
       : []
     const rows = arr.map(mapReview).filter((r: any) => r.id && (r.content || r.rating != null))
-    if (rows.length === 0) break
-    const { error } = await sb.from('guesty_reviews').upsert(rows, { onConflict: 'id' })
-    if (error) throw new Error(`upsert reviews: ${error.message}`)
-    total += rows.length
+    if (arr.length === 0) break
+    if (rows.length) {
+      const { error } = await sb.from('guesty_reviews').upsert(rows, { onConflict: 'id' })
+      if (error) throw new Error(`upsert reviews: ${error.message}`)
+      total += rows.length
+    }
     if (arr.length < 100) break
   }
   await recordSync('reviews', total)
