@@ -5,10 +5,10 @@ import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Wren
 
 type Row = {
   id: string; name: string; building: string | null; unit: string | null
-  score: number; band: 'good' | 'watch' | 'risk' | 'neutral'; unrated?: boolean; actions?: string[]
+  score: number | null; band: 'good' | 'watch' | 'risk' | 'neutral'; unrated?: boolean; actions?: string[]
   avgRating: number | null; reviewCount: number; ratedCount: number
   responseRate: number | null; recurring: string[]; topIssue: string | null; openWork: number
-  breakdown: { review: number; response: number; glitch: number; content: number; ops: number }
+  breakdown: { review: number; volume: number; response: number; glitch: number; content: number; ops: number }
 }
 type Data = { summary: any; listings: Row[]; dataPending: string[]; error?: string }
 
@@ -38,8 +38,8 @@ export default function HealthPage() {
       const s = q.toLowerCase()
       r = r.filter(x => x.name.toLowerCase().includes(s) || (x.building || '').toLowerCase().includes(s) || (x.topIssue || '').toLowerCase().includes(s))
     }
-    if (sort === 'worst') r.sort((a, b) => a.score - b.score)
-    if (sort === 'best') r.sort((a, b) => b.score - a.score)
+    if (sort === 'worst') r.sort((a, b) => (a.score == null ? 1 : 0) - (b.score == null ? 1 : 0) || (a.score ?? 0) - (b.score ?? 0))
+    if (sort === 'best') r.sort((a, b) => (a.score == null ? 1 : 0) - (b.score == null ? 1 : 0) || (b.score ?? 0) - (a.score ?? 0))
     if (sort === 'reviews') r.sort((a, b) => b.reviewCount - a.reviewCount)
     if (sort === 'response') r.sort((a, b) => (a.responseRate ?? 999) - (b.responseRate ?? 999))
     return r
@@ -135,12 +135,13 @@ export default function HealthPage() {
 
                   {isOpen && (
                     <div className="px-4 pb-4 pt-1 bg-app/40">
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
-                        <Bar label="Reviews" Icon={Star} value={r.breakdown.review} max={35} />
-                        <Bar label="Response" Icon={MessageSquare} value={r.breakdown.response} max={20} />
-                        <Bar label="Issue-free" Icon={AlertTriangle} value={r.breakdown.glitch} max={20} />
-                        <Bar label="Content" Icon={Info} value={r.breakdown.content} max={15} />
-                        <Bar label="Ops load" Icon={Wrench} value={r.breakdown.ops} max={10} />
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+                        <Bar label="Rating" Icon={Star} value={r.breakdown.review} max={40} />
+                        <Bar label="Volume" Icon={MessageSquare} value={r.breakdown.volume} max={15} />
+                        <Bar label="Response" Icon={MessageSquare} value={r.breakdown.response} max={15} />
+                        <Bar label="Issue-free" Icon={AlertTriangle} value={r.breakdown.glitch} max={15} />
+                        <Bar label="Content" Icon={Info} value={r.breakdown.content} max={10} />
+                        <Bar label="Ops load" Icon={Wrench} value={r.breakdown.ops} max={5} />
                       </div>
                       <div className="text-[12px] text-muted flex flex-wrap gap-x-4 gap-y-1">
                         <span>{r.ratedCount} rated of {r.reviewCount} reviews</span>
@@ -167,7 +168,7 @@ export default function HealthPage() {
           {/* Model note */}
           <div className="mt-4 rounded-xl border border-line bg-white px-4 py-3 text-[12px] text-muted">
             <div className="flex items-center gap-1.5 font-semibold text-ink mb-1"><TrendingUp size={13} /> How the score works</div>
-            Weighted from live data: <b className="text-ink">Reviews 35</b> (recency-weighted rating) · <b className="text-ink">Response 20</b> · <b className="text-ink">Issue-free 20</b> (recurring-complaint penalty) · <b className="text-ink">Content 15</b> · <b className="text-ink">Ops load 10</b>.
+            Weighted from live data: <b className="text-ink">Avg rating 40</b> (recency-weighted) · <b className="text-ink">Review volume 15</b> · <b className="text-ink">Response 15</b> · <b className="text-ink">Issue-free 15</b> (recurring-complaint penalty) · <b className="text-ink">Content 10</b> · <b className="text-ink">Ops load 5</b>. Units with no reviews are <b className="text-ink">Unranked</b> (—), not scored.
             {data.dataPending?.length ? <> Coming online with deeper Guesty sync: {data.dataPending.join(', ')}.</> : null}
           </div>
         </>
@@ -187,9 +188,9 @@ function Kpi({ label, value, dot, accent }: { label: string; value: any; dot?: s
   )
 }
 
-function ScorePill({ score, band }: { score: number; band: 'good' | 'watch' | 'risk' | 'neutral' }) {
+function ScorePill({ score, band }: { score: number | null; band: 'good' | 'watch' | 'risk' | 'neutral' }) {
   const b = BAND[band]
-  return <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ${b.bg} ${b.text}`}>{score}</span>
+  return <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ${b.bg} ${b.text}`} title={score == null ? 'Unranked - no reviews yet' : undefined}>{score == null ? '—' : score}</span>
 }
 
 function Seg<T extends string>({ value, set, opts }: { value: T; set: (v: T) => void; opts: [T, string][] }) {
