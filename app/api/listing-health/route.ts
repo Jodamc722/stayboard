@@ -130,8 +130,9 @@ export async function GET() {
     const now = Date.now()
     const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 
+    const SKIP_BUILDINGS = ['waves'] // deactivated buildings
     const scored = (listings ?? [])
-      .filter((l: any) => !DEAD.includes(String(l.status || '').toLowerCase()))
+      .filter((l: any) => !DEAD.includes(String(l.status || '').toLowerCase()) && !SKIP_BUILDINGS.includes(String(l.building || '').trim().toLowerCase()))
       .map((l: any) => {
         const revs = byListing.get(l.id) || []
 
@@ -170,14 +171,19 @@ export async function GET() {
         const topIssue = Object.entries(themeHits).sort((a, b) => b[1] - a[1])[0]?.[0] || null
 
         // ---- Subscores ----
-        // Review quality (35): 4.0 -> 0, 4.9 -> full. Unrated listings get a neutral 60%.
-        const reviewSub = avg == null ? 35 * 0.6 : Math.max(0, Math.min(1, (avg - 4.0) / 0.9)) * 35
-        // Response rate (20). Unrated/no-reviews neutral 60%.
-        const respSub = respRate == null ? 20 * 0.6 : respRate * 20
-        // Glitch freedom (20): start full, -5 per recurring theme, -1.5 per single mention.
+        // Components only score when there is real data to justify them. With no reviews the
+        // review / response / issue signals are EXCLUDED (no phantom positive credit) so the
+        // listing reads NEUTRAL rather than artificially healthy.
+        const hasReviews = revs.length > 0
+        const parts: { v: number; max: number }[] = []
+        const reviewSub = (hasReviews && avg != null) ? Math.max(0, Math.min(1, (avg - 4.0) / 0.9)) * 35 : 0
+        if (hasReviews && avg != null) parts.push({ v: reviewSub, max: 35 })
+        const respSub = (hasReviews && respRate != null) ? respRate * 20 : 0
+        if (hasReviews && respRate != null) parts.push({ v: respSub, max: 20 })
         const penalty = Math.min(20, recurring.length * 5 + singles.length * 1.5)
-        const glitchSub = 20 - penalty
-        // Content completeness (15): 7 checks.
+        const glitchSub = hasReviews ? 20 - penalty : 0
+        if (hasReviews) parts.push({ v: glitchSub, max: 20 })
+        // Content completeness (15): always measurable from listing fields.
         const amen = Array.isArray(l.amenities) ? l.amenities.length : 0
         const checks = [
           !!(l.title || l.nickname),
@@ -189,11 +195,24 @@ export async function GET() {
           !!l.building,
         ]
         const contentSub = (checks.filter(Boolean).length / checks.length) * 15
+        parts.push({ v: contentSub, max: 15 })
         // Operational load (10): inverse of weighted open work on the building.
         const openW = l.building ? (openByBuilding[(l.building || '').trim()] || 0) : 0
         const opsSub = Math.max(0, 10 - Math.min(10, openW * 2))
+        parts.push({ v: opsSub, max: 10 })
+        // Normalise over only the weight we actually have data for.
+        const gotMax = parts.reduce((s, p) => s + p.max, 0)
+        const gotVal = parts.reduce((s, p) => s + p.v, 0)
+        const score = gotMax > 0 ? Math.round((gotVal / gotMax) * 100) : 50
 
-        const score = Math.round(reviewSub + respSub + glitchSub + contentSub + opsSub)
+        // ---- Action plan (derived from this listing's own data) ----
+        const actions: string[] = []
+        recurring.forEach((th) => actions.push('Recurring "' + th + '" complaints - schedule a targeted fix and QA inspection.'))
+        if (hasReviews && respRate != null && respRate < 0.8) actions.push('Reply faster - ' + replied + '/' + revs.length + ' reviews answered (' + Math.round(respRate * 100) + '%). Clear the backlog.')
+        if (hasReviews && avg != null && avg < 4.6) actions.push('Rating ' + avg.toFixed(2) + '/5 is below the 4.6 target - address the top guest issues to lift it.')
+        if (contentSub < 12) actions.push('Complete the listing content (amenities, beds/baths, city) to improve OTA conversion.')
+        if (openW > 0) actions.push('Close ' + openW + ' weighted open maintenance item(s) on this building.')
+        if (!hasReviews) actions.push('No reviews yet - drive first stays and request reviews to start building OTA ranking.')
 
         return {
           id: l.id,
@@ -201,7 +220,9 @@ export async function GET() {
           building: l.building || null,
           unit: l.unit || null,
           score,
-          band: score >= 80 ? 'good' : score >= 60 ? 'watch' : 'risk',
+          band: !hasReviews ? 'neutral' : score >= 80 ? 'good' : score >= 60 ? 'watch' : 'risk',
+          unrated: !hasReviews,
+          actions,
           avgRating: avg != null ? Math.round(avg * 100) / 100 : null,
           reviewCount: revs.length,
           ratedCount,
@@ -227,6 +248,8 @@ export async function GET() {
       atRisk: scored.filter((s) => s.band === 'risk').length,
       watch: scored.filter((s) => s.band === 'watch').length,
       good: scored.filter((s) => s.band === 'good').length,
+      neutral: scored.filter((s) => s.band === 'neutral').length,
+      unrated: scored.filter((s) => s.unrated).length,
       avgResponse: withReviews.length ? Math.round(withReviews.reduce((s, x) => s + (x.responseRate || 0), 0) / withReviews.length) : null,
       reviewsAnalyzed: reviews.length,
       warming: !valid,
