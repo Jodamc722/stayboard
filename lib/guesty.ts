@@ -253,9 +253,9 @@ export async function syncReservations(maxPages = 40, since: string | null = nul
   // from 45 days ago onward — sorted by check-in, so current/upcoming bookings are ALWAYS captured
   // regardless of when they were last updated (a stale in-house booking would otherwise be pushed
   // past the page cap by more-recently-updated records). Incremental keeps using lastUpdatedAt.
-  const windowIso = new Date(Date.now() - 45 * 86_400_000).toISOString()
+  const windowIso = new Date(Date.now() - 3 * 86_400_000).toISOString()
   const filter = since ? sinceFilter(since) : `&filters=${encodeURIComponent(JSON.stringify([{ field: 'checkOut', operator: '$gte', value: windowIso }]))}`
-  const sort = since ? '-lastUpdatedAt' : 'checkIn'
+  const sort = since ? '-lastUpdatedAt' : 'checkOut'
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
     const data = await api<{ results: any[]; count?: number }>(
