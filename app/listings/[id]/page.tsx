@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
+import { ListingOptimizer } from '@/components/ListingOptimizer'
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, Wand2, ArrowLeft, Check, X,
   AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare,
@@ -200,6 +201,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const titleScore = scoreTitle(name)
   const descScore = scoreDescription(pub)
   const setScore = scoreSettings(raw, amenities.length, photoCount)
+  const optimizeScore = Math.round(titleScore.score * 0.30 + descScore.score * 0.45 + setScore.score * 0.25)
+  const optBand = band(optimizeScore)
+  const optRing = optBand === 'good' ? 'ring-emerald-200 bg-emerald-50 text-emerald-700' : optBand === 'watch' ? 'ring-amber-200 bg-amber-50 text-amber-700' : 'ring-rose-200 bg-rose-50 text-rose-700'
+  const optLabel = optBand === 'good' ? 'Well optimized' : optBand === 'watch' ? 'Room to improve' : 'Needs work'
 
   // Reviews behind the health signal (the data points).
   const { data: revRows } = await sb
@@ -233,9 +238,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             {avgRating != null && <span className="inline-flex items-center gap-1"><Star size={12} className="text-amber-500 fill-amber-500" /> {avgRating} · {reviews.length} reviews</span>}
           </div>
         </div>
-        <Link href="/optimize" className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 flex-shrink-0">
-          <Wand2 size={15} /> Optimize this listing
-        </Link>
+        <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${optRing}`} title="Optimize score">
+          <span className="text-2xl font-bold tabular-nums leading-none">{optimizeScore}</span>
+          <span className="text-[9px] uppercase tracking-wider font-semibold mt-0.5">Optimize</span>
+        </div>
       </header>
 
       {dead && (
@@ -244,7 +250,17 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </div>
       )}
 
-      {/* Score cards */}
+      {/* AI optimizer (lives on the property) */}
+      <div className="mb-5">
+        <ListingOptimizer listingId={listing.id} name={name} />
+      </div>
+
+      {/* Optimize score breakdown */}
+      <div className="mb-2 flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Optimize score breakdown</span>
+        <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded-md ring-1 text-[12px] font-bold tabular-nums ${optRing}`}>{optimizeScore}</span>
+        <span className="text-[12px] font-semibold text-muted">{optLabel}</span>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <ScoreCard title="Title" score={titleScore.score} factors={titleScore.factors} Icon={Tag} />
         <ScoreCard title="Description" score={descScore.score} factors={descScore.factors} Icon={FileText} />
