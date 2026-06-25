@@ -1,14 +1,24 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { Shell } from '@/components/Shell'
-import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Wrench, TrendingUp, Info } from 'lucide-react'
+import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Wrench, TrendingUp, Info, ArrowRight } from 'lucide-react'
+
+// Plain-language meaning of each score factor — shown so the number is never a black box.
+const FACTOR_HELP: Record<string, string> = {
+  Reviews: 'Average guest star rating, weighted so recent reviews count more than old ones. Worth up to 35 points — the biggest driver.',
+  Response: 'The share of this unit’s reviews you’ve publicly replied to. Replying to reviews lifts OTA ranking. Up to 20 points.',
+  'Issue-free': 'Starts full and loses points when the same complaint (cleanliness, A/C, noise…) shows up across multiple reviews. Up to 20 points.',
+  Content: 'How complete the listing is — title, description, amenities, beds/baths, location all filled in. Up to 15 points.',
+  'Ops load': 'How much open maintenance/field work is outstanding on this unit’s building right now. Up to 10 points.',
+}
 
 type Row = {
   id: string; name: string; building: string | null; unit: string | null
-  score: number | null; band: 'good' | 'watch' | 'risk' | 'neutral'; unrated?: boolean; actions?: string[]
+  score: number; band: 'good' | 'watch' | 'risk'
   avgRating: number | null; reviewCount: number; ratedCount: number
   responseRate: number | null; recurring: string[]; topIssue: string | null; openWork: number
-  breakdown: { review: number; volume: number; response: number; glitch: number; content: number; ops: number }
+  breakdown: { review: number; response: number; glitch: number; content: number; ops: number }
 }
 type Data = { summary: any; listings: Row[]; dataPending: string[]; error?: string }
 
@@ -16,7 +26,6 @@ const BAND = {
   good:  { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Healthy' },
   watch: { dot: 'bg-amber-500',   text: 'text-amber-700',   bg: 'bg-amber-50',   label: 'Watch' },
   risk:  { dot: 'bg-rose-500',    text: 'text-rose-700',    bg: 'bg-rose-50',    label: 'At risk' },
-  neutral: { dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-100', label: 'No reviews' },
 } as const
 
 export default function HealthPage() {
@@ -38,8 +47,8 @@ export default function HealthPage() {
       const s = q.toLowerCase()
       r = r.filter(x => x.name.toLowerCase().includes(s) || (x.building || '').toLowerCase().includes(s) || (x.topIssue || '').toLowerCase().includes(s))
     }
-    if (sort === 'worst') r.sort((a, b) => (a.score == null ? 1 : 0) - (b.score == null ? 1 : 0) || (a.score ?? 0) - (b.score ?? 0))
-    if (sort === 'best') r.sort((a, b) => (a.score == null ? 1 : 0) - (b.score == null ? 1 : 0) || (b.score ?? 0) - (a.score ?? 0))
+    if (sort === 'worst') r.sort((a, b) => a.score - b.score)
+    if (sort === 'best') r.sort((a, b) => b.score - a.score)
     if (sort === 'reviews') r.sort((a, b) => b.reviewCount - a.reviewCount)
     if (sort === 'response') r.sort((a, b) => (a.responseRate ?? 999) - (b.responseRate ?? 999))
     return r
@@ -53,7 +62,7 @@ export default function HealthPage() {
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Activity size={13} /> Portfolio health</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Listing Health Score</h1>
-          <p className="text-sm text-muted mt-1">Every active unit scored 0–100 on the signals that drive OTA visibility: review quality, response speed, recurring issues, content & ops load. No data ⇒ neutral, never a false positive.</p>
+          <p className="text-sm text-muted mt-1">Every active unit scored 0–100 on reviews, response speed, recurring issues, content & ops load.</p>
         </div>
       </header>
 
@@ -64,12 +73,11 @@ export default function HealthPage() {
       ) : (
         <>
           {/* KPI band */}
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
             <Kpi label="Avg score" value={s.avgScore} accent />
             <Kpi label="Healthy" value={s.good} dot="bg-emerald-500" />
             <Kpi label="Watch" value={s.watch} dot="bg-amber-500" />
             <Kpi label="At risk" value={s.atRisk} dot="bg-rose-500" />
-            <Kpi label="No reviews" value={s.unrated ?? 0} dot="bg-slate-400" />
             <Kpi label="Avg response" value={s.avgResponse != null ? `${s.avgResponse}%` : '—'} />
           </div>
 
@@ -135,29 +143,23 @@ export default function HealthPage() {
 
                   {isOpen && (
                     <div className="px-4 pb-4 pt-1 bg-app/40">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
-                        <Bar label="Rating" Icon={Star} value={r.breakdown.review} max={40} />
-                        <Bar label="Volume" Icon={MessageSquare} value={r.breakdown.volume} max={15} />
-                        <Bar label="Response" Icon={MessageSquare} value={r.breakdown.response} max={15} />
-                        <Bar label="Issue-free" Icon={AlertTriangle} value={r.breakdown.glitch} max={15} />
-                        <Bar label="Content" Icon={Info} value={r.breakdown.content} max={10} />
-                        <Bar label="Ops load" Icon={Wrench} value={r.breakdown.ops} max={5} />
+                      <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">What makes up this {r.score}/100</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                        <Bar label="Reviews" Icon={Star} value={r.breakdown.review} max={35} help={FACTOR_HELP['Reviews']} />
+                        <Bar label="Response" Icon={MessageSquare} value={r.breakdown.response} max={20} help={FACTOR_HELP['Response']} />
+                        <Bar label="Issue-free" Icon={AlertTriangle} value={r.breakdown.glitch} max={20} help={FACTOR_HELP['Issue-free']} />
+                        <Bar label="Content" Icon={Info} value={r.breakdown.content} max={15} help={FACTOR_HELP['Content']} />
+                        <Bar label="Ops load" Icon={Wrench} value={r.breakdown.ops} max={10} help={FACTOR_HELP['Ops load']} />
                       </div>
-                      <div className="text-[12px] text-muted flex flex-wrap gap-x-4 gap-y-1">
+                      <div className="text-[12px] text-muted flex flex-wrap gap-x-4 gap-y-1 mb-3">
                         <span>{r.ratedCount} rated of {r.reviewCount} reviews</span>
                         {r.recurring.length > 0 && <span className="text-rose-600 font-medium">Recurring: {r.recurring.join(', ')}</span>}
                         {r.openWork > 0 && <span className="text-amber-700">Open work on building (weighted): {r.openWork}</span>}
                       </div>
-                      {r.actions && r.actions.length > 0 && (
-                        <div className="mt-3">
-                          <div className="text-[11px] font-semibold text-ink uppercase tracking-wide mb-1.5">Action plan</div>
-                          <ul className="space-y-1">
-                            {r.actions.map((a, i) => (
-                              <li key={i} className="text-[12px] text-ink flex items-start gap-1.5"><span className="text-brand-600 mt-0.5">▸</span> {a}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      <Link href={`/listings/${r.id}`} prefetch={false}
+                        className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-brand-700 bg-white border border-brand-200 hover:bg-brand-50 rounded-lg px-3 py-1.5 transition-colors">
+                        Open unit — reviews, content & settings <ArrowRight size={13} />
+                      </Link>
                     </div>
                   )}
                 </div>
@@ -168,7 +170,7 @@ export default function HealthPage() {
           {/* Model note */}
           <div className="mt-4 rounded-xl border border-line bg-white px-4 py-3 text-[12px] text-muted">
             <div className="flex items-center gap-1.5 font-semibold text-ink mb-1"><TrendingUp size={13} /> How the score works</div>
-            Weighted from live data: <b className="text-ink">Avg rating 40</b> (recency-weighted) · <b className="text-ink">Review volume 15</b> · <b className="text-ink">Response 15</b> · <b className="text-ink">Issue-free 15</b> (recurring-complaint penalty) · <b className="text-ink">Content 10</b> · <b className="text-ink">Ops load 5</b>. Units with no reviews are <b className="text-ink">Unranked</b> (—), not scored.
+            Weighted from live data: <b className="text-ink">Reviews 35</b> (recency-weighted rating) · <b className="text-ink">Response 20</b> · <b className="text-ink">Issue-free 20</b> (recurring-complaint penalty) · <b className="text-ink">Content 15</b> · <b className="text-ink">Ops load 10</b>.
             {data.dataPending?.length ? <> Coming online with deeper Guesty sync: {data.dataPending.join(', ')}.</> : null}
           </div>
         </>
@@ -188,9 +190,9 @@ function Kpi({ label, value, dot, accent }: { label: string; value: any; dot?: s
   )
 }
 
-function ScorePill({ score, band }: { score: number | null; band: 'good' | 'watch' | 'risk' | 'neutral' }) {
+function ScorePill({ score, band }: { score: number; band: 'good' | 'watch' | 'risk' }) {
   const b = BAND[band]
-  return <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ${b.bg} ${b.text}`} title={score == null ? 'Unranked - no reviews yet' : undefined}>{score == null ? '—' : score}</span>
+  return <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ${b.bg} ${b.text}`}>{score}</span>
 }
 
 function Seg<T extends string>({ value, set, opts }: { value: T; set: (v: T) => void; opts: [T, string][] }) {
@@ -204,16 +206,17 @@ function Seg<T extends string>({ value, set, opts }: { value: T; set: (v: T) => 
   )
 }
 
-function Bar({ label, value, max, Icon }: { label: string; value: number; max: number; Icon: any }) {
+function Bar({ label, value, max, Icon, help }: { label: string; value: number; max: number; Icon: any; help?: string }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100))
   const color = pct >= 75 ? 'bg-emerald-500' : pct >= 45 ? 'bg-amber-500' : 'bg-rose-500'
   return (
-    <div className="rounded-lg border border-line bg-white px-2.5 py-2">
+    <div className="rounded-lg border border-line bg-white px-2.5 py-2" title={help}>
       <div className="flex items-center justify-between text-[11px] text-muted mb-1.5">
         <span className="inline-flex items-center gap-1"><Icon size={11} /> {label}</span>
         <span className="tabular-nums font-semibold text-ink">{value}<span className="text-muted">/{max}</span></span>
       </div>
       <div className="h-1.5 rounded-full bg-app overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} /></div>
+      {help && <div className="text-[10px] text-muted leading-snug mt-1.5">{help}</div>}
     </div>
   )
 }
