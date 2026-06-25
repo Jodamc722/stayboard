@@ -311,9 +311,91 @@ export async function syncMessages(conversationId: string): Promise<number> {
   return rows.length
 }
 
-export async function runFullSync(): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; errors: string[] }> {
+// Clean a raw Guesty channel id/name into a human-friendly label.
+function cleanChannel(rawChannel: string): string {
+  const c = String(rawChannel || '').toLowerCase()
+  if (/airbnb/.test(c))            return 'Airbnb'
+  if (/booking/.test(c))           return 'Booking.com'
+  if (/vrbo|homeaway/.test(c))     return 'Vrbo'
+  if (/expedia/.test(c))           return 'Expedia'
+  if (/direct|manual|owner/.test(c)) return 'Direct'
+  const trimmed = String(rawChannel || '').trim()
+  if (!trimmed) return 'Other'
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+}
+
+function mapReview(v: any) {
+  const rating = v.rating ?? v.overallRating ?? v.score ?? v.publicReview?.rating ?? null
+  const content = v.publicReview?.text ?? v.publicReview ?? v.content ?? v.text ?? v.comments ?? v.review ?? v.privateFeedback ?? ''
+  const replyText = v.response ?? v.reply ?? v.hostResponse ?? v.ownerResponse ?? v.publicReview?.response ?? null
+  const listingId = v.listingId ?? v.listing?._id ?? v.listing?.id ?? null
+  const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? v.from?.fullName ?? null
+  const rawChannel = String(v.channelId ?? v.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '')
+  const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : []
+  const replyFromArray = replies.length
+    ? (replies[0]?.text ?? replies[0]?.body ?? replies[0]?.response ?? null)
+    : null
+  const finalReply = (replyText && String(replyText).trim()) ? replyText : replyFromArray
+  const hasReply = !!(finalReply && String(finalReply).trim())
+  return {
+    id:          v._id ?? v.id ?? v.externalReviewId ?? null,
+    listing_id:  listingId,
+    rating:      typeof rating === 'number' ? rating : (rating != null ? Number(rating) : null),
+    content:     String(typeof content === 'string' ? content : '').slice(0, 600),
+    channel:     cleanChannel(rawChannel),
+    channel_raw: rawChannel || null,
+    guest_name:  guest,
+    created_at:  v.createdAt ?? v.date ?? v.submittedAt ?? null,
+    has_reply:   hasReply,
+    reply:       finalReply ? String(finalReply) : null,
+    raw:         v
+  }
+}
+
+// Reviews — paginate /reviews and upsert into the dedicated guesty_reviews table.
+export async function syncReviews(maxPages = 12): Promise<number> {
+  const sb = supabaseAdmin()
+  let total = 0
+  for (let page = 0; page < maxPages; page++) {
+    const skip = page * 100
+    const data = await api<{ results?: any[]; data?: any[]; reviews?: any[] } | any[]>(
+      `/reviews?limit=100&skip=${skip}&sort=-createdAt`
+    )
+    const arr: any[] = Array.isArray(data) ? data : (data.results || data.data || data.reviews || [])
+    const rows = arr.map(mapReview).filter((r: any) => r.id && (r.content || r.rating != null))
+    if (rows.length === 0) break
+    const { error } = await sb.from('guesty_reviews').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`upsert reviews: ${error.message}`)
+    total += rows.length
+    if (arr.length < 100) break
+  }
+  await recordSync('reviews', total)
+  return total
+}
+
+// Fetch message bodies for the most recently active conversations (bounded for rate limits).
+export async function syncRecentMessages(maxConversations = 150): Promise<number> {
+  const sb = supabaseAdmin()
+  const { data, error } = await sb
+    .from('guesty_conversations')
+    .select('id, last_message_at')
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .limit(maxConversations)
+  if (error) throw new Error(`read conversations for messages: ${error.message}`)
+  const convos = (data || []) as { id: string }[]
+  let total = 0
+  for (const c of convos) {
+    if (!c.id) continue
+    total += await syncMessages(c.id)
+  }
+  await recordSync('messages', total)
+  return total
+}
+
+
+export async function runFullSync(): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; reviews: number; messages: number; errors: string[] }> {
   const errors: string[] = []
-  const result = { reservations: 0, listings: 0, custom_fields: 0, conversations: 0, errors }
+  const result = { reservations: 0, listings: 0, custom_fields: 0, conversations: 0, reviews: 0, messages: 0, errors }
   // Warm the shared token ONCE up front. If Guesty's auth endpoint is throttled (429),
   // abort the whole sync instead of letting each entity hammer the token endpoint.
   try {
@@ -335,5 +417,7 @@ export async function runFullSync(): Promise<{ reservations: number; listings: n
   await safe('listings',      syncListings,      v => result.listings      = v)
   await safe('reservations',  syncReservations,  v => result.reservations  = v)
   await safe('conversations', syncConversations, v => result.conversations = v)
+  await safe('reviews', syncReviews, v => result.reviews = v)
+  await safe('messages', () => syncRecentMessages(150), v => result.messages = v)
   return result
 }
