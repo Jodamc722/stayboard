@@ -1,8 +1,8 @@
 'use client'
 import { useMemo, useState } from 'react'
 import {
-  Search, Sparkles, Wand2, Copy, Check, Building2, BedDouble, Bath, Users,
-  AlertTriangle, ListChecks, Info,
+  Search, Sparkles, Wand2, Building2, BedDouble, Bath, Users,
+  AlertTriangle, Info, UploadCloud, Check, RotateCcw,
 } from 'lucide-react'
 
 type Listing = {
@@ -20,39 +20,26 @@ type Listing = {
   status: string | null
 }
 
-type Section = { label: string; text: string }
-type Suggestion = {
-  platform: 'airbnb' | 'vrbo' | 'expedia' | 'booking'
-  platformLabel: string
-  mode: 'copy' | 'structured'
-  titleField: string
+type Content = { title: string; summary: string; space: string; access: string; neighborhood: string; transit: string; notes: string }
+type Result = {
+  listingId: string
   titleMax: number
-  descField: string
-  descMax: number
-  title: string
-  description: string
-  sections: Section[]
-  bullets: string[]
-  checklist: string[]
+  sections: { key: string; label: string }[]
+  current: Content
+  proposed: Content
   rationale: string
   warnings: string[]
 }
 
-type PlatformKey = 'airbnb' | 'vrbo' | 'expedia' | 'booking'
-const PLATFORMS: { key: PlatformKey; label: string }[] = [
-  { key: 'airbnb', label: 'Airbnb' },
-  { key: 'vrbo', label: 'Vrbo' },
-  { key: 'expedia', label: 'Expedia' },
-  { key: 'booking', label: 'Booking.com' },
+const FIELDS: { key: keyof Content; label: string; rows: number }[] = [
+  { key: 'title', label: 'Title', rows: 2 },
+  { key: 'summary', label: 'Summary', rows: 5 },
+  { key: 'space', label: 'The space', rows: 6 },
+  { key: 'access', label: 'Guest access', rows: 4 },
+  { key: 'neighborhood', label: 'Neighborhood', rows: 5 },
+  { key: 'transit', label: 'Getting around', rows: 4 },
+  { key: 'notes', label: 'Other notes', rows: 4 },
 ]
-
-// Honest, per-platform context shown under the picker.
-const PLATFORM_NOTE: Record<PlatformKey, string> = {
-  airbnb: 'Title capped at 50 characters; the description summary at 500. I also draft Airbnb’s “The space”, “Guest access” and “Neighborhood” sections.',
-  vrbo: 'Headline 20–80 characters; description 400–10,000. No URLs, phone, email or addresses — Vrbo rejects them.',
-  expedia: 'For a Guesty-connected manager, your Expedia listing is your Vrbo listing (syndicated via Expedia’s network), so it follows Vrbo’s rules.',
-  booking: 'Booking.com auto-generates descriptions from structured fields — you can’t push prose. So I optimize the property name and give you a content-completeness checklist instead.',
-}
 
 function nameOf(l: Listing) {
   return l.title || l.nickname || l.building || l.unit || 'Untitled listing'
@@ -61,16 +48,15 @@ function nameOf(l: Listing) {
 export function OptimizeClient({ listings }: { listings: Listing[] }) {
   const [q, setQ] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [platform, setPlatform] = useState<PlatformKey>('airbnb')
   const [busy, setBusy] = useState(false)
+  const [pushing, setPushing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
-  const [copied, setCopied] = useState<string | null>(null)
+  const [result, setResult] = useState<Result | null>(null)
+  const [edited, setEdited] = useState<Content | null>(null)
+  const [include, setInclude] = useState<Record<string, boolean>>({})
+  const [pushedMsg, setPushedMsg] = useState<string | null>(null)
 
-  const selected = useMemo(
-    () => listings.find(l => l.id === selectedId) || null,
-    [listings, selectedId]
-  )
+  const selected = useMemo(() => listings.find(l => l.id === selectedId) || null, [listings, selectedId])
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -84,29 +70,25 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
   }, [listings, q])
 
   function pick(l: Listing) {
-    setSelectedId(l.id)
-    setSuggestion(null)
-    setError(null)
+    setSelectedId(l.id); setResult(null); setEdited(null); setInclude({}); setError(null); setPushedMsg(null)
   }
 
-  function choosePlatform(p: PlatformKey) {
-    setPlatform(p)
-    setSuggestion(null)
-    setError(null)
-  }
-
-  async function optimize() {
+  async function generate() {
     if (!selected || busy) return
-    setBusy(true); setError(null); setSuggestion(null)
+    setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null)
     try {
       const res = await fetch('/api/optimize-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId: selected.id, platform }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId: selected.id }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      setSuggestion(d.suggestion as Suggestion)
+      const r = d as Result
+      setResult(r)
+      setEdited({ ...r.proposed })
+      const inc: Record<string, boolean> = {}
+      for (const f of FIELDS) inc[f.key] = !!(r.proposed as any)[f.key]?.trim()
+      setInclude(inc)
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {
@@ -114,27 +96,55 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
     }
   }
 
-  async function copy(label: string, text: string) {
+  function setField(k: keyof Content, v: string) {
+    setEdited(prev => prev ? { ...prev, [k]: v } : prev); setPushedMsg(null)
+  }
+  function resetField(k: keyof Content) {
+    if (result) setField(k, (result.proposed as any)[k] || '')
+  }
+  function toggle(k: string) { setInclude(p => ({ ...p, [k]: !p[k] })); setPushedMsg(null) }
+
+  const approvedCount = FIELDS.filter(f => include[f.key] && (edited as any)?.[f.key]?.trim()).length
+
+  async function pushApproved() {
+    if (!selected || !edited || pushing || approvedCount === 0) return
+    const titleApproved = include.title && edited.title.trim()
+    if (titleApproved && edited.title.trim().length > (result?.titleMax || 50)) {
+      setError(`Title is over the ${result?.titleMax || 50}-char limit. Trim it before pushing.`); return
+    }
+    const sections: Record<string, string> = {}
+    for (const f of FIELDS) {
+      if (f.key === 'title') continue
+      if (include[f.key] && (edited as any)[f.key]?.trim()) sections[f.key] = (edited as any)[f.key].trim()
+    }
+    const ok = window.confirm(`Push ${approvedCount} approved field(s) to Guesty for "${nameOf(selected)}"? This updates the live listing on every connected channel.`)
+    if (!ok) return
+    setPushing(true); setError(null); setPushedMsg(null)
     try {
-      await navigator.clipboard.writeText(text)
-      setCopied(label)
-      setTimeout(() => setCopied(c => (c === label ? null : c)), 1500)
-    } catch { /* clipboard unavailable */ }
+      const res = await fetch('/api/listing-content', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId: selected.id, title: titleApproved ? edited.title.trim() : undefined, publicDescription: sections }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+      const parts = [d.pushed?.title ? 'title' : null, ...(d.pushed?.sections || [])].filter(Boolean)
+      setPushedMsg(`Pushed to Guesty: ${parts.join(', ')}.`)
+    } catch (e: any) {
+      setError(e?.message || String(e))
+    } finally {
+      setPushing(false)
+    }
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
+    <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-5">
       {/* Listing picker */}
-      <div className="rounded-2xl border border-line bg-white overflow-hidden flex flex-col max-h-[72vh]">
+      <div className="rounded-2xl border border-line bg-white overflow-hidden flex flex-col max-h-[78vh]">
         <div className="px-3 py-3 border-b border-line">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              value={q}
-              onChange={e => setQ(e.target.value)}
-              placeholder="Search listings…"
-              className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-white text-sm focus:outline-none focus:border-brand-500"
-            />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search listings…"
+              className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-white text-sm focus:outline-none focus:border-brand-500" />
           </div>
           <div className="text-[11px] text-muted mt-2">{filtered.length} of {listings.length} active</div>
         </div>
@@ -144,11 +154,8 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
           ) : filtered.map(l => {
             const active = l.id === selectedId
             return (
-              <button
-                key={l.id}
-                onClick={() => pick(l)}
-                className={`w-full text-left px-4 py-2.5 border-b border-line last:border-0 transition-colors ${active ? 'bg-brand-50' : 'hover:bg-app'}`}
-              >
+              <button key={l.id} onClick={() => pick(l)}
+                className={`w-full text-left px-4 py-2.5 border-b border-line last:border-0 transition-colors ${active ? 'bg-brand-50' : 'hover:bg-app'}`}>
                 <div className={`text-sm font-medium truncate ${active ? 'text-brand-700' : 'text-ink'}`}>{nameOf(l)}</div>
                 <div className="text-[11px] text-muted truncate">
                   {l.building || 'Unassigned'}{l.unit ? ` · ${l.unit}` : ''}{l.address_city ? ` · ${l.address_city}` : ''}
@@ -159,25 +166,21 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
         </div>
       </div>
 
-      {/* Detail / suggestion */}
+      {/* Editor */}
       <div className="min-w-0">
         {!selected ? (
           <div className="rounded-2xl border border-line bg-white px-6 py-20 text-center">
-            <span className="inline-flex w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 items-center justify-center text-white shadow-soft">
-              <Wand2 size={22} />
-            </span>
+            <span className="inline-flex w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 items-center justify-center text-white shadow-soft"><Wand2 size={22} /></span>
             <h3 className="mt-4 text-lg font-bold text-ink tracking-tight">Pick a listing to optimize</h3>
-            <p className="mt-1.5 text-sm text-muted max-w-md mx-auto">
-              Choose any active listing, then a target OTA. I&apos;ll write copy tuned to that platform&apos;s real rules — using only the listing&apos;s real data.
-            </p>
+            <p className="mt-1.5 text-sm text-muted max-w-md mx-auto">Choose any active listing, then generate. I&apos;ll rewrite the title and all six Guesty sections from the listing&apos;s real data — you approve each one before it pushes to Guesty.</p>
           </div>
         ) : (
           <div className="space-y-5">
-            {/* Current listing card + platform picker */}
+            {/* Header card */}
             <div className="rounded-2xl border border-line bg-white p-5">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
-                  <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Current title</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Optimizing</div>
                   <div className="text-lg font-bold text-ink mt-0.5 break-words">{nameOf(selected)}</div>
                   <div className="text-[12px] text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1">
                     <span className="inline-flex items-center gap-1"><Building2 size={12} />{selected.building || 'Unassigned'}{selected.unit ? ` · ${selected.unit}` : ''}</span>
@@ -186,37 +189,15 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                     {selected.max_occupancy != null && <span className="inline-flex items-center gap-1"><Users size={12} />sleeps {selected.max_occupancy}</span>}
                   </div>
                 </div>
-                <button
-                  onClick={optimize}
-                  disabled={busy}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0"
-                >
+                <button onClick={generate} disabled={busy}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
                   {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
-                  {busy ? 'Optimizing…' : 'Optimize with AI'}
+                  {busy ? 'Generating…' : result ? 'Regenerate' : 'Generate with AI'}
                 </button>
               </div>
-
-              {/* Target OTA picker */}
-              <div className="mt-4 pt-4 border-t border-line">
-                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Target OTA</div>
-                <div className="inline-flex flex-wrap gap-1.5">
-                  {PLATFORMS.map(p => {
-                    const active = p.key === platform
-                    return (
-                      <button
-                        key={p.key}
-                        onClick={() => choosePlatform(p.key)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink hover:border-brand-200'}`}
-                      >
-                        {p.label}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="text-[12px] text-muted mt-2 flex items-start gap-1.5 max-w-2xl">
-                  <Info size={13} className="mt-0.5 flex-shrink-0" /> {PLATFORM_NOTE[platform]}
-                </p>
-              </div>
+              <p className="text-[12px] text-muted mt-3 flex items-start gap-1.5 max-w-2xl">
+                <Info size={13} className="mt-0.5 flex-shrink-0" /> This writes Guesty&apos;s master content (title + the six description sections), which syncs to Airbnb, Vrbo, Expedia and Booking.com. Written to Airbnb&apos;s stricter standard. Nothing pushes until you approve.
+              </p>
             </div>
 
             {error && (
@@ -224,150 +205,82 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                 <AlertTriangle size={14} /> {error}
               </div>
             )}
-
-            {busy && !suggestion && (
-              <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">
-                Optimizing for {PLATFORMS.find(p => p.key === platform)?.label}…
-              </div>
+            {busy && !result && (
+              <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Writing fresh copy from this listing&apos;s real data…</div>
             )}
 
-            {suggestion && <SuggestionView s={suggestion} before={nameOf(selected)} copied={copied} onCopy={copy} />}
+            {result && edited && (
+              <>
+                {result.warnings.length > 0 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800">
+                    <div className="font-semibold flex items-center gap-1.5 mb-1"><AlertTriangle size={14} /> Before you push</div>
+                    <ul className="space-y-0.5">{result.warnings.map((w, i) => <li key={i} className="flex items-start gap-1.5"><span className="mt-0.5">•</span> {w}</li>)}</ul>
+                  </div>
+                )}
+
+                {FIELDS.map(f => {
+                  const cur = (result.current as any)[f.key] || ''
+                  const val = (edited as any)[f.key] || ''
+                  const isTitle = f.key === 'title'
+                  const over = isTitle && val.length > result.titleMax
+                  const on = !!include[f.key]
+                  return (
+                    <div key={f.key} className={`rounded-2xl border bg-white p-4 ${on ? 'border-brand-200' : 'border-line'}`}>
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                          <input type="checkbox" checked={on} onChange={() => toggle(f.key)} className="accent-brand-600 w-4 h-4" />
+                          <span className="text-sm font-semibold text-ink">{f.label}</span>
+                          <span className="text-[11px] text-muted">{on ? 'will push' : 'skipped'}</span>
+                        </label>
+                        <button onClick={() => resetField(f.key)} className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-brand-700">
+                          <RotateCcw size={11} /> reset to AI
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1">Current</div>
+                          <div className="text-[13px] text-muted whitespace-pre-wrap leading-relaxed rounded-lg bg-app border border-line px-3 py-2 min-h-[44px]">{cur || <span className="italic">empty</span>}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-1 flex items-center gap-1"><Sparkles size={10} /> Proposed (editable)</div>
+                          <textarea value={val} onChange={e => setField(f.key, e.target.value)} rows={f.rows}
+                            className={`w-full text-[13px] text-ink leading-relaxed rounded-lg border px-3 py-2 focus:outline-none ${over ? 'border-rose-300 focus:border-rose-500' : 'border-line focus:border-brand-500'}`} />
+                          <div className={`text-[11px] mt-1 ${over ? 'text-rose-600 font-semibold' : 'text-muted'}`}>
+                            {val.length}{isTitle ? ` / ${result.titleMax}` : ''} chars{over ? ' · over limit' : ''}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+                })}
+
+                {result.rationale && (
+                  <div className="rounded-xl border border-line bg-app/50 px-4 py-3 text-[12px] text-muted">
+                    <span className="font-semibold text-ink">Why this converts better: </span>{result.rationale}
+                  </div>
+                )}
+
+                {pushedMsg && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2">
+                    <Check size={14} /> {pushedMsg}
+                  </div>
+                )}
+
+                <div className="sticky bottom-0 bg-gradient-to-t from-app via-app to-transparent pt-3 pb-1">
+                  <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center justify-between gap-3 shadow-soft">
+                    <div className="text-[13px] text-muted">{approvedCount} of {FIELDS.length} field(s) approved</div>
+                    <button onClick={pushApproved} disabled={pushing || approvedCount === 0}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50">
+                      {pushing ? <Sparkles size={15} className="animate-pulse" /> : <UploadCloud size={15} />}
+                      {pushing ? 'Pushing…' : 'Push approved to Guesty'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
     </div>
-  )
-}
-
-function SuggestionView({ s, before, copied, onCopy }: {
-  s: Suggestion; before: string; copied: string | null; onCopy: (l: string, t: string) => void
-}) {
-  const titleOver = s.title.length > s.titleMax
-  return (
-    <div className="space-y-4">
-      {/* Warnings */}
-      {s.warnings.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800">
-          <div className="font-semibold flex items-center gap-1.5 mb-1"><AlertTriangle size={14} /> Before you publish</div>
-          <ul className="space-y-0.5">
-            {s.warnings.map((w, i) => <li key={i} className="flex items-start gap-1.5"><span className="mt-0.5">•</span> {w}</li>)}
-          </ul>
-        </div>
-      )}
-
-      {/* Title before/after */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">Before</div>
-          <div className="text-sm text-ink break-words">{before}</div>
-        </div>
-        <div className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1">
-              <Sparkles size={11} /> {s.platformLabel} {s.titleField.toLowerCase()}
-            </div>
-            <CopyBtn label="title" text={s.title} copied={copied} onCopy={onCopy} />
-          </div>
-          <div className="text-sm font-semibold text-ink break-words">{s.title || '—'}</div>
-          <div className={`text-[11px] mt-1 ${titleOver ? 'text-rose-600 font-semibold' : 'text-muted'}`}>
-            {s.title.length} / {s.titleMax} chars{titleOver ? ' · over limit' : ''}
-          </div>
-        </div>
-      </div>
-
-      {/* Description (copy mode) */}
-      {s.mode === 'copy' && (
-        <div className="rounded-2xl border border-brand-200 bg-white p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1">
-              <Sparkles size={11} /> {s.platformLabel} {s.descField.toLowerCase()}
-            </div>
-            <CopyBtn label="description" text={s.description} copied={copied} onCopy={onCopy} />
-          </div>
-          <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{s.description || '—'}</div>
-          {s.descMax > 0 && (
-            <div className={`text-[11px] mt-2 ${s.description.length > s.descMax ? 'text-rose-600 font-semibold' : 'text-muted'}`}>
-              {s.description.length} / {s.descMax} chars
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Airbnb structured sections */}
-      {s.sections.length > 0 && (
-        <div className="grid grid-cols-1 gap-3">
-          {s.sections.map((sec, i) => (
-            <div key={i} className="rounded-2xl border border-line bg-white p-4">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{sec.label}</div>
-                <CopyBtn label={`sec-${i}`} text={sec.text} copied={copied} onCopy={onCopy} />
-              </div>
-              <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{sec.text}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Booking.com content checklist (structured mode) */}
-      {s.mode === 'structured' && s.checklist.length > 0 && (
-        <div className="rounded-2xl border border-brand-200 bg-white p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold inline-flex items-center gap-1">
-              <ListChecks size={12} /> Content-completeness checklist
-            </div>
-            <CopyBtn label="checklist" text={s.checklist.map(b => `• ${b}`).join('\n')} copied={copied} onCopy={onCopy} />
-          </div>
-          <ul className="space-y-1.5">
-            {s.checklist.map((b, i) => (
-              <li key={i} className="text-sm text-ink flex items-start gap-2">
-                <span className="mt-0.5 text-brand-600 flex-shrink-0"><Check size={14} /></span> {b}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Highlight bullets */}
-      {s.bullets.length > 0 && (
-        <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Highlight bullets</div>
-            <CopyBtn label="bullets" text={s.bullets.map(b => `• ${b}`).join('\n')} copied={copied} onCopy={onCopy} />
-          </div>
-          <ul className="space-y-1">
-            {s.bullets.map((b, i) => (
-              <li key={i} className="text-sm text-ink flex items-start gap-1.5">
-                <span className="text-brand-600 mt-0.5">▸</span> {b}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Rationale */}
-      {s.rationale && (
-        <div className="rounded-xl border border-line bg-app/50 px-4 py-3 text-[12px] text-muted">
-          <span className="font-semibold text-ink">Why this is stronger: </span>{s.rationale}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function CopyBtn({ label, text, copied, onCopy }: {
-  label: string
-  text: string
-  copied: string | null
-  onCopy: (label: string, text: string) => void
-}) {
-  const done = copied === label
-  return (
-    <button
-      onClick={() => onCopy(label, text)}
-      disabled={!text}
-      className="inline-flex items-center gap-1 text-[12px] font-medium text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-    >
-      {done ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
-    </button>
   )
 }
