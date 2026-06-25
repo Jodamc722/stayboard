@@ -5,7 +5,7 @@ import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Wren
 
 type Row = {
   id: string; name: string; building: string | null; unit: string | null
-  score: number; band: 'good' | 'watch' | 'risk'
+  score: number; band: 'good' | 'watch' | 'risk' | 'neutral'; unrated?: boolean; actions?: string[]
   avgRating: number | null; reviewCount: number; ratedCount: number
   responseRate: number | null; recurring: string[]; topIssue: string | null; openWork: number
   breakdown: { review: number; response: number; glitch: number; content: number; ops: number }
@@ -16,6 +16,7 @@ const BAND = {
   good:  { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Healthy' },
   watch: { dot: 'bg-amber-500',   text: 'text-amber-700',   bg: 'bg-amber-50',   label: 'Watch' },
   risk:  { dot: 'bg-rose-500',    text: 'text-rose-700',    bg: 'bg-rose-50',    label: 'At risk' },
+  neutral: { dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-100', label: 'No reviews' },
 } as const
 
 export default function HealthPage() {
@@ -52,7 +53,7 @@ export default function HealthPage() {
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Activity size={13} /> Portfolio health</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Listing Health Score</h1>
-          <p className="text-sm text-muted mt-1">Every active unit scored 0–100 on reviews, response speed, recurring issues, content & ops load.</p>
+          <p className="text-sm text-muted mt-1">Every active unit scored 0–100 on the signals that drive OTA visibility: review quality, response speed, recurring issues, content & ops load. No data ⇒ neutral, never a false positive.</p>
         </div>
       </header>
 
@@ -63,11 +64,12 @@ export default function HealthPage() {
       ) : (
         <>
           {/* KPI band */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
             <Kpi label="Avg score" value={s.avgScore} accent />
             <Kpi label="Healthy" value={s.good} dot="bg-emerald-500" />
             <Kpi label="Watch" value={s.watch} dot="bg-amber-500" />
             <Kpi label="At risk" value={s.atRisk} dot="bg-rose-500" />
+            <Kpi label="No reviews" value={s.unrated ?? 0} dot="bg-slate-400" />
             <Kpi label="Avg response" value={s.avgResponse != null ? `${s.avgResponse}%` : '—'} />
           </div>
 
@@ -145,6 +147,16 @@ export default function HealthPage() {
                         {r.recurring.length > 0 && <span className="text-rose-600 font-medium">Recurring: {r.recurring.join(', ')}</span>}
                         {r.openWork > 0 && <span className="text-amber-700">Open work on building (weighted): {r.openWork}</span>}
                       </div>
+                      {r.actions && r.actions.length > 0 && (
+                        <div className="mt-3">
+                          <div className="text-[11px] font-semibold text-ink uppercase tracking-wide mb-1.5">Action plan</div>
+                          <ul className="space-y-1">
+                            {r.actions.map((a, i) => (
+                              <li key={i} className="text-[12px] text-ink flex items-start gap-1.5"><span className="text-brand-600 mt-0.5">▸</span> {a}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -175,7 +187,7 @@ function Kpi({ label, value, dot, accent }: { label: string; value: any; dot?: s
   )
 }
 
-function ScorePill({ score, band }: { score: number; band: 'good' | 'watch' | 'risk' }) {
+function ScorePill({ score, band }: { score: number; band: 'good' | 'watch' | 'risk' | 'neutral' }) {
   const b = BAND[band]
   return <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ${b.bg} ${b.text}`}>{score}</span>
 }
