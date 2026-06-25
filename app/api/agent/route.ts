@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (!messages.length) return NextResponse.json({ error: 'no messages' }, { status: 400 })
 
   const today = new Date()
-  const todayStr = today.toISOString().slice(0, 10)
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(today)
   const in7 = addDays(today, 7)
   const nowTs = nowISO()
 
