@@ -10,7 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, Wand2, ArrowLeft, Check, X,
-  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag,
+  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -182,7 +182,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   // Reviews behind the health signal (the data points).
   const { data: revRows } = await sb
     .from('guesty_reviews')
-    .select('id, rating, content, channel, guest_name, created_at, has_reply')
+    .select('id, rating, content, channel, guest_name, created_at, has_reply, reply')
     .eq('listing_id', params.id)
     .order('created_at', { ascending: false })
     .limit(40)
@@ -279,6 +279,12 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${r.has_reply ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{r.has_reply ? 'Replied' : 'No reply'}</span>
                     </div>
                     {r.content && <div className="text-[13px] text-ink mt-1 leading-snug">{String(r.content).slice(0, 280)}</div>}
+                    {r.reply && String(r.reply).trim() && (
+                      <div className="mt-2 pl-2.5 border-l-2 border-brand-200 bg-brand-50/40 rounded-r py-1.5 pr-2">
+                        <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-0.5 inline-flex items-center gap-1"><MessageSquare size={10} /> Your response</div>
+                        <div className="text-[12px] text-ink leading-snug">{String(r.reply).slice(0, 400)}</div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
