@@ -104,13 +104,14 @@ export async function POST(req: NextRequest) {
   if (listingIds.length > 120) return NextResponse.json({ error: 'Too many listings in one batch (max 120).' }, { status: 400 })
 
   // Validate + normalize the requested changes.
+  const dryRunPictures = (body as any)?.dryRunPictures === true
   const change: any = {}
   if (typeof p.checkInTime === 'string' && /^\d{1,2}:\d{2}$/.test(p.checkInTime)) change.checkInTime = p.checkInTime
   if (typeof p.checkOutTime === 'string' && /^\d{1,2}:\d{2}$/.test(p.checkOutTime)) change.checkOutTime = p.checkOutTime
   if (p.minNights != null && Number.isFinite(Number(p.minNights)) && Number(p.minNights) > 0) change.minNights = Math.round(Number(p.minNights))
   if (p.maxNights != null && Number.isFinite(Number(p.maxNights)) && Number(p.maxNights) > 0) change.maxNights = Math.round(Number(p.maxNights))
   if (typeof p.houseRules === 'string' && p.houseRules.trim()) change.houseRules = p.houseRules.trim().slice(0, 4000)
-  if (Object.keys(change).length === 0) return NextResponse.json({ error: 'No valid policy changes provided.' }, { status: 400 })
+  if (Object.keys(change).length === 0 && !dryRunPictures) return NextResponse.json({ error: 'No valid policy changes provided.' }, { status: 400 })
 
   const sb = supabaseAdmin()
   const tok = await token(sb)
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
   let okCount = 0, failCount = 0
 
   // Writability test: PUT a listing's CURRENT pictures back unchanged to see if Guesty allows photo writes.
-  if ((body as any)?.dryRunPictures === true) {
+  if (dryRunPictures) {
     const id0 = listingIds[0]
     const raw0: any = (byId.get(id0)?.raw && typeof byId.get(id0).raw === 'object') ? byId.get(id0).raw : {}
     const pics0 = Array.isArray(raw0.pictures) ? raw0.pictures : []
