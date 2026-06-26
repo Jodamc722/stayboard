@@ -9,10 +9,11 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { ListingOptimizer } from '@/components/ListingOptimizer'
+import { ListingReviews } from '@/components/ListingReviews'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X,
-  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare, PlusCircle, ShieldAlert,
+  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare, PlusCircle, ShieldAlert, ExternalLink,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -59,11 +60,22 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
     ? listing.amenities
     : (Array.isArray(raw.amenities) ? raw.amenities : [])
   const photoCount = Array.isArray(listing.pictures) ? listing.pictures.length
+    ? listing.pictures.length
     : (Array.isArray(raw.pictures) ? raw.pictures.length : 0)
   const name = listing.title || listing.nickname || 'Untitled unit'
   const place = [listing.address_city, listing.address_state].filter(Boolean).join(', ')
   const dead = DEAD.includes(String(listing.status || '').toLowerCase())
   const buildingName = rollupBuilding(listing.building)
+  const streetAddress = (listing as any).address_full || raw?.address?.full || null
+
+  // Direct links to the live listing on each OTA, built from the Guesty channel integrations.
+  const ints = Array.isArray(raw.integrations) ? raw.integrations : []
+  const channelObj = (n: string) => { for (const it of ints) if (it?.[n]) return it[n]; return null }
+  const otaLinks: { name: string; url: string }[] = []
+  const ab = channelObj('airbnb2') || channelObj('airbnb')
+  if (ab?.id) otaLinks.push({ name: 'Airbnb', url: `https://www.airbnb.com/rooms/${ab.id}` })
+  const vr = channelObj('homeaway') || channelObj('vrbo')
+  if (vr?.id) otaLinks.push({ name: 'Vrbo', url: `https://www.vrbo.com/${vr.id}` })
 
   // Reviews first — they feed the Optimize Score's review signal.
   const { data: revRows } = await sb
@@ -111,6 +123,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             <span className="inline-flex items-center gap-1"><ImageIcon size={12} /> {photoCount} photos</span>
             {avgRating != null && <span className="inline-flex items-center gap-1"><Star size={12} className="text-amber-500 fill-amber-500" /> {avgRating} · {reviews.length} reviews</span>}
           </div>
+          {streetAddress && <div className="text-[12px] text-muted mt-1.5 inline-flex items-center gap-1.5"><MapPin size={12} /> {streetAddress}</div>}
         </div>
         <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${opt.ring}`} title="Optimize score">
           <span className="text-2xl font-bold tabular-nums leading-none">{optimizeScore}</span>
@@ -173,36 +186,27 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             )}
           </Panel>
 
-          <Panel title="Recent reviews" sub={`${reviews.length} pulled · the data behind this unit's ratings`}>
-            {reviews.length === 0 ? (
-              <div className="text-sm text-muted italic">No reviews synced for this unit yet.</div>
-            ) : (
-              <div className="space-y-2.5">
-                {reviews.slice(0, 12).map((r: any) => (
-                  <div key={r.id} className="border border-line rounded-lg px-3 py-2">
-                    <div className="flex items-center justify-between gap-2 text-[12px]">
-                      <span className="inline-flex items-center gap-1.5">
-                        {r.rating != null && <span className="inline-flex items-center gap-0.5 font-semibold text-ink"><Star size={11} className="text-amber-500 fill-amber-500" />{r.rating}</span>}
-                        <span className="text-muted">{r.channel || '—'}</span>
-                        {r.guest_name && <span className="text-muted">· {r.guest_name}</span>}
-                      </span>
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${r.has_reply ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{r.has_reply ? 'Replied' : 'No reply'}</span>
-                    </div>
-                    {r.content && <div className="text-[13px] text-ink mt-1 leading-snug">{String(r.content).slice(0, 280)}</div>}
-                    {r.hostReply && (
-                      <div className="mt-2 pl-2.5 border-l-2 border-brand-200 bg-brand-50/40 rounded-r py-1.5 pr-2">
-                        <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-0.5 inline-flex items-center gap-1"><MessageSquare size={10} /> Your public response</div>
-                        <div className="text-[12px] text-ink leading-snug">{String(r.hostReply).slice(0, 400)}</div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+          <Panel title="Recent reviews" sub={`${reviews.length} pulled · reply to any of them right here`}>
+            <ListingReviews
+              reviews={reviews.slice(0, 20).map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply }))}
+               listingName={name}
+            />
           </Panel>
         </div>
 
         <div className="space-y-4">
+          {otaLinks.length > 0 && (
+            <Panel title="View live on OTAs">
+              <div className="flex flex-wrap gap-2">
+                {otaLinks.map(l => (
+                  <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line text-brand-700 px-2.5 py-1.5 hover:bg-app">
+                    <ExternalLink size={13} /> {l.name}
+                  </a>
+                ))}
+              </div>
+            </Panel>
+          )}
           <Panel title="Booking settings (from Guesty)">
             <dl className="space-y-2.5 text-sm">
               <SettingRow Icon={Ban} label="Cancellation" value={res.settings.meta.cancel.label} tone={res.settings.meta.cancel.tier === 'flex' ? 'good' : res.settings.meta.cancel.tier === 'strict' ? 'bad' : 'muted'} />
@@ -261,7 +265,7 @@ function ScoreCard({ title, score, factors, Icon }: { title: string; score: numb
   )
 }
 
-function AmenityScoreCard({ score, suggestions, mustFix, have }: { score: number; suggestions: { name: string; tier: 1 | 2 | 3; reason: string }[]; mustFix: string[]; have: number }) {
+function AmenityScoreCard(y { score, suggestions, mustFix, have }: { score: number; suggestions: { name: string; tier: 1 | 2 | 3; reason: string }[]; mustFix: string[]; have: number }) {
   const ui = bandUi(band(score))
   return (
     <div className="rounded-2xl border border-line bg-white p-4">
