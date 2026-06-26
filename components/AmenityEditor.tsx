@@ -38,18 +38,22 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
   }
 
   const curLower = useMemo(() => new Set(current.map(a => a.toLowerCase())), [current])
+  // Everything the unit WILL have = current plus anything you've ticked to add. Pickers exclude these
+  // so a ticked amenity drops out of 'add' and shows up under the listing as added.
+  const selLower = useMemo(() => new Set(Array.from(sel).map(a => a.toLowerCase())), [sel])
+  const willHave = useMemo(() => Array.from(new Set([...current, ...Array.from(sel)])), [current, sel])
   // Recommended = missing high-value picks (already filtered server-side to not-on-unit).
-  const recAdds = useMemo(() => recommended.filter(a => !curLower.has(a.toLowerCase())), [recommended, curLower])
+  const recAdds = useMemo(() => recommended.filter(a => !selLower.has(a.toLowerCase())), [recommended, selLower])
   const recLower = useMemo(() => new Set(recAdds.map(a => a.toLowerCase())), [recAdds])
   // Catalog addable = portfolio amenities not on the unit and not already shown as recommended.
   const addable = useMemo(() => {
     const seen = new Set<string>()
     return fullCatalog.filter(a => {
       const l = a.toLowerCase()
-      if (curLower.has(l) || recLower.has(l) || seen.has(l)) return false
+      if (selLower.has(l) || recLower.has(l) || seen.has(l)) return false
       seen.add(l); return true
     }).sort((a, b) => a.localeCompare(b))
-  }, [fullCatalog, curLower, recLower])
+  }, [fullCatalog, selLower, recLower])
   const filtered = q.trim() ? addable.filter(a => a.toLowerCase().includes(q.toLowerCase())) : addable
   // Organized by Guesty category. Each group shows only its addable amenities; "Other" catches anything not categorized.
   const addableSet = useMemo(() => new Set(addable.map(a => a.toLowerCase())), [addable])
@@ -97,16 +101,22 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
         )}
       </div>
 
-      {/* current */}
+      {/* on this listing (current + anything you've added) */}
       <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">On this listing</div>
       <div className="flex flex-wrap gap-1.5 mb-3">
-        {current.length === 0 && <span className="text-[12px] text-muted italic">None set.</span>}
-        {current.map(a => {
+        {willHave.length === 0 && <span className="text-[12px] text-muted italic">None set.</span>}
+        {willHave.map(a => {
           const on = sel.has(a)
+          const isAdded = on && !curSet.has(a)   // newly added (not originally on the unit)
+          const cls = !on
+            ? 'bg-rose-50 text-rose-700 border-rose-200 line-through'   // removed
+            : isAdded
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-300'      // just added
+            : 'bg-app text-ink border-line'                            // already had it
           return (
-            <button key={a} onClick={() => toggle(a)}
-              className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-app text-ink border-line' : 'bg-rose-50 text-rose-700 border-rose-200 line-through'}`}>
-              {on ? <Check size={11} className="text-emerald-600" /> : <AlertTriangle size={11} />} {a}
+            <button key={a} onClick={() => toggle(a)} title={isAdded ? 'Added — click to undo' : on ? 'Click to remove' : 'Click to keep'}
+              className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${cls}`}>
+              {!on ? <AlertTriangle size={11} /> : <Check size={11} className={isAdded ? 'text-emerald-600' : 'text-emerald-600'} />} {a}{isAdded ? ' · added' : ''}
             </button>
           )
         })}
