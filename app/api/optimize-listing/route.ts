@@ -17,7 +17,7 @@ const SECTION_DEFS: { key: string; label: string; guide: string }[] = [
   { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if the data indicates it. NEVER include the street address, unit number, real codes, phone, or URLs. ~300-700 characters.' },
   { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it. ~500-1000 characters.' },
   { key: 'transit', label: 'Getting around', guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances. ~250-600 characters.' },
-  { key: 'notes', label: 'Other notes', guide: 'Anything that sets honest expectations: who it suits best, building/HOA notes, quiet-enjoyment, and the booking flexibility (cancellation policy / instant book / min stay) when known. Positive and factual. ~250-700 characters.' },
+  { key: 'notes', label: 'Other notes', guide: 'Standardized "Listing Notes" - write as short, scannable lines (one per item), factual and welcoming. NEVER mention the cancellation policy or refunds anywhere in this section. Include these lines, lightly adapted to this listing: (1) ONLY IF facts.minAge21 is true: "The primary guest must be 21 years or older to check in"; (2) "No smoking or parties permitted"; (3) "Guests must sign the rental agreement and check-in form before arrival - these are mandatory to confirm your reservation and receive access instructions"; (4) "Please review all house rules prior to arrival for a seamless experience"; (5) "Only initial consumables (toiletries, coffee, paper products) are provided; additional supplies can be requested for a small fee"; (6) "Mid-stay cleaning services are available upon request for an additional fee"; (7) "Additional accessibility details and building policies available upon request before booking". ~400-800 characters.' },
 ]
 
 const TITLE_MAX = 50
@@ -116,6 +116,7 @@ export async function POST(req: NextRequest) {
     amenities: Array.isArray(listing.amenities) ? listing.amenities.slice(0, 80) : (listing.amenities ?? null),
     tags: Array.isArray(listing.tags) ? listing.tags.slice(0, 30) : (listing.tags ?? null),
     location, bookingSettings: settings,
+    minAge21: /arya|amrit|district\s*225/i.test(str(listing.building)),
   }
 
   // ── Photos for VISION: let the model SEE the actual space, verify features, and write copy that sells ──
@@ -125,6 +126,15 @@ export async function POST(req: NextRequest) {
     .filter((u: string) => /^https?:\/\//.test(u))
     .slice(0, 8)
   const photoBlocks = photoUrls.map((u: string) => ({ type: 'image', source: { type: 'url', url: u } }))
+
+  // 17 West is the in-house GOLD STANDARD for the 'space' voice/format. Pull a real example to anchor
+  // the style - match its voice/format as a BASELINE, then ENHANCE beyond it.
+  let spaceExemplar = ''
+  try {
+    const { data: ex } = await sb.from('guesty_listings').select('building, raw').or('building.ilike.%17 west%,building.ilike.%17west%').limit(20)
+    const cands = (ex ?? []).map((rr: any) => str(rr?.raw?.publicDescription?.space)).filter(Boolean).sort((a: string, b: string) => b.length - a.length)
+    if (cands[0]) spaceExemplar = cands[0].slice(0, 1400)
+  } catch { /* exemplar is best-effort */ }
 
   // ── Single-section mode ──────────────────────────────────────────────────────
   // When the UI asks to regenerate ONE field (optionally with a custom instruction),
@@ -153,6 +163,7 @@ OUTPUT: STRICT minified JSON only, nothing else, exactly: {"text":"...","rationa
 - "text" = the new field content as a single non-empty string (for the title, obey the character limit).
 - "rationale" = one short sentence on why it is stronger.`
     const USR = `Field to rewrite: "${singleSection}".
+${singleSection === 'space' && spaceExemplar ? `\n17 WEST STYLE EXEMPLAR (match its voice/format as a baseline, then ENHANCE; do NOT copy its facts):\n"""${spaceExemplar}"""\n` : ''}
 
 VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
@@ -223,7 +234,7 @@ ${sectionSpec}
 
 SOUTH FLORIDA KEYWORDS — only when the data supports them: "ocean view", "walk to the beach", "pool", "hot tub", "free parking", "king bed", real neighborhoods, real property types. Quantify location only if the data provides the figure.
 
-BOOKING FLEXIBILITY: if the booking settings include a flexible cancellation policy, instant book, or a low minimum stay, you MAY mention the convenience honestly in the notes section. Do not state a policy that isn't in the data.
+NOTES SECTION: NEVER mention the cancellation policy or refunds anywhere (not in notes, not elsewhere). Write the "Other notes" field using the standardized Listing Notes format described above.
 
 OUTPUT FORMAT
 Return STRICT, minified JSON and nothing else (no markdown, no code fences, no commentary). Exactly this shape:
@@ -231,6 +242,7 @@ Return STRICT, minified JSON and nothing else (no markdown, no code fences, no c
 - Every section is a non-empty string. "rationale": 1-2 sentences on why this wins on visibility + honest expectation-setting.`
 
   const USER = `Rewrite the master content for this listing.
+${instruction ? `\nMUST-INCLUDE FROM JON (work this in naturally, within the honesty rules - never invent facts to satisfy it): "${instruction}"\n` : ''}${spaceExemplar ? `\n17 WEST STYLE EXEMPLAR for the 'space' field - match this VOICE and FORMAT as your baseline, then ENHANCE it (even more compelling, photo-grounded). Do NOT copy its specific facts:\n"""${spaceExemplar}"""\n` : ''}
 
 VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
