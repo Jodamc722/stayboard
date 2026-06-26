@@ -36,7 +36,16 @@ export async function POST(req: NextRequest) {
     body: JSON.stringify({ reviewReply: String(reviewReply) })
   })
   const body = await r.text().catch(() => '')
-  if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${body.slice(0, 200)}` }, { status: 502 })
+  if (!r.ok) {
+    const orphan = r.status === 404 && /externalPropertyId|REVIEWS_LISTING_NOT_FOUND/i.test(body)
+    if (orphan) {
+      // The review's listing isn't mapped on its channel - flag it so it stops counting toward
+      // the average / health score, but keep it visible for feedback.
+      try { await sb.from('guesty_reviews').update({ excluded_from_score: true, exclude_reason: 'listing not mapped on channel (cannot reply)' }).eq('id', reviewId) } catch { /* best effort */ }
+      return NextResponse.json({ error: "This listing isn't currently mapped on its channel, so the reply can't post here - reply directly in the channel if needed. This review has been excluded from your average score.", orphaned: true }, { status: 409 })
+    }
+    return NextResponse.json({ error: `Guesty ${r.status}: ${body.slice(0, 200)}` }, { status: 502 })
+  }
 
   // Persist locally so it shows immediately and review counts stay accurate. Also mirror the
   // reply into raw.hostResponse, because the listing page derives "replied" from raw (not the
