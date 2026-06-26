@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   const tok = await token(sb)
   if (!tok) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
 
-  const r = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=defaultCheckInTime defaultCheckOutTime terms prices publicDescription houseRules`, {
+  const r = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=defaultCheckInTime defaultCheckOutTime terms prices publicDescription houseRules integrations`, {
     headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' },
   })
   const text = await r.text()
@@ -51,6 +51,18 @@ export async function GET(req: NextRequest) {
     houseRules_top: l.houseRules ?? null,
     publicDescription_houseRules: l.publicDescription?.houseRules ?? null,
     publicDescription_keys: l.publicDescription && typeof l.publicDescription === 'object' ? Object.keys(l.publicDescription) : null,
+    terms_cancellation: l.terms?.cancellation ?? null,
+    integrations: Array.isArray(l.integrations) ? l.integrations.map((it: any) => {
+      const platform = it?.platform || it?.channel || it?._id || null
+      const out: any = { platform }
+      for (const k of Object.keys(it || {})) {
+        const v = (it as any)[k]
+        if (v && typeof v === 'object' && ('cancellationPolicy' in v || 'cancellation' in v)) {
+          out[k] = { cancellationPolicy: v.cancellationPolicy ?? v.cancellation ?? null }
+        }
+      }
+      return out
+    }) : null,
   })
 }
 
