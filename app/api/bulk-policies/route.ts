@@ -13,6 +13,15 @@ export const maxDuration = 60
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 const CANCELLATION = ['flexible', 'moderate', 'firm', 'strict', 'super_strict_30', 'super_strict_60', 'non_refundable']
+// Cancellation lives per-channel with channel-specific enums. Map a chosen tier to each channel's
+// own value. We only change channels we're confident about and PRESERVE every other channel's
+// current value, so a partial mapping never rejects the whole listing update.
+const TIER_BY_CHANNEL: Record<string, Record<string, string>> = {
+  flexible: { airbnb2: 'flexible', homeaway2: 'RELAXED', bookingCom: 'FLEXIBLE', whimstay: 'flexible', expedia: 'flexible' },
+  moderate: { airbnb2: 'moderate', homeaway2: 'MODERATE', bookingCom: 'MODERATE', whimstay: 'moderate', expedia: 'moderate' },
+  firm: { airbnb2: 'firm', homeaway2: 'FIRM', bookingCom: 'STRICT', whimstay: 'firm', expedia: 'firm' },
+  strict: { airbnb2: 'strict', homeaway2: 'STRICT', bookingCom: 'STRICT_60', whimstay: 'strict_60', expedia: 'strict' },
+}
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 async function token(sb: any): Promise<string | null> {
@@ -75,6 +84,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const listingIds: string[] = Array.isArray(body?.listingIds) ? body.listingIds.filter((x: any) => typeof x === 'string') : []
   const p = (body?.policy && typeof body.policy === 'object') ? body.policy : {}
+  const dryRun = body?.dryRun === true  // writability test: PUT current integrations unchanged
   if (listingIds.length === 0) return NextResponse.json({ error: 'listingIds required' }, { status: 400 })
   if (listingIds.length > 120) return NextResponse.json({ error: 'Too many listings in one batch (max 120).' }, { status: 400 })
 
@@ -86,7 +96,7 @@ export async function POST(req: NextRequest) {
   if (p.maxNights != null && Number.isFinite(Number(p.maxNights)) && Number(p.maxNights) > 0) change.maxNights = Math.round(Number(p.maxNights))
   if (typeof p.cancellation === 'string' && CANCELLATION.includes(p.cancellation)) change.cancellation = p.cancellation
   if (typeof p.houseRules === 'string' && p.houseRules.trim()) change.houseRules = p.houseRules.trim().slice(0, 4000)
-  if (Object.keys(change).length === 0) return NextResponse.json({ error: 'No valid policy changes provided.' }, { status: 400 })
+  if (Object.keys(change).length === 0 && !dryRun) return NextResponse.json({ error: 'No valid policy changes provided.' }, { status: 400 })
 
   const sb = supabaseAdmin()
   const tok = await token(sb)
@@ -113,10 +123,20 @@ export async function POST(req: NextRequest) {
       if (change.maxNights != null) terms.maxNights = change.maxNights
       payload.terms = terms
     }
-    if (change.cancellation) {
-      const prices = (raw.prices && typeof raw.prices === 'object') ? { ...raw.prices } : {}
-      prices.guestyCancellationPolicy = change.cancellation
-      payload.prices = prices
+    if (change.cancellation || dryRun) {
+      // Merge the tier into each connected channel's own cancellationPolicy, preserving everything else.
+      const map = change.cancellation ? (TIER_BY_CHANNEL[change.cancellation] || null) : null
+      const ints = Array.isArray(raw.integrations) ? raw.integrations.map((it: any) => ({ ...it })) : []
+      let touched = 0
+      for (const it of ints) {
+        const plat = it?.platform
+        const want = dryRun ? (it[plat]?.cancellationPolicy ?? null) : (map && plat ? map[plat] : null)
+        if (want && it[plat] && typeof it[plat] === 'object' && 'cancellationPolicy' in it[plat]) {
+          it[plat] = { ...it[plat], cancellationPolicy: want }
+          touched++
+        }
+      }
+      if (touched > 0) payload.integrations = ints
     }
     if (change.houseRules) payload.publicDescription = { houseRules: change.houseRules }
 
@@ -135,6 +155,7 @@ export async function POST(req: NextRequest) {
         if (change.checkOutTime) newRaw.defaultCheckOutTime = change.checkOutTime
         if (payload.terms) newRaw.terms = payload.terms
         if (payload.prices) newRaw.prices = payload.prices
+        if (payload.integrations) newRaw.integrations = payload.integrations
         if (change.houseRules) newRaw.publicDescription = { ...(raw.publicDescription || {}), houseRules: change.houseRules }
         await sb.from('guesty_listings').update({ raw: newRaw }).eq('id', id)
       } catch { /* best effort */ }
