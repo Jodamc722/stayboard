@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
     const pub: any = (raw.publicDescription && typeof raw.publicDescription === 'object') ? raw.publicDescription : {}
     const mergedPub = { ...pub, ...publicDescription }
-    const newRaw = { ...raw, publicDescription: mergedPub, ...(title ? { title } : {}) }
+    const newRaw = { ...raw, publicDescription: mergedPub, _lastOptimized: new Date().toISOString(), ...(title ? { title } : {}) }
     const update: any = { raw: newRaw }
     if (title) update.title = title
     await sb.from('guesty_listings').update(update).eq('id', listingId)
