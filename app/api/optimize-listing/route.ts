@@ -24,12 +24,21 @@ const TITLE_MAX = 50
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
 // Cancellation policy: read across the fields Guesty / channels use.
+function integrationField(raw: any, key: string): any {
+  const ints = Array.isArray(raw?.integrations) ? raw.integrations : []
+  for (const name of ['airbnb2', 'airbnb']) for (const it of ints) { const c = it?.[name]; if (c && c[key] != null) return c[key] }
+  for (const it of ints) for (const ck of Object.keys(it || {})) { const c = (it as any)[ck]; if (c && typeof c === 'object' && c[key] != null) return c[key] }
+  return null
+}
+
 function cancellationPolicy(raw: any): string | null {
   const candidates = [
+    integrationField(raw, 'cancellationPolicy'),
     raw?.terms?.cancellation, raw?.prices?.guestyCancellationPolicy, raw?.cancellationPolicy,
     raw?.airbnb?.cancellationPolicy, raw?.bookingcom?.cancellationPolicy, raw?.cancellation,
   ].map(str).filter(Boolean)
-  return candidates[0] || null
+  const v = candidates[0]
+  return v ? v.replace(/_/g, ' ') : null
 }
 
 export async function POST(req: NextRequest) {
@@ -75,7 +84,8 @@ export async function POST(req: NextRequest) {
 
   // Booking settings — also the inputs behind the property page's Optimize Score.
   const terms = raw.terms || {}
-  const instantRaw = raw?.instantBookable ?? raw?.instantBook ?? null
+  const ibCategory = integrationField(raw, 'instantBookingAllowedCategory')
+  const instantRaw = raw?.instantBookable ?? raw?.instantBook ?? (typeof ibCategory === 'string' && ibCategory && ibCategory.toLowerCase() !== 'off' ? true : (ibCategory != null ? ibCategory : null))
   const settings = {
     cancellationPolicy: cancellationPolicy(raw),
     instantBook: instantRaw === true || instantRaw === 'true' ? true : (instantRaw == null ? null : false),
