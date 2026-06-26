@@ -74,17 +74,29 @@ function hasForbidden(s: string): string | null {
   return null
 }
 
+// Guesty stores channel settings under raw.integrations[].{airbnb2|whimstay|hopper|...}.
+// Pull a field, preferring Airbnb (the strictest/highest-converting channel).
+export function integrationField(raw: any, key: string): any {
+  const ints = Array.isArray(raw?.integrations) ? raw.integrations : []
+  for (const name of ['airbnb2', 'airbnb']) for (const it of ints) { const c = it?.[name]; if (c && c[key] != null) return c[key] }
+  for (const it of ints) for (const ck of Object.keys(it || {})) { const c = (it as any)[ck]; if (c && typeof c === 'object' && c[key] != null) return c[key] }
+  return null
+}
+
 export function cancellationInfo(raw: any): { label: string; tier: 'flex' | 'mod' | 'strict' | 'unknown' } {
   const candidates = [
+    integrationField(raw, 'cancellationPolicy'),
     raw?.terms?.cancellation, raw?.prices?.guestyCancellationPolicy, raw?.cancellationPolicy,
     raw?.airbnb?.cancellationPolicy, raw?.bookingcom?.cancellationPolicy,
   ].map(str).filter(Boolean)
-  const c = (candidates[0] || '').toLowerCase()
+  const raw0 = candidates[0] || ''
+  const c = raw0.toLowerCase()
   if (!c) return { label: 'Not set', tier: 'unknown' }
-  if (/flex|relax|free/.test(c)) return { label: candidates[0], tier: 'flex' }
-  if (/moderate|firm/.test(c)) return { label: candidates[0], tier: 'mod' }
-  if (/strict|super|non.?refund|long/.test(c)) return { label: candidates[0], tier: 'strict' }
-  return { label: candidates[0], tier: 'mod' }
+  const label = raw0.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()) // "strict_60" -> "Strict 60"
+  if (/flex|relax|free/.test(c)) return { label, tier: 'flex' }
+  if (/strict|super|non.?refund|long/.test(c)) return { label, tier: 'strict' }
+  if (/moderate|firm/.test(c)) return { label, tier: 'mod' }
+  return { label, tier: 'mod' }
 }
 
 /* ------------------------------ amenity model ------------------------------ */
@@ -185,8 +197,10 @@ function scoreSettings(raw: any, photoCount: number): { score: number; factors: 
   const terms = raw?.terms || {}
   const minN = terms.minNights ?? raw?.defaultListingMinNights ?? null
   const maxN = terms.maxNights ?? null
-  const instantRaw = raw?.instantBookable ?? raw?.instantBook ?? null
-  const instant = instantRaw === true || instantRaw === 'true'
+  const ibCategory = integrationField(raw, 'instantBookingAllowedCategory')
+  const instantRaw = raw?.instantBookable ?? raw?.instantBook ?? (ibCategory != null ? ibCategory : null)
+  const instant = instantRaw === true || instantRaw === 'true' ||
+    (typeof ibCategory === 'string' && ibCategory.length > 0 && ibCategory.toLowerCase() !== 'off')
   const checkIn = str(raw?.defaultCheckInTime || raw?.checkInTime)
   const checkOut = str(raw?.defaultCheckOutTime || raw?.checkOutTime)
   const cancel = cancellationInfo(raw)
