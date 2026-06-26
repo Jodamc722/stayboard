@@ -46,10 +46,25 @@ export async function GET(req: NextRequest) {
   const matches: Record<string, any> = {}
   walk(raw, '', matches, 0)
 
+  const ints = Array.isArray(raw.integrations) ? raw.integrations : []
+  const integrationsSummary = ints.map((it: any) => {
+    const out: any = {}
+    for (const ck of Object.keys(it || {})) {
+      const c = (it as any)[ck]
+      if (c && typeof c === 'object') {
+        const urlish: any = {}
+        for (const k of Object.keys(c)) { if (/url|link|listingid|roomid|listing_id|room_id|propertyid|hotelid|externalid|external_id|id$/i.test(k)) urlish[k] = (c as any)[k] }
+        out[ck] = { keys: Object.keys(c).slice(0, 40), urlish }
+      }
+    }
+    return out
+  })
   return NextResponse.json({
     id: listing.id,
     name: (listing as any).title || (listing as any).nickname,
-    topLevelKeys: Object.keys(raw),
+    address: raw.address || null,
+    amenities: raw.amenities || null,
+    integrationsSummary,
     matchedPaths: matches,
   })
 }
