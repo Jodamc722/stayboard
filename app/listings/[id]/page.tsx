@@ -105,10 +105,21 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const curLower = new Set(amenities.map(a => String(a).toLowerCase()))
   const siblingExtras = Array.from(new Set(siblingAmenities)).filter(a => !curLower.has(String(a).toLowerCase()))
 
+  // Full portfolio amenity catalog (every value already in use somewhere = valid Guesty amenity).
+  const amenityCatalog: string[] = Array.from(new Set(
+    (siblings ?? []).flatMap((s: any) => Array.isArray(s.amenities) ? s.amenities : (Array.isArray(s.raw?.amenities) ? s.raw.amenities : []))
+  )).map((a: any) => String(a)).filter(Boolean)
+
   const isBeach = /beach/i.test(String(listing.address_city || ''))
   const res = computeScore(listing, { avgRating, reviewCount: reviews.length, isBeach, siblingAmenities })
   const optimizeScore = res.overall
   const opt = bandUi(res.band)
+
+  // Recommended-to-add = optimizer high-value picks this unit is missing (canonical labels, incl. Self check-in).
+  const recommendedAdds: string[] = Array.from(new Set([
+    ...res.amenities.mustFix,
+    ...res.amenities.suggestions.map((x: any) => x.name),
+  ])).filter(a => !curLower.has(String(a).toLowerCase()))
 
   return (
     <Shell>
@@ -189,7 +200,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             )}
           </Panel>
 
-          <AmenityEditor listingId={listing.id} current={amenities} siblingExtras={siblingExtras} />
+          <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} />
 
           <Panel title="Recent reviews" sub={`${reviews.length} pulled · reply to any of them right here`}>
             <ListingReviews
