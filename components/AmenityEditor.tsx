@@ -5,7 +5,7 @@
 //  3) Full catalog — every amenity used anywhere in the portfolio (all valid Guesty values),
 //     searchable, so you can add anything (incl. Self check-in) without leaving the page.
 // Apply writes the final set to Guesty (PUT /properties-api/amenities/{id}) after you confirm.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Star, Search } from 'lucide-react'
 
 export function AmenityEditor({ listingId, current, recommended, catalog }: {
@@ -18,6 +18,14 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
   const [confirming, setConfirming] = useState(false)
   const [done, setDone] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [extra, setExtra] = useState<string[]>([])  // full Guesty supported-amenities catalog
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/amenities-catalog').then(r => r.json()).then(d => { if (alive && Array.isArray(d?.names)) setExtra(d.names) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const fullCatalog = useMemo(() => Array.from(new Set([...catalog, ...extra])), [catalog, extra])
 
   function toggle(a: string) {
     setDone(null); setErr(null)
@@ -31,12 +39,12 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
   // Catalog addable = portfolio amenities not on the unit and not already shown as recommended.
   const addable = useMemo(() => {
     const seen = new Set<string>()
-    return catalog.filter(a => {
+    return fullCatalog.filter(a => {
       const l = a.toLowerCase()
       if (curLower.has(l) || recLower.has(l) || seen.has(l)) return false
       seen.add(l); return true
     }).sort((a, b) => a.localeCompare(b))
-  }, [catalog, curLower, recLower])
+  }, [fullCatalog, curLower, recLower])
   const filtered = q.trim() ? addable.filter(a => a.toLowerCase().includes(q.toLowerCase())) : addable
 
   const toAdd = Array.from(sel).filter(a => !curSet.has(a))
