@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { computeScore, rollupBuilding, slugToBuilding, band, bandUi } from '@/lib/optimize-score'
 import { Shell } from '@/components/Shell'
+import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
 import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -35,6 +36,9 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   const siblingAmenities: string[] = Array.from(new Set(
     units.flatMap((u: any) => Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : []))
   ))
+
+  const bulkUnits = units.map((u: any) => ({ id: u.id, name: u.title || u.nickname || u.unit || 'Unit', amenityCount: (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])).length }))
+  const bulkAddable = Array.from(new Set(siblingAmenities)).sort((a, b) => a.localeCompare(b))
 
   const scored = units.map((l: any) => {
     const dead = DEAD.includes(String(l.status || '').toLowerCase())
@@ -69,6 +73,8 @@ export default async function BuildingPage({ params }: { params: { slug: string 
           </div>
         )}
       </header>
+
+      <div className="mb-5"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /></div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {scored.map(({ l, dead, score, suggestions, mustFix }) => {
