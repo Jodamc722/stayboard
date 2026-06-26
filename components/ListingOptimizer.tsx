@@ -25,6 +25,7 @@ const FIELDS: { key: keyof Content; label: string; rows: number }[] = [
 
 export function ListingOptimizer({ listingId, name }: { listingId: string; name: string }) {
   const [open, setOpen] = useState(false)
+  const [genPrompt, setGenPrompt] = useState('')  // optional 'make sure X is included' instruction
   const [busy, setBusy] = useState(false)
   const [pushing, setPushing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +46,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     try {
       const res = await fetch('/api/optimize-listing', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId }),
+        body: JSON.stringify({ listingId, instruction: genPrompt.trim() || undefined }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
@@ -148,6 +149,8 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
         <div className="min-w-0">
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Wand2 size={15} className="text-brand-600" /> Optimize with AI</h2>
           <p className="text-[12px] text-muted mt-0.5">Rewrites the title + six Guesty sections from this unit&apos;s data, reviews and settings. Regenerate or push any section on its own — you approve everything before it goes live.</p>
+          <input value={genPrompt} onChange={e => setGenPrompt(e.target.value)} placeholder="Optional: make sure something gets included (e.g. “mention the rooftop pool and free garage parking”)"
+            className="mt-2 w-full sm:w-[420px] text-[12px] rounded-lg border border-line bg-app px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </div>
         <button onClick={generate} disabled={busy}
           className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
