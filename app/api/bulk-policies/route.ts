@@ -29,10 +29,25 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const id = new URL(req.url).searchParams.get('listingId') || ''
   if (!id) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
+  const probe = new URL(req.url).searchParams.get('probe') || ''
 
   const sb = supabaseAdmin()
   const tok = await token(sb)
   if (!tok) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
+
+  if (probe === 'checkin') {
+    const rr = await fetch(`${BASE}/listings/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+    const tt = await rr.text()
+    if (!rr.ok) return NextResponse.json({ error: `Guesty ${rr.status}: ${tt.slice(0, 200)}` }, { status: 200 })
+    let lf: any = {}; try { lf = JSON.parse(tt) } catch { lf = {} }
+    const ci = /check.?in|self|lock|keypad|smart|access|arriv/i
+    const topKeys = Object.keys(lf).filter(k => ci.test(k))
+    const top: any = {}; for (const k of topKeys) top[k] = lf[k]
+    const ab = Array.isArray(lf.integrations) ? lf.integrations.find((it: any) => it?.airbnb2)?.airbnb2 : null
+    const abKeys = ab && typeof ab === 'object' ? Object.keys(ab).filter(k => ci.test(k)) : []
+    const ab2: any = {}; for (const k of abKeys) ab2[k] = ab[k]
+    return NextResponse.json({ topCheckInFields: top, airbnb2CheckIn: ab2, airbnb2AllKeys: ab && typeof ab === 'object' ? Object.keys(ab) : null, publicDescriptionKeys: lf.publicDescription && typeof lf.publicDescription === 'object' ? Object.keys(lf.publicDescription) : null })
+  }
 
   const r = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=defaultCheckInTime defaultCheckOutTime terms prices publicDescription houseRules integrations`, {
     headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' },
