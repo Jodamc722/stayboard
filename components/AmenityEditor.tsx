@@ -19,10 +19,15 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
   const [done, setDone] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extra, setExtra] = useState<string[]>([])  // full Guesty supported-amenities catalog
+  const [groups, setGroups] = useState<{ group: string; names: string[] }[]>([])
 
   useEffect(() => {
     let alive = true
-    fetch('/api/amenities-catalog').then(r => r.json()).then(d => { if (alive && Array.isArray(d?.names)) setExtra(d.names) }).catch(() => {})
+    fetch('/api/amenities-catalog').then(r => r.json()).then(d => {
+      if (!alive) return
+      if (Array.isArray(d?.names)) setExtra(d.names)
+      if (Array.isArray(d?.groups)) setGroups(d.groups)
+    }).catch(() => {})
     return () => { alive = false }
   }, [])
   const fullCatalog = useMemo(() => Array.from(new Set([...catalog, ...extra])), [catalog, extra])
@@ -46,6 +51,18 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
     }).sort((a, b) => a.localeCompare(b))
   }, [fullCatalog, curLower, recLower])
   const filtered = q.trim() ? addable.filter(a => a.toLowerCase().includes(q.toLowerCase())) : addable
+  // Organized by Guesty category. Each group shows only its addable amenities; "Other" catches anything not categorized.
+  const addableSet = useMemo(() => new Set(addable.map(a => a.toLowerCase())), [addable])
+  const groupedAddable = useMemo(() => {
+    const used = new Set<string>()
+    const out = groups.map(g => {
+      const names = g.names.filter(a => { const l = a.toLowerCase(); if (!addableSet.has(l) || used.has(l)) return false; used.add(l); return true })
+      return { group: g.group, names }
+    }).filter(g => g.names.length)
+    const leftover = addable.filter(a => !used.has(a.toLowerCase()))
+    if (leftover.length) out.push({ group: 'Other', names: leftover })
+    return out
+  }, [groups, addable, addableSet])
 
   const toAdd = Array.from(sel).filter(a => !curSet.has(a))
   const toRemove = current.filter(a => !sel.has(a))
@@ -119,17 +136,37 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
         <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search amenities…" className="w-full pl-8 pr-3 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
       </div>
-      <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
-        {filtered.length === 0 && <span className="text-[12px] text-muted italic">{addable.length === 0 ? 'Everything in the catalog is already on this unit.' : 'No matches.'}</span>}
-        {filtered.map(a => {
-          const on = sel.has(a)
-          return (
-            <button key={a} onClick={() => toggle(a)}
-              className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-brand-700 border-brand-200 hover:bg-brand-50'}`}>
-              {on ? <Check size={11} /> : <Plus size={11} />} {a}
-            </button>
-          )
-        })}
+      <div className="max-h-72 overflow-y-auto space-y-3">
+        {addable.length === 0 && <span className="text-[12px] text-muted italic">Everything in the catalog is already on this unit.</span>}
+        {q.trim() ? (
+          <div className="flex flex-wrap gap-1.5">
+            {filtered.length === 0 && <span className="text-[12px] text-muted italic">No matches.</span>}
+            {filtered.map(a => {
+              const on = sel.has(a)
+              return (
+                <button key={a} onClick={() => toggle(a)}
+                  className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-brand-700 border-brand-200 hover:bg-brand-50'}`}>
+                  {on ? <Check size={11} /> : <Plus size={11} />} {a}
+                </button>
+              )
+            })}
+          </div>
+        ) : groupedAddable.map(g => (
+          <div key={g.group}>
+            <div className="text-[10px] uppercase tracking-wider text-ink/50 font-bold mb-1.5">{g.group} <span className="text-muted/60">· {g.names.length}</span></div>
+            <div className="flex flex-wrap gap-1.5">
+              {g.names.map(a => {
+                const on = sel.has(a)
+                return (
+                  <button key={a} onClick={() => toggle(a)}
+                    className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-brand-700 border-brand-200 hover:bg-brand-50'}`}>
+                    {on ? <Check size={11} /> : <Plus size={11} />} {a}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {err && <div className="mt-3 text-[12px] text-rose-600 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {err}</div>}
