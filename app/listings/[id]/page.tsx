@@ -60,7 +60,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
     ? listing.amenities
     : (Array.isArray(raw.amenities) ? raw.amenities : [])
   const photoCount = Array.isArray(listing.pictures) ? listing.pictures.length
-    ? listing.pictures.length
     : (Array.isArray(raw.pictures) ? raw.pictures.length : 0)
   const name = listing.title || listing.nickname || 'Untitled unit'
   const place = [listing.address_city, listing.address_state].filter(Boolean).join(', ')
