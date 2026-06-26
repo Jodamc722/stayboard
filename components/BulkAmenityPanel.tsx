@@ -2,7 +2,7 @@
 // Bulk amenity add for a building: pick amenities, pick which units, apply to all selected at
 // once. The amenity catalog is the union of amenities already in use across the building's units
 // (so every value is a valid Guesty amenity). Writes to Guesty after you confirm.
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Search, X } from 'lucide-react'
 
 type Unit = { id: string; name: string; amenityCount: number }
@@ -16,11 +16,19 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [results, setResults] = useState<Res[] | null>(null)
+  const [extra, setExtra] = useState<string[]>([])  // full Guesty supported-amenities catalog
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/amenities-catalog').then(r => r.json()).then(d => { if (alive && Array.isArray(d?.names)) setExtra(d.names) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const allAddable = useMemo(() => Array.from(new Set([...addable, ...extra])).sort((a, b) => a.localeCompare(b)), [addable, extra])
   const [err, setErr] = useState<string | null>(null)
 
   const toggleA = (a: string) => setAmen(s => { const n = new Set(s); n.has(a) ? n.delete(a) : n.add(a); return n })
   const toggleU = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const filtered = q.trim() ? addable.filter(a => a.toLowerCase().includes(q.toLowerCase())) : addable
+  const filtered = q.trim() ? allAddable.filter(a => a.toLowerCase().includes(q.toLowerCase())) : allAddable
   const canApply = amen.size > 0 && sel.size > 0
 
   async function apply() {
