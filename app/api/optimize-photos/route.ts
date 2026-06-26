@@ -11,7 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MAX_PHOTOS = 40 // cap vision payload; any beyond this keep their original relative order at the end
+const MAX_PHOTOS = 24 // cap vision payload; any beyond this keep their original relative order at the end
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
@@ -60,11 +60,25 @@ export async function POST(req: NextRequest) {
   const toOrder = rest.slice(0, MAX_PHOTOS)
   const overflow = rest.slice(MAX_PHOTOS)
 
-  // Label each photo "Photo N" so the model can refer to it unambiguously.
+  // Label each photo "Photo N" so the model can refer to it unambiguously. We fetch each thumbnail
+  // server-side and inline it as BASE64 (not a url source) so we don't hit Anthropic's per-minute
+  // URL-content-fetch rate limit when a listing has many photos.
   const photoBlocks: any[] = []
+  const fetched = await Promise.all(toOrder.map(async (p) => {
+    try {
+      const ir = await fetch(p.url)
+      if (!ir.ok) return null
+      const ct = (ir.headers.get('content-type') || '').toLowerCase()
+      const media = ct.includes('png') ? 'image/png' : ct.includes('webp') ? 'image/webp' : ct.includes('gif') ? 'image/gif' : 'image/jpeg'
+      const buf = Buffer.from(await ir.arrayBuffer())
+      return { data: buf.toString('base64'), media }
+    } catch { return null }
+  }))
   toOrder.forEach((p, i) => {
     photoBlocks.push({ type: 'text', text: `Photo ${i + 1}${p.caption ? ` (caption: ${p.caption})` : ''}:` })
-    photoBlocks.push({ type: 'image', source: { type: 'url', url: p.url } })
+    const f = fetched[i]
+    if (f) photoBlocks.push({ type: 'image', source: { type: 'base64', media_type: f.media, data: f.data } })
+    else photoBlocks.push({ type: 'text', text: '(photo unavailable)' })
   })
 
   const SYS = `You are a short-term-rental listing merchandiser. You are given the photos of one property (the cover/hero photo is already chosen by the host and is NOT included here). Decide the optimal DISPLAY ORDER for the remaining photos to maximize bookings on Airbnb/Vrbo/Booking.com.
