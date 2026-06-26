@@ -15,7 +15,7 @@ const FACTOR_HELP: Record<string, string> = {
 
 type Row = {
   id: string; name: string; building: string | null; unit: string | null
-  score: number; band: 'good' | 'watch' | 'risk'
+  score: number | null; band: 'good' | 'watch' | 'risk' | 'neutral'
   avgRating: number | null; reviewCount: number; ratedCount: number
   responseRate: number | null; recurring: string[]; topIssue: string | null; openWork: number
   breakdown: { review: number; response: number; glitch: number; content: number; ops: number }
@@ -26,6 +26,7 @@ const BAND = {
   good:  { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Healthy' },
   watch: { dot: 'bg-amber-500',   text: 'text-amber-700',   bg: 'bg-amber-50',   label: 'Watch' },
   risk:  { dot: 'bg-rose-500',    text: 'text-rose-700',    bg: 'bg-rose-50',    label: 'At risk' },
+  neutral: { dot: 'bg-slate-300', text: 'text-muted', bg: 'bg-app', label: 'No reviews yet' },
 } as const
 
 export default function HealthPage() {
