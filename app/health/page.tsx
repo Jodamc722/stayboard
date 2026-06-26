@@ -1,7 +1,8 @@
 'use client'
 // Listing Health Score - master quality metric. Encompasses optimization + review/ops health,
 // scored per listing, per OTA, and rolled up per building, with team-assignable actions.
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useCachedFetch } from '@/lib/swr'
 import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Building2, Wrench, ArrowRight, Info } from 'lucide-react'
@@ -35,14 +36,12 @@ function Pill({ score, band }: { score: number | null; band: string }) {
 }
 
 export default function HealthPage() {
-  const [data, setData] = useState<Data | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data, loading } = useCachedFetch<Data>('/api/listing-health')
   const [q, setQ] = useState('')
   const [band, setBand] = useState<'all' | 'critical' | 'risk' | 'watch' | 'healthy'>('all')
   const [view, setView] = useState<'units' | 'buildings'>('units')
   const [open, setOpen] = useState<string | null>(null)
 
-  useEffect(() => { fetch('/api/listing-health').then(r => r.json()).then(d => { setData(d); setLoading(false) }).catch(() => setLoading(false)) }, [])
 
   const rows = useMemo(() => {
     let r = data?.listings ? [...data.listings] : []
