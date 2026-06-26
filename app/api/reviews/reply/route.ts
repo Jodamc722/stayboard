@@ -44,6 +44,17 @@ export async function POST(req: NextRequest) {
       try { await sb.from('guesty_reviews').update({ excluded_from_score: true, exclude_reason: 'listing not mapped on channel (cannot reply)' }).eq('id', reviewId) } catch { /* best effort */ }
       return NextResponse.json({ error: "This listing isn't currently mapped on its channel, so the reply can't post here - reply directly in the channel if needed. This review has been excluded from your average score.", orphaned: true }, { status: 409 })
     }
+    // Booking.com (and some channels) reject a second reply: the review is already answered and
+    // the channel doesn't allow edits. Treat that as success - mark it replied so it stops nagging.
+    const alreadyReplied = /already exists|does not allow update|ERR_REVIEWS_LIBRARY/i.test(body)
+    if (alreadyReplied) {
+      try {
+        const { data: row } = await sb.from('guesty_reviews').select('raw').eq('id', reviewId).maybeSingle()
+        const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
+        await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true, raw: { ...raw, hostResponse: String(reviewReply) } }).eq('id', reviewId)
+      } catch { try { await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true }).eq('id', reviewId) } catch { /* best effort */ } }
+      return NextResponse.json({ ok: true, alreadyReplied: true, reply: String(reviewReply), note: "This review was already answered on its channel (Booking.com doesn't allow edits), so it's now marked as replied." }, { status: 200 })
+    }
     return NextResponse.json({ error: `Guesty ${r.status}: ${body.slice(0, 200)}` }, { status: 502 })
   }
 
