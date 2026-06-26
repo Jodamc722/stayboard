@@ -15,7 +15,7 @@ const FACTOR_HELP: Record<string, string> = {
 
 type Row = {
   id: string; name: string; building: string | null; unit: string | null
-  score: number | null; band: 'good' | 'watch' | 'risk' | 'neutral'
+  score: number; band: 'good' | 'watch' | 'risk' | 'neutral'
   avgRating: number | null; reviewCount: number; ratedCount: number
   responseRate: number | null; recurring: string[]; topIssue: string | null; openWork: number
   breakdown: { review: number; response: number; glitch: number; content: number; ops: number }
