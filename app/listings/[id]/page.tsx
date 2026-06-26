@@ -14,7 +14,7 @@ import { ListingReviews } from '@/components/ListingReviews'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
 import {
-  Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X,
+  Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X, Sparkles,
   AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare, PlusCircle, ShieldAlert, ExternalLink,
 } from 'lucide-react'
 
@@ -68,6 +68,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const dead = DEAD.includes(String(listing.status || '').toLowerCase())
   const buildingName = rollupBuilding(listing.building)
   const streetAddress = (listing as any).address_full || raw?.address?.full || null
+  // When the listing was last pushed/optimized (content or photo order). Shown so the team can see freshness at a glance.
+  const lastOptIso: string | null = (typeof raw?._lastOptimized === 'string' ? raw._lastOptimized : null)
+  const lastOptimized = lastOptIso ? new Date(lastOptIso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null
 
   // Direct links to the live listing on each OTA, built from the Guesty channel integrations.
   const ints = Array.isArray(raw.integrations) ? raw.integrations : []
@@ -139,6 +142,11 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             {avgRating != null && <span className="inline-flex items-center gap-1"><Star size={12} className="text-amber-500 fill-amber-500" /> {avgRating} · {reviews.length} reviews</span>}
           </div>
           {streetAddress && <div className="text-[12px] text-muted mt-1.5 inline-flex items-center gap-1.5"><MapPin size={12} /> {streetAddress}</div>}
+          <div className="text-[12px] mt-1.5 inline-flex items-center gap-1.5">
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${lastOptimized ? 'bg-emerald-50 text-emerald-700' : 'bg-app text-muted'}`}>
+              <Sparkles size={11} /> {lastOptimized ? `Last optimized ${lastOptimized}` : 'Not optimized yet'}
+            </span>
+          </div>
         </div>
         <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${opt.ring}`} title="Optimize score">
           <span className="text-2xl font-bold tabular-nums leading-none">{optimizeScore}</span>
