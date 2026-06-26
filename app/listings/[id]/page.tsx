@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { ListingOptimizer } from '@/components/ListingOptimizer'
+import { PhotoOrganizer } from '@/components/PhotoOrganizer'
 import { ListingReviews } from '@/components/ListingReviews'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
@@ -152,6 +153,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
       )}
 
       <div className="mb-5"><ListingOptimizer listingId={listing.id} name={name} /></div>
+      <div className="mb-5"><PhotoOrganizer listingId={listing.id} name={name} /></div>
 
       {/* Optimize score breakdown */}
       <div className="mb-2 flex items-center gap-2 flex-wrap">
