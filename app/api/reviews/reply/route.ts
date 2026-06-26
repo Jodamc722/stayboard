@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     .eq('id', 'singleton')
     .maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
-  if (!valid) return NextResponse.json({ error: 'Guesty token is refreshing â try again in a moment.' }, { status: 503 })
+  if (!valid) return NextResponse.json({ error: 'Guesty token is refreshing - try again in a moment.' }, { status: 503 })
 
   const r = await fetch(`${BASE}/reviews/${encodeURIComponent(reviewId)}/reply`, {
     method: 'PUT',
@@ -38,9 +38,17 @@ export async function POST(req: NextRequest) {
   const body = await r.text().catch(() => '')
   if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${body.slice(0, 200)}` }, { status: 502 })
 
-  // Persist the reply locally so it shows immediately and review counts stay accurate,
-  // regardless of whether Guesty echoes the reply text back on the next sync.
-  await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true }).eq('id', reviewId)
+  // Persist locally so it shows immediately and review counts stay accurate. Also mirror the
+  // reply into raw.hostResponse, because the listing page derives "replied" from raw (not the
+  // reply column) - this makes the unit page reflect the reply right after posting and on reload.
+  try {
+    const { data: row } = await sb.from('guesty_reviews').select('raw').eq('id', reviewId).maybeSingle()
+    const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
+    const newRaw = { ...raw, hostResponse: String(reviewReply) }
+    await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true, raw: newRaw }).eq('id', reviewId)
+  } catch {
+    await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true }).eq('id', reviewId)
+  }
 
   return NextResponse.json({ ok: true, reply: String(reviewReply) })
 }
