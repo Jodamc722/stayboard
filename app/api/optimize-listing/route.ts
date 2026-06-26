@@ -1,9 +1,9 @@
-// AI listing optimizer -> Guesty master content. Generates an optimized title + all six
-// Guesty publicDescription sections (summary, space, access, neighborhood, transit, notes),
-// grounded ONLY in a single listing's verified data, its current content, its real guest-review
-// signal, and its booking settings. This is the MASTER content Guesty syncs to every channel, so
-// it is written to Airbnb's stricter, highest-converting standard for maximum visibility and to set
-// great, honest expectations. Generate-only here; the human approves + pushes via /api/listing-content.
+// AI listing optimizer -> Guesty master content. Generates an optimized title + all six Guesty
+// publicDescription sections, grounded ONLY in the listing's verified data, its real address/area,
+// its current content, its guest-review signal, and its booking settings (cancellation, instant
+// book, min stay). MASTER content syncs to every channel; written to Airbnb's stricter, highest-
+// converting standard. HARD honesty: never invent facts, distances, businesses, or amenities, and
+// never print the street address/codes. Generate-only; push via /api/listing-content.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -12,17 +12,25 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 45
 
 const SECTION_DEFS: { key: string; label: string; guide: string }[] = [
-  { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, real perk (e.g. "5-min walk to the sand"); state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. Most important field.' },
-  { key: 'space', label: 'The space', guide: 'Room-by-room layout and standout features in short labeled lines or tight paragraphs (this is the 17 West house style): bedrooms + bed types, bathrooms, kitchen, living areas, outdoor space, views, building amenities (pool, gym, parking). Concrete and scannable. ~700-1300 characters.' },
-  { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if applicable. NEVER include real codes, full addresses, phone, or URLs. ~300-700 characters.' },
-  { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the listing city/area: name real, well-known nearby beaches, dining/nightlife districts, attractions and walkable spots with quantified proximity where the data supports it. Roughly 90% of guests want surrounding-area info, and it is a strong visibility/expectation signal. ~500-1000 characters.' },
-  { key: 'transit', label: 'Getting around', guide: 'Transport and orientation: parking, distance/time to the beach or key spots, airport proximity, whether a car is useful, rideshare/walkability. ~250-600 characters.' },
-  { key: 'notes', label: 'Other notes', guide: 'Anything else that sets honest expectations and prevents bad surprises: who it suits best, building/HOA notes, quiet-enjoyment, the booking/cancellation flexibility if known. Keep positive and factual. ~250-700 characters.' },
+  { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, REAL perk only if the data supports it; state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. Most important field.' },
+  { key: 'space', label: 'The space', guide: 'Room-by-room layout and standout features in short labeled lines or tight paragraphs (the 17 West house style): bedrooms + bed types, bathrooms, kitchen, living areas, outdoor space, views, building amenities (pool, gym, parking) — but ONLY ones present in the data. Concrete and scannable. ~700-1300 characters.' },
+  { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if the data indicates it. NEVER include the street address, unit number, real codes, phone, or URLs. ~300-700 characters.' },
+  { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it. ~500-1000 characters.' },
+  { key: 'transit', label: 'Getting around', guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances. ~250-600 characters.' },
+  { key: 'notes', label: 'Other notes', guide: 'Anything that sets honest expectations: who it suits best, building/HOA notes, quiet-enjoyment, and the booking flexibility (cancellation policy / instant book / min stay) when known. Positive and factual. ~250-700 characters.' },
 ]
 
 const TITLE_MAX = 50
-
 function str(v: any): string { return typeof v === 'string' ? v : '' }
+
+// Cancellation policy: read across the fields Guesty / channels use.
+function cancellationPolicy(raw: any): string | null {
+  const candidates = [
+    raw?.terms?.cancellation, raw?.prices?.guestyCancellationPolicy, raw?.cancellationPolicy,
+    raw?.airbnb?.cancellationPolicy, raw?.bookingcom?.cancellationPolicy, raw?.cancellation,
+  ].map(str).filter(Boolean)
+  return candidates[0] || null
+}
 
 export async function POST(req: NextRequest) {
   const supabase = createClient()
@@ -39,7 +47,7 @@ export async function POST(req: NextRequest) {
   const sb = supabaseAdmin()
   const [{ data: listing, error }, { data: reviewRows }] = await Promise.all([
     sb.from('guesty_listings')
-      .select('id, title, nickname, building, unit, room_type, tags, address_city, address_state, bedrooms, bathrooms, max_occupancy, amenities, status, raw')
+      .select('id, title, nickname, building, unit, room_type, tags, address_full, address_city, address_state, bedrooms, bathrooms, max_occupancy, amenities, status, raw')
       .eq('id', listingId).single(),
     sb.from('guesty_reviews').select('rating, content').eq('listing_id', listingId).order('created_at', { ascending: false }).limit(40),
   ])
@@ -55,25 +63,35 @@ export async function POST(req: NextRequest) {
     neighborhood: get('neighborhood'), transit: get('transit'), notes: get('notes'),
   }
 
-  // Booking settings / "scoring" inputs - flexible policies and clear terms lift conversion + visibility.
-  const terms = raw.terms || {}
-  const settings = {
-    minNights: terms.minNights ?? raw.defaultCheckInTime ?? null,
-    maxNights: terms.maxNights ?? null,
-    cancellationPolicy: str(raw.cancellationPolicy || raw?.prices?.cancellation || raw?.cancellation || '') || null,
-    checkInTime: raw.defaultCheckInTime ?? null,
-    checkOutTime: raw.defaultCheckOutTime ?? null,
-    instantBookable: raw.instantBookable ?? null,
+  // Real location (used to identify the area + name real nearby places — NOT to print verbatim).
+  const addr = raw?.address || {}
+  const location = {
+    streetAddress: listing.address_full || str(addr.full) || null,
+    city: listing.address_city || str(addr.city) || null,
+    state: listing.address_state || str(addr.state) || null,
+    neighborhood: str(addr.neighborhood) || null,
+    lat: addr.lat ?? null, lng: addr.lng ?? null,
   }
 
-  // Guest-review signal: what guests actually praise (lean in) + overall rating, to set great honest expectations.
+  // Booking settings — also the inputs behind the property page's Optimize Score.
+  const terms = raw.terms || {}
+  const instantRaw = raw?.instantBookable ?? raw?.instantBook ?? null
+  const settings = {
+    cancellationPolicy: cancellationPolicy(raw),
+    instantBook: instantRaw === true || instantRaw === 'true' ? true : (instantRaw == null ? null : false),
+    minNights: terms.minNights ?? raw?.defaultListingMinNights ?? null,
+    maxNights: terms.maxNights ?? null,
+    checkInTime: raw?.defaultCheckInTime ?? null,
+    checkOutTime: raw?.defaultCheckOutTime ?? null,
+  }
+
+  // Guest-review signal: what guests genuinely praise (lean in) + average rating.
   const reviews = Array.isArray(reviewRows) ? reviewRows : []
   const rated = reviews.map(r => Number(r.rating)).filter(n => Number.isFinite(n))
   const avgRating = rated.length ? Math.round((rated.reduce((a, b) => a + b, 0) / rated.length) * 10) / 10 : null
   const praise = reviews
     .filter(r => (Number(r.rating) >= 4 || r.rating == null) && str(r.content).trim().length > 12)
-    .map(r => str(r.content).replace(/\s+/g, ' ').trim().slice(0, 220))
-    .slice(0, 8)
+    .map(r => str(r.content).replace(/\s+/g, ' ').trim().slice(0, 220)).slice(0, 8)
   const reviewSignal = { count: reviews.length, avgRating, guestPraiseSamples: praise }
 
   const facts = {
@@ -82,52 +100,54 @@ export async function POST(req: NextRequest) {
     building: listing.building || null,
     unit: listing.unit || null,
     roomType: listing.room_type || null,
-    city: listing.address_city || null,
-    state: listing.address_state || null,
     bedrooms: listing.bedrooms ?? null,
     bathrooms: listing.bathrooms ?? null,
     sleeps: listing.max_occupancy ?? null,
     amenities: Array.isArray(listing.amenities) ? listing.amenities.slice(0, 80) : (listing.amenities ?? null),
     tags: Array.isArray(listing.tags) ? listing.tags.slice(0, 30) : (listing.tags ?? null),
-    bookingSettings: settings,
+    location, bookingSettings: settings,
   }
 
   const sectionSpec = SECTION_DEFS.map(s => `- "${s.key}" (${s.label}): ${s.guide}`).join('\n')
 
-  const SYSTEM = `You are a senior short-term-rental listing copywriter for Stay Hospitality, a South Florida property manager (Miami Beach / Fort Lauderdale / Broward). You write the MASTER listing content stored in Guesty, which syncs out to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard so it is excellent everywhere.
+  const SYSTEM = `You are a senior short-term-rental listing copywriter for Stay Hospitality, a South Florida property manager (Miami Beach / Fort Lauderdale / Broward). You write the MASTER listing content stored in Guesty, which syncs to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard so it is excellent everywhere.
 
-YOUR TWO GOALS
-1) MAXIMIZE VISIBILITY: OTAs rank complete, specific, keyword-rich, high-converting listings. Fill every section fully; use real searchable terms; quantify; lead with the strongest differentiators.
-2) SET GREAT, HONEST EXPECTATIONS: guests rate against expectations. Lean into what guests genuinely praise (see the review signal), and never over-promise. Accurate, vivid, complete copy earns better reviews and ranking over time.
+GOALS
+1) MAXIMIZE VISIBILITY: OTAs rank complete, specific, keyword-rich, high-converting listings. Fill every section fully with REAL detail; lead with the strongest true differentiators.
+2) SET GREAT, HONEST EXPECTATIONS: lean into what guests genuinely praise (review signal); never over-promise. Accurate, complete copy earns better reviews and ranking over time.
+
+ABSOLUTE HONESTY (THE MOST IMPORTANT RULE)
+- Use ONLY facts present in the JSON below (data, location, current content, review signal, booking settings). If you are NOT certain of something — an exact distance, a specific restaurant/shop/attraction name, a drive time, an amenity, a view, a room count — DO NOT state it. Omit it or stay general. Never guess, never embellish, never invent.
+- It is far better to say less, accurately, than to say more and be wrong. This copy goes on a live listing.
+
+LOCATION (use it; never print it verbatim)
+- A real address/area is provided. Use it ONLY to identify the actual city/neighborhood so you can name genuinely well-known, real nearby places for THAT exact city (e.g. for Miami Beach: South Beach, Lincoln Road, Ocean Drive; for Fort Lauderdale: Las Olas, Fort Lauderdale Beach). Reference only landmarks you are confident actually exist for that city.
+- NEVER print the exact street address, unit number, lock/door codes, phone, email, or URLs anywhere in the copy. Keep proximity general ("a short walk to the beach") unless the data gives an exact distance.
 
 HOUSE STYLE (model the strong "17 West" formatting)
-- Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest point. Vivid but never flowery or padded.
-- Use the listing's CITY/AREA to name real, well-known nearby things to do (beaches, dining/nightlife districts, attractions, walkable spots) in the Neighborhood section. It is fine to reference the area and landmarks; never include the exact street address, codes, phone, email, or URLs.
+- Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest true point. Vivid but never padded or flowery.
 
 TITLE RULES
-- Hard limit ${TITLE_MAX} characters including spaces. Mobile cards truncate near 32 chars, so FRONT-LOAD the strongest differentiators. Title Case. No emoji, no repeated symbols, no ALL-CAPS words (proper nouns OK), no phone/email/URLs.
+- Hard limit ${TITLE_MAX} characters including spaces. Front-load the strongest true differentiators (mobile cards truncate ~32 chars). Title Case. No emoji, no repeated symbols, no ALL-CAPS words (proper nouns OK), no phone/email/URLs.
 
 SECTION RULES (Guesty publicDescription fields)
 ${sectionSpec}
 
-SOUTH FLORIDA KEYWORD GUIDANCE
-- Use high-value, real searchable terms ONLY when the data supports them: "ocean view", "walk to the beach", "pool", "hot tub", "free parking", "king bed", neighborhoods ("Miami Beach", "South Pointe", "Las Olas", "Fort Lauderdale Beach"), property types ("penthouse", "villa", "condo"). Quantify location ("5-min walk to the sand") rather than vague ("close to beach").
+SOUTH FLORIDA KEYWORDS — only when the data supports them: "ocean view", "walk to the beach", "pool", "hot tub", "free parking", "king bed", real neighborhoods, real property types. Quantify location only if the data provides the figure.
 
-HONESTY (CRITICAL)
-- Use ONLY facts present in the listing JSON below (data, current content, review signal, booking settings). NEVER invent amenities, room counts, views, distances, codes, or features. If a fact is missing, write around it honestly. Never include phone numbers, emails, URLs, street addresses, or door/lock codes in any field.
-- The guest-review samples are signal for what to emphasize and the tone guests respond to; do not quote them verbatim or invent specifics from them.
+BOOKING FLEXIBILITY: if the booking settings include a flexible cancellation policy, instant book, or a low minimum stay, you MAY mention the convenience honestly in the notes section. Do not state a policy that isn't in the data.
 
 OUTPUT FORMAT
 Return STRICT, minified JSON and nothing else (no markdown, no code fences, no commentary). Exactly this shape:
 {"title":"...","summary":"...","space":"...","access":"...","neighborhood":"...","transit":"...","notes":"...","rationale":"..."}
-- Every section is a non-empty string. "rationale": 1-2 sentences on why this version wins on visibility and expectation-setting.`
+- Every section is a non-empty string. "rationale": 1-2 sentences on why this wins on visibility + honest expectation-setting.`
 
   const USER = `Rewrite the master content for this listing.
 
-VERIFIED FACTS (use ONLY these):
+VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
 
-GUEST REVIEW SIGNAL (lean into what guests praise; set honest expectations; do not quote verbatim):
+GUEST REVIEW SIGNAL (lean into what guests praise; do not quote verbatim):
 ${JSON.stringify(reviewSignal)}
 
 CURRENT GUESTY CONTENT (improve on this; it may be thin or empty):
@@ -160,20 +180,21 @@ ${JSON.stringify(current)}`
     if (proposed.title.length > TITLE_MAX) warnings.push(`Title is ${proposed.title.length} chars - over the ${TITLE_MAX}-char Guesty/Airbnb limit. Trim before pushing.`)
     for (const f of forbiddenIn(proposed.title)) warnings.push(`Title contains ${f} - channels may reject it.`)
     if (proposed.summary.length > 500) warnings.push(`Summary is ${proposed.summary.length} chars - over the 500-char limit Airbnb shows before "read more".`)
+    const streetNum = location.streetAddress ? String(location.streetAddress).match(/\d{2,}/)?.[0] : null
     for (const [k, v] of Object.entries(proposed)) {
       if (k === 'title') continue
       const bad = forbiddenIn(v as string).filter(x => x === 'a phone number' || x === 'an email address' || x === 'a URL')
       if (bad.length) warnings.push(`The ${k} section contains ${bad.join(' and ')} - remove it before pushing.`)
+      if (streetNum && String(v).includes(streetNum)) warnings.push(`The ${k} section may contain the street address - remove it before pushing.`)
     }
 
     return NextResponse.json({
       listingId,
       titleMax: TITLE_MAX,
       sections: SECTION_DEFS.map(s => ({ key: s.key, label: s.label })),
-      current,
-      proposed,
-      reviewSignal,
+      current, proposed, reviewSignal,
       bookingSettings: settings,
+      location: { city: location.city, state: location.state, neighborhood: location.neighborhood },
       rationale: String(parsed.rationale || '').trim(),
       warnings,
     })
