@@ -223,10 +223,19 @@ function scoreSettings(raw: any, photoCount: number): { score: number; factors: 
   factors.push({ label: 'Minimum stay', got: mGot, max: 22, note: mNote, ok: mGot >= 18 ? 'good' : mGot >= 10 ? 'warn' : 'bad' })
   factors.push({ label: 'Instant Book', got: instant ? 22 : 6, max: 22, note: instant ? 'On - boosts ranking on Airbnb & Vrbo' : (instantRaw == null ? 'Unknown / not set' : 'Off - turning it on lifts ranking'), ok: instant ? 'good' : 'warn' })
   let pGot = 0, pNote = ''
-  if (photoCount >= 20) { pGot = 16; pNote = `${photoCount} photos - strong` }
-  else if (photoCount >= 15) { pGot = 12; pNote = `${photoCount} photos - good, target 20+` }
-  else if (photoCount >= 10) { pGot = 8; pNote = `${photoCount} photos - add more (target 20+)` }
-  else if (photoCount >= 6) { pGot = 4; pNote = `${photoCount} photos - minimum met, well short of ideal` }
+  // If the AI photo-quality assessment has been run (persisted to raw._photoScore), score on a blend of
+  // coverage (count) + AI-judged quality. Otherwise fall back to count alone.
+  const aiPhoto: any = (raw && typeof raw._photoScore === 'object') ? raw._photoScore : null
+  const aiQ = aiPhoto && Number.isFinite(Number(aiPhoto.score)) ? Math.max(0, Math.min(100, Number(aiPhoto.score))) : null
+  if (aiQ != null) {
+    const countComp = photoCount >= 20 ? 8 : photoCount >= 15 ? 6 : photoCount >= 10 ? 4 : photoCount >= 6 ? 2 : photoCount > 0 ? 1 : 0
+    const qualComp = Math.round((aiQ / 100) * 8)
+    pGot = countComp + qualComp
+    pNote = `${photoCount} photos - AI quality ${aiQ}/100${aiPhoto.coverageNote ? ' - ' + String(aiPhoto.coverageNote) : ''}`
+  } else if (photoCount >= 20) { pGot = 12; pNote = `${photoCount} photos - strong count (run AI photo analysis to score quality)` }
+  else if (photoCount >= 15) { pGot = 9; pNote = `${photoCount} photos - good count, target 20+ (run AI photo analysis for quality)` }
+  else if (photoCount >= 10) { pGot = 6; pNote = `${photoCount} photos - add more (target 20+)` }
+  else if (photoCount >= 6) { pGot = 3; pNote = `${photoCount} photos - minimum met, well short of ideal` }
   else if (photoCount > 0) { pGot = 1; pNote = `${photoCount} photos - below Vrbo's 6 minimum` }
   else { pGot = 0; pNote = 'No photos detected' }
   factors.push({ label: 'Photos', got: pGot, max: 16, note: pNote, ok: pGot >= 12 ? 'good' : pGot >= 6 ? 'warn' : 'bad' })
