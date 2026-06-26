@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
 
 ABSOLUTE HONESTY (most important): Use ONLY facts in the JSON provided below. If you are not certain of a distance, a specific business/attraction name, an amenity, a view, or a room count, omit it or stay general. Never guess, embellish, or invent. Better to say less, accurately - this goes on a live listing.
 LOCATION: a real area is provided; use it ONLY to name genuinely well-known, real nearby places for that exact city. NEVER print the street address, unit number, lock/door codes, phone, email, or URLs.
-PHOTOS: the listing's actual photos are attached — study them and ground this field in what they genuinely show; use them to VERIFY (only state what's visible in a photo or in the data) and to surface the most compelling true selling points.\nHOUSE STYLE: structured and scannable; lead with the strongest true point; vivid but never padded; write to SELL the stay.
+PHOTOS: the listing's actual photos are attached - study them and ground this field in what they genuinely show; use them to VERIFY (only state what's visible in a photo or in the data). DISTINGUISH real unit/building photos from generic area/stock photos (skyline, beach, map, landmarks, decor stock) - only ground home-feature claims in real unit photos; stock/area shots inform Neighborhood only. NEVER claim a garage (no unit has one).\nHOUSE STYLE: structured and scannable; lead with the strongest true point; vivid but never padded; write to SELL the stay.
 
 You are writing ONLY this field:
 ${guide}
@@ -221,6 +221,8 @@ LOCATION (use it; never print it verbatim)
 PHOTOS (you can SEE them — use them)
 - The listing's actual photos are attached. STUDY them. Ground the copy (especially "The space") in what the images genuinely show: layout, light, finishes, views, outdoor areas, standout features.
 - Use the photos to VERIFY before you write. Only describe what is visible in a photo or stated in the data. If a claimed amenity/view isn't visible or in the data, leave it out. The photos are your fact-check.
+- REAL vs STOCK: some photos are NOT of this home - they are generic area/stock shots (city skyline, beach, map, sunset, neighborhood landmarks, building exterior renderings, lifestyle/decor stock). You must tell these apart. ONLY ground home-feature claims (rooms, layout, finishes, views from the unit, the unit's outdoor space) in photos that genuinely show THIS unit or building. Generic area/stock photos may ONLY inform the Neighborhood section - never describe them as part of the home.
+- NEVER claim a GARAGE or garage parking - none of these units have a garage. If parking exists per the data, describe it generically (e.g. parking available) and never call it a garage.
 - Lead with the most visually compelling TRUE selling points. Make a reader picture themselves there.
 
 HOUSE STYLE (model the strong "17 West" formatting)
