@@ -15,6 +15,15 @@ const MAX_PHOTOS = 24 // cap vision payload; any beyond this keep their original
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
+// Downsize Guesty/Cloudinary images before sending to vision. Each image otherwise costs thousands of
+// input tokens; a ~420px-wide rendition costs ~90, letting us order many photos within tight rate tiers.
+function smallUrl(u: string): string {
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) {
+    return u.replace('/image/upload/', '/image/upload/w_420,c_limit,q_auto,f_jpg/')
+  }
+  return u
+}
+
 type Pic = { _id: string; url: string; caption: string }
 
 function readPics(raw: any, listing: any): Pic[] {
@@ -66,7 +75,7 @@ export async function POST(req: NextRequest) {
   const photoBlocks: any[] = []
   const fetched = await Promise.all(toOrder.map(async (p) => {
     try {
-      const ir = await fetch(p.url)
+      const ir = await fetch(smallUrl(p.url))
       if (!ir.ok) return null
       const ct = (ir.headers.get('content-type') || '').toLowerCase()
       const media = ct.includes('png') ? 'image/png' : ct.includes('webp') ? 'image/webp' : ct.includes('gif') ? 'image/gif' : 'image/jpeg'
