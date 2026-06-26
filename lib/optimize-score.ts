@@ -114,7 +114,7 @@ const HIGH_VALUE: AmenityDef[] = [
   { name: 'Hot tub', tier: 2, variants: ['hot tub', 'jacuzzi', 'jetted tub', 'spa'] },
   { name: 'Washer', tier: 2, variants: ['washer', 'washing machine', 'laundry'] },
   { name: 'Dryer', tier: 2, variants: ['dryer'] },
-  { name: 'Dedicated workspace', tier: 2, variants: ['dedicated workspace', 'laptop-friendly', 'desk'] },
+  { name: 'Dedicated workspace', tier: 2, variants: ['dedicated workspace', 'laptop-friendly', 'laptop friendly', 'workspace', 'work space', 'desk', 'office'] },
   { name: 'Beach access', tier: 2, variants: ['beach access', 'beachfront', 'beach essentials', 'ocean view', 'waterfront'], conditional: 'beach' },
   { name: 'Gym', tier: 2, variants: ['gym', 'exercise equipment', 'fitness'] },
   { name: 'TV', tier: 2, variants: ['tv', 'hdtv', 'cable', 'netflix'] },
@@ -139,7 +139,9 @@ function normAmenities(list: string[]): string[] {
     .trim())
 }
 function present(norm: string[], def: AmenityDef): boolean {
-  return def.variants.some(v => norm.some(a => a.includes(v)))
+  // hyphen/space-insensitive contains, so "laptop friendly" matches the "laptop-friendly" variant
+  const flat = (x: string) => x.replace(/[-\s]+/g, ' ').trim()
+  return def.variants.some(v => { const vf = flat(v); return norm.some(a => flat(a).includes(vf)) })
 }
 
 /* --------------------------------- scoring --------------------------------- */
