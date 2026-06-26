@@ -93,9 +93,9 @@ export async function POST(req: NextRequest) {
   const SYS = `You are a short-term-rental listing merchandiser. You are given the photos of one property (the cover/hero photo is already chosen by the host and is NOT included here). Decide the optimal DISPLAY ORDER for the remaining photos to maximize bookings on Airbnb/Vrbo/Booking.com.
 
 Ordering principles (in priority):
-1. Lead with the most visually striking, true selling spaces (a stunning view, bright open living area, a pool, a beautiful kitchen).
-2. Show VARIETY early - alternate space types in the first several so a guest quickly grasps the whole home (e.g. living -> kitchen -> primary bedroom -> view/outdoor) rather than five bathrooms in a row.
-3. Then walk the home logically: living/dining, kitchen, bedrooms (primary first), bathrooms, outdoor/balcony/pool, building amenities (gym, lobby, parking).
+1. The host's COVER photo is already #1 (not shown to you). Your FIRST 1-2 photos should be the strongest remaining HIGHLIGHTS - the wow shots (a stunning view, the pool, a bright open living area, a beautiful kitchen).
+2. After those 1-2 highlights, switch to a PRACTICAL, logical walkthrough of the ACTUAL home so the sequence makes sense to a guest touring it: living/dining -> kitchen -> primary bedroom -> other bedrooms -> bathrooms -> outdoor/balcony/pool -> building amenities (gym, lobby, parking).
+3. GROUP rooms of the same type together; do NOT scatter (no bedroom, then kitchen, then another bedroom). The flow should feel like a sensible tour, not a shuffle.
 4. Push utility/detail/closeup shots, duplicates, and the weakest images toward the END.
 5. Never invent what a photo shows - judge only from the image.
 
