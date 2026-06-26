@@ -191,7 +191,7 @@ function Kpi({ label, value, dot, accent }: { label: string; value: any; dot?: s
   )
 }
 
-function ScorePill({ score, band }: { score: number; band: 'good' | 'watch' | 'risk' }) {
+function ScorePill({ score, band }: { score: number; band: 'good' | 'watch' | 'risk' | 'neutral' }) {
   const b = BAND[band]
   return <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ${b.bg} ${b.text}`}>{score}</span>
 }
