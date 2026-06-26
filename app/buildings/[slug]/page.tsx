@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase-server'
 import { computeScore, rollupBuilding, slugToBuilding, band, bandUi } from '@/lib/optimize-score'
 import { Shell } from '@/components/Shell'
 import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
+import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
 import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -74,7 +75,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
         )}
       </header>
 
-      <div className="mb-5"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /></div>
+      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /></div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {scored.map(({ l, dead, score, suggestions, mustFix }) => {
