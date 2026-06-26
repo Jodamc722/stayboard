@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare } from 'lucide-react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap } from 'lucide-react'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string }
 
 const SIGN = '— Stay Hospitality'
 
@@ -52,8 +52,8 @@ const ratingFrac = (n: number | null) => n == null ? -1 : (n <= 5 ? n / 5 : n / 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
 
 export function ReviewsPanel() {
-  const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; error?: string }>({ loading: true })
-  const [tab, setTab] = useState<'needs' | 'replied'>('needs')
+  const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string }>({ loading: true })
+  const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped'>('needs')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [posted, setPosted] = useState<Record<string, boolean>>({})
@@ -70,7 +70,7 @@ export function ReviewsPanel() {
     fetch('/api/reviews').then(r => r.json())
       .then(d => {
         const reviews: Review[] = d.reviews || []
-        setS({ loading: false, reviews, error: d.error })
+        setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error })
         // No template placeholders — drafts stay empty until the AI writes the real one.
       })
       .catch(e => setS({ loading: false, error: String(e) }))
@@ -90,6 +90,7 @@ export function ReviewsPanel() {
   const replied = (s.reviews || [])
     .filter(r => (r.hasReply || posted[r.id]) && matchQ(r))
     .sort((a, b) => (postedAt[b.id] || 0) - (postedAt[a.id] || 0) || (b.created_at || '').localeCompare(a.created_at || ''))
+  const unmapped = (s.unmapped || []).filter(matchQ)
   const selectedIds = needs.filter(r => selected[r.id])
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
@@ -168,6 +169,10 @@ export function ReviewsPanel() {
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'replied' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
             <CheckCircle2 size={12} /> Replied <span className={`ml-0.5 px-1 rounded ${tab === 'replied' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : replied.length}</span>
           </button>
+          <button onClick={() => setTab('unmapped')}
+            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'unmapped' ? 'bg-slate-600 text-white' : 'text-muted border border-line hover:bg-app'}`} title="Reviews on listings not synced to their channel — shown for visibility, can't be replied to, and never count toward scores">
+            <PlugZap size={12} /> Not synced <span className={`ml-0.5 px-1 rounded ${tab === 'unmapped' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : unmapped.length}</span>
+          </button>
           {tab === 'needs' && !s.loading && needs.length > 0 && (
             <div className="ml-auto flex items-center gap-1.5">
               <button onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
@@ -234,6 +239,29 @@ export function ReviewsPanel() {
               </li>
             ))}
           </ul>
+        )
+      ) : tab === 'unmapped' ? (
+        unmapped.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted">No unsynced listings. Everything is connected. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
+        ) : (
+          <>
+            <div className="px-4 pt-3 pb-1 text-[11px] text-muted">These reviews are on listings that aren't synced to their channel — shown for visibility only. They can't be replied to here and <b>don't count toward the average or health score</b> (positive or negative).</div>
+            <ul className="divide-y divide-line/70">
+              {unmapped.map(r => (
+                <li key={r.id} className="px-4 py-3 border-l-[3px] border-slate-300 bg-slate-50/40">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                      <Star size={11} /> {fmtRating(r.rating)}
+                    </span>
+                    <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
+                    {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                    <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><PlugZap size={11} /> {r.reason || 'Not synced'}</span>
+                  </div>
+                  {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+                </li>
+             )) }
+            </ul>
+          </>
         )
       ) : needs.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-muted">All caught up on reviews. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
