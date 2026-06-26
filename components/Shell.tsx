@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase-browser'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star,
-  Share2, Sparkles, TrendingUp
+  Share2, Sparkles, TrendingUp, UserCog
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -63,10 +63,12 @@ const SECTIONS: {
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname()
   const [email, setEmail] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || null))
+    fetch('/api/access/me').then(r => r.json()).then(j => setIsAdmin(!!j?.isAdmin)).catch(() => {})
   }, [])
 
   async function signOut() {
@@ -79,6 +81,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const isActive = (to: string) => path === to || (to !== '/' && path?.startsWith(to))
 
+  // Admins get a Users link in Settings.
+  const sections = SECTIONS.map(sec => sec.title === 'Settings' && isAdmin
+    ? { ...sec, items: [...sec.items, { to: '/users', label: 'Users & access', Icon: UserCog }] }
+    : sec)
+
   return (
     <div className="min-h-screen flex bg-app">
       {/* Sidebar */}
@@ -88,7 +95,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <span className="font-bold text-[15px] tracking-tight text-ink">STAYBOARD</span>
         </div>
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
-          {SECTIONS.map((section, si) => (
+          {sections.map((section, si) => (
             <div key={si}>
               {section.title && (
                 <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">{section.title}</div>
