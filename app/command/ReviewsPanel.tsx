@@ -101,7 +101,7 @@ export function ReviewsPanel() {
       for (let attempt = 0; attempt < 4; attempt++) {
         const res = await fetch('/api/reviews/draft', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction })
+          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction, currentDraft: drafts[r.id] || '' })
         })
         const d = await res.json()
         if (res.ok && d.draft) { setDraft(r.id, d.draft); return }
@@ -267,7 +267,7 @@ export function ReviewsPanel() {
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
                     <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
                   </button>
-                  <button onClick={() => { const i = window.prompt('How should the AI rephrase this reply? (e.g. warmer, shorter, more apologetic, more professional)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
+                  <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional, or: let them know we resolved the issue)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
                     disabled={aiBusy[r.id] || rowBusy[r.id]}
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
                     Rephrase…
