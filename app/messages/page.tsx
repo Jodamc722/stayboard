@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
+import { SentimentBoard } from '@/components/SentimentBoard'
 import { MessageSquare, Gauge, Timer, Zap, Reply, Inbox, Mail } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -99,6 +100,8 @@ export default async function MessagesPage() {
           tone={kpis.unread === 0 ? 'good' : kpis.unread <= 10 ? 'amber' : 'red'}
         />
       </div>
+
+      <SentimentBoard />
 
       {list.length === 0 ? (
         <div className="bg-white rounded-2xl border border-line p-16 text-center text-muted shadow-soft">
