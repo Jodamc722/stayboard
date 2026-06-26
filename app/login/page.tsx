@@ -27,7 +27,7 @@ export default function LoginPage() {
         router.push('/'); router.refresh()
       } else {
         const { error } = await supabase.auth.signInWithOtp({
-          email, options: { emailRedirectTo: `${window.location.origin}/auth/callback` }
+          email, options: { emailRedirectTo: `${window.location.origin}/auth/callback`, shouldCreateUser: false }
         })
         if (error) throw error
         setSent(true)
