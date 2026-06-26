@@ -80,7 +80,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   // Reviews first — they feed the Optimize Score's review signal.
   const { data: revRows } = await sb
     .from('guesty_reviews')
-    .select('id, rating, content, channel, guest_name, created_at, raw')
+    .select('id, rating, content, channel, guest_name, created_at, excluded_from_score, raw')
     .eq('listing_id', params.id)
     .order('created_at', { ascending: false })
     .limit(40)
@@ -88,7 +88,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
     const hostReply = hostReplyFromRaw(r.raw)
     return { ...r, hostReply, has_reply: !!hostReply }
   })
-  const rated = reviews.filter((r: any) => r.rating != null)
+  const rated = reviews.filter((r: any) => r.rating != null && !r.excluded_from_score)
   const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + Number(r.rating), 0) / rated.length) * 100) / 100 : null
 
   // Sibling amenities across the building → "other units have it, add it" suggestions.
