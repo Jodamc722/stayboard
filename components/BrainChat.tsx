@@ -1,12 +1,13 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
+import { usePathname } from 'next/navigation'
 import { Sparkles, X, Send } from 'lucide-react'
 
 type Msg = { role: 'user' | 'assistant'; content: string }
 
 const HELLO: Msg = {
   role: 'assistant',
-  content: "Hey Jon — I'm the Brain. Ask me what needs approval, who's arriving today, or say \"draft an ops plan for the Miami and Broward teams.\""
+  content: "Hey Jon — I'm Eve. Ask me what needs approval, who's arriving today, or say \"draft an ops plan for the Miami and Broward teams.\""
 }
 
 const SUGGEST = [
@@ -16,6 +17,7 @@ const SUGGEST = [
 ]
 
 export function BrainChat() {
+  const path = usePathname()
   const [open, setOpen] = useState(false)
   const [msgs, setMsgs] = useState<Msg[]>([HELLO])
   const [input, setInput] = useState('')
@@ -41,18 +43,22 @@ export function BrainChat() {
     } finally { setBusy(false) }
   }
 
+  // The Command Center already embeds the full Eve console, so the floating pill there
+  // is redundant and overlaps it. Hide the floater on /command; show it everywhere else.
+  if (path === '/command') return null
+
   return (
     <>
       {!open && (
         <button onClick={() => setOpen(true)}
           className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 rounded-full bg-brand-600 text-white px-4 py-3 shadow-lg hover:bg-brand-700 transition-colors">
-          <Sparkles size={18} /> <span className="font-semibold text-sm">Ask the Brain</span>
+          <Sparkles size={18} /> <span className="font-semibold text-sm">Ask Eve</span>
         </button>
       )}
       {open && (
         <div className="fixed bottom-5 right-5 z-50 w-[min(92vw,380px)] h-[min(72vh,580px)] flex flex-col rounded-2xl border border-brand-200 bg-white shadow-2xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-brand-50">
-            <span className="font-semibold text-ink text-sm inline-flex items-center gap-1.5"><Sparkles size={15} className="text-brand-600" /> The Brain</span>
+            <span className="font-semibold text-ink text-sm inline-flex items-center gap-1.5"><Sparkles size={15} className="text-brand-600" /> Eve</span>
             <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
