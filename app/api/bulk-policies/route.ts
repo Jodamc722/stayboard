@@ -35,6 +35,15 @@ export async function GET(req: NextRequest) {
   const tok = await token(sb)
   if (!tok) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
 
+  if (probe === 'pictures') {
+    const rr = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=pictures`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+    const tt = await rr.text()
+    if (!rr.ok) return NextResponse.json({ error: `Guesty ${rr.status}: ${tt.slice(0, 200)}` }, { status: 200 })
+    let lf: any = {}; try { lf = JSON.parse(tt) } catch { lf = {} }
+    const pics = Array.isArray(lf.pictures) ? lf.pictures : []
+    return NextResponse.json({ count: pics.length, sampleKeys: pics[0] && typeof pics[0] === 'object' ? Object.keys(pics[0]) : null, sample: pics.slice(0, 3).map((x: any) => ({ id: x?._id || x?.id || null, hasOriginal: !!(x?.original || x?.large), caption: x?.caption ?? null })) })
+  }
+
   if (probe === 'checkin') {
     const rr = await fetch(`${BASE}/listings/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
     const tt = await rr.text()
@@ -113,6 +122,16 @@ export async function POST(req: NextRequest) {
 
   const results: { id: string; name: string; ok: boolean; error?: string }[] = []
   let okCount = 0, failCount = 0
+
+  // Writability test: PUT a listing's CURRENT pictures back unchanged to see if Guesty allows photo writes.
+  if ((body as any)?.dryRunPictures === true) {
+    const id0 = listingIds[0]
+    const raw0: any = (byId.get(id0)?.raw && typeof byId.get(id0).raw === 'object') ? byId.get(id0).raw : {}
+    const pics0 = Array.isArray(raw0.pictures) ? raw0.pictures : []
+    const rp = await fetch(`${BASE}/listings/${encodeURIComponent(id0)}`, { method: 'PUT', headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ pictures: pics0 }) })
+    const tp = await rp.text().catch(() => '')
+    return NextResponse.json({ dryRunPictures: true, listingId: id0, status: rp.status, ok: rp.ok, pics: pics0.length, body: tp.slice(0, 200) })
+  }
 
   for (const id of listingIds) {
     const row = byId.get(id)
