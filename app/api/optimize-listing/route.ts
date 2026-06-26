@@ -118,6 +118,71 @@ export async function POST(req: NextRequest) {
     location, bookingSettings: settings,
   }
 
+  // ── Single-section mode ──────────────────────────────────────────────────────
+  // When the UI asks to regenerate ONE field (optionally with a custom instruction),
+  // rewrite just that field and return { section, text, rationale, warnings }.
+  const singleSection: string | null = typeof body?.section === 'string' && body.section ? body.section : null
+  const instruction = str(body?.instruction).trim().slice(0, 600)
+  const currentDraft = str(body?.currentText)
+  if (singleSection) {
+    const isTitle = singleSection === 'title'
+    const def = SECTION_DEFS.find(s => s.key === singleSection)
+    if (!isTitle && !def) return NextResponse.json({ error: 'unknown section' }, { status: 400 })
+    const guide = isTitle
+      ? `Title: hard limit ${TITLE_MAX} characters including spaces; front-load the strongest true differentiators (mobile cards truncate ~32 chars); Title Case; no emoji, repeated symbols, ALL-CAPS words, phone/email/URLs.`
+      : `${def!.label}: ${def!.guide}`
+    const SYS = `You are a senior short-term-rental listing copywriter for Stay Hospitality (South Florida). You are rewriting ONE field of the Guesty MASTER listing content, which syncs to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard.
+
+ABSOLUTE HONESTY (most important): Use ONLY facts in the JSON provided below. If you are not certain of a distance, a specific business/attraction name, an amenity, a view, or a room count, omit it or stay general. Never guess, embellish, or invent. Better to say less, accurately - this goes on a live listing.
+LOCATION: a real area is provided; use it ONLY to name genuinely well-known, real nearby places for that exact city. NEVER print the street address, unit number, lock/door codes, phone, email, or URLs.
+HOUSE STYLE: structured and scannable; lead with the strongest true point; vivid but never padded.
+
+You are writing ONLY this field:
+${guide}
+${instruction ? `\nTHE USER WANTS THIS SPECIFIC CHANGE (apply it, within the honesty rules above): "${instruction}"` : ''}
+
+OUTPUT: STRICT minified JSON only, nothing else, exactly: {"text":"...","rationale":"..."}
+- "text" = the new field content as a single non-empty string (for the title, obey the character limit).
+- "rationale" = one short sentence on why it is stronger.`
+    const USR = `Field to rewrite: "${singleSection}".
+
+VERIFIED FACTS (use ONLY these; never invent beyond them):
+${JSON.stringify(facts)}
+
+GUEST REVIEW SIGNAL (lean into what guests praise; do not quote verbatim):
+${JSON.stringify(reviewSignal)}
+
+CURRENT TEXT for this field (improve on it):
+${JSON.stringify(currentDraft || (current as any)[singleSection] || '')}`
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: USR }] }),
+      })
+      const d: any = await r.json()
+      if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
+      const text = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
+      const parsed = parseJson(text)
+      if (!parsed || typeof parsed.text !== 'string') return NextResponse.json({ error: 'Model returned an unparseable response.' }, { status: 502 })
+      const value = String(parsed.text).trim()
+      const warnings: string[] = []
+      if (isTitle) {
+        if (value.length > TITLE_MAX) warnings.push(`Title is ${value.length} chars - over the ${TITLE_MAX}-char limit. Trim before pushing.`)
+        for (const f of forbiddenIn(value)) warnings.push(`Title contains ${f} - channels may reject it.`)
+      } else {
+        const bad = forbiddenIn(value).filter(x => x === 'a phone number' || x === 'an email address' || x === 'a URL')
+        if (bad.length) warnings.push(`This section contains ${bad.join(' and ')} - remove it before pushing.`)
+        const streetNum = location.streetAddress ? String(location.streetAddress).match(/\d{2,}/)?.[0] : null
+        if (streetNum && value.includes(streetNum)) warnings.push('This section may contain the street address - remove it before pushing.')
+        if (singleSection === 'summary' && value.length > 500) warnings.push(`Summary is ${value.length} chars - over the 500-char limit Airbnb shows before "read more".`)
+      }
+      return NextResponse.json({ listingId, section: singleSection, text: value, titleMax: TITLE_MAX, rationale: String(parsed.rationale || '').trim(), warnings })
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
+    }
+  }
+
   const sectionSpec = SECTION_DEFS.map(s => `- "${s.key}" (${s.label}): ${s.guide}`).join('\n')
 
   const SYSTEM = `You are a senior short-term-rental listing copywriter for Stay Hospitality, a South Florida property manager (Miami Beach / Fort Lauderdale / Broward). You write the MASTER listing content stored in Guesty, which syncs to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard so it is excellent everywhere.
