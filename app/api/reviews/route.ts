@@ -44,7 +44,7 @@ export async function GET(req: Request) {
   try {
     const { data: rows, error } = await sb
       .from('guesty_reviews')
-      .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply')
+      .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, excluded_from_score, exclude_reason')
       .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString())
       .order('created_at', { ascending: false })
       .limit(2000)
@@ -67,32 +67,36 @@ export async function GET(req: Request) {
         })
       }
 
-      const reviews = rows
-        .filter((r: any) => {
-          const m = r.listing_id ? meta[r.listing_id] : null
-          if (m) {
-            if (DEAD_STATUSES.has(m.status)) return false
-            if (m.building && String(m.building).toLowerCase() === 'waves') return false
-          }
-          return true
-        })
-        .map((r: any) => {
-          const m = r.listing_id ? meta[r.listing_id] : null
-          return {
-            id: r.id,
-            rating: r.rating != null ? Number(r.rating) : null,
-            content: String(r.content || '').slice(0, 400),
-            channel: r.channel || '',
-            listingId: r.listing_id,
-            guest: r.guest_name,
-            created_at: r.created_at,
-            hasReply: !!r.has_reply,
-            reply: r.reply || null,
-            listing_name: m?.name || r.listing_id || 'Unknown listing'
-          }
-        })
+      const shape = (r: any, m: any) => ({
+        id: r.id,
+        rating: r.rating != null ? Number(r.rating) : null,
+        content: String(r.content || '').slice(0, 400),
+        channel: r.channel || '',
+        listingId: r.listing_id,
+        guest: r.guest_name,
+        created_at: r.created_at,
+        hasReply: !!r.has_reply,
+        reply: r.reply || null,
+        listing_name: m?.name || r.listing_id || 'Unknown listing',
+      })
 
-      return NextResponse.json({ reviews })
+      // Active (mapped, synced) reviews are draftable + count toward scores. Unmapped reviews
+      // (listing not synced, inactive, or flagged not-mapped-on-channel) are shown separately,
+      // can't be replied to, and never count toward the average / health score.
+      const reviews: any[] = []
+      const unmapped: any[] = []
+      for (const r of rows as any[]) {
+        const m = r.listing_id ? meta[r.listing_id] : null
+        if (m && m.building && String(m.building).toLowerCase() === 'waves') continue  // Waves excluded entirely
+        let reason: string | null = null
+        if (!m) reason = 'Listing not synced'
+        else if (DEAD_STATUSES.has(m.status)) reason = 'Listing inactive'
+        else if (r.excluded_from_score) reason = r.exclude_reason || 'Not mapped on channel'
+        if (reason) unmapped.push({ ...shape(r, m), reason })
+        else reviews.push(shape(r, m))
+      }
+
+      return NextResponse.json({ reviews, unmapped })
     }
   } catch {
     // fall through to live pull
