@@ -23,7 +23,7 @@ export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: numbe
       CACHE.set(key, { data: json, at: Date.now() })
       if (mounted.current) { setData(json); setError(json?.error ?? null) }
     } catch (e: any) {
-      if (mounted.current) setError(e?.message || Stringe(e)))
+      if (mounted.current) setError(e?.message || String(e))
     } finally {
       if (mounted.current) setLoading(false)
     }
