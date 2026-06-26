@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { ListingOptimizer } from '@/components/ListingOptimizer'
 import { ListingReviews } from '@/components/ListingReviews'
+import { AmenityEditor } from '@/components/AmenityEditor'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X,
@@ -93,13 +94,16 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   // Sibling amenities across the building → "other units have it, add it" suggestions.
   const { data: siblings } = await sb
     .from('guesty_listings')
-    .select('building, amenities, raw')
+    .select('building, amenities')
     .limit(1000)
   const siblingAmenities: string[] = Array.from(new Set(
     (siblings ?? [])
       .filter((s: any) => rollupBuilding(s.building) === buildingName)
       .flatMap((s: any) => Array.isArray(s.amenities) ? s.amenities : (Array.isArray(s.raw?.amenities) ? s.raw.amenities : []))
   ))
+
+  const curLower = new Set(amenities.map(a => String(a).toLowerCase()))
+  const siblingExtras = Array.from(new Set(siblingAmenities)).filter(a => !curLower.has(String(a).toLowerCase()))
 
   const isBeach = /beach/i.test(String(listing.address_city || ''))
   const res = computeScore(listing, { avgRating, reviewCount: reviews.length, isBeach, siblingAmenities })
@@ -184,6 +188,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
               </div>
             )}
           </Panel>
+
+          <AmenityEditor listingId={listing.id} current={amenities} siblingExtras={siblingExtras} />
 
           <Panel title="Recent reviews" sub={`${reviews.length} pulled · reply to any of them right here`}>
             <ListingReviews
