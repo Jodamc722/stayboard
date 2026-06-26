@@ -31,14 +31,18 @@ export type ScoreResult = {
 /* ----------------------------- building rollup ----------------------------- */
 // Roll unit-level building names up to their parent property.
 // e.g. "Botanica 6108" -> "Botanica", "Oasis Mahogany" -> "Oasis", "Arya 1704" -> "Arya".
-const PARENTS = ['Botanica', 'Oasis', 'Arya']
+const PARENTS = ['Botanica', 'Oasis', 'Arya', '3316']
 const OASIS_UNITS = ['mahogany', 'royal palm', 'bougainvillea', 'bamboo', 'sapodilla', 'jasmine']
+// Exact building-name aliases that are really the same property (canonical on the right).
+const ALIASES: Record<string, string> = { '101': 'Lucerne' }
 export function rollupBuilding(raw?: string | null): string {
   const b = (raw || '').trim()
   if (!b) return 'Unassigned'
   const lower = b.toLowerCase()
+  if (ALIASES[lower]) return ALIASES[lower]
   for (const p of PARENTS) {
-    if (lower === p.toLowerCase() || lower.startsWith(p.toLowerCase() + ' ')) return p
+    const pl = p.toLowerCase()
+    if (lower === pl || lower.startsWith(pl + ' ') || lower.startsWith(pl + '-')) return p
   }
   if (OASIS_UNITS.some(u => lower === u || lower.startsWith(u + ' '))) return 'Oasis'
   return b
