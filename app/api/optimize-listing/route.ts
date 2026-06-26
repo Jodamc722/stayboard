@@ -13,7 +13,7 @@ export const maxDuration = 45
 
 const SECTION_DEFS: { key: string; label: string; guide: string }[] = [
   { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, REAL perk only if the data supports it; state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. Most important field.' },
-  { key: 'space', label: 'The space', guide: 'Room-by-room layout and standout features in short labeled lines or tight paragraphs (the 17 West house style): bedrooms + bed types, bathrooms, kitchen, living areas, outdoor space, views, building amenities (pool, gym, parking) — but ONLY ones present in the data. Concrete and scannable. ~700-1300 characters.' },
+  { key: 'space', label: 'The space', guide: 'The SELLING section — make the reader want to book. Walk them through the home the way the PHOTOS show it: open with the single most compelling, true visual highlight (the view, the natural light, the kitchen, the pool), then room-by-room in short labeled lines or tight paragraphs (17 West house style): bedrooms + bed types, bathrooms, kitchen, living/dining, outdoor space, views, standout finishes, building amenities (pool, gym, parking). Use the photos to add specific, verifiable sensory detail (materials, brightness, layout, outlook) and to CONFIRM every claim — if you cannot see it in a photo or find it in the data, do not state it. Lead with benefits (how it FEELS to stay), not a dry inventory. Concrete, vivid, scannable. ~700-1300 characters.' },
   { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if the data indicates it. NEVER include the street address, unit number, real codes, phone, or URLs. ~300-700 characters.' },
   { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it. ~500-1000 characters.' },
   { key: 'transit', label: 'Getting around', guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances. ~250-600 characters.' },
@@ -118,6 +118,14 @@ export async function POST(req: NextRequest) {
     location, bookingSettings: settings,
   }
 
+  // ── Photos for VISION: let the model SEE the actual space, verify features, and write copy that sells ──
+  const rawPics: any[] = Array.isArray(raw.pictures) ? raw.pictures : (Array.isArray((listing as any).pictures) ? (listing as any).pictures : [])
+  const photoUrls: string[] = rawPics
+    .map((pic: any) => typeof pic === 'string' ? pic : str(pic?.original || pic?.large || pic?.regular || pic?.url || pic?.thumbnail || ''))
+    .filter((u: string) => /^https?:\/\//.test(u))
+    .slice(0, 8)
+  const photoBlocks = photoUrls.map((u: string) => ({ type: 'image', source: { type: 'url', url: u } }))
+
   // ── Single-section mode ──────────────────────────────────────────────────────
   // When the UI asks to regenerate ONE field (optionally with a custom instruction),
   // rewrite just that field and return { section, text, rationale, warnings }.
@@ -135,7 +143,7 @@ export async function POST(req: NextRequest) {
 
 ABSOLUTE HONESTY (most important): Use ONLY facts in the JSON provided below. If you are not certain of a distance, a specific business/attraction name, an amenity, a view, or a room count, omit it or stay general. Never guess, embellish, or invent. Better to say less, accurately - this goes on a live listing.
 LOCATION: a real area is provided; use it ONLY to name genuinely well-known, real nearby places for that exact city. NEVER print the street address, unit number, lock/door codes, phone, email, or URLs.
-HOUSE STYLE: structured and scannable; lead with the strongest true point; vivid but never padded.
+PHOTOS: the listing's actual photos are attached — study them and ground this field in what they genuinely show; use them to VERIFY (only state what's visible in a photo or in the data) and to surface the most compelling true selling points.\nHOUSE STYLE: structured and scannable; lead with the strongest true point; vivid but never padded; write to SELL the stay.
 
 You are writing ONLY this field:
 ${guide}
@@ -158,7 +166,7 @@ ${JSON.stringify(currentDraft || (current as any)[singleSection] || '')}`
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: USR }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
       })
       const d: any = await r.json()
       if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
@@ -199,6 +207,11 @@ LOCATION (use it; never print it verbatim)
 - A real address/area is provided. Use it ONLY to identify the actual city/neighborhood so you can name genuinely well-known, real nearby places for THAT exact city (e.g. for Miami Beach: South Beach, Lincoln Road, Ocean Drive; for Fort Lauderdale: Las Olas, Fort Lauderdale Beach). Reference only landmarks you are confident actually exist for that city.
 - NEVER print the exact street address, unit number, lock/door codes, phone, email, or URLs anywhere in the copy. Keep proximity general ("a short walk to the beach") unless the data gives an exact distance.
 
+PHOTOS (you can SEE them — use them)
+- The listing's actual photos are attached. STUDY them. Ground the copy (especially "The space") in what the images genuinely show: layout, light, finishes, views, outdoor areas, standout features.
+- Use the photos to VERIFY before you write. Only describe what is visible in a photo or stated in the data. If a claimed amenity/view isn't visible or in the data, leave it out. The photos are your fact-check.
+- Lead with the most visually compelling TRUE selling points. Make a reader picture themselves there.
+
 HOUSE STYLE (model the strong "17 West" formatting)
 - Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest true point. Vivid but never padded or flowery.
 
@@ -232,7 +245,7 @@ ${JSON.stringify(current)}`
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2400, system: SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
