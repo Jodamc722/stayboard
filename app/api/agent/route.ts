@@ -59,15 +59,28 @@ export async function POST(req: NextRequest) {
     const db = supabaseAdmin()
 
     // Listing names for joins (id -> nickname/title). Cheap lookup map.
-    let listingName: Record<string, string> = {}
+    let listingMeta: Record<string, { name: string; status: string; building: string }> = {}
     try {
-      const { data: listingRows } = await db.from('guesty_listings').select('id,nickname,title')
+      const { data: listingRows } = await db.from('guesty_listings').select('id,nickname,title,status,building')
       for (const l of (listingRows || [])) {
-        listingName[String((l as any).id)] = (l as any).nickname || (l as any).title || ''
+        listingMeta[String((l as any).id)] = {
+          name: (l as any).nickname || (l as any).title || '',
+          status: String((l as any).status || '').toLowerCase(),
+          building: String((l as any).building || ''),
+        }
       }
     } catch { /* listings table missing or empty */ }
 
-    const nameOf = (lid: any) => listingName[String(lid)] || ''
+    const nameOf = (lid: any) => listingMeta[String(lid)]?.name || ''
+    const REVIEW_DEAD = /inactive|disabled|archived|deleted/i
+    const reviewable = (lid: any) => {
+      const m = listingMeta[String(lid)]
+      if (!m) return false
+      if (REVIEW_DEAD.test(m.status)) return false
+      if (m.building.toLowerCase() === 'waves') return false
+      return true
+    }
+    const REVIEW_CUTOFF = new Date(Date.now() - 60 * 86400000).toISOString()
 
     const safe = async <T>(p: PromiseLike<T>, fb: T): Promise<T> => {
       try { return await p } catch { return fb }
@@ -75,9 +88,9 @@ export async function POST(req: NextRequest) {
 
     const [
       // Reviews
-      reviewsUnansweredCount,
-      reviewsUnanswered,
-      reviewsLow,
+      reviewsUnansweredRes,
+      _reviewsUnused,
+      reviewsRecentRes,
       // Conversations
       convsUnread,
       // Reservations
@@ -93,12 +106,9 @@ export async function POST(req: NextRequest) {
       // Listings (active)
       listingsActive,
     ] = await Promise.all([
-      // count of unanswered reviews
-      safe(db.from('guesty_reviews').select('*', { count: 'exact', head: true }).eq('has_reply', false), { count: 0 } as any),
-      // examples of unanswered reviews
-      safe(db.from('guesty_reviews').select('id,listing_id,rating,content,channel,guest_name,created_at').eq('has_reply', false).order('created_at', { ascending: false }).limit(8), { data: [] } as any),
-      // recent low-rated reviews (filter low in JS to handle 5/10 scales)
-      safe(db.from('guesty_reviews').select('id,listing_id,rating,content,channel,guest_name,created_at,has_reply').order('created_at', { ascending: false }).limit(40), { data: [] } as any),
+      safe(db.from('guesty_reviews').select('id,listing_id,rating,content,channel,guest_name,created_at').eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', REVIEW_CUTOFF).order('created_at', { ascending: false }).limit(500), { data: [] } as any),
+      safe(Promise.resolve({ data: [] as any[] }), { data: [] } as any),
+      safe(db.from('guesty_reviews').select('id,listing_id,rating,content,channel,guest_name,created_at,has_reply').eq('excluded_from_score', false).gte('created_at', REVIEW_CUTOFF).order('created_at', { ascending: false }).limit(300), { data: [] } as any),
       // unread conversations
       safe(db.from('guesty_conversations').select('guest_name,channel,unread_count,last_message_preview,last_message_at').gt('unread_count', 0).order('last_message_at', { ascending: false }).limit(40), { data: [] } as any),
       // today's check-ins
@@ -120,8 +130,10 @@ export async function POST(req: NextRequest) {
 
     const notCancelled = (r: any) => !/cancel|declin/i.test(String(r?.status || ''))
 
-    // Reviews ---
-    const unansweredEx = (reviewsUnanswered.data || []).map((r: any) => ({
+    // Reviews --- only actionable (live, non-Waves, mapped) reviews in the 60-day window
+    const unansweredAll = (reviewsUnansweredRes.data || []).filter((r: any) => reviewable(r.listing_id))
+    const unansweredCount = unansweredAll.length
+    const unansweredEx = unansweredAll.slice(0, 8).map((r: any) => ({
       property: nameOf(r.listing_id) || 'Unknown',
       rating: r.rating,
       channel: r.channel,
@@ -129,8 +141,8 @@ export async function POST(req: NextRequest) {
       when: r.created_at ? String(r.created_at).slice(0, 10) : null,
       excerpt: String(r.content || '').slice(0, 160),
     }))
-    const lowReviews = (reviewsLow.data || [])
-      .filter((r: any) => isLowRating(r.rating))
+    const lowReviews = (reviewsRecentRes.data || [])
+      .filter((r: any) => reviewable(r.listing_id) && isLowRating(r.rating))
       .slice(0, 8)
       .map((r: any) => ({
         property: nameOf(r.listing_id) || 'Unknown',
@@ -190,7 +202,8 @@ export async function POST(req: NextRequest) {
       listings_active: activeListings.length,
 
       reviews: {
-        unanswered_total: reviewsUnansweredCount.count ?? unansweredEx.length,
+        window_days: 60,
+        unanswered_total: unansweredCount,
         unanswered_examples: unansweredEx,
         low_rated_recent: lowReviews,
       },
