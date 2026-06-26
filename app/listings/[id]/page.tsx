@@ -265,7 +265,7 @@ function ScoreCard({ title, score, factors, Icon }: { title: string; score: numb
   )
 }
 
-function AmenityScoreCard(y { score, suggestions, mustFix, have }: { score: number; suggestions: { name: string; tier: 1 | 2 | 3; reason: string }[]; mustFix: string[]; have: number }) {
+function AmenityScoreCard({ score, suggestions, mustFix, have }: { score: number; suggestions: { name: string; tier: 1 | 2 | 3; reason: string }[]; mustFix: string[]; have: number }) {
   const ui = bandUi(band(score))
   return (
     <div className="rounded-2xl border border-line bg-white p-4">
