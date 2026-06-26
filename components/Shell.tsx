@@ -34,8 +34,7 @@ const SECTIONS: {
   {
     title: 'Portfolio',
     items: [
-      { to: '/buildings', label: 'Buildings',  Icon: Layers },
-      { to: '/listings',  label: 'Properties', Icon: Building2 },
+      { to: '/buildings', label: 'Portfolio', Icon: Building2 },
     ],
   },
   {
