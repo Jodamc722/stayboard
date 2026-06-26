@@ -1,30 +1,27 @@
 // Property detail — shows the exact content Guesty pushes to the OTAs (title, every
-// description section, amenities, photos) PLUS transparent, best-practice scores for
-// the title/description and the booking settings (cancellation, min nights, instant
-// book). Everything is read from guesty_listings.raw (the full Guesty listing object)
-// and guesty_reviews. Generate-only — nothing writes back.
+// description section, amenities, photos) PLUS the transparent, research-backed Optimize
+// Score (title, description, booking settings, amenity coverage, review signal) and a
+// concrete list of high-value amenities to ADD. Scoring lives in lib/optimize-score so the
+// property page, the building drill-in, and the Portfolio roll-up all agree. Generate-only.
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { ListingOptimizer } from '@/components/ListingOptimizer'
+import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
 import {
-  Building2, MapPin, BedDouble, Bath, Users, Star, Wand2, ArrowLeft, Check, X,
-  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare,
+  Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X,
+  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare, PlusCircle, ShieldAlert,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 
-/* ---------------- helpers: defensive extraction from raw ---------------- */
-function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
-
-// Pull ONLY the host's PUBLIC reply to a review from the raw Guesty object.
-// The stored `reply` column is unreliable (it sometimes captured the guest's PRIVATE
-// feedback). The host's public response lives in reviewReplies[] (or an explicit
-// host-response field) — guest private feedback is NEVER read here.
+// Pull ONLY the host's PUBLIC reply to a review from raw. The stored `reply` column is
+// unreliable (sometimes captured the guest's PRIVATE feedback); the host's public response
+// lives in reviewReplies[] / host-response fields. Guest private feedback is NEVER read.
 function hostReplyFromRaw(raw: any): string | null {
   if (!raw || typeof raw !== 'object') return null
   const rr = raw.rawReview || raw.raw || {}
@@ -38,141 +35,10 @@ function hostReplyFromRaw(raw: any): string | null {
       }
     }
   }
-  // Explicit host-response scalar fields only — deliberately excludes any private/guest field.
   const hr = rr.host_response ?? rr.hostResponse ?? rr.owner_response ?? rr.ownerResponse ?? raw.hostResponse ?? raw.ownerResponse ?? null
   return hr && String(hr).trim() ? String(hr).trim() : null
 }
 
-// Cancellation-policy friendliness: flexible/moderate convert + rank better than strict.
-function cancellationInfo(raw: any): { label: string; tier: 'flex' | 'mod' | 'strict' | 'unknown' } {
-  const candidates = [
-    raw?.terms?.cancellation, raw?.prices?.guestyCancellationPolicy, raw?.cancellationPolicy,
-    raw?.airbnb?.cancellationPolicy, raw?.bookingcom?.cancellationPolicy,
-  ].map(str).filter(Boolean)
-  const c = (candidates[0] || '').toLowerCase()
-  if (!c) return { label: 'Not set', tier: 'unknown' }
-  if (/flex|relax|free/.test(c)) return { label: candidates[0], tier: 'flex' }
-  if (/moderate|firm/.test(c)) return { label: candidates[0], tier: 'mod' }
-  if (/strict|super|non.?refund|long/.test(c)) return { label: candidates[0], tier: 'strict' }
-  return { label: candidates[0], tier: 'mod' }
-}
-
-type Factor = { label: string; got: number; max: number; note: string; ok: 'good' | 'warn' | 'bad' }
-function band(score: number): 'good' | 'watch' | 'risk' {
-  return score >= 75 ? 'good' : score >= 50 ? 'watch' : 'risk'
-}
-function hasForbidden(s: string): string | null {
-  if (/[\w.-]+@[\w.-]+\.\w+/.test(s)) return 'an email address'
-  if (/https?:\/\/|www\.|\b[\w-]+\.(com|net|org|io|co)\b/i.test(s)) return 'a URL'
-  if (/(?:\+?\d[\s().-]?){7,}/.test(s)) return 'a phone number'
-  if (/[☀-➿]|[\uD83C-\uDBFF][\uDC00-\uDFFF]/.test(s)) return 'an emoji'
-  if (/\b[A-Z]{4,}\b/.test(s)) return 'an ALL-CAPS word'
-  return null
-}
-
-const AMENITY_KW = ['pool', 'ocean', 'beach', 'view', 'hot tub', 'parking', 'king', 'balcony', 'gym', 'waterfront', 'rooftop', 'penthouse']
-function scoreTitle(title: string): { score: number; factors: Factor[] } {
-  const t = title.trim()
-  const len = t.length
-  const factors: Factor[] = []
-  // Length (35) — Airbnb caps at 50; 25–50 is the sweet spot.
-  let lenGot = 0, lenNote = ''
-  if (len === 0) { lenGot = 0; lenNote = 'Empty title' }
-  else if (len > 65) { lenGot = 8; lenNote = `${len} chars — too long, gets truncated on every OTA` }
-  else if (len > 50) { lenGot = 22; lenNote = `${len} chars — over Airbnb's 50-char cap` }
-  else if (len >= 25) { lenGot = 35; lenNote = `${len} chars — ideal length` }
-  else { lenGot = 20; lenNote = `${len} chars — short, you have room for a selling point` }
-  factors.push({ label: 'Length', got: lenGot, max: 35, note: lenNote, ok: lenGot >= 30 ? 'good' : lenGot >= 18 ? 'warn' : 'bad' })
-  // Clean (25)
-  const forb = t ? hasForbidden(t) : 'empty'
-  factors.push({ label: 'Clean & compliant', got: forb ? 5 : 25, max: 25, note: forb && forb !== 'empty' ? `Contains ${forb} — OTAs may reject it` : (forb === 'empty' ? 'No title to check' : 'No caps/emoji/contact issues'), ok: forb ? 'bad' : 'good' })
-  // Differentiator keyword (20)
-  const lower = t.toLowerCase()
-  const kw = AMENITY_KW.filter(k => lower.includes(k))
-  factors.push({ label: 'Standout amenity', got: kw.length ? 20 : 6, max: 20, note: kw.length ? `Leads with: ${kw.slice(0, 3).join(', ')}` : 'No headline amenity (pool, ocean view, etc.) — add one', ok: kw.length ? 'good' : 'warn' })
-  // Specificity / location (20) — has a capitalized proper noun beyond the first word
-  const hasLoc = /\b(beach|miami|brickell|south|downtown|lincoln|bay|isle|district|pointe|collins|ocean)\b/i.test(t) || (t.split(/\s+/).filter(w => /^[A-Z]/.test(w)).length >= 2)
-  factors.push({ label: 'Specific location', got: hasLoc ? 20 : 8, max: 20, note: hasLoc ? 'Names a neighborhood / landmark' : 'Add a neighborhood or landmark guests search for', ok: hasLoc ? 'good' : 'warn' })
-  const score = Math.round(factors.reduce((s, f) => s + f.got, 0))
-  return { score, factors }
-}
-
-function scoreDescription(pub: any): { score: number; factors: Factor[]; sections: { label: string; text: string }[] } {
-  const get = (k: string) => str(pub?.[k]).trim()
-  const summary = get('summary')
-  const sectionDefs: [string, string][] = [
-    ['summary', 'Summary'], ['space', 'The space'], ['access', 'Guest access'],
-    ['neighborhood', 'Neighborhood'], ['transit', 'Getting around'], ['notes', 'Other notes'],
-  ]
-  const sections = sectionDefs.map(([k, label]) => ({ label, text: get(k) })).filter(s => s.text)
-  const full = sectionDefs.map(([k]) => get(k)).join(' ')
-  const lower = full.toLowerCase()
-  const factors: Factor[] = []
-  // Summary present + length (30): ideal 150–500.
-  let sGot = 0, sNote = ''
-  if (!summary) { sGot = 0; sNote = 'No summary — this is what shows before "read more"' }
-  else if (summary.length < 80) { sGot = 12; sNote = `Summary only ${summary.length} chars — thin` }
-  else if (summary.length <= 500) { sGot = 30; sNote = `Summary ${summary.length} chars — good` }
-  else { sGot = 22; sNote = `Summary ${summary.length} chars — over Airbnb's 500 cap` }
-  factors.push({ label: 'Summary', got: sGot, max: 30, note: sNote, ok: sGot >= 24 ? 'good' : sGot >= 12 ? 'warn' : 'bad' })
-  // Section completeness (30)
-  const filled = sections.length
-  factors.push({ label: 'Sections filled', got: Math.round((Math.min(filled, 5) / 5) * 30), max: 30, note: `${filled} of 6 description sections filled`, ok: filled >= 4 ? 'good' : filled >= 2 ? 'warn' : 'bad' })
-  // Layout mentioned (15)
-  const layout = /\b(bed|bath|sleeps?|king|queen|sofa|bunk)\b/.test(lower)
-  factors.push({ label: 'States layout', got: layout ? 15 : 4, max: 15, note: layout ? 'Mentions beds/baths/sleeps' : 'Add bed/bath/sleeps early', ok: layout ? 'good' : 'warn' })
-  // Location specifics (15)
-  const loc = /\b(walk|min|minutes|steps|near|close|beach|downtown|blocks?)\b/.test(lower)
-  factors.push({ label: 'Quantified location', got: loc ? 15 : 4, max: 15, note: loc ? 'Describes proximity to attractions' : 'Add "5-min walk to…" style distances', ok: loc ? 'good' : 'warn' })
-  // Clean (10)
-  const forb = full ? hasForbidden(full) : 'empty'
-  factors.push({ label: 'No contact info', got: forb && forb !== 'empty' ? 2 : 10, max: 10, note: forb && forb !== 'empty' ? `Contains ${forb}` : 'Clean', ok: forb && forb !== 'empty' ? 'bad' : 'good' })
-  const score = Math.round(factors.reduce((s, f) => s + f.got, 0))
-  return { score, factors, sections }
-}
-
-function scoreSettings(raw: any, amenityCount: number, photoCount: number): { score: number; factors: Factor[]; meta: any } {
-  const terms = raw?.terms || {}
-  const minN = terms.minNights ?? raw?.defaultListingMinNights ?? null
-  const maxN = terms.maxNights ?? null
-  const instantRaw = raw?.instantBookable ?? raw?.instantBook ?? null
-  const instant = instantRaw === true || instantRaw === 'true'
-  const checkIn = str(raw?.defaultCheckInTime || raw?.checkInTime)
-  const checkOut = str(raw?.defaultCheckOutTime || raw?.checkOutTime)
-  const cancel = cancellationInfo(raw)
-  const factors: Factor[] = []
-  // Cancellation flexibility (25)
-  const cGot = cancel.tier === 'flex' ? 25 : cancel.tier === 'mod' ? 18 : cancel.tier === 'strict' ? 8 : 12
-  factors.push({ label: 'Cancellation policy', got: cGot, max: 25, note: cancel.tier === 'unknown' ? 'Not set in Guesty' : `${cancel.label} — ${cancel.tier === 'flex' ? 'flexible policies rank & convert best' : cancel.tier === 'strict' ? 'strict policies suppress conversion' : 'moderate'}`, ok: cGot >= 18 ? 'good' : cGot >= 12 ? 'warn' : 'bad' })
-  // Min nights (20)
-  let mGot = 12, mNote = 'Not set'
-  if (minN != null) {
-    const n = Number(minN)
-    if (n <= 2) { mGot = 20; mNote = `${n}-night minimum — very bookable` }
-    else if (n <= 4) { mGot = 14; mNote = `${n}-night minimum — moderate` }
-    else { mGot = 6; mNote = `${n}-night minimum — limits demand` }
-  }
-  factors.push({ label: 'Minimum stay', got: mGot, max: 20, note: mNote, ok: mGot >= 16 ? 'good' : mGot >= 10 ? 'warn' : 'bad' })
-  // Instant book (20)
-  factors.push({ label: 'Instant Book', got: instant ? 20 : 6, max: 20, note: instant ? 'On — boosts ranking on Airbnb & Vrbo' : (instantRaw == null ? 'Unknown / not set' : 'Off — turning it on lifts ranking'), ok: instant ? 'good' : 'warn' })
-  // Photos (15)
-  let pGot = 0, pNote = ''
-  if (photoCount >= 20) { pGot = 15; pNote = `${photoCount} photos — strong` }
-  else if (photoCount >= 10) { pGot = 10; pNote = `${photoCount} photos — add more (target 20+)` }
-  else if (photoCount >= 6) { pGot = 6; pNote = `${photoCount} photos — minimum met, well short of ideal` }
-  else { pGot = 1; pNote = `${photoCount} photos — below Vrbo's 6 minimum` }
-  factors.push({ label: 'Photos', got: pGot, max: 15, note: pNote, ok: pGot >= 12 ? 'good' : pGot >= 6 ? 'warn' : 'bad' })
-  // Amenities completeness (10)
-  const aGot = amenityCount >= 25 ? 10 : amenityCount >= 12 ? 7 : amenityCount >= 5 ? 4 : 1
-  factors.push({ label: 'Amenities listed', got: aGot, max: 10, note: `${amenityCount} amenities — every unchecked box drops you from filtered searches`, ok: aGot >= 8 ? 'good' : aGot >= 4 ? 'warn' : 'bad' })
-  // Check-in/out set (10)
-  const ciGot = checkIn && checkOut ? 10 : checkIn || checkOut ? 5 : 0
-  factors.push({ label: 'Check-in/out times', got: ciGot, max: 10, note: checkIn && checkOut ? `${checkIn} / ${checkOut}` : 'Not fully set', ok: ciGot >= 10 ? 'good' : 'warn' })
-  const score = Math.round(factors.reduce((s, f) => s + f.got, 0))
-  return { score, factors, meta: { minN, maxN, instant, instantRaw, checkIn, checkOut, cancel } }
-}
-
-/* ---------------- page ---------------- */
 export default async function ListingDetailPage({ params }: { params: { id: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -197,23 +63,15 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const name = listing.title || listing.nickname || 'Untitled unit'
   const place = [listing.address_city, listing.address_state].filter(Boolean).join(', ')
   const dead = DEAD.includes(String(listing.status || '').toLowerCase())
+  const buildingName = rollupBuilding(listing.building)
 
-  const titleScore = scoreTitle(name)
-  const descScore = scoreDescription(pub)
-  const setScore = scoreSettings(raw, amenities.length, photoCount)
-  const optimizeScore = Math.round(titleScore.score * 0.30 + descScore.score * 0.45 + setScore.score * 0.25)
-  const optBand = band(optimizeScore)
-  const optRing = optBand === 'good' ? 'ring-emerald-200 bg-emerald-50 text-emerald-700' : optBand === 'watch' ? 'ring-amber-200 bg-amber-50 text-amber-700' : 'ring-rose-200 bg-rose-50 text-rose-700'
-  const optLabel = optBand === 'good' ? 'Well optimized' : optBand === 'watch' ? 'Room to improve' : 'Needs work'
-
-  // Reviews behind the health signal (the data points).
+  // Reviews first — they feed the Optimize Score's review signal.
   const { data: revRows } = await sb
     .from('guesty_reviews')
     .select('id, rating, content, channel, guest_name, created_at, raw')
     .eq('listing_id', params.id)
     .order('created_at', { ascending: false })
     .limit(40)
-  // Derive the genuine host PUBLIC reply from raw (never the guest's private feedback).
   const reviews = (revRows ?? []).map((r: any) => {
     const hostReply = hostReplyFromRaw(r.raw)
     return { ...r, hostReply, has_reply: !!hostReply }
@@ -221,9 +79,25 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const rated = reviews.filter((r: any) => r.rating != null)
   const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + Number(r.rating), 0) / rated.length) * 100) / 100 : null
 
+  // Sibling amenities across the building → "other units have it, add it" suggestions.
+  const { data: siblings } = await sb
+    .from('guesty_listings')
+    .select('building, amenities, raw')
+    .limit(1000)
+  const siblingAmenities: string[] = Array.from(new Set(
+    (siblings ?? [])
+      .filter((s: any) => rollupBuilding(s.building) === buildingName)
+      .flatMap((s: any) => Array.isArray(s.amenities) ? s.amenities : (Array.isArray(s.raw?.amenities) ? s.raw.amenities : []))
+  ))
+
+  const isBeach = /beach/i.test(String(listing.address_city || ''))
+  const res = computeScore(listing, { avgRating, reviewCount: reviews.length, isBeach, siblingAmenities })
+  const optimizeScore = res.overall
+  const opt = bandUi(res.band)
+
   return (
     <Shell>
-      <Link href="/listings" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-4"><ArrowLeft size={15} /> Back to Properties</Link>
+      <Link href={`/buildings/${buildingSlug(buildingName)}`} className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-4"><ArrowLeft size={15} /> Back to {buildingName}</Link>
 
       <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
@@ -238,7 +112,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             {avgRating != null && <span className="inline-flex items-center gap-1"><Star size={12} className="text-amber-500 fill-amber-500" /> {avgRating} · {reviews.length} reviews</span>}
           </div>
         </div>
-        <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${optRing}`} title="Optimize score">
+        <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${opt.ring}`} title="Optimize score">
           <span className="text-2xl font-bold tabular-nums leading-none">{optimizeScore}</span>
           <span className="text-[9px] uppercase tracking-wider font-semibold mt-0.5">Optimize</span>
         </div>
@@ -250,38 +124,34 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </div>
       )}
 
-      {/* AI optimizer (lives on the property) */}
-      <div className="mb-5">
-        <ListingOptimizer listingId={listing.id} name={name} />
-      </div>
+      <div className="mb-5"><ListingOptimizer listingId={listing.id} name={name} /></div>
 
       {/* Optimize score breakdown */}
       <div className="mb-2 flex items-center gap-2 flex-wrap">
         <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Optimize score breakdown</span>
-        <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded-md ring-1 text-[12px] font-bold tabular-nums ${optRing}`}>{optimizeScore}</span>
-        <span className="text-[12px] font-semibold text-muted">{optLabel}</span>
+        <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded-md ring-1 text-[12px] font-bold tabular-nums ${opt.ring}`}>{optimizeScore}</span>
+        <span className="text-[12px] font-semibold text-muted">{opt.label}</span>
+        {res.reviewSignal && <span className="text-[11px] text-muted">· review signal {res.reviewSignal.score}/100</span>}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
-        <ScoreCard title="Title" score={titleScore.score} factors={titleScore.factors} Icon={Tag} />
-        <ScoreCard title="Description" score={descScore.score} factors={descScore.factors} Icon={FileText} />
-        <ScoreCard title="Booking settings" score={setScore.score} factors={setScore.factors} Icon={Zap} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+        <ScoreCard title="Title" score={res.title.score} factors={res.title.factors} Icon={Tag} />
+        <ScoreCard title="Description" score={res.description.score} factors={res.description.factors} Icon={FileText} />
+        <ScoreCard title="Booking settings" score={res.settings.score} factors={res.settings.factors} Icon={Zap} />
+        <AmenityScoreCard score={res.amenities.score} suggestions={res.amenities.suggestions} mustFix={res.amenities.mustFix} have={amenities.length} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
-        {/* Left: the OTA content */}
         <div className="space-y-4 min-w-0">
-          {/* Title */}
           <Panel title="Title pushed to OTAs" sub={`${name.length} characters`}>
             <div className="text-base font-semibold text-ink break-words">{name}</div>
           </Panel>
 
-          {/* Description sections */}
-          <Panel title="Description pushed to OTAs" sub={descScore.sections.length ? `${descScore.sections.length} of 6 sections filled` : 'No description set'}>
-            {descScore.sections.length === 0 ? (
+          <Panel title="Description pushed to OTAs" sub={res.description.sections.length ? `${res.description.sections.length} of 6 sections filled` : 'No description set'}>
+            {res.description.sections.length === 0 ? (
               <div className="text-sm text-muted italic">No description content in Guesty. Use Optimize to draft one.</div>
             ) : (
               <div className="space-y-3">
-                {descScore.sections.map((s, i) => (
+                {res.description.sections.map((s, i) => (
                   <div key={i}>
                     <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">{s.label} <span className="text-muted/60 normal-case tracking-normal">· {s.text.length} chars</span></div>
                     <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{s.text}</div>
@@ -291,7 +161,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             )}
           </Panel>
 
-          {/* Amenities */}
           <Panel title="Amenities pushed to OTAs" sub={`${amenities.length} listed`}>
             {amenities.length === 0 ? (
               <div className="text-sm text-muted italic">No amenities set — every unchecked box drops this unit out of filtered OTA searches.</div>
@@ -304,7 +173,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             )}
           </Panel>
 
-          {/* Reviews — the data points behind the health signal */}
           <Panel title="Recent reviews" sub={`${reviews.length} pulled · the data behind this unit's ratings`}>
             {reviews.length === 0 ? (
               <div className="text-sm text-muted italic">No reviews synced for this unit yet.</div>
@@ -334,15 +202,14 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           </Panel>
         </div>
 
-        {/* Right: settings data points */}
         <div className="space-y-4">
           <Panel title="Booking settings (from Guesty)">
             <dl className="space-y-2.5 text-sm">
-              <SettingRow Icon={Ban} label="Cancellation" value={setScore.meta.cancel.label} tone={setScore.meta.cancel.tier === 'flex' ? 'good' : setScore.meta.cancel.tier === 'strict' ? 'bad' : 'muted'} />
-              <SettingRow Icon={CalendarClock} label="Min nights" value={setScore.meta.minN != null ? `${setScore.meta.minN}` : 'Not set'} tone={setScore.meta.minN != null && Number(setScore.meta.minN) <= 2 ? 'good' : 'muted'} />
-              <SettingRow Icon={CalendarClock} label="Max nights" value={setScore.meta.maxN != null ? `${setScore.meta.maxN}` : '—'} tone="muted" />
-              <SettingRow Icon={Zap} label="Instant Book" value={setScore.meta.instant ? 'On' : (setScore.meta.instantRaw == null ? 'Unknown' : 'Off')} tone={setScore.meta.instant ? 'good' : 'muted'} />
-              <SettingRow Icon={CalendarClock} label="Check-in / out" value={setScore.meta.checkIn || setScore.meta.checkOut ? `${setScore.meta.checkIn || '—'} / ${setScore.meta.checkOut || '—'}` : 'Not set'} tone="muted" />
+              <SettingRow Icon={Ban} label="Cancellation" value={res.settings.meta.cancel.label} tone={res.settings.meta.cancel.tier === 'flex' ? 'good' : res.settings.meta.cancel.tier === 'strict' ? 'bad' : 'muted'} />
+              <SettingRow Icon={CalendarClock} label="Min nights" value={res.settings.meta.minN != null ? `${res.settings.meta.minN}` : 'Not set'} tone={res.settings.meta.minN != null && Number(res.settings.meta.minN) <= 3 ? 'good' : 'muted'} />
+              <SettingRow Icon={CalendarClock} label="Max nights" value={res.settings.meta.maxN != null ? `${res.settings.meta.maxN}` : '—'} tone="muted" />
+              <SettingRow Icon={Zap} label="Instant Book" value={res.settings.meta.instant ? 'On' : (res.settings.meta.instantRaw == null ? 'Unknown' : 'Off')} tone={res.settings.meta.instant ? 'good' : 'muted'} />
+              <SettingRow Icon={CalendarClock} label="Check-in / out" value={res.settings.meta.checkIn || res.settings.meta.checkOut ? `${res.settings.meta.checkIn || '—'} / ${res.settings.meta.checkOut || '—'}` : 'Not set'} tone="muted" />
               <SettingRow Icon={ImageIcon} label="Photos" value={`${photoCount}`} tone={photoCount >= 20 ? 'good' : photoCount >= 6 ? 'muted' : 'bad'} />
             </dl>
           </Panel>
@@ -369,13 +236,12 @@ function Panel({ title, sub, children }: { title: string; sub?: string; children
 }
 
 function ScoreCard({ title, score, factors, Icon }: { title: string; score: number; factors: Factor[]; Icon: any }) {
-  const b = band(score)
-  const ring = b === 'good' ? 'ring-emerald-200 bg-emerald-50 text-emerald-700' : b === 'watch' ? 'ring-amber-200 bg-amber-50 text-amber-700' : 'ring-rose-200 bg-rose-50 text-rose-700'
+  const ui = bandUi(band(score))
   return (
     <div className="rounded-2xl border border-line bg-white p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5"><Icon size={13} /> {title} score</div>
-        <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ring-1 ${ring}`}>{score}</span>
+        <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ring-1 ${ui.ring}`}>{score}</span>
       </div>
       <div className="space-y-2">
         {factors.map((f, i) => (
@@ -391,6 +257,42 @@ function ScoreCard({ title, score, factors, Icon }: { title: string; score: numb
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+function AmenityScoreCard({ score, suggestions, mustFix, have }: { score: number; suggestions: { name: string; tier: 1 | 2 | 3; reason: string }[]; mustFix: string[]; have: number }) {
+  const ui = bandUi(band(score))
+  return (
+    <div className="rounded-2xl border border-line bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5"><PlusCircle size={13} /> Amenities score</div>
+        <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ring-1 ${ui.ring}`}>{score}</span>
+      </div>
+      <div className="text-[11px] text-muted mb-2">{have} listed{mustFix.length === 0 && suggestions.length === 0 ? ' — fully covered' : ''}</div>
+      {mustFix.length > 0 && (
+        <div className="mb-2">
+          <div className="text-[10px] uppercase tracking-wider text-rose-700 font-semibold mb-1 inline-flex items-center gap-1"><ShieldAlert size={11} /> Must fix (safety)</div>
+          <div className="flex flex-wrap gap-1.5">
+            {mustFix.map((m, i) => <span key={i} className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">{m}</span>)}
+          </div>
+        </div>
+      )}
+      {suggestions.length > 0 ? (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold mb-1">Suggested to add</div>
+          <div className="space-y-1.5">
+            {suggestions.slice(0, 6).map((s, i) => (
+              <div key={i} className="text-[12px]">
+                <span className={`font-semibold ${s.tier === 3 ? 'text-ink' : 'text-muted'}`}>{s.name}</span>
+                <span className="text-[11px] text-muted"> — {s.reason}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : mustFix.length === 0 ? (
+        <div className="text-[12px] text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> All high-value amenities present</div>
+      ) : null}
     </div>
   )
 }
