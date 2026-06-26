@@ -47,7 +47,7 @@ export async function GET() {
     const fetchAllReviews = async () => {
       let all: any[] = []
       for (let from = 0; from < 20000; from += 1000) {
-        const { data } = await sb.from('guesty_reviews').select('listing_id, rating, content, has_reply, created_at').range(from, from + 999)
+        const { data } = await sb.from('guesty_reviews').select('listing_id, rating, content, has_reply, created_at').eq('excluded_from_score', false).range(from, from + 999)
         if (!data || data.length === 0) break
         all = all.concat(data)
         if (data.length < 1000) break
