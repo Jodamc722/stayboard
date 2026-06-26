@@ -19,7 +19,7 @@ export function AmenityEditor({ listingId, current, siblingExtras }: { listingId
     setSel(s => { const n = new Set(s); n.has(a) ? n.delete(a) : n.add(a); return n })
   }
 
-  const toAdd = [...sel].filter(a => !curSet.has(a))
+  const toAdd = Array.from(sel).filter(a => !curSet.has(a))
   const toRemove = current.filter(a => !sel.has(a))
   const changed = toAdd.length > 0 || toRemove.length > 0
 
@@ -28,7 +28,7 @@ export function AmenityEditor({ listingId, current, siblingExtras }: { listingId
     try {
       const res = await fetch('/api/listing-amenities', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, amenities: [...sel] }),
+        body: JSON.stringify({ listingId, amenities: Array.from(sel) }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
