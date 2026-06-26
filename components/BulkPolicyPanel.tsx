@@ -4,7 +4,7 @@
 // units you pick, after you confirm. Writes to Guesty via /api/bulk-policies (PUT per listing).
 // Note: cancellation policy is channel-specific in Guesty and handled separately, so it's not here.
 import { useState } from 'react'
-import { Check, SlidersHorizontal, AlertTriangle, RefreshCw, X, Clock } from 'lucide-react'
+import { Check, SlidersHorizontal, AlertTriangle, RefreshCw, X } from 'lucide-react'
 
 type Unit = { id: string; name: string }
 type Res = { id: string; name: string; ok: boolean; error?: string }
@@ -89,10 +89,10 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
           <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-2">1. Set the policies to apply <span className="text-muted/70">(leave blank to skip)</span></div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
             <label className="text-[11px] text-muted">Check-in
-              <div className="relative mt-0.5"><Clock size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" /><input value={checkIn} onChange={e => setCheckIn(e.target.value)} placeholder="15:00" className="w-full pl-7 pr-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" /></div>
+              <input type="time" value={checkIn} onChange={e => setCheckIn(e.target.value)} className="w-full mt-0.5 px-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </label>
             <label className="text-[11px] text-muted">Check-out
-              <div className="relative mt-0.5"><Clock size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" /><input value={checkOut} onChange={e => setCheckOut(e.target.value)} placeholder="11:00" className="w-full pl-7 pr-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" /></div>
+              <input type="time" value={checkOut} onChange={e => setCheckOut(e.target.value)} className="w-full mt-0.5 px-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </label>
             <label className="text-[11px] text-muted">Min nights
               <input value={minNights} onChange={e => setMinNights(e.target.value.replace(/\D/g, ''))} placeholder="2" className="w-full mt-0.5 px-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
