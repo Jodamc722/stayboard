@@ -1,14 +1,19 @@
 'use client'
-// Listing-level amenity editor. Shows the unit's current amenities (toggle off to remove)
-// and the amenities OTHER UNITS in the same building have that this one is missing (toggle
-// on to add). Porting from siblings guarantees the values are valid Guesty amenities.
+// Listing-level amenity editor. Three groups:
+//  1) On this listing — toggle off to remove.
+//  2) Recommended to add — the optimizer's high-value picks this unit is missing (badged ★).
+//  3) Full catalog — every amenity used anywhere in the portfolio (all valid Guesty values),
+//     searchable, so you can add anything (incl. Self check-in) without leaving the page.
 // Apply writes the final set to Guesty (PUT /properties-api/amenities/{id}) after you confirm.
-import { useState } from 'react'
-import { Check, Plus, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Star, Search } from 'lucide-react'
 
-export function AmenityEditor({ listingId, current, siblingExtras }: { listingId: string; current: string[]; siblingExtras: string[] }) {
+export function AmenityEditor({ listingId, current, recommended, catalog }: {
+  listingId: string; current: string[]; recommended: string[]; catalog: string[]
+}) {
   const curSet = new Set(current)
   const [sel, setSel] = useState<Set<string>>(new Set(current))
+  const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [done, setDone] = useState<string | null>(null)
@@ -18,6 +23,21 @@ export function AmenityEditor({ listingId, current, siblingExtras }: { listingId
     setDone(null); setErr(null)
     setSel(s => { const n = new Set(s); n.has(a) ? n.delete(a) : n.add(a); return n })
   }
+
+  const curLower = useMemo(() => new Set(current.map(a => a.toLowerCase())), [current])
+  // Recommended = missing high-value picks (already filtered server-side to not-on-unit).
+  const recAdds = useMemo(() => recommended.filter(a => !curLower.has(a.toLowerCase())), [recommended, curLower])
+  const recLower = useMemo(() => new Set(recAdds.map(a => a.toLowerCase())), [recAdds])
+  // Catalog addable = portfolio amenities not on the unit and not already shown as recommended.
+  const addable = useMemo(() => {
+    const seen = new Set<string>()
+    return catalog.filter(a => {
+      const l = a.toLowerCase()
+      if (curLower.has(l) || recLower.has(l) || seen.has(l)) return false
+      seen.add(l); return true
+    }).sort((a, b) => a.localeCompare(b))
+  }, [catalog, curLower, recLower])
+  const filtered = q.trim() ? addable.filter(a => a.toLowerCase().includes(q.toLowerCase())) : addable
 
   const toAdd = Array.from(sel).filter(a => !curSet.has(a))
   const toRemove = current.filter(a => !sel.has(a))
@@ -42,8 +62,8 @@ export function AmenityEditor({ listingId, current, siblingExtras }: { listingId
     <section className="rounded-2xl border border-line bg-white p-4">
       <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Sparkles size={14} className="text-brand-600" /> Fix amenities (based on other units)</h2>
-          <p className="text-[11px] text-muted mt-0.5">Toggle off to remove, or add the ones your other building units list. Changes write to Guesty after you confirm.</p>
+          <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Sparkles size={14} className="text-brand-600" /> Edit amenities</h2>
+          <p className="text-[11px] text-muted mt-0.5">Toggle current ones off to remove, or add from the recommended picks and full catalog. Changes write to Guesty after you confirm.</p>
         </div>
         {changed && (
           <span className="text-[11px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-2 py-1">
@@ -52,6 +72,7 @@ export function AmenityEditor({ listingId, current, siblingExtras }: { listingId
         )}
       </div>
 
+      {/* current */}
       <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">On this listing</div>
       <div className="flex flex-wrap gap-1.5 mb-3">
         {current.length === 0 && <span className="text-[12px] text-muted italic">None set.</span>}
@@ -66,22 +87,42 @@ export function AmenityEditor({ listingId, current, siblingExtras }: { listingId
         })}
       </div>
 
-      {siblingExtras.length > 0 && (
+      {/* recommended to add */}
+      {recAdds.length > 0 && (
         <>
-          <div className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold mb-1.5">On other units in this building — not here yet</div>
-          <div className="flex flex-wrap gap-1.5">
-            {siblingExtras.map(a => {
+          <div className="text-[10px] uppercase tracking-wider text-amber-700 font-semibold mb-1.5 inline-flex items-center gap-1"><Star size={11} className="fill-amber-400 text-amber-500" /> Recommended to add</div>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {recAdds.map(a => {
               const on = sel.has(a)
               return (
                 <button key={a} onClick={() => toggle(a)}
-                  className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-brand-700 border-brand-200 hover:bg-brand-50'}`}>
-                  {on ? <Check size={11} /> : <Plus size={11} />} {a}
+                  className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'}`}>
+                  {on ? <Check size={11} /> : <Star size={11} className="fill-amber-400 text-amber-500" />} {a}
                 </button>
               )
             })}
           </div>
         </>
       )}
+
+      {/* full catalog */}
+      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Add from full catalog {addable.length > 0 && <span className="text-muted/70">· {addable.length}</span>}</div>
+      <div className="relative mb-2">
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search amenities…" className="w-full pl-8 pr-3 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
+      </div>
+      <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
+        {filtered.length === 0 && <span className="text-[12px] text-muted italic">{addable.length === 0 ? 'Everything in the catalog is already on this unit.' : 'No matches.'}</span>}
+        {filtered.map(a => {
+          const on = sel.has(a)
+          return (
+            <button key={a} onClick={() => toggle(a)}
+              className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-brand-700 border-brand-200 hover:bg-brand-50'}`}>
+              {on ? <Check size={11} /> : <Plus size={11} />} {a}
+            </button>
+          )
+        })}
+      </div>
 
       {err && <div className="mt-3 text-[12px] text-rose-600 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {err}</div>}
       {done && <div className="mt-3 text-[12px] text-emerald-700 inline-flex items-center gap-1.5"><Check size={13} /> {done} <button onClick={() => location.reload()} className="ml-1 underline underline-offset-2 inline-flex items-center gap-1"><RefreshCw size={11} /> refresh</button></div>}
