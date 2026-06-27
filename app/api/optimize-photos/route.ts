@@ -11,7 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MAX_PHOTOS = 60 // downsized renditions are ~55 tokens each, so we can order most listings in full
+const MAX_PHOTOS = 40 // keep total vision input tokens under the org's 10k/min tier
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
@@ -19,7 +19,7 @@ function str(v: any): string { return typeof v === 'string' ? v : '' }
 // input tokens; a ~420px-wide rendition costs ~90, letting us order many photos within tight rate tiers.
 function smallUrl(u: string): string {
   if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) {
-    return u.replace('/image/upload/', '/image/upload/w_400,c_limit,q_auto,f_jpg/')
+    return u.replace('/image/upload/', '/image/upload/w_300,h_300,c_limit,q_auto,f_jpg/')
   }
   return u
 }
