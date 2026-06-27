@@ -1,6 +1,6 @@
 'use client'
 import { useMemo, useRef, useState } from 'react'
-import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle } from 'lucide-react'
+import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle, X } from 'lucide-react'
 
 type Pic = { _id?: string; original?: string; thumbnail?: string }
 
@@ -173,9 +173,9 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><LayoutGrid size={15} className="text-brand-600" /> Hero collage ideas</h2>
           <p className="text-[12px] text-muted mt-0.5">Builds marketing hero images from this unit&apos;s real photos with amenity tags. Generate a few design ideas, then download the ones you like.</p>
         </div>
-        <button onClick={() => { setOpen(o => !o); if (!open && seeds.length === 0) generate() }} disabled={busy}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
-          {busy ? <Sparkles size={15} className="animate-pulse" /> : <LayoutGrid size={15} />} {busy ? 'Building…' : open ? 'Hide' : 'Generate ideas'}
+        <button onClick={() => setOpen(o => !o)}
+          className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 flex-shrink-0">
+          <LayoutGrid size={15} /> {open ? 'Hide' : 'Open'}
         </button>
       </div>
 
@@ -186,12 +186,20 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
             {[0, 1, 2].map(i => (
               <div key={i}>
                 <label className="block text-[11px] font-semibold text-muted mb-1">Tag {i + 1}</label>
-                <input value={tags[i] || ''} onChange={e => setTag(i, e.target.value)} placeholder="e.g. Pool Access"
-                  className="w-40 text-[13px] rounded-lg border border-line bg-app px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <div className="relative">
+                  <input value={tags[i] || ''} onChange={e => setTag(i, e.target.value)} placeholder="e.g. Pool Access"
+                    className="w-44 text-[13px] rounded-lg border border-line bg-app pl-2.5 pr-7 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  {!!(tags[i] || '').trim() && (
+                    <button type="button" onClick={() => setTag(i, '')} title="Remove this tag" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-rose-600"><X size={13} /></button>
+                  )}
+                </div>
               </div>
             ))}
-            <button onClick={generate} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-[13px] font-semibold text-ink hover:bg-app disabled:opacity-50"><RefreshCw size={13} /> New ideas</button>
+            <button onClick={generate} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">
+              {busy ? <Sparkles size={14} className="animate-pulse" /> : <RefreshCw size={14} />} {busy ? 'Building…' : seeds.length ? 'New ideas' : 'Generate ideas'}
+            </button>
           </div>
+          <p className="text-[11px] text-muted">Set your tags (or clear any you don\'t want with the ×), then Generate. Leave all blank for no tags.</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {seeds.map(s => (
