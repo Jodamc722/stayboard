@@ -42,31 +42,28 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 function drawTags(ctx: CanvasRenderingContext2D, tags: string[], accent: string, W: number, H: number, rnd: () => number) {
-  if (!tags.length) return
-  const style = pick(['bottomBar', 'pills', 'pills'] as const, rnd)
-  ctx.font = '600 30px Inter, system-ui, sans-serif'
-  if (style === 'bottomBar') {
-    const barH = 86
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, H - barH, W, barH)
-    let x = 32; const y = H - barH / 2
-    ctx.textBaseline = 'middle'
-    tags.slice(0, 3).forEach((t, i) => {
-      const tw = ctx.measureText(t).width
-      if (i > 0) { ctx.fillStyle = accent; ctx.fillRect(x, y - 12, 4, 24); x += 18 }
-      ctx.fillStyle = '#fff'; ctx.fillText(t, x, y); x += tw + 26
-    })
-  } else {
-    const corner = pick(['bl', 'br', 'tl'] as const, rnd)
-    let y = corner === 'tl' ? 34 : H - 34 - 52
-    const rows = tags.slice(0, 3)
-    rows.forEach((t) => {
-      const tw = ctx.measureText(t).width, padX = 22, w = tw + padX * 2, h = 52
-      const x = corner === 'br' ? W - w - 30 : 30
-      ctx.fillStyle = accent; roundRect(ctx, x, y, w, h, 12); ctx.fill()
-      ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(t, x + padX, y + h / 2)
-      y += corner === 'tl' ? 64 : -64
-    })
-  }
+  // Clean white "Guest favorite"-style pills, centered along the bottom with a soft drop shadow.
+  const items = tags.map(t => String(t || '').trim()).filter(Boolean).slice(0, 3)
+  if (!items.length) return
+  ctx.font = '600 31px Inter, "Helvetica Neue", system-ui, sans-serif'
+  const padX = 28, gap = 16, h = 62
+  const widths = items.map(t => ctx.measureText(t).width + padX * 2)
+  const total = widths.reduce((a, b) => a + b, 0) + gap * (items.length - 1)
+  let x = (W - total) / 2
+  const y = H - 44 - h
+  items.forEach((t, i) => {
+    const w = widths[i]
+    ctx.save()
+    ctx.shadowColor = 'rgba(0,0,0,0.30)'; ctx.shadowBlur = 22; ctx.shadowOffsetY = 7
+    ctx.fillStyle = '#ffffff'
+    roundRect(ctx, x, y, w, h, h / 2)
+    ctx.fill()
+    ctx.restore()
+    ctx.fillStyle = '#222222'
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+    ctx.fillText(t, x + padX, y + h / 2 + 1)
+    x += w + gap
+  })
 }
 
 function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: string[], seed: number) {
