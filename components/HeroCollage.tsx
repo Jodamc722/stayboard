@@ -1,6 +1,6 @@
 'use client'
 import { useMemo, useRef, useState } from 'react'
-import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle, X, Upload } from 'lucide-react'
+import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle, X, Upload, UploadCloud } from 'lucide-react'
 
 type Pic = { _id?: string; original?: string; thumbnail?: string }
 
@@ -99,6 +99,8 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   const [tags, setTags] = useState<string[]>(() => suggestTags(amenities, city, building))
   const [seeds, setSeeds] = useState<number[]>([])
   const [uploads, setUploads] = useState<{ url: string; name: string }[]>([])
+  const [pushing, setPushing] = useState<number | null>(null)
+  const [pushMsg, setPushMsg] = useState<string | null>(null)
   const refs = useRef<Record<number, HTMLCanvasElement | null>>({})
   const fileInput = useRef<HTMLInputElement | null>(null)
 
@@ -175,6 +177,22 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   function removeUpload(i: number) { setUploads(u => { const n = u.slice(); const [rm] = n.splice(i, 1); if (rm) URL.revokeObjectURL(rm.url); return n }) }
   function clearUploads() { setUploads(u => { u.forEach(x => URL.revokeObjectURL(x.url)); return [] }) }
 
+  async function pushToGuesty(seed: number) {
+    const c = refs.current[seed]; if (!c) return
+    if (!confirm('Push this image to Guesty as a NEW photo on this listing?\n\nIt syncs to ALL connected channels (Airbnb, Booking.com, Vrbo, etc.) and is added at the END of the photo set - not the cover.\n\nNote: Airbnb discourages photos with text/graphics, so collages are best for Booking.com, Vrbo and your direct site.')) return
+    setPushing(seed); setPushMsg(null)
+    try {
+      const dataUrl: string = await new Promise((res) => c.toBlob((b) => {
+        if (!b) return res(''); const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.readAsDataURL(b)
+      }, 'image/jpeg', 0.95))
+      if (!dataUrl) throw new Error('Could not read the image.')
+      const r = await fetch('/api/hero/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dataUrl, caption: (tags.find(t => (t || '').trim()) || name || 'Featured') }) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Push failed')
+      setPushMsg(`Pushed to Guesty - listing now has ${j.count} photos. Syncing to channels.`)
+    } catch (e: any) { setPushMsg(e.message || String(e)) } finally { setPushing(null) }
+  }
+
   function download(seed: number) {
     const c = refs.current[seed]; if (!c) return
     c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 1.0)
@@ -198,6 +216,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
       {open && (
         <div className="px-4 py-4 border-t border-line space-y-4">
           {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
+          {pushMsg && <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-700 flex items-center justify-between gap-2"><span>{pushMsg}</span><button onClick={() => setPushMsg(null)} className="text-muted hover:text-ink"><X size={13} /></button></div>}
 
           {/* Photo source: upload your own (best quality) or fall back to the unit's synced photos */}
           <div className="rounded-xl border border-line bg-app/30 p-3">
@@ -248,9 +267,12 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
             {seeds.map(s => (
               <div key={s} className="rounded-xl border border-line overflow-hidden bg-app/30">
                 <canvas ref={el => { refs.current[s] = el }} className="w-full block" style={{ aspectRatio: '3 / 2' }} />
-                <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-[11px] text-muted">3000 &times; 2000 JPEG</span>
-                  <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700"><Download size={13} /> Download</button>
+                <div className="flex items-center justify-between px-3 py-2 gap-2">
+                  <span className="text-[11px] text-muted">3000 &times; 2000</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => pushToGuesty(s)} disabled={pushing === s} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-50">{pushing === s ? <Sparkles size={13} className="animate-pulse" /> : <UploadCloud size={13} />} {pushing === s ? 'Pushing…' : 'Push to Guesty'}</button>
+                    <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink hover:text-brand-700"><Download size={13} /> Download</button>
+                  </div>
                 </div>
               </div>
             ))}
