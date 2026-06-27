@@ -139,7 +139,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
 
   function download(seed: number) {
     const c = refs.current[seed]; if (!c) return
-    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.png`; a.click(); URL.revokeObjectURL(a.href) }, 'image/png')
+    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.92)
   }
 
   function setTag(i: number, v: string) { setTags(t => { const n = t.slice(); n[i] = v; return n }) }
@@ -176,7 +176,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               <div key={s} className="rounded-xl border border-line overflow-hidden bg-app/30">
                 <canvas ref={el => { refs.current[s] = el }} className="w-full block" style={{ aspectRatio: '3 / 2' }} />
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-[11px] text-muted">1200 &times; 800 PNG</span>
+                  <span className="text-[11px] text-muted">1200 &times; 800 JPEG</span>
                   <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700"><Download size={13} /> Download</button>
                 </div>
               </div>
