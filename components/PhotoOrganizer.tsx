@@ -34,6 +34,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [overflow, setOverflow] = useState(0)
   const [assessment, setAssessment] = useState<Result['assessment']>(null)
   const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
+  const [toRemove, setToRemove] = useState<Set<string>>(new Set())
   const [dragId, setDragId] = useState<string | null>(null)
 
   async function analyze(hero?: string) {
@@ -74,16 +75,23 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     setDragId(null)
   }
 
+  function toggleRemove(id: string) {
+    setToRemove(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
   async function push() {
+    const remove = Array.from(toRemove)
+    if (remove.length > 0 && !window.confirm(`This reorders the photos AND permanently removes ${remove.length} photo(s) from this listing on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
     setPushing(true); setError(null); setPushedMsg(null)
     try {
       const r = await fetch('/api/photo-order', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, order }),
+        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove) }),
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Failed to push order.')
-      setPushedMsg(`New photo order pushed to Guesty (${j.count} photos). It will sync to all channels shortly.`)
+      setPushedMsg(`Pushed to Guesty: ${j.count} photos in new order${j.removed ? `, ${j.removed} removed` : ''}. Syncs to all channels shortly.`)
+      setToRemove(new Set())
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
@@ -136,11 +144,12 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 <span className="text-[11px] text-muted ml-auto">delete these in Guesty &mdash; StayBoard never deletes photos for you</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                {removeList.map(r => { const p = photos[r._id]; if (!p) return null; return (
+                {removeList.map(r => { const p = photos[r._id]; if (!p) return null; const marked = toRemove.has(r._id); return (
                   <div key={r._id} className="rounded-lg border border-rose-200 overflow-hidden bg-white">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={p.url} alt="remove candidate" className="w-full aspect-[4/3] object-cover opacity-80" loading="lazy" />
-                    <p className="text-[10px] text-rose-700 leading-snug p-1.5">{r.reason}</p>
+                    <p className="text-[10px] text-rose-700 leading-snug px-1.5 pt-1.5">{r.reason}</p>
+                    <button onClick={() => toggleRemove(r._id)} className={`w-full text-[10px] font-semibold py-1 ${marked ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'}`}>{marked ? 'Marked to remove' : 'Mark to remove'}</button>
                   </div>
                 )})}
               </div>
@@ -179,7 +188,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${isHero ? 'bg-amber-500 text-white' : 'bg-black/60 text-white'}`}>{idx + 1}</span>
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
                         {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
-                        {removeList.some(r => r._id === id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Remove</span>}
+                        {removeList.some(r => r._id === id) && !toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Trash2 size={10} /> Suggest</span>}
+                        {toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Removing</span>}
                       </div>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={p.url} alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
@@ -191,6 +201,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                             <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>
                             <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="Move later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>
                             <button onClick={() => setAsHero(id)} title="Make this the cover photo" className="ml-auto p-1 rounded border border-line text-amber-600 hover:text-amber-700"><Star size={12} /></button>
+                            <button onClick={() => toggleRemove(id)} title={toRemove.has(id) ? 'Keep this photo' : 'Remove this photo from the listing'} className={`p-1 rounded border ${toRemove.has(id) ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-line text-muted hover:text-rose-600'}`}><Trash2 size={12} /></button>
                           </div>
                         )}
                       </div>
