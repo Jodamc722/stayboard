@@ -163,7 +163,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
       <div className="mb-5"><ListingOptimizer listingId={listing.id} name={name} /></div>
       <div className="mb-5"><PhotoOrganizer listingId={listing.id} name={name} /></div>
-      <div className="mb-5"><HeroCollage name={name} city={listing.address_city || ''} building={buildingName} pictures={(Array.isArray(listing.pictures) ? listing.pictures : (Array.isArray(raw.pictures) ? raw.pictures : []))} amenities={amenities} /></div>
+      <div className="mb-5"><HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={(Array.isArray(listing.pictures) ? listing.pictures : (Array.isArray(raw.pictures) ? raw.pictures : []))} amenities={amenities} /></div>
 
       {/* Optimize score breakdown */}
       <div className="mb-2 flex items-center gap-2 flex-wrap">
