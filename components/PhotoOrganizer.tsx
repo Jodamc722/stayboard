@@ -1,14 +1,15 @@
 'use client'
 import { useState } from 'react'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge } from 'lucide-react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned } from 'lucide-react'
 
-type Photo = { _id: string; url: string; caption?: string; category?: string; reason?: string }
+type Photo = { _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string }
 type Result = {
   heroId: string
   proposedOrder: string[]
   photos: Photo[]
   heroSuggestion?: { _id: string; why: string } | null
   assessment?: { quality: number | null; coverage: string; notes: string[] } | null
+  recommendRemove?: { _id: string; reason: string }[]
   overflow?: number
 }
 
@@ -32,6 +33,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [heroSug, setHeroSug] = useState<Result['heroSuggestion']>(null)
   const [overflow, setOverflow] = useState(0)
   const [assessment, setAssessment] = useState<Result['assessment']>(null)
+  const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
   const [dragId, setDragId] = useState<string | null>(null)
 
   async function analyze(hero?: string) {
@@ -46,7 +48,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       const map: Record<string, Photo> = {}
       ;(j.photos || []).forEach((p: Photo) => { map[p._id] = p })
       setPhotos(map); setHeroId(j.heroId); setOrder(j.proposedOrder); setProposed(j.proposedOrder)
-      setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null)
+      setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
   }
 
@@ -126,6 +128,25 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
 
+          {removeList.length > 0 && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50/60 px-3.5 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Trash2 size={15} className="text-rose-600" />
+                <span className="text-[13px] font-semibold text-ink">Recommended to remove ({removeList.length})</span>
+                <span className="text-[11px] text-muted ml-auto">delete these in Guesty &mdash; StayBoard never deletes photos for you</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                {removeList.map(r => { const p = photos[r._id]; if (!p) return null; return (
+                  <div key={r._id} className="rounded-lg border border-rose-200 overflow-hidden bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.url} alt="remove candidate" className="w-full aspect-[4/3] object-cover opacity-80" loading="lazy" />
+                    <p className="text-[10px] text-rose-700 leading-snug p-1.5">{r.reason}</p>
+                  </div>
+                )})}
+              </div>
+            </div>
+          )}
+
           {order.length > 0 && (
             <>
               {heroSug && heroSug._id !== heroId && (
@@ -157,6 +178,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                       <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-1">
                         <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${isHero ? 'bg-amber-500 text-white' : 'bg-black/60 text-white'}`}>{idx + 1}</span>
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
+                        {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
+                        {removeList.some(r => r._id === id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Remove</span>}
                       </div>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={p.url} alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
