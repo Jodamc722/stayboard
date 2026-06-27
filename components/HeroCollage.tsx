@@ -22,7 +22,7 @@ function suggestTags(amenities: string[], city: string, building: string): strin
 }
 
 const PALETTE = ['#0f766e', '#1d4ed8', '#be123c', '#b45309', '#7c3aed', '#0e7490', '#15803d', '#9d174d']
-const LAYOUTS = ['grid2x2', 'big3', 'strip3', 'big2', 'hero1'] as const
+const LAYOUTS = ['grid2x2', 'big3', 'strip3', 'big2', 'twoup', 'film', 'fivegrid', 'bigleft2', 'hero1'] as const
 
 function pick<T>(arr: readonly T[], rnd: () => number): T { return arr[Math.floor(rnd() * arr.length)] }
 function shuffle<T>(arr: T[], rnd: () => number): T[] { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
@@ -77,6 +77,10 @@ function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: s
   else if (layout === 'grid2x2') { const cw = (W - g) / 2, ch = (H - g) / 2;[[0, 0], [cw + g, 0], [0, ch + g], [cw + g, ch + g]].forEach((p, i) => drawCover(ctx, at(i), p[0], p[1], cw, ch)) }
   else if (layout === 'big3') { const bw = W * 0.6; drawCover(ctx, at(0), 0, 0, bw - g / 2, H); const rw = W - bw - g / 2, rh = (H - 2 * g) / 3; for (let i = 0; i < 3; i++) drawCover(ctx, at(i + 1), bw + g / 2, i * (rh + g), rw, rh) }
   else if (layout === 'strip3') { const cw = (W - 2 * g) / 3; for (let i = 0; i < 3; i++) drawCover(ctx, at(i), i * (cw + g), 0, cw, H) }
+  else if (layout === 'twoup') { const hw = (W - g) / 2; drawCover(ctx, at(0), 0, 0, hw, H); drawCover(ctx, at(1), hw + g, 0, hw, H) }
+  else if (layout === 'film') { const th = H * 0.7; drawCover(ctx, at(0), 0, 0, W, th - g / 2); const fy = th + g / 2, fh = H - fy, fw = (W - 3 * g) / 4; for (let i = 0; i < 4; i++) drawCover(ctx, at(i + 1), i * (fw + g), fy, fw, fh) }
+  else if (layout === 'fivegrid') { const bw = W * 0.6; drawCover(ctx, at(0), 0, 0, bw - g / 2, H); const rx = bw + g / 2, rw = W - rx, rcw = (rw - g) / 2, rch = (H - g) / 2;[[rx, 0], [rx + rcw + g, 0], [rx, rch + g], [rx + rcw + g, rch + g]].forEach((p, i) => drawCover(ctx, at(i + 1), p[0], p[1], rcw, rch)) }
+  else if (layout === 'bigleft2') { const bw = W * 0.62; drawCover(ctx, at(0), 0, 0, bw - g / 2, H); const rx = bw + g / 2, rw = W - rx, rh = (H - g) / 2; drawCover(ctx, at(1), rx, 0, rw, rh); drawCover(ctx, at(2), rx, rh + g, rw, rh) }
   else { const th = H * 0.6; drawCover(ctx, at(0), 0, 0, W, th - g / 2); const bw = (W - g) / 2, by = th + g / 2, bh = H - by; drawCover(ctx, at(1), 0, by, bw, bh); drawCover(ctx, at(2), bw + g, by, bw, bh) }
   drawTags(ctx, tags, accent, W, H, rnd)
 }
