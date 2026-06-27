@@ -177,7 +177,7 @@ ${JSON.stringify(currentDraft || (current as any)[singleSection] || '')}`
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
+        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
       })
       const d: any = await r.json()
       if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
@@ -259,7 +259,7 @@ ${JSON.stringify(current)}`
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2400, system: SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
+      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 2400, system: SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
