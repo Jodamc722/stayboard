@@ -4,7 +4,9 @@
 // the shared lib/optimize-score (research-backed, computed from Guesty data).
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi } from '@/lib/optimize-score'
 import { Building2, BedDouble, Users, Wrench, MapPin, ArrowRight, AlertTriangle } from 'lucide-react'
@@ -13,16 +15,15 @@ export const dynamic = 'force-dynamic'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 
-export default async function PortfolioPage() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
+// Heavy: pulls every listing's Guesty `raw` to compute scores. Cache the rollup across requests and
+// recompute at most every 2 minutes so the portfolio page loads instantly instead of recomputing each hit.
+const getPortfolioData = unstable_cache(async () => {
+  const sb = supabaseAdmin()
   const [{ data: listings }, { data: work }] = await Promise.all([
-    supabase.from('guesty_listings')
+    sb.from('guesty_listings')
       .select('id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, raw')
       .limit(1000),
-    supabase.from('field_requests').select('building').in('status', ['open', 'in_progress']).limit(1000),
+    sb.from('field_requests').select('building').in('status', ['open', 'in_progress']).limit(1000),
   ])
 
   const workByBuilding: Record<string, number> = {}
@@ -31,13 +32,13 @@ export default async function PortfolioPage() {
     if (b && b !== 'Unassigned') workByBuilding[b] = (workByBuilding[b] || 0) + 1
   })
 
-  type B = { name: string; city?: string; units: any[]; beds: number; sleeps: number; active: number; scores: number[] }
+  type B = { name: string; city?: string; unitCount: number; beds: number; sleeps: number; active: number; scores: number[] }
   const map = new Map<string, B>()
   ;(listings ?? []).forEach((l: any) => {
     const name = rollupBuilding(l.building)
-    if (!map.has(name)) map.set(name, { name, city: l.address_city || undefined, units: [], beds: 0, sleeps: 0, active: 0, scores: [] })
+    if (!map.has(name)) map.set(name, { name, city: l.address_city || undefined, unitCount: 0, beds: 0, sleeps: 0, active: 0, scores: [] })
     const b = map.get(name)!
-    b.units.push(l)
+    b.unitCount += 1
     b.beds += Number(l.bedrooms) || 0
     b.sleeps += Number(l.max_occupancy) || 0
     const dead = DEAD.includes(String(l.status || '').toLowerCase())
@@ -49,15 +50,26 @@ export default async function PortfolioPage() {
     if (!b.city && l.address_city) b.city = l.address_city
   })
 
+  const allScores: number[] = []
   const buildings = Array.from(map.values()).map(b => {
+    allScores.push(...b.scores)
     const avg = b.scores.length ? Math.round(b.scores.reduce((s, n) => s + n, 0) / b.scores.length) : null
     const weak = b.scores.filter(s => s < 60).length
-    return { ...b, avg, weak }
+    const { scores, ...rest } = b
+    return { ...rest, avg, weak }
   }).sort((a, b) => (a.avg ?? 999) - (b.avg ?? 999)) // weakest portfolios first
 
   const totalUnits = (listings ?? []).length
-  const scored = buildings.flatMap(b => b.scores)
-  const portfolioAvg = scored.length ? Math.round(scored.reduce((s, n) => s + n, 0) / scored.length) : null
+  const portfolioAvg = allScores.length ? Math.round(allScores.reduce((s, n) => s + n, 0) / allScores.length) : null
+  return { buildings, workByBuilding, totalUnits, portfolioAvg }
+}, ['portfolio-rollup-v1'], { revalidate: 120 })
+
+export default async function PortfolioPage() {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { buildings, workByBuilding, totalUnits, portfolioAvg } = await getPortfolioData()
 
   return (
     <Shell>
@@ -106,7 +118,7 @@ export default async function PortfolioPage() {
                 </div>
 
                 <div className="grid grid-cols-3 divide-x divide-line border-b border-line text-center">
-                  <Mini label="Units" value={b.units.length} />
+                  <Mini label="Units" value={b.unitCount} />
                   <Mini label="Bedrooms" value={b.beds} Icon={BedDouble} />
                   <Mini label="Sleeps" value={b.sleeps} Icon={Users} />
                 </div>
