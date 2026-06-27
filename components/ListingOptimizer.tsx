@@ -40,13 +40,17 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
   const [pushKey, setPushKey] = useState<string | null>(null)
   const [sectionMsg, setSectionMsg] = useState<Record<string, string>>({})
 
-  async function generate() {
+  async function generate(freshFeel = false) {
     if (busy) return
     setOpen(true); setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null); setSectionMsg({})
     try {
+      const base = genPrompt.trim()
+      const instruction = freshFeel
+        ? `RECREATE THIS LISTING WITH A COMPLETELY FRESH FEEL: write a brand-new title and all six sections from scratch using a different angle, voice and structure than the current copy, so it reads like a fresh, new listing — while staying 100% honest and accurate to this unit's real features (never invent anything).${base ? ' Also make sure to: ' + base : ''}`
+        : (base || undefined)
       const res = await fetch('/api/optimize-listing', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, instruction: genPrompt.trim() || undefined }),
+        body: JSON.stringify({ listingId, instruction }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
@@ -152,11 +156,17 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
           <input value={genPrompt} onChange={e => setGenPrompt(e.target.value)} placeholder="Optional: make sure something gets included (e.g. “mention the rooftop pool and free garage parking”)"
             className="mt-2 w-full sm:w-[420px] text-[12px] rounded-lg border border-line bg-app px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </div>
-        <button onClick={generate} disabled={busy}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
-          {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
-          {busy ? 'Generating…' : result ? 'Regenerate all' : 'Generate optimized content'}
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => generate(true)} disabled={busy} title="Brand-new title + all descriptions with a fresh angle"
+            className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2.5 text-sm font-semibold hover:bg-brand-50 disabled:opacity-50">
+            <Sparkles size={15} /> Recreate (fresh feel)
+          </button>
+          <button onClick={() => generate(false)} disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50">
+            {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
+            {busy ? 'Generating…' : result ? 'Regenerate all' : 'Generate optimized content'}
+          </button>
+        </div>
       </div>
 
       {(open && (busy || result || error)) && (
