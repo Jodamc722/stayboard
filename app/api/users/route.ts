@@ -94,16 +94,51 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const email = clean(body?.email)
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
+  const password = typeof body?.password === 'string' ? body.password : ''
+  if (password && password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
   const patch: any = {}
   if (body?.role === 'admin' || body?.role === 'member') patch.role = body.role
   if (body?.status === 'active' || body?.status === 'disabled') patch.status = body.status
-  if (Object.keys(patch).length === 0) return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 })
+  if (Object.keys(patch).length === 0 && !password) return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 })
   // Guard: never let an admin lock themselves out of admin or disable themselves.
   if (email === access.email && (patch.role === 'member' || patch.status === 'disabled')) {
     return NextResponse.json({ error: 'You cannot remove your own admin access.' }, { status: 400 })
   }
   const sb = supabaseAdmin()
-  const { error: e } = await sb.from('app_users').update(patch).eq('email', email)
-  if (e) return NextResponse.json({ error: e.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  if (Object.keys(patch).length) {
+    const { error: e } = await sb.from('app_users').update(patch).eq('email', email)
+    if (e) return NextResponse.json({ error: e.message }, { status: 500 })
+  }
+  // Optional password reset for the existing account.
+  let passwordSet: boolean | undefined
+  if (password) {
+    const id = await findUserId(sb, email)
+    if (!id) return NextResponse.json({ error: 'No login account exists yet for this email - add them with a password to create one.' }, { status: 400 })
+    const { error: uErr } = await (sb as any).auth.admin.updateUserById(id, { password })
+    if (uErr) return NextResponse.json({ error: `Could not set password: ${uErr.message}` }, { status: 500 })
+    passwordSet = true
+  }
+  return NextResponse.json({ ok: true, passwordSet })
+}
+
+// DELETE — remove a teammate entirely: drop the allowlist row AND delete their login account.
+// Owner-protected: nobody can delete themselves or the hardcoded owner (jon@stay-hospitality.com).
+export async function DELETE(req: NextRequest) {
+  const { error, access } = await requireAdmin()
+  if (error) return error
+  const body = await req.json().catch(() => ({} as any))
+  const email = clean(body?.email)
+  if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
+  if (email === access.email) return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 })
+  if (email === 'jon@stay-hospitality.com') return NextResponse.json({ error: 'The owner account cannot be deleted.' }, { status: 400 })
+  const sb = supabaseAdmin()
+  const { error: dErr } = await sb.from('app_users').delete().eq('email', email)
+  if (dErr) return NextResponse.json({ error: dErr.message }, { status: 500 })
+  // Best-effort: also remove the Supabase auth account so they can no longer sign in.
+  let authRemoved = false
+  try {
+    const id = await findUserId(sb, email)
+    if (id) { const { error: aErr } = await (sb as any).auth.admin.deleteUser(id); authRemoved = !aErr }
+  } catch { /* ignore */ }
+  return NextResponse.json({ ok: true, authRemoved })
 }
