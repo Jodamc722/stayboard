@@ -24,7 +24,7 @@ function suggestTags(amenities: string[], city: string, building: string): strin
 // Request a crisp, properly-sized Cloudinary rendition so the canvas isn't downscaling a giant original
 // in one rough step (that's what made collages look soft). w_1400 best-quality is sharp for hero cells.
 function hiRes(u: string): string {
-  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_1400,q_auto:best,f_jpg/')
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_2000,q_auto:best,f_jpg/')
   return u
 }
 const PALETTE = ['#0f766e', '#1d4ed8', '#be123c', '#b45309', '#7c3aed', '#0e7490', '#15803d', '#9d174d']
@@ -74,7 +74,7 @@ function drawTags(ctx: CanvasRenderingContext2D, tags: string[], accent: string,
 }
 
 function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: string[], seed: number) {
-  const W = 1800, H = 1200, g = 14
+  const W = 2400, H = 1600, g = 18
   canvas.width = W; canvas.height = H
   const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; const rnd = rngFrom(seed)
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H)
@@ -151,7 +151,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
 
   function download(seed: number) {
     const c = refs.current[seed]; if (!c) return
-    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.95)
+    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.96)
   }
 
   function setTag(i: number, v: string) { setTags(t => { const n = t.slice(); n[i] = v; return n }) }
@@ -188,7 +188,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               <div key={s} className="rounded-xl border border-line overflow-hidden bg-app/30">
                 <canvas ref={el => { refs.current[s] = el }} className="w-full block" style={{ aspectRatio: '3 / 2' }} />
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-[11px] text-muted">1800 &times; 1200 JPEG</span>
+                  <span className="text-[11px] text-muted">2400 &times; 1600 JPEG</span>
                   <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700"><Download size={13} /> Download</button>
                 </div>
               </div>
