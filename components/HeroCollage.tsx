@@ -45,31 +45,32 @@ function drawTags(ctx: CanvasRenderingContext2D, tags: string[], accent: string,
   // Clean white "Guest favorite"-style pills, centered along the bottom with a soft drop shadow.
   const items = tags.map(t => String(t || '').trim()).filter(Boolean).slice(0, 3)
   if (!items.length) return
-  ctx.font = '600 31px Inter, "Helvetica Neue", system-ui, sans-serif'
-  const padX = 28, gap = 16, h = 62
+  const s = W / 1200
+  ctx.font = `600 ${Math.round(31 * s)}px Inter, "Helvetica Neue", system-ui, sans-serif`
+  const padX = 28 * s, gap = 16 * s, h = 62 * s
   const widths = items.map(t => ctx.measureText(t).width + padX * 2)
   const total = widths.reduce((a, b) => a + b, 0) + gap * (items.length - 1)
   let x = (W - total) / 2
-  const y = H - 44 - h
+  const y = H - 44 * s - h
   items.forEach((t, i) => {
     const w = widths[i]
     ctx.save()
-    ctx.shadowColor = 'rgba(0,0,0,0.30)'; ctx.shadowBlur = 22; ctx.shadowOffsetY = 7
+    ctx.shadowColor = 'rgba(0,0,0,0.30)'; ctx.shadowBlur = 22 * s; ctx.shadowOffsetY = 7 * s
     ctx.fillStyle = '#ffffff'
     roundRect(ctx, x, y, w, h, h / 2)
     ctx.fill()
     ctx.restore()
     ctx.fillStyle = '#222222'
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
-    ctx.fillText(t, x + padX, y + h / 2 + 1)
+    ctx.fillText(t, x + padX, y + h / 2 + s)
     x += w + gap
   })
 }
 
 function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: string[], seed: number) {
-  const W = 1200, H = 800, g = 10
+  const W = 1800, H = 1200, g = 14
   canvas.width = W; canvas.height = H
-  const ctx = canvas.getContext('2d')!; const rnd = rngFrom(seed)
+  const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; const rnd = rngFrom(seed)
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H)
   const layout = pick(LAYOUTS, rnd); const accent = pick(PALETTE, rnd); const ph = shuffle(imgs, rnd)
   const at = (i: number) => ph[i % ph.length]
@@ -108,11 +109,15 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
       const remove = new Set((j.recommendRemove || []).map((x: any) => x._id))
       const origById: Record<string, string> = {}
       pictures.forEach(p => { if (p._id) origById[p._id] = p.original || p.thumbnail || '' })
-      const picks = j.proposedOrder
-        .filter((id: string) => { const p = byId[id]; return p && p.kind !== 'stock' && !remove.has(id) })
-        .map((id: string) => origById[id] || (byId[id] && byId[id].url) || '')
-        .filter(Boolean)
-        .slice(0, 8)
+      // Build a VARIED set for the collage: guarantee some exterior + pool/view/outdoor shots, then fill
+      // with the strongest interiors. (Plain ordering is unit-first, so exteriors would otherwise drop off.)
+      const props: any[] = j.proposedOrder.map((id: string) => byId[id]).filter((p: any) => p && p.kind !== 'stock' && !remove.has(p._id))
+      const used = new Set<string>(); const chosen: any[] = []
+      const take = (test: (c: string) => boolean, max: number) => { let n = 0; for (const p of props) { if (used.has(p._id)) continue; if (test(String(p.category || ''))) { chosen.push(p); used.add(p._id); if (++n >= max) break } } }
+      take(c => c === 'exterior', 2)
+      take(c => c === 'view' || c === 'outdoor' || c === 'amenity', 2)
+      for (const p of props) { if (chosen.length >= 8) break; if (!used.has(p._id)) { chosen.push(p); used.add(p._id) } }
+      const picks = chosen.slice(0, 8).map((p: any) => origById[p._id] || p.url || '').filter(Boolean)
       return picks.length >= 2 ? picks : fallbackUrls
     } catch { return fallbackUrls }
   }
@@ -177,7 +182,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               <div key={s} className="rounded-xl border border-line overflow-hidden bg-app/30">
                 <canvas ref={el => { refs.current[s] = el }} className="w-full block" style={{ aspectRatio: '3 / 2' }} />
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-[11px] text-muted">1200 &times; 800 JPEG</span>
+                  <span className="text-[11px] text-muted">1800 &times; 1200 JPEG</span>
                   <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700"><Download size={13} /> Download</button>
                 </div>
               </div>
