@@ -14,7 +14,22 @@ export function SyncNowButton() {
     setState('syncing'); setMsg(null)
     try {
       const r = await fetch('/api/sync/guesty', { method: 'POST' })
-      const d = await r.json()
+      // Read as text first: a long full sync can exceed the serverless time limit and return a
+      // plain-text gateway error (not JSON), which would otherwise throw a cryptic parse error.
+      const text = await r.text()
+      let d: any = null
+      try { d = text ? JSON.parse(text) : null } catch { /* non-JSON (timeout / gateway error) */ }
+      if (!d) {
+        setState('err')
+        if (r.status === 504 || /timeout|timed out|an error occurred/i.test(text)) {
+          setMsg('Sync is taking a while — it may still be finishing in the background. Refresh in a moment.')
+        } else {
+          setMsg(`Sync failed (HTTP ${r.status}).`)
+        }
+        startTransition(() => router.refresh())
+        setTimeout(() => setState('idle'), 6000)
+        return
+      }
       if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
       setState('ok')
       setMsg(`${d.reservations} res · ${d.listings} props · ${d.conversations} threads`)
