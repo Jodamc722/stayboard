@@ -129,10 +129,20 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   }
 
   async function loadImgs(urls: string[]): Promise<HTMLImageElement[]> {
-    const list = urls.map(u => new Promise<HTMLImageElement | null>((res) => {
-      const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null)
-      im.src = `/api/img-proxy?url=${encodeURIComponent(hiRes(u))}`
-    }))
+    const tryLoad = (src: string) => new Promise<HTMLImageElement | null>((res) => {
+      const im = new Image(); let done = false
+      const t = setTimeout(() => { if (!done) { done = true; res(null) } }, 13000)
+      im.onload = () => { if (!done) { done = true; clearTimeout(t); res(im) } }
+      im.onerror = () => { if (!done) { done = true; clearTimeout(t); res(null) } }
+      im.src = src
+    })
+    // Try the high-res Cloudinary rendition first; if it fails (some images/hosts reject the transform),
+    // fall back to the plain proxied original, then the raw URL. This keeps the collage from failing.
+    const list = urls.map(async (u) =>
+      (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(hiRes(u))}`))
+      || (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(u)}`))
+      || (await tryLoad(u))
+    )
     return (await Promise.all(list)).filter((x): x is HTMLImageElement => !!x)
   }
 
