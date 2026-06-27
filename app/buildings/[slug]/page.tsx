@@ -8,11 +8,23 @@ import { computeScore, rollupBuilding, slugToBuilding, band, bandUi } from '@/li
 import { Shell } from '@/components/Shell'
 import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
 import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
-import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon } from 'lucide-react'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
+
+// True if the host has publicly replied to this review (mirrors the listing page logic).
+function hasHostReply(raw: any, reply: any): boolean {
+  if (typeof reply === 'string' && reply.trim()) return true
+  if (!raw || typeof raw !== 'object') return false
+  const rr = raw.rawReview || raw.raw || {}
+  const arrays = [raw.reviewReplies, rr.reviewReplies].filter(Array.isArray)
+  for (const arr of arrays) for (const x of arr) { const t = x?.reply ?? x?.text ?? x?.body ?? x?.response; if (t && String(t).trim()) return true }
+  const hr = rr.host_response ?? rr.hostResponse ?? raw.hostResponse ?? null
+  return !!(hr && String(hr).trim())
+}
 
 export default async function BuildingPage({ params }: { params: { slug: string } }) {
   const supabase = createClient()
@@ -30,6 +42,21 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   if (units.length === 0) notFound()
 
   const buildingName = rollupBuilding(units[0].building)
+
+  // Per-unit "reviews to respond" count (real reviews with no host reply), for quick auditing.
+  const unitIds = units.map((u: any) => u.id)
+  const notResponded: Record<string, number> = {}
+  try {
+    const sb = supabaseAdmin()
+    const { data: revs } = await sb.from('guesty_reviews').select('listing_id, rating, reply, raw, excluded_from_score').in('listing_id', unitIds).limit(5000)
+    for (const r of (revs ?? [])) {
+      if ((r as any).excluded_from_score) continue
+      if ((r as any).rating == null) continue
+      if (hasHostReply((r as any).raw, (r as any).reply)) continue
+      const id = (r as any).listing_id
+      notResponded[id] = (notResponded[id] || 0) + 1
+    }
+  } catch { /* reviews are best-effort */ }
   const city = units.find((u: any) => u.address_city)?.address_city || ''
   const isBeach = /beach/i.test(String(city))
 
@@ -115,9 +142,18 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                 )}
               </div>
 
-              <div className="px-4 py-2 border-t border-line flex items-center justify-between text-[11px] font-medium text-muted group-hover:text-brand-700 transition-colors">
-                <span>Open content, scores & optimizer</span>
-                <ArrowRight size={13} className="group-hover:translate-x-0.5 transition-transform" />
+              <div className="px-4 py-2 border-t border-line flex items-center justify-between gap-2 text-[11px] font-medium flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`inline-flex items-center gap-1 ${l.raw?._lastOptimized ? 'text-emerald-700' : 'text-muted'}`} title="Last time content or photos were pushed">
+                    <Sparkles size={11} /> {l.raw?._lastOptimized ? `Optimized ${new Date(l.raw._lastOptimized).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'Not optimized'}
+                  </span>
+                  {(notResponded[l.id] || 0) > 0 && (
+                    <span className="inline-flex items-center gap-1 text-amber-700" title="Reviews with no host reply">
+                      <MessageSquare size={11} /> {notResponded[l.id]} to reply
+                    </span>
+                  )}
+                </div>
+                <ArrowRight size={13} className="text-muted group-hover:text-brand-700 group-hover:translate-x-0.5 transition-all" />
               </div>
             </Link>
           )
