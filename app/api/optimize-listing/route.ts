@@ -15,7 +15,7 @@ const SECTION_DEFS: { key: string; label: string; guide: string }[] = [
   { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, REAL perk only if the data supports it; state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. Most important field.' },
   { key: 'space', label: 'The space', guide: 'The SELLING section — make the reader want to book. Walk them through the home the way the PHOTOS show it: open with the single most compelling, true visual highlight (the view, the natural light, the kitchen, the pool), then room-by-room in short labeled lines or tight paragraphs (17 West house style): bedrooms + bed types, bathrooms, kitchen, living/dining, outdoor space, views, standout finishes, building amenities (pool, gym, parking). Keep it INVITING and broad - describe what the home offers in warm, confident strokes and list its real features. Use the photos to stay accurate and CONFIRM claims, but do NOT over-specify fine detail (exact materials, brands, precise finishes) unless you are 100% sure from a photo or the data; when unsure stay general (e.g. a bright open living area, a full kitchen, ample outdoor space) rather than risk a wrong specific. Lead with benefits (how it FEELS to stay), not a dry inventory. Concrete, vivid, scannable. ~700-1300 characters.' },
   { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if the data indicates it. NEVER include the street address, unit number, real codes, phone, or URLs. ~300-700 characters.' },
-  { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it. ~500-1000 characters.' },
+  { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Highlight genuinely desirable, KEY draws - do NOT pad with trivial conveniences (a laundromat, convenience store, ATM, gas station, pharmacy). Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it. ~500-1000 characters.' },
   { key: 'transit', label: 'Getting around', guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances. ~250-600 characters.' },
   { key: 'notes', label: 'Other notes', guide: 'Standardized "Listing Notes" - write as short, scannable lines (one per item), factual and welcoming. NEVER mention the cancellation policy or refunds anywhere in this section. Include these lines, lightly adapted to this listing: (1) ONLY IF facts.minAge21 is true: "The primary guest must be 21 years or older to check in"; (2) "No smoking or parties permitted"; (3) "Guests must sign the rental agreement and check-in form before arrival - these are mandatory to confirm your reservation and receive access instructions"; (4) "Please review all house rules prior to arrival for a seamless experience"; (5) "Only initial consumables (toiletries, coffee, paper products) are provided; additional supplies can be requested for a small fee"; (6) "Mid-stay cleaning services are available upon request for an additional fee"; (7) "Additional accessibility details and building policies available upon request before booking". ~400-800 characters.' },
 ]
@@ -168,7 +168,7 @@ ${singleSection === 'space' && spaceExemplar ? `\n17 WEST STYLE EXEMPLAR (match 
 VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
 
-GUEST REVIEW SIGNAL (lean into what guests praise; do not quote verbatim):
+GUEST REVIEW SIGNAL - you MAY share what guests genuinely PRAISE, in your own words (e.g. "guests love the natural light and the walkable location"). NEVER state a star rating, a numeric score, or "X-star"; never quote a review verbatim:
 ${JSON.stringify(reviewSignal)}
 
 CURRENT TEXT for this field (improve on it):
@@ -249,7 +249,7 @@ ${instruction ? `\nMUST-INCLUDE FROM JON (work this in naturally, within the hon
 VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
 
-GUEST REVIEW SIGNAL (lean into what guests praise; do not quote verbatim):
+GUEST REVIEW SIGNAL - you MAY share what guests genuinely PRAISE, in your own words (e.g. "guests love the natural light and the walkable location"). NEVER state a star rating, a numeric score, or "X-star"; never quote a review verbatim:
 ${JSON.stringify(reviewSignal)}
 
 CURRENT GUESTY CONTENT (improve on this; it may be thin or empty):
