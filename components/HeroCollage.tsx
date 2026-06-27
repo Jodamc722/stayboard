@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle } from 'lucide-react'
 
-type Pic = { original?: string; thumbnail?: string }
+type Pic = { _id?: string; original?: string; thumbnail?: string }
 
 // Map a unit's amenities + location into a few short, honest hero tags the host can edit.
 function suggestTags(amenities: string[], city: string, building: string): string[] {
@@ -84,7 +84,7 @@ function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: s
   drawTags(ctx, tags, accent, W, H, rnd)
 }
 
-export function HeroCollage({ name, city, building, pictures, amenities }: { name: string; city: string; building: string; pictures: Pic[]; amenities: string[] }) {
+export function HeroCollage({ listingId, name, city, building, pictures, amenities }: { listingId: string; name: string; city: string; building: string; pictures: Pic[]; amenities: string[] }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -92,9 +92,31 @@ export function HeroCollage({ name, city, building, pictures, amenities }: { nam
   const [seeds, setSeeds] = useState<number[]>([])
   const refs = useRef<Record<number, HTMLCanvasElement | null>>({})
 
-  const urls = useMemo(() => pictures.map(p => p.original || p.thumbnail || '').filter(Boolean).slice(0, 8), [pictures])
+  const fallbackUrls = useMemo(() => pictures.map(p => p.original || p.thumbnail || '').filter(Boolean).slice(0, 8), [pictures])
 
-  async function loadImgs(): Promise<HTMLImageElement[]> {
+  // Ask the AI photo analyzer which photos are the strongest REAL property shots, and use those for
+  // the collage (skipping stock/location photos and any it flags for removal). Falls back to the first
+  // few photos if the analyzer is unavailable.
+  async function selectUrls(): Promise<string[]> {
+    try {
+      const r = await fetch('/api/optimize-photos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId }) })
+      const j = await r.json()
+      if (!r.ok || !Array.isArray(j.proposedOrder)) return fallbackUrls
+      const byId: Record<string, any> = {}
+      ;(j.photos || []).forEach((p: any) => { byId[p._id] = p })
+      const remove = new Set((j.recommendRemove || []).map((x: any) => x._id))
+      const origById: Record<string, string> = {}
+      pictures.forEach(p => { if (p._id) origById[p._id] = p.original || p.thumbnail || '' })
+      const picks = j.proposedOrder
+        .filter((id: string) => { const p = byId[id]; return p && p.kind !== 'stock' && !remove.has(id) })
+        .map((id: string) => origById[id] || (byId[id] && byId[id].url) || '')
+        .filter(Boolean)
+        .slice(0, 8)
+      return picks.length >= 2 ? picks : fallbackUrls
+    } catch { return fallbackUrls }
+  }
+
+  async function loadImgs(urls: string[]): Promise<HTMLImageElement[]> {
     const list = urls.map(u => new Promise<HTMLImageElement | null>((res) => {
       const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null)
       im.src = `/api/img-proxy?url=${encodeURIComponent(u)}`
@@ -105,7 +127,8 @@ export function HeroCollage({ name, city, building, pictures, amenities }: { nam
   async function generate() {
     setBusy(true); setError(null)
     try {
-      const imgs = await loadImgs()
+      const chosen = await selectUrls()
+      const imgs = await loadImgs(chosen)
       if (imgs.length < 1) throw new Error('Could not load this listing’s photos to build a collage.')
       const newSeeds = Array.from({ length: 6 }, () => Math.floor(Math.random() * 1e9))
       setSeeds(newSeeds)
