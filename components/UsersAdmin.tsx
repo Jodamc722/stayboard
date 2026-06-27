@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw } from 'lucide-react'
+import { UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2, KeyRound } from 'lucide-react'
 
 type Row = { email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'; invited_by: string | null; created_at: string; last_invited_at: string | null }
 
@@ -41,6 +41,28 @@ export function UsersAdmin({ myEmail }: { myEmail: string }) {
       const r = await fetch('/api/users', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, ...patch }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update.')
       load()
+    } catch (e: any) { setError(e.message || String(e)) }
+  }
+
+  async function resetPw(email: string) {
+    const pw = window.prompt(`Set a new password for ${email} (min 8 characters). Share it with them securely.`)
+    if (pw == null) return
+    if (pw.length < 8) { setError('Password must be at least 8 characters.'); return }
+    setError(null); setMsg(null)
+    try {
+      const r = await fetch('/api/users', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to set password.')
+      setMsg(`Password updated for ${email}. Share it with them securely.`)
+    } catch (e: any) { setError(e.message || String(e)) }
+  }
+
+  async function del(email: string) {
+    if (!window.confirm(`Remove ${email}? This deletes their access AND their login account. They will no longer be able to sign in. This cannot be undone.`)) return
+    setError(null); setMsg(null)
+    try {
+      const r = await fetch('/api/users', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to delete user.')
+      setMsg(`Removed ${email}.`); load()
     } catch (e: any) { setError(e.message || String(e)) }
   }
 
@@ -107,6 +129,8 @@ export function UsersAdmin({ myEmail }: { myEmail: string }) {
                     ) : (
                       <button onClick={() => patch(u.email, { status: 'active' })} className="inline-flex items-center gap-1 text-[12px] text-emerald-600 hover:text-emerald-700"><RotateCcw size={13} /> Re-enable</button>
                     )}
+                    <button onClick={() => resetPw(u.email)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><KeyRound size={13} /> Password</button>
+                    <button onClick={() => del(u.email)} disabled={me || u.email === 'jon@stay-hospitality.com'} title={u.email === 'jon@stay-hospitality.com' ? 'The owner account cannot be deleted' : 'Delete user'} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:text-rose-700 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 size={13} /> Delete</button>
                   </div>
                 </li>
               )
