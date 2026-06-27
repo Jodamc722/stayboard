@@ -21,6 +21,12 @@ function suggestTags(amenities: string[], city: string, building: string): strin
   return Array.from(new Set(out)).slice(0, 6)
 }
 
+// Request a crisp, properly-sized Cloudinary rendition so the canvas isn't downscaling a giant original
+// in one rough step (that's what made collages look soft). w_1400 best-quality is sharp for hero cells.
+function hiRes(u: string): string {
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_1400,q_auto:best,f_jpg/')
+  return u
+}
 const PALETTE = ['#0f766e', '#1d4ed8', '#be123c', '#b45309', '#7c3aed', '#0e7490', '#15803d', '#9d174d']
 const LAYOUTS = ['grid2x2', 'big3', 'strip3', 'big2', 'twoup', 'film', 'fivegrid', 'bigleft2', 'hero1'] as const
 
@@ -125,7 +131,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   async function loadImgs(urls: string[]): Promise<HTMLImageElement[]> {
     const list = urls.map(u => new Promise<HTMLImageElement | null>((res) => {
       const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null)
-      im.src = `/api/img-proxy?url=${encodeURIComponent(u)}`
+      im.src = `/api/img-proxy?url=${encodeURIComponent(hiRes(u))}`
     }))
     return (await Promise.all(list)).filter((x): x is HTMLImageElement => !!x)
   }
@@ -145,7 +151,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
 
   function download(seed: number) {
     const c = refs.current[seed]; if (!c) return
-    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.92)
+    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.95)
   }
 
   function setTag(i: number, v: string) { setTags(t => { const n = t.slice(); n[i] = v; return n }) }
