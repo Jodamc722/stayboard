@@ -24,7 +24,7 @@ function suggestTags(amenities: string[], city: string, building: string): strin
 // Request a crisp, properly-sized Cloudinary rendition so the canvas isn't downscaling a giant original
 // in one rough step (that's what made collages look soft). w_1400 best-quality is sharp for hero cells.
 function hiRes(u: string): string {
-  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_2000,q_auto:best,f_jpg/')
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_2400,q_auto:best,f_jpg/')
   return u
 }
 const PALETTE = ['#0f766e', '#1d4ed8', '#be123c', '#b45309', '#7c3aed', '#0e7490', '#15803d', '#9d174d']
@@ -151,7 +151,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
 
   function download(seed: number) {
     const c = refs.current[seed]; if (!c) return
-    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.96)
+    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 1.0)
   }
 
   function setTag(i: number, v: string) { setTags(t => { const n = t.slice(); n[i] = v; return n }) }
