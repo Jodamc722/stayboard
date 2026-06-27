@@ -26,6 +26,7 @@ const FIELDS: { key: keyof Content; label: string; rows: number }[] = [
 export function ListingOptimizer({ listingId, name }: { listingId: string; name: string }) {
   const [open, setOpen] = useState(false)
   const [genPrompt, setGenPrompt] = useState('')  // optional 'make sure X is included' instruction
+  const [wasRecreate, setWasRecreate] = useState(false)  // true when the current result came from a full Recreate
   const [busy, setBusy] = useState(false)
   const [pushing, setPushing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,6 +43,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
 
   async function generate(freshFeel = false) {
     if (busy) return
+    setWasRecreate(freshFeel)
     setOpen(true); setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null); setSectionMsg({})
     try {
       const base = genPrompt.trim()
@@ -129,12 +131,15 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
       if (f.key === 'title') continue
       if (include[f.key] && (edited as any)[f.key]?.trim()) sections[f.key] = (edited as any)[f.key].trim()
     }
-    if (!window.confirm(`Push ${approvedCount} approved field(s) to Guesty for "${name}"? This updates the live listing on every connected channel.`)) return
+    const confirmMsg = wasRecreate
+      ? `RECREATE: this REPLACES the live title and descriptions for "${name}" with the brand-new version on every connected channel (Airbnb, Vrbo, etc.). Are you sure?`
+      : `Push ${approvedCount} approved field(s) to Guesty for "${name}"? This updates the live listing on every connected channel.`
+    if (!window.confirm(confirmMsg)) return
     setPushing(true); setError(null); setPushedMsg(null)
     try {
       const res = await fetch('/api/listing-content', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, title: titleApproved ? edited.title.trim() : undefined, publicDescription: sections }),
+        body: JSON.stringify({ listingId, title: titleApproved ? edited.title.trim() : undefined, publicDescription: sections, recreate: wasRecreate }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
