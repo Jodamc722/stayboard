@@ -1,6 +1,6 @@
 'use client'
 import { useMemo, useRef, useState } from 'react'
-import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle, X } from 'lucide-react'
+import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle, X, Upload } from 'lucide-react'
 
 type Pic = { _id?: string; original?: string; thumbnail?: string }
 
@@ -22,7 +22,7 @@ function suggestTags(amenities: string[], city: string, building: string): strin
 }
 
 // Request a crisp, properly-sized Cloudinary rendition so the canvas isn't downscaling a giant original
-// in one rough step (that's what made collages look soft). w_1400 best-quality is sharp for hero cells.
+// in one rough step (that's what made collages look soft). w_2400 best-quality is sharp for hero cells.
 function hiRes(u: string): string {
   if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_2400,q_auto:best,f_jpg/')
   return u
@@ -74,7 +74,7 @@ function drawTags(ctx: CanvasRenderingContext2D, tags: string[], accent: string,
 }
 
 function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: string[], seed: number) {
-  const W = 2400, H = 1600, g = 18
+  const W = 3000, H = 2000, g = 22
   canvas.width = W; canvas.height = H
   const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; const rnd = rngFrom(seed)
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H)
@@ -98,7 +98,9 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   const [error, setError] = useState<string | null>(null)
   const [tags, setTags] = useState<string[]>(() => suggestTags(amenities, city, building))
   const [seeds, setSeeds] = useState<number[]>([])
+  const [uploads, setUploads] = useState<{ url: string; name: string }[]>([])
   const refs = useRef<Record<number, HTMLCanvasElement | null>>({})
+  const fileInput = useRef<HTMLInputElement | null>(null)
 
   const fallbackUrls = useMemo(() => pictures.map(p => p.original || p.thumbnail || '').filter(Boolean).slice(0, 8), [pictures])
 
@@ -128,36 +130,50 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
     } catch { return fallbackUrls }
   }
 
-  async function loadImgs(urls: string[]): Promise<HTMLImageElement[]> {
+  // Generic image loader. `proxy` routes Guesty/Cloudinary URLs through our same-origin proxy and tries a
+  // hi-res rendition first; uploaded files are local object URLs that load directly at full resolution.
+  function loadImages(urls: string[], proxy: boolean): Promise<HTMLImageElement[]> {
     const tryLoad = (src: string) => new Promise<HTMLImageElement | null>((res) => {
       const im = new Image(); let done = false
-      const t = setTimeout(() => { if (!done) { done = true; res(null) } }, 13000)
+      const t = setTimeout(() => { if (!done) { done = true; res(null) } }, 15000)
       im.onload = () => { if (!done) { done = true; clearTimeout(t); res(im) } }
       im.onerror = () => { if (!done) { done = true; clearTimeout(t); res(null) } }
       im.src = src
     })
-    // Try the high-res Cloudinary rendition first; if it fails (some images/hosts reject the transform),
-    // fall back to the plain proxied original, then the raw URL. This keeps the collage from failing.
-    const list = urls.map(async (u) =>
-      (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(hiRes(u))}`))
-      || (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(u)}`))
-      || (await tryLoad(u))
-    )
-    return (await Promise.all(list)).filter((x): x is HTMLImageElement => !!x)
+    const list = urls.map(async (u) => proxy
+      ? ((await tryLoad(`/api/img-proxy?url=${encodeURIComponent(hiRes(u))}`)) || (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(u)}`)) || (await tryLoad(u)))
+      : (await tryLoad(u)))
+    return Promise.all(list).then(r => r.filter((x): x is HTMLImageElement => !!x))
   }
 
   async function generate() {
     setBusy(true); setError(null)
     try {
-      const chosen = await selectUrls()
-      const imgs = await loadImgs(chosen)
-      if (imgs.length < 1) throw new Error('Could not load this listing’s photos to build a collage.')
+      let imgs: HTMLImageElement[]
+      if (uploads.length) {
+        // Best quality: build straight from the host's own full-resolution uploads (no compression/proxy).
+        imgs = await loadImages(uploads.map(u => u.url), false)
+        if (imgs.length < 1) throw new Error('Could not read the uploaded photos. Try different files.')
+      } else {
+        const chosen = await selectUrls()
+        imgs = await loadImages(chosen, true)
+        if (imgs.length < 1) throw new Error('Could not load this listing’s photos. Upload your own photos above for the best quality.')
+      }
       const newSeeds = Array.from({ length: 6 }, () => Math.floor(Math.random() * 1e9))
       setSeeds(newSeeds)
       // render after canvases mount
       setTimeout(() => newSeeds.forEach(s => { const c = refs.current[s]; if (c) renderIdea(c, imgs, tags, s) }), 50)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
   }
+
+  function onFiles(list: FileList | null) {
+    if (!list) return
+    const next = Array.from(list).filter(f => f.type.startsWith('image/')).map(f => ({ url: URL.createObjectURL(f), name: f.name }))
+    if (next.length) setUploads(u => [...u, ...next].slice(0, 12))
+    if (fileInput.current) fileInput.current.value = ''
+  }
+  function removeUpload(i: number) { setUploads(u => { const n = u.slice(); const [rm] = n.splice(i, 1); if (rm) URL.revokeObjectURL(rm.url); return n }) }
+  function clearUploads() { setUploads(u => { u.forEach(x => URL.revokeObjectURL(x.url)); return [] }) }
 
   function download(seed: number) {
     const c = refs.current[seed]; if (!c) return
@@ -171,7 +187,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
       <div className="px-4 py-3 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><LayoutGrid size={15} className="text-brand-600" /> Hero collage ideas</h2>
-          <p className="text-[12px] text-muted mt-0.5">Builds marketing hero images from this unit&apos;s real photos with amenity tags. Generate a few design ideas, then download the ones you like.</p>
+          <p className="text-[12px] text-muted mt-0.5">Builds marketing hero images with amenity tags. Upload your own photos for the sharpest result, or use this unit&apos;s photos. Generate a few ideas, then download the ones you like.</p>
         </div>
         <button onClick={() => setOpen(o => !o)}
           className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 flex-shrink-0">
@@ -182,6 +198,33 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
       {open && (
         <div className="px-4 py-4 border-t border-line space-y-4">
           {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
+
+          {/* Photo source: upload your own (best quality) or fall back to the unit's synced photos */}
+          <div className="rounded-xl border border-line bg-app/30 p-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <p className="text-[12px] font-semibold text-ink">Photos</p>
+                <p className="text-[11px] text-muted">{uploads.length ? `Using your ${uploads.length} uploaded photo${uploads.length > 1 ? 's' : ''} (best quality).` : 'No uploads — will use this unit’s synced photos. Upload originals for the sharpest hero.'}</p>
+              </div>
+              <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
+              <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-50 flex-shrink-0">
+                <Upload size={14} /> Upload photos
+              </button>
+            </div>
+            {!!uploads.length && (
+              <div className="flex flex-wrap gap-2 mt-3 items-center">
+                {uploads.map((u, i) => (
+                  <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-line">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={u.url} alt={u.name} className="w-full h-full object-cover" />
+                    <button onClick={() => removeUpload(i)} title="Remove" className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 hover:bg-rose-600"><X size={11} /></button>
+                  </div>
+                ))}
+                <button onClick={clearUploads} className="text-[11px] text-muted hover:text-rose-600 self-center ml-1">Clear all</button>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-end gap-2">
             {[0, 1, 2].map(i => (
               <div key={i}>
@@ -199,14 +242,14 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               {busy ? <Sparkles size={14} className="animate-pulse" /> : <RefreshCw size={14} />} {busy ? 'Building…' : seeds.length ? 'New ideas' : 'Generate ideas'}
             </button>
           </div>
-          <p className="text-[11px] text-muted">Set your tags (or clear any you don\'t want with the ×), then Generate. Leave all blank for no tags.</p>
+          <p className="text-[11px] text-muted">Set your tags (or clear any you don&apos;t want with the ×), then Generate. Leave all blank for no tags.</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {seeds.map(s => (
               <div key={s} className="rounded-xl border border-line overflow-hidden bg-app/30">
                 <canvas ref={el => { refs.current[s] = el }} className="w-full block" style={{ aspectRatio: '3 / 2' }} />
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-[11px] text-muted">2400 &times; 1600 JPEG</span>
+                  <span className="text-[11px] text-muted">3000 &times; 2000 JPEG</span>
                   <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700"><Download size={13} /> Download</button>
                 </div>
               </div>
