@@ -11,7 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MAX_PHOTOS = 24 // cap vision payload; any beyond this keep their original relative order at the end
+const MAX_PHOTOS = 60 // downsized renditions are ~55 tokens each, so we can order most listings in full
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
@@ -19,7 +19,7 @@ function str(v: any): string { return typeof v === 'string' ? v : '' }
 // input tokens; a ~420px-wide rendition costs ~90, letting us order many photos within tight rate tiers.
 function smallUrl(u: string): string {
   if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) {
-    return u.replace('/image/upload/', '/image/upload/w_420,c_limit,q_auto,f_jpg/')
+    return u.replace('/image/upload/', '/image/upload/w_400,c_limit,q_auto,f_jpg/')
   }
   return u
 }
@@ -96,11 +96,12 @@ Ordering principles (in priority):
 1. The host's COVER photo is already #1 (not shown to you). Your FIRST 1-2 photos should be the strongest remaining HIGHLIGHTS - the wow shots (a stunning view, the pool, a bright open living area, a beautiful kitchen).
 2. After those 1-2 highlights, switch to a PRACTICAL, logical walkthrough of the ACTUAL home so the sequence makes sense to a guest touring it: living/dining -> kitchen -> primary bedroom -> other bedrooms -> bathrooms -> outdoor/balcony/pool -> building amenities (gym, lobby, parking).
 3. GROUP rooms of the same type together; do NOT scatter (no bedroom, then kitchen, then another bedroom). The flow should feel like a sensible tour, not a shuffle.
-4. Push utility/detail/closeup shots, duplicates, and the weakest images toward the END.
-5. Never invent what a photo shows - judge only from the image.
+4. PROPERTY vs STOCK: classify every photo. "property" = an actual photo OF THIS home or its building (rooms, the unit's view/balcony, the real building exterior/lobby/pool/gym). "stock" = generic location/marketing imagery that is NOT this specific home: a city skyline, a generic beach, a map, a sunset, an attraction, a restaurant, lifestyle/decor stock, or a watermarked promo graphic. Stock photos must NOT be woven into the room-by-room tour - order all property photos first, then any stock photos last.
+5. RECOMMEND DELETIONS: set remove=true for photos that hurt conversion: stock/location photos that misrepresent the home, EXACT or near-duplicates (keep the single best, flag the rest), dark/blurry/badly-lit/crooked shots, cluttered or unstaged messes, tiny detail/closeups that add nothing, and screenshots/graphics. Give a short removeReason. Be willing to recommend several - a tight set of strong real photos beats a padded set.
+6. Never invent what a photo shows - judge only from the image. Every "reason" must be grounded in what you actually see.
 
 Return ONLY valid JSON, no prose, in exactly this shape:
-{"order":[<photo numbers in best order>],"items":[{"n":<photo number>,"category":"<living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other>","reason":"<<=12 words why it's placed here>"}],"heroSuggestion":{"n":<photo number or null>,"why":"<<=14 words, only if one of these would beat the current cover photo, else null>"},"assessment":{"quality":<0-100 overall photo-SET quality for converting bookings: lighting, sharpness, composition, staging, professional feel>,"coverage":"<<=14 words: which key spaces are well-shown vs missing>","notes":["<<=14 words concrete improvement>","..."]}}
+{"order":[<photo numbers in best order>],"items":[{"n":<photo number>,"kind":"<property|stock>","category":"<living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other>","reason":"<<=14 words why it's placed here, grounded in the image>","remove":<true|false>,"removeReason":"<if remove true: <=14 words why; else empty>"}],"heroSuggestion":{"n":<photo number or null>,"why":"<<=14 words, only if one of these would beat the current cover photo, else null>"},"assessment":{"quality":<0-100 overall photo-SET quality for converting bookings: lighting, sharpness, composition, staging, professional feel>,"coverage":"<<=16 words: which key spaces are well-shown vs missing>","notes":["<<=16 words concrete improvement>","..."]}}
 "order" MUST be a permutation of 1..${toOrder.length} (every photo exactly once).`
 
   const USR = `Property: ${str(listing.title) || str(listing.nickname) || 'listing'} (${str(listing.building) || 'building'}). ${toOrder.length} photos to order (the host's cover photo is separate and stays first). Order them now.`
@@ -112,7 +113,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 2000,
+        model: 'claude-sonnet-4-6', max_tokens: 3500,
         system: SYS,
         messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }],
       }),
@@ -145,13 +146,16 @@ Return ONLY valid JSON, no prose, in exactly this shape:
   // Build the full proposed order: hero first, AI-ordered middle, untouched overflow last.
   const proposedOrder = [hero._id, ...orderedIds, ...overflow.map(p => p._id)]
 
-  // Per-photo reason/category lookup by photo number.
-  const meta: Record<string, { category: string; reason: string }> = {}
+  // Per-photo reason/category/kind lookup by photo number + the "recommend removing" list.
+  const meta: Record<string, { category: string; reason: string; kind: string }> = {}
+  const recommendRemove: { _id: string; reason: string }[] = []
   if (Array.isArray(modelJson.items)) {
     for (const it of modelJson.items) {
       const idx = Number(it?.n) - 1
       if (Number.isInteger(idx) && idx >= 0 && idx < toOrder.length) {
-        meta[toOrder[idx]._id] = { category: str(it?.category) || 'other', reason: str(it?.reason) }
+        const id = toOrder[idx]._id
+        meta[id] = { category: str(it?.category) || 'other', reason: str(it?.reason), kind: str(it?.kind) === 'stock' ? 'stock' : 'property' }
+        if (it?.remove === true) recommendRemove.push({ _id: id, reason: str(it?.removeReason) || 'Recommended for removal' })
       }
     }
   }
@@ -194,6 +198,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
     photos: allPics.map(p => ({ _id: p._id, url: p.url, caption: p.caption, ...(meta[p._id] || {}) })),
     heroSuggestion,
     assessment,
+    recommendRemove,
     overflow: overflow.length,
   })
 }
