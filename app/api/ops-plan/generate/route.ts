@@ -67,7 +67,7 @@ Rules:
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 2000, system: SYSTEM,
+        model: 'claude-opus-4-8', max_tokens: 2000, system: SYSTEM,
         messages: [{ role: 'user', content: `Live snapshot (JSON):\n${JSON.stringify(context)}\n\nGenerate the plan JSON now.` }]
       })
     })
