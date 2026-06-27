@@ -28,16 +28,22 @@ export async function POST(req: NextRequest) {
     : (Array.isArray((row as any).pictures) ? (row as any).pictures : [])
   if (current.length === 0) return NextResponse.json({ error: 'listing has no pictures' }, { status: 400 })
 
-  // Reorder by _id. Any photo not named in `order` is appended in its original relative order, so we
-  // can never drop a photo. The result must be a strict permutation (same set, same count).
+  // Reorder by _id; then drop any photos flagged in `remove`. Photos not named in `order` are appended
+  // (we never silently drop) - `remove` is the ONLY way a photo leaves the listing.
+  const removeSet = new Set<string>(Array.isArray(body?.remove) ? body.remove.filter((x: any) => typeof x === 'string') : [])
   const byId = new Map<string, any>()
   current.forEach((p, i) => byId.set(String(p?._id ?? `idx-${i}`), p))
   const used = new Set<string>()
-  const reordered: any[] = []
-  for (const id of order) { const p = byId.get(id); if (p && !used.has(id)) { used.add(id); reordered.push(p) } }
-  current.forEach((p, i) => { const id = String(p?._id ?? `idx-${i}`); if (!used.has(id)) { used.add(id); reordered.push(p) } })
-  if (reordered.length !== current.length) {
+  const ordered: { id: string; p: any }[] = []
+  for (const id of order) { const p = byId.get(id); if (p && !used.has(id)) { used.add(id); ordered.push({ id, p }) } }
+  current.forEach((p, i) => { const id = String(p?._id ?? `idx-${i}`); if (!used.has(id)) { used.add(id); ordered.push({ id, p }) } })
+  if (ordered.length !== current.length) {
     return NextResponse.json({ error: 'reorder integrity check failed' }, { status: 500 })
+  }
+  const reordered: any[] = ordered.filter(o => !removeSet.has(o.id)).map(o => o.p)
+  const removedCount = ordered.length - reordered.length
+  if (reordered.length === 0) {
+    return NextResponse.json({ error: 'Refusing to remove every photo from the listing.' }, { status: 400 })
   }
 
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
@@ -60,5 +66,5 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 
-  return NextResponse.json({ ok: true, count: reordered.length })
+  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount })
 }
