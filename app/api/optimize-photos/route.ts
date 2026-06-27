@@ -143,9 +143,6 @@ Return ONLY valid JSON, no prose, in exactly this shape:
   }
   toOrder.forEach((p, idx) => { if (!seen.has(idx)) orderedIds.push(p._id) })
 
-  // Build the full proposed order: hero first, AI-ordered middle, untouched overflow last.
-  const proposedOrder = [hero._id, ...orderedIds, ...overflow.map(p => p._id)]
-
   // Per-photo reason/category/kind lookup by photo number + the "recommend removing" list.
   const meta: Record<string, { category: string; reason: string; kind: string }> = {}
   const recommendRemove: { _id: string; reason: string }[] = []
@@ -159,6 +156,16 @@ Return ONLY valid JSON, no prose, in exactly this shape:
       }
     }
   }
+
+  // Deterministic guarantee of the spec regardless of model variance: keep the AI's first 5 photos as
+  // the best highlights, then group everything else strictly by room (all photos of a room together),
+  // and force shared amenities + building exteriors to the very end.
+  const ROOM_RANK: Record<string, number> = { living: 0, dining: 1, kitchen: 2, bedroom: 3, bathroom: 4, outdoor: 5, view: 6, detail: 7, other: 8, amenity: 9, exterior: 10 }
+  const rankOf = (id: string) => ROOM_RANK[meta[id]?.category || 'other'] ?? 8
+  const highlights = orderedIds.slice(0, 5)
+  const grouped = orderedIds.slice(5).map((id, i) => ({ id, i })).sort((a, b) => (rankOf(a.id) - rankOf(b.id)) || (a.i - b.i)).map(x => x.id)
+  const finalMiddle = [...highlights, ...grouped]
+  const proposedOrder = [hero._id, ...finalMiddle, ...overflow.map(p => p._id)]
 
   // Hero suggestion (advisory only).
   let heroSuggestion: { _id: string; why: string } | null = null
