@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 500,
         system: SYSTEM,
         messages: [{ role: 'user', content: userMsg }],
