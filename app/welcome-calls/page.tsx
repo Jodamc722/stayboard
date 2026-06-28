@@ -53,6 +53,8 @@ export default async function WelcomeCallsPage() {
         phone: r.guest_phone || '',
         value: Number(r.money_total) || 0,
         source: r.source || '',
+        notes: (Array.isArray(r.custom_fields) ? ((r.custom_fields.find((c: any) => /reservation[_ ]?notes/i.test(String(c?.fieldName || c?.name || ''))) || {}).value) : '') || '',
+        customFields: (Array.isArray(r.custom_fields) ? r.custom_fields.map((c: any) => ({ fieldId: String(c?.fieldId?._id || c?.fieldId || c?.field?._id || c?._id || ''), name: String(c?.fieldName || c?.name || c?.fieldId?.name || ''), value: typeof c?.value === 'string' ? c.value : (c?.value == null ? '' : String(c.value)) })).filter((c: any) => c.fieldId && c.name) : []),
         done: truthy(fieldVal(r.custom_fields, 'welcome')),
         calledBy: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._by || '',
         calledAt: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._at || '',
