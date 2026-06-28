@@ -25,7 +25,7 @@ export default async function WelcomeCallsPage() {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const toDate = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
   const { data } = await sb.from('guesty_reservations')
-    .select('id,guest_name,guest_phone,listing_name,check_in,status,money_total,custom_fields')
+    .select('id,guest_name,guest_phone,listing_name,check_in,status,money_total,custom_fields,source')
     .gte('check_in', today).lte('check_in', toDate).order('check_in').limit(500)
 
   const fieldVal = (cf: any, kw: string) => {
@@ -52,6 +52,7 @@ export default async function WelcomeCallsPage() {
         check_in,
         phone: r.guest_phone || '',
         value: Number(r.money_total) || 0,
+        source: r.source || '',
         done: truthy(fieldVal(r.custom_fields, 'welcome')),
         calledBy: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._by || '',
         calledAt: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._at || '',
