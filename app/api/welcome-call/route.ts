@@ -17,6 +17,39 @@ function fieldIdOf(cf: any): string | null {
 function nameOf(cf: any): string { return String(cf?.fieldName || cf?.name || cf?.fieldId?.name || cf?.field?.name || '') }
 const isWelcome = (cf: any) => /welcome/i.test(nameOf(cf))
 
+async function getToken(sb: any): Promise<string | null> {
+  const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
+  const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
+  return valid ? tok.access_token : null
+}
+// Live reservation custom fields straight from Guesty (covers fields unset locally).
+async function liveCustomFields(token: string, id: string): Promise<any[]> {
+  try {
+    const r = await fetch(`${BASE}/reservations/${encodeURIComponent(id)}?fields=customFields`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+    if (!r.ok) return []
+    const j: any = await r.json().catch(() => ({}))
+    const cf = j?.customFields || j?.reservation?.customFields
+    return Array.isArray(cf) ? cf : []
+  } catch { return [] }
+}
+// The Welcome Call field id from Guesty's custom-field DEFINITIONS (it exists even when unset on reservations).
+async function welcomeDefId(token: string): Promise<{ id: string | null; tried: any[] }> {
+  const tried: any[] = []
+  const urls = [`${BASE}/custom-fields?limit=200`, `${BASE}/reservations/custom-fields?limit=200`, `${BASE}/accounts/${process.env.GUESTY_ACCOUNT_ID || '68af6c6fc3307ffd38a1c2b6'}/custom-fields?limit=200`]
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+      if (!r.ok) { tried.push({ u, status: r.status }); continue }
+      const j: any = await r.json().catch(() => ({}))
+      const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])
+      tried.push({ u, count: Array.isArray(arr) ? arr.length : 0 })
+      const w = (arr || []).find((d: any) => /welcome/i.test(String(d?.name || d?.displayName || d?.label || d?.title || '')))
+      if (w) return { id: w._id || w.id || null, tried }
+    } catch (e: any) { tried.push({ u, err: String(e?.message || e).slice(0, 80) }) }
+  }
+  return { id: null, tried }
+}
+
 export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -31,6 +64,12 @@ export async function GET(req: NextRequest) {
       if (w) return NextResponse.json({ found: true, reservationId: (r as any).id, fieldId: fieldIdOf(w), entry: w })
     }
     return NextResponse.json({ found: false, note: 'No reservation carries a Welcome Call custom field yet.' })
+  }
+  if (params.get('defs') || params.get('live')) {
+    const sbD = supabaseAdmin(); const token = await getToken(sbD)
+    if (!token) return NextResponse.json({ error: 'no Guesty token' }, { status: 503 })
+    if (params.get('live')) return NextResponse.json({ live: await liveCustomFields(token, params.get('live') as string) })
+    return NextResponse.json(await welcomeDefId(token))
   }
   const id = params.get('probe')
   if (!id) return NextResponse.json({ error: 'pass ?probe=<reservationId> or ?find=welcome' }, { status: 400 })
@@ -73,16 +112,21 @@ export async function POST(req: NextRequest) {
       if (w) { fieldId = fieldIdOf(w); if (fieldId) break }
     }
   }
-  if (!fieldId) return NextResponse.json({ error: 'Could not find the Welcome Call custom field anywhere in Guesty data. It likely needs to be created in Guesty (Reservation custom fields) and applied, then synced.' }, { status: 422 })
+  const token = await getToken(sb)
+  if (!token) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
 
-  const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
-  const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
-  if (!valid) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
+  // The field is defined in Guesty but unset everywhere (so not in our synced data) - pull its id live.
+  if (!fieldId) {
+    const w = (await liveCustomFields(token, reservationId)).find(isWelcome)
+    if (w) fieldId = fieldIdOf(w)
+  }
+  if (!fieldId) { const d = await welcomeDefId(token); if (d.id) fieldId = d.id }
+  if (!fieldId) return NextResponse.json({ error: 'Could not resolve the Welcome Call custom field id from Guesty. Check the field name contains \'welcome\' and is applied to reservations.' }, { status: 422 })
 
   // Guesty Open API: update a reservation custom field value.
   const r = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
     method: 'PUT',
-    headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ customFields: [{ fieldId, value }] }),
   })
   const respText = await r.text().catch(() => '')
