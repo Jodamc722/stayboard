@@ -101,7 +101,7 @@ Ordering principles (in priority):
 6. Never invent what a photo shows - judge only from the image. Every "reason" must be grounded in what you actually see.
 
 Return ONLY valid JSON, no prose, in exactly this shape:
-{"order":[<photo numbers in best order>],"items":[{"n":<photo number>,"kind":"<property|stock>","category":"<living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other>","reason":"<<=14 words why it's placed here, grounded in the image>","remove":<true|false>,"removeReason":"<if remove true: <=14 words why; else empty>"}],"heroSuggestion":{"n":<photo number or null>,"why":"<<=14 words, only if one of these would beat the current cover photo, else null>"},"assessment":{"quality":<0-100 overall photo-SET quality for converting bookings: lighting, sharpness, composition, staging, professional feel>,"coverage":"<<=16 words: which key spaces are well-shown vs missing>","notes":["<<=16 words concrete improvement>","..."]}}
+{"order":[<photo numbers in best order>],"items":[{"n":<photo number>,"kind":"<property|stock>","category":"<living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other>","reason":"<<=14 words why it's placed here, grounded in the image>","caption":"<<=8 word guest-facing caption describing what the photo shows, e.g. 'Bright open-plan living room' or 'King bedroom with balcony'; NEVER include a unit/room/listing number>","remove":<true|false>,"removeReason":"<if remove true: <=14 words why; else empty>"}],"heroSuggestion":{"n":<photo number or null>,"why":"<<=14 words, only if one of these would beat the current cover photo, else null>"},"assessment":{"quality":<0-100 overall photo-SET quality for converting bookings: lighting, sharpness, composition, staging, professional feel>,"coverage":"<<=16 words: which key spaces are well-shown vs missing>","notes":["<<=16 words concrete improvement>","..."]}}
 "order" MUST be a permutation of 1..${toOrder.length} (every photo exactly once).`
 
   const USR = `Property: ${str(listing.title) || str(listing.nickname) || 'listing'} (${str(listing.building) || 'building'}). ${toOrder.length} photos to order (the host's cover photo is separate and stays first). Order them now.`
@@ -144,14 +144,14 @@ Return ONLY valid JSON, no prose, in exactly this shape:
   toOrder.forEach((p, idx) => { if (!seen.has(idx)) orderedIds.push(p._id) })
 
   // Per-photo reason/category/kind lookup by photo number + the "recommend removing" list.
-  const meta: Record<string, { category: string; reason: string; kind: string }> = {}
+  const meta: Record<string, { category: string; reason: string; kind: string; caption: string }> = {}
   const recommendRemove: { _id: string; reason: string }[] = []
   if (Array.isArray(modelJson.items)) {
     for (const it of modelJson.items) {
       const idx = Number(it?.n) - 1
       if (Number.isInteger(idx) && idx >= 0 && idx < toOrder.length) {
         const id = toOrder[idx]._id
-        meta[id] = { category: str(it?.category) || 'other', reason: str(it?.reason), kind: str(it?.kind) === 'stock' ? 'stock' : 'property' }
+        meta[id] = { category: str(it?.category) || 'other', reason: str(it?.reason), kind: str(it?.kind) === 'stock' ? 'stock' : 'property', caption: str(it?.caption) }
         if (it?.remove === true) recommendRemove.push({ _id: id, reason: str(it?.removeReason) || 'Recommended for removal' })
       }
     }
@@ -202,7 +202,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
     heroId: hero._id,
     currentOrder: allPics.map(p => p._id),
     proposedOrder,
-    photos: allPics.map(p => ({ _id: p._id, url: p.url, caption: p.caption, ...(meta[p._id] || {}) })),
+    photos: allPics.map(p => ({ _id: p._id, url: p.url, ...(meta[p._id] || {}), caption: (meta[p._id]?.caption || p.caption || '') })),
     heroSuggestion,
     assessment,
     recommendRemove,
