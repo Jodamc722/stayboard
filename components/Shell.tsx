@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase-browser'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star,
-  Share2, Sparkles, TrendingUp, UserCog
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -29,6 +29,7 @@ const SECTIONS: {
       { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
       { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
+      { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
     ],
   },
   {
