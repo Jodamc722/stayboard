@@ -2,8 +2,9 @@
 import { useState } from 'react'
 import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, Car, KeyRound, Utensils, Coffee, ShoppingCart, Umbrella, Lightbulb, ChevronDown } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
+import { ReservationFieldsEditor } from '@/components/ReservationFieldsEditor'
 
-type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string }
+type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; customFields: { fieldId: string; name: string; value: string }[] }
 
 export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
@@ -12,20 +13,29 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+  const [saved, setSaved] = useState<string | null>(null)
 
   async function mark(id: string, done: boolean) {
-    let note = ''
-    if (done) {
-      const entered = window.prompt('Add a note from the call (optional) — saved to the reservation notes for the internal team. Leave blank to just mark it done.')
-      if (entered === null) return // cancelled
-      note = entered.trim()
-    }
+    const note = done ? (draft[id] || '').trim() : ''
     setBusy(id); setError(null)
     try {
       const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, done, note }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update Guesty.')
-      setRows(prev => prev.map(x => x.id === id ? { ...x, done, calledBy: done ? (j.by || x.calledBy) : '', calledAt: done ? (j.at || '') : '' } : x))
+      setRows(prev => prev.map(x => x.id === id ? { ...x, done, calledBy: done ? (j.by || x.calledBy) : '', calledAt: done ? (j.at || '') : '', notes: (done && j.notes) ? j.notes : x.notes } : x))
+      if (done) setDraft(d => ({ ...d, [id]: '' }))
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(null) }
+  }
+  async function saveNote(id: string) {
+    const note = (draft[id] || '').trim(); if (!note) return
+    setSaving(id); setError(null)
+    try {
+      const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, noteOnly: true, note }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to save note.')
+      setRows(prev => prev.map(x => x.id === id ? { ...x, notes: j.notes || x.notes } : x))
+      setDraft(d => ({ ...d, [id]: '' })); setSaved(id); setTimeout(() => setSaved(s => s === id ? null : s), 1800)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setSaving(null) }
   }
   async function copyPhone(id: string, phone: string) {
     try { await navigator.clipboard.writeText(phone); setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 1500) } catch { /* ignore */ }
@@ -106,6 +116,19 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
 
               {open && (
                 <div className="rounded-xl border border-line bg-slate-50 p-3.5 text-[12px] space-y-3 leading-relaxed">
+                  {/* Call notes — type during the call, saves to the reservation in Guesty */}
+                  <div className="rounded-lg border border-line bg-white p-2.5">
+                    <div className="font-bold text-ink flex items-center gap-1.5"><StickyNote size={13} /> Call notes → reservation</div>
+                    {r.notes && <div className="mt-1.5 text-[11px] text-muted whitespace-pre-wrap border-l-2 border-line pl-2 max-h-28 overflow-auto">{r.notes}</div>}
+                    <textarea value={draft[r.id] || ''} onChange={e => setDraft(d => ({ ...d, [r.id]: e.target.value }))} rows={3} placeholder="Type details from the call — e.g. arrival time, who you spoke to, deposit confirmed, special requests…" className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-2 text-[12px] text-ink focus:outline-none focus:border-brand-600" />
+                    <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                      <button onClick={() => saveNote(r.id)} disabled={saving === r.id || !(draft[r.id] || '').trim()} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">{saving === r.id ? <Loader2 size={13} className="animate-spin" /> : <StickyNote size={13} />} Save note</button>
+                      {saved === r.id && <span className="text-[12px] text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> Saved to Guesty</span>}
+                      <span className="text-[11px] text-muted/70">Internal only · adds your name + date</span>
+                    </div>
+                  </div>
+                  {/* Reservation custom fields — editable, pushes to Guesty */}
+                  <ReservationFieldsEditor reservationId={r.id} fields={r.customFields} />
                   {/* Channel checks — most important */}
                   <div>
                     <div className="font-bold text-ink flex items-center gap-1.5"><ShieldCheck size={13} /> {ch} booking — pre-arrival checks</div>
