@@ -21,8 +21,19 @@ export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const id = new URL(req.url).searchParams.get('probe')
-  if (!id) return NextResponse.json({ error: 'pass ?probe=<reservationId>' }, { status: 400 })
+  const params = new URL(req.url).searchParams
+  if (params.get('find')) {
+    const sbF = supabaseAdmin()
+    const { data } = await sbF.from('guesty_reservations').select('id, custom_fields, raw').limit(1500)
+    for (const r of (data || [])) {
+      const cf = Array.isArray((r as any).custom_fields) ? (r as any).custom_fields : ((r as any)?.raw?.customFields || [])
+      const w = (cf || []).find(isWelcome)
+      if (w) return NextResponse.json({ found: true, reservationId: (r as any).id, fieldId: fieldIdOf(w), entry: w })
+    }
+    return NextResponse.json({ found: false, note: 'No reservation carries a Welcome Call custom field yet.' })
+  }
+  const id = params.get('probe')
+  if (!id) return NextResponse.json({ error: 'pass ?probe=<reservationId> or ?find=welcome' }, { status: 400 })
   const sb = supabaseAdmin()
   const { data: row } = await sb.from('guesty_reservations').select('custom_fields, raw').eq('id', id).maybeSingle()
   const cf = Array.isArray((row as any)?.custom_fields) ? (row as any).custom_fields : ((row as any)?.raw?.customFields || [])
@@ -54,7 +65,15 @@ export async function POST(req: NextRequest) {
     const { data: defs } = await sb.from('guesty_custom_fields').select('id, name, slug').or('slug.ilike.%welcome%,name.ilike.%welcome%')
     if (defs && defs[0]) fieldId = (defs[0] as any).id
   }
-  if (!fieldId)  return NextResponse.json({ error: 'Could not find the Welcome Call custom field id. Run a custom-fields sync, or check the field exists in Guesty.' }, { status: 422 })
+  if (!fieldId) {
+    const { data: others } = await sb.from('guesty_reservations').select('custom_fields, raw').limit(1500)
+    for (const o of (others || [])) {
+      const cf = Array.isArray((o as any).custom_fields) ? (o as any).custom_fields : ((o as any)?.raw?.customFields || [])
+      const w = (cf || []).find(isWelcome)
+      if (w) { fieldId = fieldIdOf(w); if (fieldId) break }
+    }
+  }
+  if (!fieldId) return NextResponse.json({ error: 'Could not find the Welcome Call custom field anywhere in Guesty data. It likely needs to be created in Guesty (Reservation custom fields) and applied, then synced.' }, { status: 422 })
 
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
