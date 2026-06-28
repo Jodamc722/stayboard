@@ -49,6 +49,21 @@ async function welcomeDefId(token: string): Promise<{ id: string | null; tried: 
   }
   return { id: null, tried }
 }
+// The reservation-notes custom field id (internal team notes).
+async function notesDefId(token: string): Promise<string | null> {
+  const urls = [`${BASE}/accounts/${process.env.GUESTY_ACCOUNT_ID || '68af6c6fc3307ffd38a1c2b6'}/custom-fields?limit=200`, `${BASE}/custom-fields?limit=200`]
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+      if (!r.ok) continue
+      const j: any = await r.json().catch(() => ({}))
+      const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])
+      const w = (arr || []).find((d: any) => /reservation[_ ]?notes/i.test(String(d?.name || d?.fieldName || d?.displayName || d?.label || '')))
+      if (w) return w._id || w.id || w.fieldId || null
+    } catch { /* ignore */ }
+  }
+  return null
+}
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
@@ -88,6 +103,8 @@ export async function POST(req: NextRequest) {
   const reservationId = body?.reservationId
   const done = body?.done !== false // default true
   const value = typeof body?.value === 'string' ? body.value : (done ? 'Yes' : '')
+  const by = String(user.email || '').toLowerCase()
+  const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : ''
   if (!reservationId) return NextResponse.json({ error: 'reservationId required' }, { status: 400 })
 
   const sb = supabaseAdmin()
@@ -123,24 +140,45 @@ export async function POST(req: NextRequest) {
   if (!fieldId) { const d = await welcomeDefId(token); if (d.id) fieldId = d.id }
   if (!fieldId) return NextResponse.json({ error: 'Could not resolve the Welcome Call custom field id from Guesty. Check the field name contains \'welcome\' and is applied to reservations.' }, { status: 422 })
 
-  // Guesty Open API: update a reservation custom field value.
+  const at = new Date().toISOString(); const stamp = at.slice(0, 10)
+  // Writes: the welcome value, plus an internal reservation note logging who called (+ any note) when done.
+  const isNotes = (cf: any) => /reservation[_ ]?notes/i.test(nameOf(cf))
+  const writes: any[] = [{ fieldId, value }]
+  let notesId: string | null = null; let newNotes = ''
+  if (done) {
+    const existingNotes = (current || []).find(isNotes)
+    notesId = existingNotes ? fieldIdOf(existingNotes) : await notesDefId(token)
+    if (notesId) {
+      const prior = existingNotes && typeof existingNotes.value === 'string' ? existingNotes.value : ''
+      const line = `[${stamp}] Welcome call by ${by}${note ? ': ' + note : ''}`
+      newNotes = prior ? `${prior}\n${line}` : line
+      writes.push({ fieldId: notesId, value: newNotes })
+    }
+  }
+
+  // Guesty Open API: update the reservation custom field value(s).
   const r = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customFields: [{ fieldId, value }] }),
+    body: JSON.stringify({ customFields: writes }),
   })
   const respText = await r.text().catch(() => '')
   if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${respText.slice(0, 240)}`, fieldId }, { status: 502 })
 
-  // Mirror locally: upsert the welcome field value into the cached custom_fields array.
+  // Mirror locally: welcome value + who/when/note, and the appended internal notes.
   try {
     let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
     const idx = cf.findIndex(isWelcome)
-    if (idx >= 0) cf[idx] = { ...cf[idx], value }
-    else cf.push({ fieldId, fieldName: 'Welcome Call', value })
-    const newRaw = { ...raw, customFields: cf }
-    await sb.from('guesty_reservations').update({ custom_fields: cf, raw: newRaw }).eq('id', reservationId)
+    const meta = done ? { _by: by, _at: at, _note: note } : { _by: null, _at: null, _note: '' }
+    if (idx >= 0) cf[idx] = { ...cf[idx], value, ...meta }
+    else cf.push({ fieldId, fieldName: 'Welcome Call', value, ...meta })
+    if (notesId && newNotes) {
+      const nidx = cf.findIndex(isNotes)
+      if (nidx >= 0) cf[nidx] = { ...cf[nidx], value: newNotes }
+      else cf.push({ fieldId: notesId, fieldName: 'Reservation Notes', value: newNotes })
+    }
+    await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
   } catch { /* mirror best-effort */ }
 
-  return NextResponse.json({ ok: true, done, value })
+  return NextResponse.json({ ok: true, done, value, by, at })
 }
