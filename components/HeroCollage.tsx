@@ -161,7 +161,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
         imgs = await loadImages(chosen, true)
         if (imgs.length < 1) throw new Error('Could not load this listing’s photos. Upload your own photos above for the best quality.')
       }
-      const newSeeds = Array.from({ length: 6 }, () => Math.floor(Math.random() * 1e9))
+      const newSeeds = Array.from({ length: 3 }, () => Math.floor(Math.random() * 1e9))
       setSeeds(newSeeds)
       // render after canvases mount
       setTimeout(() => newSeeds.forEach(s => { const c = refs.current[s]; if (c) renderIdea(c, imgs, tags, s) }), 50)
