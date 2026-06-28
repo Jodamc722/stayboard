@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const listingId = body?.listingId
   const order: string[] = Array.isArray(body?.order) ? body.order.filter((x: any) => typeof x === 'string') : []
+  const captions: Record<string, string> = (body?.captions && typeof body.captions === 'object') ? body.captions : {}
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   if (order.length === 0) return NextResponse.json({ error: 'order array required' }, { status: 400 })
 
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
   if (ordered.length !== current.length) {
     return NextResponse.json({ error: 'reorder integrity check failed' }, { status: 500 })
   }
-  const reordered: any[] = ordered.filter(o => !removeSet.has(o.id)).map(o => o.p)
+  const reordered: any[] = ordered.filter(o => !removeSet.has(o.id)).map(o => (typeof captions[o.id] === 'string' ? { ...o.p, caption: captions[o.id] } : o.p))
   const removedCount = ordered.length - reordered.length
   if (reordered.length === 0) {
     return NextResponse.json({ error: 'Refusing to remove every photo from the listing.' }, { status: 400 })
