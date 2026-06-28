@@ -1,8 +1,8 @@
 'use client'
 import { useState } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy } from 'lucide-react'
+import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote } from 'lucide-react'
 
-type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number }
+type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string }
 
 export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
@@ -12,11 +12,17 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [copied, setCopied] = useState<string | null>(null)
 
   async function mark(id: string, done: boolean) {
+    let note = ''
+    if (done) {
+      const entered = window.prompt('Add a note from the call (optional) — saved to the reservation notes for the internal team. Leave blank to just mark it done.')
+      if (entered === null) return // cancelled
+      note = entered.trim()
+    }
     setBusy(id); setError(null)
     try {
-      const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, done }) })
+      const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, done, note }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update Guesty.')
-      setRows(prev => prev.map(x => x.id === id ? { ...x, done } : x))
+      setRows(prev => prev.map(x => x.id === id ? { ...x, done, calledBy: done ? (j.by || x.calledBy) : '', calledAt: done ? (j.at || '') : '' } : x))
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(null) }
   }
   async function copyPhone(id: string, phone: string) {
@@ -24,12 +30,13 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   }
 
   const money = (n: number) => n ? '$' + Math.round(n).toLocaleString() : ''
+  const who = (e: string) => e ? (e.split('@')[0] || e) : ''
+  const day = (iso: string) => { try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) } catch { return '' } }
   const pending = rows.filter(r => !r.done)
   const duePending = pending.filter(r => r.due)
   const doneCount = rows.length - pending.length
 
   let shown = filter === 'due' ? duePending : filter === 'pending' ? pending : rows
-  // Priority buildings first, then highest reservation value, then soonest check-in.
   shown = [...shown].sort((a, b) => a.prio - b.prio || (b.value - a.value) || a.check_in.localeCompare(b.check_in))
 
   return (
@@ -49,7 +56,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
         </div>
       </div>
 
-      <p className="text-[12px] text-muted">Due within <b>48 hours of arrival</b>. Priority buildings (17West, Arya, Elser, 7071, Amrit) first, then by reservation value (highest first).</p>
+      <p className="text-[12px] text-muted">Due within <b>48 hours of arrival</b>. Priority buildings (17West, Arya, Elser, 7071, Amrit) first, then by reservation value (highest first). Marking a call logs who did it and your note to the reservation (internal only).</p>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
 
@@ -69,6 +76,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                   {r.sensitive && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><ShieldAlert size={10} /> Sensitive</span>}
                 </div>
                 <div className="text-[12px] text-muted mt-0.5">{r.listing} · checks in {new Date(r.check_in + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+                {r.done && r.calledBy && <div className="text-[11px] text-emerald-700 mt-0.5">Called by {who(r.calledBy)}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}</div>}
                 {r.phone ? (
                   <div className="text-[12px] mt-1 inline-flex items-center gap-2">
                     <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>
@@ -82,10 +90,10 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                 <button onClick={() => mark(r.id, true)} disabled={busy === r.id} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === r.id ? <Loader2 size={14} className="animate-spin" /> : <PhoneCall size={14} />} Mark called</button>
               )}
             </li>
-         ))}
+          ))}
         </ul>
       )}
-      <p className="text-[11px] text-muted">Marking a call writes the <b>Welcome Call</b> custom field on the reservation in Guesty. Eve reads the same field.</p>
+      <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Marking writes the <b>Welcome Call</b> field on the reservation in Guesty and appends your note (with who & when) to the reservation notes — internal team only. Eve reads the same field.</p>
     </div>
   )
 }
