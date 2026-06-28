@@ -53,6 +53,8 @@ export default async function WelcomeCallsPage() {
         phone: r.guest_phone || '',
         value: Number(r.money_total) || 0,
         done: truthy(fieldVal(r.custom_fields, 'welcome')),
+        calledBy: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._by || '',
+        calledAt: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._at || '',
         sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
         due: check_in <= dueDate,                                  // within 48h of arrival
         prio: PRIORITY.some(k => lname.includes(k)) ? 0 : 1,       // priority buildings first
