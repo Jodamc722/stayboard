@@ -82,9 +82,31 @@ export async function GET(req: NextRequest) {
   }
   if (params.get('defslist')) {
     // All reservation custom-field definitions (so the panel can offer every field, even unset ones).
+    // Prefer Guesty's live definitions; fall back to the local table.
     const sbL = supabaseAdmin()
-    const { data } = await sbL.from('guesty_custom_fields').select('id, name, slug').limit(300)
-    return NextResponse.json({ defs: (data || []).map((d: any) => ({ id: d.id, name: d.name, slug: d.slug })) })
+    let defs: any[] = []
+    const token = await getToken(sbL)
+    if (token) {
+      const acct = process.env.GUESTY_ACCOUNT_ID || '68af6c6fc3307ffd38a1c2b6'
+      const urls = [`${BASE}/accounts/${acct}/custom-fields?limit=200`, `${BASE}/reservations/custom-fields?limit=200`, `${BASE}/custom-fields?limit=200`]
+      for (const u of urls) {
+        try {
+          const r = await fetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+          if (!r.ok) continue
+          const j: any = await r.json().catch(() => ({}))
+          const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])
+          const mapped = (arr || [])
+            .map((d: any) => ({ id: d._id || d.id || d.fieldId, name: String(d.name || d.displayName || d.label || d.title || d.fieldName || ''), slug: d.slug || '' }))
+            .filter((d: any) => d.id && d.name)
+          if (mapped.length) { defs = mapped; break }
+        } catch { /* try next */ }
+      }
+    }
+    if (!defs.length) {
+      const { data } = await sbL.from('guesty_custom_fields').select('id, name, slug').limit(300)
+      defs = (data || []).map((d: any) => ({ id: d.id, name: d.name, slug: d.slug }))
+    }
+    return NextResponse.json({ defs })
   }
   if (params.get('defs') || params.get('live')) {
     const sbD = supabaseAdmin(); const token = await getToken(sbD)
