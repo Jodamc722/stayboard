@@ -80,6 +80,12 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json({ found: false, note: 'No reservation carries a Welcome Call custom field yet.' })
   }
+  if (params.get('defslist')) {
+    // All reservation custom-field definitions (so the panel can offer every field, even unset ones).
+    const sbL = supabaseAdmin()
+    const { data } = await sbL.from('guesty_custom_fields').select('id, name, slug').limit(300)
+    return NextResponse.json({ defs: (data || []).map((d: any) => ({ id: d.id, name: d.name, slug: d.slug })) })
+  }
   if (params.get('defs') || params.get('live')) {
     const sbD = supabaseAdmin(); const token = await getToken(sbD)
     if (!token) return NextResponse.json({ error: 'no Guesty token' }, { status: 503 })
@@ -101,11 +107,13 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({} as any))
   const reservationId = body?.reservationId
-  const done = body?.done !== false // default true
+  const noteOnly = body?.noteOnly === true
+  const done = body?.done !== false // default true (ignored when noteOnly)
   const value = typeof body?.value === 'string' ? body.value : (done ? 'Yes' : '')
   const by = String(user.email || '').toLowerCase()
-  const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : ''
+  const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
   if (!reservationId) return NextResponse.json({ error: 'reservationId required' }, { status: 400 })
+  if (noteOnly && !note) return NextResponse.json({ error: 'Type a note first.' }, { status: 400 })
 
   const sb = supabaseAdmin()
   const { data: row, error } = await sb.from('guesty_reservations').select('custom_fields, raw').eq('id', reservationId).single()
@@ -113,7 +121,69 @@ export async function POST(req: NextRequest) {
   const raw: any = (row.raw && typeof row.raw === 'object') ? row.raw : {}
   const current: any[] = Array.isArray((row as any).custom_fields) ? (row as any).custom_fields : (Array.isArray(raw.customFields) ? raw.customFields : [])
 
-  // Find the welcome_call field id: from the reservation's own fields, else from the field definitions table.
+  const token = await getToken(sb)
+  if (!token) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
+
+  // --- GENERIC FIELD WRITES: the team edits any reservation custom field in the panel and pushes to Guesty. ---
+  if (Array.isArray(body?.writes) && body.writes.length) {
+    const writes = body.writes
+      .filter((w: any) => w && w.fieldId)
+      .map((w: any) => ({ fieldId: String(w.fieldId), value: w.value == null ? '' : String(w.value).slice(0, 2000) }))
+    if (!writes.length) return NextResponse.json({ error: 'no valid field writes' }, { status: 400 })
+    const rr = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customFields: writes }),
+    })
+    const rt = await rr.text().catch(() => '')
+    if (!rr.ok) return NextResponse.json({ error: `Guesty ${rr.status}: ${rt.slice(0, 240)}` }, { status: 502 })
+    try {
+      let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
+      for (const w of writes) {
+        const idx = cf.findIndex((c: any) => String(fieldIdOf(c) || '') === w.fieldId)
+        if (idx >= 0) cf[idx] = { ...cf[idx], value: w.value }
+        else cf.push({ fieldId: w.fieldId, value: w.value })
+      }
+      await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
+    } catch { /* mirror best-effort */ }
+    return NextResponse.json({ ok: true, saved: writes.length })
+  }
+
+  const isNotes = (cf: any) => /reservation[_ ]?notes/i.test(nameOf(cf))
+  const at = new Date().toISOString(); const stamp = at.slice(0, 10)
+
+  // Resolve the Reservation Notes custom field id + build the appended value (prior notes + a new dated line).
+  async function appendNote(label: string): Promise<{ notesId: string | null; newNotes: string }> {
+    const existingNotes = (current || []).find(isNotes)
+    const notesId = existingNotes ? fieldIdOf(existingNotes) : await notesDefId(token!)
+    if (!notesId) return { notesId: null, newNotes: '' }
+    const prior = existingNotes && typeof existingNotes.value === 'string' ? existingNotes.value : ''
+    const line = `[${stamp}] ${label} by ${by}${note ? ': ' + note : ''}`
+    return { notesId, newNotes: prior ? `${prior}\n${line}` : line }
+  }
+
+  // --- NOTE-ONLY: append the team's call note to Reservation Notes; do NOT touch the Welcome Call field. ---
+  if (noteOnly) {
+    const { notesId, newNotes } = await appendNote('Call note')
+    if (!notesId) return NextResponse.json({ error: 'Could not resolve the Reservation Notes custom field id in Guesty.' }, { status: 422 })
+    const r = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customFields: [{ fieldId: notesId, value: newNotes }] }),
+    })
+    const respText = await r.text().catch(() => '')
+    if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${respText.slice(0, 240)}` }, { status: 502 })
+    try {
+      let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
+      const nidx = cf.findIndex(isNotes)
+      if (nidx >= 0) cf[nidx] = { ...cf[nidx], value: newNotes }
+      else cf.push({ fieldId: notesId, fieldName: 'Reservation Notes', value: newNotes })
+      await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
+    } catch { /* mirror best-effort */ }
+    return NextResponse.json({ ok: true, noteOnly: true, by, at, notes: newNotes })
+  }
+
+  // --- MARK / UNMARK the welcome call (resolve the Welcome Call field id from reservation / defs / live). ---
   let fieldId: string | null = null
   const existing = (current || []).find(isWelcome)
   if (existing) fieldId = fieldIdOf(existing)
@@ -129,10 +199,6 @@ export async function POST(req: NextRequest) {
       if (w) { fieldId = fieldIdOf(w); if (fieldId) break }
     }
   }
-  const token = await getToken(sb)
-  if (!token) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
-
-  // The field is defined in Guesty but unset everywhere (so not in our synced data) - pull its id live.
   if (!fieldId) {
     const w = (await liveCustomFields(token, reservationId)).find(isWelcome)
     if (w) fieldId = fieldIdOf(w)
@@ -140,20 +206,12 @@ export async function POST(req: NextRequest) {
   if (!fieldId) { const d = await welcomeDefId(token); if (d.id) fieldId = d.id }
   if (!fieldId) return NextResponse.json({ error: 'Could not resolve the Welcome Call custom field id from Guesty. Check the field name contains \'welcome\' and is applied to reservations.' }, { status: 422 })
 
-  const at = new Date().toISOString(); const stamp = at.slice(0, 10)
-  // Writes: the welcome value, plus an internal reservation note logging who called (+ any note) when done.
-  const isNotes = (cf: any) => /reservation[_ ]?notes/i.test(nameOf(cf))
   const writes: any[] = [{ fieldId, value }]
   let notesId: string | null = null; let newNotes = ''
   if (done) {
-    const existingNotes = (current || []).find(isNotes)
-    notesId = existingNotes ? fieldIdOf(existingNotes) : await notesDefId(token)
-    if (notesId) {
-      const prior = existingNotes && typeof existingNotes.value === 'string' ? existingNotes.value : ''
-      const line = `[${stamp}] Welcome call by ${by}${note ? ': ' + note : ''}`
-      newNotes = prior ? `${prior}\n${line}` : line
-      writes.push({ fieldId: notesId, value: newNotes })
-    }
+    const r2 = await appendNote('Welcome call')
+    notesId = r2.notesId; newNotes = r2.newNotes
+    if (notesId && newNotes) writes.push({ fieldId: notesId, value: newNotes })
   }
 
   // Guesty Open API: update the reservation custom field value(s).
@@ -180,5 +238,5 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
   } catch { /* mirror best-effort */ }
 
-  return NextResponse.json({ ok: true, done, value, by, at })
+  return NextResponse.json({ ok: true, done, value, by, at, notes: newNotes })
 }
