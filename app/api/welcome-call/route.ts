@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getToken as refreshGuestyToken } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -18,6 +19,8 @@ function nameOf(cf: any): string { return String(cf?.fieldName || cf?.name || cf
 const isWelcome = (cf: any) => /welcome/i.test(nameOf(cf))
 
 async function getToken(sb: any): Promise<string | null> {
+  // Prefer the shared client which auto-refreshes via OAuth client_credentials; fall back to the cached row.
+  try { const t = await refreshGuestyToken(); if (t) return t } catch { /* fall back to cached read */ }
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
   return valid ? tok.access_token : null
