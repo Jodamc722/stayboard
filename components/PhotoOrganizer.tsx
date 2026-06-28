@@ -78,19 +78,24 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   function toggleRemove(id: string) {
     setToRemove(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
+  function setCaption(id: string, v: string) {
+    setPhotos(prev => ({ ...prev, [id]: { ...prev[id], caption: v } }))
+  }
 
   async function push() {
     const remove = Array.from(toRemove)
     if (remove.length > 0 && !window.confirm(`This reorders the photos AND permanently removes ${remove.length} photo(s) from this listing on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
     setPushing(true); setError(null); setPushedMsg(null)
     try {
+      const captions: Record<string, string> = {}
+      order.forEach(id => { const c = photos[id]?.caption; if (typeof c === 'string') captions[id] = c })
       const r = await fetch('/api/photo-order', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove) }),
+        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove), captions }),
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Failed to push order.')
-      setPushedMsg(`Pushed to Guesty: ${j.count} photos in new order${j.removed ? `, ${j.removed} removed` : ''}. Syncs to all channels shortly.`)
+      setPushedMsg(`Pushed to Guesty: ${j.count} photos (order + descriptions)${j.removed ? `, ${j.removed} removed` : ''}. Syncs to all channels shortly.`)
       setToRemove(new Set())
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
@@ -102,7 +107,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       <div className="px-4 py-3 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={15} className="text-brand-600" /> Organize photos with AI</h2>
-          <p className="text-[12px] text-muted mt-0.5">AI studies every photo and orders them to maximize bookings. You pick the cover photo (#1) — AI orders the rest. Drag or nudge to tweak, then push to Guesty.</p>
+          <p className="text-[12px] text-muted mt-0.5">AI studies every photo, orders them to maximize bookings, and writes a guest-facing description for each. You pick the cover photo (#1); AI orders the rest. Edit anything, then push the order + descriptions to Guesty.</p>
         </div>
         <button onClick={() => { setOpen(o => !o); if (!open && order.length === 0) analyze() }} disabled={busy}
           className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
@@ -196,6 +201,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                       <div className="p-2 space-y-1">
                         {p.category && <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded ${CAT_COLORS[p.category] || CAT_COLORS.other}`}>{p.category}</span>}
                         {p.reason && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
+                        <input value={p.caption || ''} onChange={e => setCaption(id, e.target.value)} placeholder="Add a description…" title="Guest-facing photo description — pushed to Guesty" className="w-full text-[11px] rounded border border-line bg-white px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-200" />
                         {!isHero && (
                           <div className="flex items-center gap-1 pt-0.5">
                             <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>
@@ -214,7 +220,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 <button onClick={push} disabled={pushing || busy}
                   className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50">
                   {pushing ? <Sparkles size={15} className="animate-pulse" /> : <UploadCloud size={15} />}
-                  {pushing ? 'Pushing…' : 'Push order to Guesty'}
+                  {pushing ? 'Pushing…' : 'Push to Guesty'}
                 </button>
               </div>
             </>
