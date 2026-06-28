@@ -43,8 +43,8 @@ async function welcomeDefId(token: string): Promise<{ id: string | null; tried: 
       const j: any = await r.json().catch(() => ({}))
       const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])
       tried.push({ u, count: Array.isArray(arr) ? arr.length : 0, names: (arr || []).slice(0, 50).map((d: any) => (d?.name || d?.displayName || d?.label || d?.title || d?.fieldName || ('keys:' + Object.keys(d || {}).join(',')))) })
-      const w = (arr || []).find((d: any) => /welcome/i.test(String(d?.name || d?.displayName || d?.label || d?.title || '')))
-      if (w) return { id: w._id || w.id || null, tried }
+      const w = (arr || []).find((d: any) => /welcome/i.test(String(d?.name || d?.displayName || d?.label || d?.title || d?.fieldName || '')))
+      if (w) return { id: w._id || w.id || w.fieldId || null, tried }
     } catch (e: any) { tried.push({ u, err: String(e?.message || e).slice(0, 80) }) }
   }
   return { id: null, tried }
