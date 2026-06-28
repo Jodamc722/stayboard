@@ -27,6 +27,10 @@ export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Eve is restricted to the owner for now.
+  if (String(user.email || '').toLowerCase() !== 'jon@stay-hospitality.com') {
+    return NextResponse.json({ error: 'Eve is available to Jon only right now.' }, { status: 403 })
+  }
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured - add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
@@ -139,6 +143,35 @@ export async function POST(req: NextRequest) {
         const nights = rows.reduce((s: number, r: any) => s + (Number(r.nights) || 0), 0)
         return { reservations: rows.length, revenue: Math.round(rev), nights, adr: nights ? Math.round(rev / nights) : null }
       }
+      if (name === 'guesty_config') {
+        let q = db.from('guesty_listings').select('id,nickname,title,building,raw').limit(1)
+        if (input?.id) q = q.eq('id', input.id); else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
+        const { data } = await q
+        const l: any = (data || [])[0]; if (!l) return { error: 'listing not found' }
+        const raw = l.raw || {}; const terms = raw.terms || {}; const ints = Array.isArray(raw.integrations) ? raw.integrations : []
+        const intField = (k: string) => { for (const it of ints) { for (const key of Object.keys(it || {})) { const v: any = (it as any)[key]; if (v && typeof v === 'object' && v[k] != null) return v[k] } } return null }
+        return {
+          name: l.nickname || l.title, building: rollupBuilding(l.building),
+          check_in_time: raw.defaultCheckInTime || raw.checkInTime || null,
+          check_out_time: raw.defaultCheckOutTime || raw.checkOutTime || null,
+          min_nights: terms.minNights ?? raw.defaultListingMinNights ?? null,
+          max_nights: terms.maxNights ?? null,
+          instant_book: raw.instantBookable ?? raw.instantBook ?? intField('instantBookingAllowedCategory') ?? null,
+          cancellation: terms.cancellation ?? intField('cancellationPolicy') ?? raw?.prices?.guestyCancellationPolicy ?? null,
+          property_type: raw.propertyType || null, room_type: raw.roomType || null,
+          tags: Array.isArray(raw.tags) ? raw.tags : [],
+          address: raw?.address?.full || l.address_city || null,
+          has_checkin_instructions: !!(raw.checkInInstructions || raw?.publicDescription?.access),
+          house_rules: String(raw?.publicDescription?.houseRules || '').slice(0, 400),
+          custom_fields: Array.isArray(raw.customFields) ? raw.customFields.map((c: any) => ({ name: c?.fieldId?.name || c?.name, value: typeof c?.value === 'string' ? c.value.slice(0, 160) : c?.value })).slice(0, 40) : [],
+        }
+      }
+      if (name === 'portfolio') {
+        const { data } = await db.from('guesty_listings').select('status,building')
+        const byBuilding: Record<string, number> = {}; const byStatus: Record<string, number> = {}
+        for (const l of (data || [])) { const b = rollupBuilding((l as any).building); byBuilding[b] = (byBuilding[b] || 0) + 1; const st = String((l as any).status || 'unknown').toLowerCase(); byStatus[st] = (byStatus[st] || 0) + 1 }
+        return { total: (data || []).length, by_building: byBuilding, by_status: byStatus }
+      }
       return { error: `unknown tool ${name}` }
     } catch (e: any) { return { error: String(e?.message || e).slice(0, 160) } }
   }
@@ -151,22 +184,24 @@ export async function POST(req: NextRequest) {
     { name: 'unread_conversations', description: 'Guest message threads with unread messages.', input_schema: { type: 'object', properties: { limit: { type: 'number' } } } },
     { name: 'field_work', description: 'Field work / maintenance requests. Filter by status (default open+in_progress), building, approval_only.', input_schema: { type: 'object', properties: { status: { type: 'string' }, building: { type: 'string' }, approval_only: { type: 'boolean' }, limit: { type: 'number' } } } },
     { name: 'revenue', description: 'Revenue summary over reservations in a check-in date range (from/to YYYY-MM-DD), optional building. Returns reservations, revenue, nights, ADR.', input_schema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, building: { type: 'string' } } } },
+    { name: 'guesty_config', description: 'Deep Guesty operational config for ONE listing (by name or id): check-in/out times, min/max nights, instant book, cancellation policy, property/room type, tags, address, house rules, whether check-in instructions exist, and CUSTOM FIELDS (door/access codes often live here). Use this to answer anything about how a unit is set up in Guesty.', input_schema: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'string' } } } },
+    { name: 'portfolio', description: 'Portfolio-wide awareness: total units and counts broken down by building and by status. Use for "how many", "across the portfolio", coverage questions.', input_schema: { type: 'object', properties: {} } },
   ]
 
-  const SYSTEM = `You are Eve — the operating brain for Stay Hospitality, a ~235-unit South Florida short-term-rental manager. You work directly with Jon (owner / GM) as his sharp, trusted right hand.
+  const SYSTEM = `You are Eve — the operating brain for Stay Hospitality, a ~235-unit South Florida short-term-rental manager. You work directly with Jon (owner / GM) as his sharp, trusted right hand. Right now you work for Jon ALONE.
 
-Talk like a real, smart operator — the way an excellent chief of staff actually talks: natural, direct, plain English. Short sentences. Say what matters and get to the point. NO flowery hotel-concierge language, no corporate filler, no "I'd be delighted to," no "rest assured." You're a person who's great at this job, not a brochure.
+Talk like a real, smart operator — the way an excellent chief of staff actually talks: natural, direct, plain English. Short sentences. Say what matters and get to the point. NO flowery hotel-concierge language, no corporate filler, no "I'd be delighted to," no "rest assured." You're a person who's great at this job, not a brochure. Drop the customer-service voice entirely - no "I'd be delighted to," "rest assured," "I hope this helps," "Certainly!" GOOD: "Three units are dragging Oasis down - 1102, 1107, 1206, all with unanswered 2-star cleaning reviews. I'd post replies today and flag a deep clean for Miami." BAD: "I would be delighted to help you review your portfolio!"
 
 Be genuinely smart: interpret data, don't just repeat it. Find what matters, reason about WHY, connect signals across reviews, messages, field work and revenue, and tell Jon what you'd do and why.
 
-YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. If a tool returns empty, say that data isn't synced rather than guessing.
+YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. If a tool returns empty, say that data isn't synced rather than guessing. You know Guesty COLD: you also have guesty_config (per-unit check-in/out times, min/max nights, instant book, cancellation, house rules, and custom fields incl. door/access codes) and portfolio (portfolio-wide counts). Chain as many tool calls as you need to dig in - think of it as sending yourself in to investigate.
 
 TEAMS: work is run by three teams — CCS, Miami, Broward. Organize dispatched actions by team. Refer to buildings by rolled-up name (Botanica, Oasis, Arya).
 
 HEADLINE SNAPSHOT (a glance, not the whole picture — use tools for depth):
 ${JSON.stringify(headline)}
 
-REVIEW-REPLY SAFETY (when drafting any guest-facing reply/message): never admit fault; never mention unit numbers; never affirm/name bed bugs, pests, break-ins, intrusion or anyone "walking in" — thank the guest and note the team is looking into it; keep it gracious and brief; redirect serious claims to a private channel.
+REVIEW-REPLY SAFETY (when drafting any guest-facing reply/message): ALWAYS reply in English regardless of the guest's language; never admit fault; never mention unit numbers; never affirm/name bed bugs, pests, break-ins, intrusion or anyone "walking in" — thank the guest and note the team is looking into it; keep it gracious and brief; redirect serious claims to a private channel.
 
 STYLE: human and natural, short sentences, lead with the answer or the call, bullets only when they truly help. Make Jon's next decision obvious.`
 
@@ -174,11 +209,11 @@ STYLE: human and natural, short sentences, lead with the answer or the call, bul
   const convo: any[] = messages.map((m: any) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 8000) }))
   try {
     let finalText = ''
-    for (let turn = 0; turn < 6; turn++) {
+    for (let turn = 0; turn < 10; turn++) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 2048, system: SYSTEM, tools, messages: convo }),
+        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 4096, system: SYSTEM, tools, messages: convo }),
       })
       const d: any = await r.json()
       if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
