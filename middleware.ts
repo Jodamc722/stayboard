@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { featureForPath, featureEnabled, firstEnabled } from './lib/features'
 
 type CookieToSet = { name: string; value: string; options: CookieOptions }
 
@@ -7,23 +8,23 @@ const SUPERADMIN = 'jon@stay-hospitality.com'
 
 // Allowlist check via Supabase REST with the service key. FAIL-OPEN: any error, a missing table, or an
 // empty allowlist (no active members yet) returns true so nobody is ever locked out by accident.
-async function isAllowed(email: string): Promise<boolean> {
+async function getMember(email: string): Promise<{ allowed: boolean; features: Record<string, any> | null }> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_KEY
-  if (!url || !key) return true
+  if (!url || !key) return { allowed: true, features: null }
   try {
     const headers = { apikey: key, Authorization: `Bearer ${key}` }
-    const r = await fetch(`${url}/rest/v1/app_users?select=status&email=eq.${encodeURIComponent(email)}`, { headers })
-    if (!r.ok) return true
+    const r = await fetch(`${url}/rest/v1/app_users?select=status,features&email=eq.${encodeURIComponent(email)}`, { headers })
+    if (!r.ok) return { allowed: true, features: null }
     const rows = await r.json().catch(() => null)
-    if (!Array.isArray(rows)) return true
-    if (rows.length > 0) return rows[0]?.status === 'active'
+    if (!Array.isArray(rows)) return { allowed: true, features: null }
+    if (rows.length > 0) return { allowed: rows[0]?.status === 'active', features: (rows[0]?.features && typeof rows[0].features === 'object') ? rows[0].features : null }
     // No row for this user. Allow only if the allowlist is still empty (pre-setup); otherwise deny.
     const r2 = await fetch(`${url}/rest/v1/app_users?select=email&status=eq.active&limit=1`, { headers })
-    if (!r2.ok) return true
+    if (!r2.ok) return { allowed: true, features: null }
     const any = await r2.json().catch(() => null)
-    return !Array.isArray(any) || any.length === 0
-  } catch { return true }
+    return { allowed: !Array.isArray(any) || any.length === 0, features: null }
+  } catch { return { allowed: true, features: null } }
 }
 
 export async function middleware(request: NextRequest) {
@@ -49,10 +50,19 @@ export async function middleware(request: NextRequest) {
   if (user && !isOpenPath) {
     const email = String(user.email || '').toLowerCase()
     if (email && email !== SUPERADMIN) {
-      const ok = await isAllowed(email)
-      if (!ok) {
+      const { allowed, features } = await getMember(email)
+      if (!allowed) {
         const url = request.nextUrl.clone()
         url.pathname = '/no-access'
+        url.search = ''
+        return NextResponse.redirect(url)
+      }
+      // Per-user page access: if this path maps to a feature the user has turned OFF, bounce them to
+      // their first allowed page. Fail-open (no features -> everything allowed). Owner never reaches here.
+      const feat = featureForPath(path)
+      if (feat && !featureEnabled(features, feat.key)) {
+        const url = request.nextUrl.clone()
+        url.pathname = firstEnabled(features)
         url.search = ''
         return NextResponse.redirect(url)
       }
