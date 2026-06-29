@@ -62,3 +62,27 @@ export function PlanItemStatus({ itemId, initial }: { itemId: string; initial: s
     </div>
   )
 }
+
+export function BuildWeeklyPlanButton() {
+  const router = useRouter()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  async function go() {
+    setBusy(true); setErr(null)
+    try {
+      const res = await fetch('/api/ops-plan/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'weekly' }) })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+      router.push(`/plan/${d.id}`)
+    } catch (e: any) { setErr(e?.message || String(e)); setBusy(false) }
+  }
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button onClick={go} disabled={busy}
+        className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white text-sm font-semibold px-4 py-2.5 hover:bg-brand-700 disabled:opacity-50">
+        <Sparkles size={16} /> {busy ? 'Building this week’s plan…' : 'Build this week’s plan'}
+      </button>
+      {err && <span className="text-[11px] text-red-600 max-w-xs text-right">{err}</span>}
+    </div>
+  )
+}
