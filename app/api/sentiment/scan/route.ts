@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { markReservationSensitive } from '@/lib/sensitive'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -51,12 +52,13 @@ export async function POST(req: NextRequest) {
   // 2) Which already have an up-to-date sentiment row?
   const { data: existing } = await sb
     .from('guesty_conversation_sentiment')
-    .select('conversation_id, last_message_at, status')
+    .select('conversation_id, last_message_at, status, marked_sensitive_at')
   if (existing === null) {
     return NextResponse.json({ error: 'Sentiment table not found - run guest_sentiment_migration.sql in Supabase first.' }, { status: 503 })
   }
   const seen = new Map<string, string>()
-  ;(existing ?? []).forEach((r: any) => seen.set(r.conversation_id, str(r.last_message_at)))
+  const markedSet = new Set<string>()
+  ;(existing ?? []).forEach((r: any) => { seen.set(r.conversation_id, str(r.last_message_at)); if (r.marked_sensitive_at) markedSet.add(r.conversation_id) })
 
   // Need a (re)scan when there's no row, or the conversation has newer activity.
   const todo = all.filter(c => {
@@ -139,6 +141,19 @@ Return STRICT minified JSON only, no markdown:
 
       scanned++
       if (triggers.length) flagged++
+
+      // AUTO-FLAG SENSITIVE: only on clear complaints (low score or risk keyword), idempotent, written to Guesty.
+      const strong = score <= 2 || kw
+      if (strong && c.reservation_id && !markedSet.has(c.id)) {
+        try {
+          const why = str(parsed.topIssue).trim() ? `${str(parsed.topIssue).trim()}: "${str(parsed.excerpt).trim().slice(0, 120)}"` : str(parsed.reason).trim().slice(0, 200)
+          const mres = await markReservationSensitive(c.reservation_id, why)
+          if (mres.ok) {
+            await sb.from('guesty_conversation_sentiment').update({ marked_sensitive_at: new Date().toISOString() }).eq('conversation_id', c.id)
+            markedSet.add(c.id)
+          }
+        } catch { /* best-effort */ }
+      }
     } catch { /* skip this conversation, continue the batch */ }
   }
 
