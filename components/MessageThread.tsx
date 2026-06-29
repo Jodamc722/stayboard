@@ -1,8 +1,10 @@
 'use client'
-import { useState, useRef, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+// Read-only AUDIT view of a guest conversation: full transcript (who sent each message),
+// a reservation-details pop-up, and a button to open + reply in Guesty's inbox.
+// (In-app replying is intentionally off for now — this is a quality/audit surface.)
+import { useState } from 'react'
 import Link from 'next/link'
-import { Send, Loader2, AlertTriangle, CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble } from 'lucide-react'
+import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, MessageSquare } from 'lucide-react'
 
 type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null }
 type Reservation = {
@@ -14,39 +16,14 @@ type Reservation = {
 const fmt = (s?: string | null) => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
 const fmtDay = (s?: string | null) => { if (!s) return '—'; const d = new Date(s); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) }
 
-export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation }: {
-  conversationId: string; channel: string; guest: string; unit: string; initialMessages: Msg[]; reservation: Reservation
+export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation, guestyUrl }: {
+  conversationId: string; channel: string; guest: string; unit: string; initialMessages: Msg[]; reservation: Reservation; guestyUrl: string
 }) {
-  const router = useRouter()
-  const [messages, setMessages] = useState<Msg[]>(initialMessages)
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
   const [showRes, setShowRes] = useState(false)
-  const endRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
-
-  async function send() {
-    const b = text.trim()
-    if (!b || sending) return
-    setSending(true); setErr(null)
-    // optimistic
-    const optimistic: Msg = { id: `tmp-${Date.now()}`, sender: 'host', sender_name: 'You', body: b, sent_at: new Date().toISOString() }
-    setMessages(m => [...m, optimistic]); setText('')
-    try {
-      const res = await fetch('/api/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId, body: b }) })
-      const d = await res.json().catch(() => ({}))
-      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      router.refresh()
-    } catch (e: any) {
-      setErr(e?.message || String(e))
-      setMessages(m => m.filter(x => x.id !== optimistic.id)); setText(b)
-    } finally { setSending(false) }
-  }
+  const messages = initialMessages
 
   return (
-    <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col" style={{ minHeight: '60vh' }}>
+    <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col" style={{ minHeight: '55vh' }}>
       {/* Thread header */}
       <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
@@ -54,17 +31,22 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
           {unit && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">Unit {unit}</span>}
           {channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{channel}</span>}
         </div>
-        {reservation && (
-          <button onClick={() => setShowRes(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 px-2.5 py-1.5 rounded-lg">
-            <CalendarDays size={13} /> Reservation details
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {reservation && (
+            <button onClick={() => setShowRes(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 px-2.5 py-1.5 rounded-lg">
+              <CalendarDays size={13} /> Reservation details
+            </button>
+          )}
+          <a href={guestyUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-brand-600 hover:bg-brand-700 px-2.5 py-1.5 rounded-lg">
+            <ExternalLink size={13} /> Open in Guesty
+          </a>
+        </div>
       </div>
 
-      {/* Messages */}
+      {/* Messages (read-only) */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
         {messages.length === 0 ? (
-          <p className="text-center text-muted py-8 text-sm">No messages in this thread yet.</p>
+          <p className="text-center text-muted py-8 text-sm">No messages cached for this thread yet. Sync to pull the latest.</p>
         ) : messages.map(m => {
           const guestMsg = m.sender === 'guest'
           const system = m.sender === 'system'
@@ -79,23 +61,14 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
             </div>
           )
         })}
-        <div ref={endRef} />
       </div>
 
-      {/* Composer */}
-      <div className="border-t border-line p-3">
-        {err && <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700 flex items-center gap-2"><AlertTriangle size={13} /> {err}</div>}
-        <div className="flex items-end gap-2">
-          <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
-            onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
-            placeholder={`Reply to ${guest || 'the guest'} on ${channel || 'their channel'}…  (⌘/Ctrl+Enter to send)`}
-            className="flex-1 resize-y text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <button onClick={send} disabled={sending || !text.trim()}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
-            {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} {sending ? 'Sending…' : 'Send'}
-          </button>
-        </div>
-        <p className="text-[10px] text-muted mt-1.5">Sends to the guest on {channel || 'their channel'} via Guesty. Replying quickly lifts your OTA ranking.</p>
+      {/* Audit footer — reply happens in Guesty */}
+      <div className="border-t border-line px-5 py-3 flex items-center justify-between gap-3 flex-wrap bg-app/30">
+        <span className="text-[12px] text-muted inline-flex items-center gap-1.5"><MessageSquare size={13} /> Audit view — reply to the guest in Guesty.</span>
+        <a href={guestyUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 hover:underline">
+          Reply in Guesty <ExternalLink size={12} />
+        </a>
       </div>
 
       {/* Reservation modal */}
