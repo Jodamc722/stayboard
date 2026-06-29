@@ -1,10 +1,9 @@
 'use client'
 import { useState } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, Car, KeyRound, Utensils, Coffee, ShoppingCart, Umbrella, Lightbulb, ChevronDown } from 'lucide-react'
+import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, Car, KeyRound, Utensils, Coffee, ShoppingCart, Umbrella, Lightbulb, ChevronDown, Info, CreditCard, CalendarDays, Tag, ClipboardCheck, Globe } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
-import { ReservationFieldsEditor } from '@/components/ReservationFieldsEditor'
 
-type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; customFields: { fieldId: string; name: string; value: string }[] }
+type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; status: { paidFull: boolean; balance: number; currency: string; parking: number | null; addOns: { t: string; amt: number }[]; nights: number; checkOut: string } }
 
 export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
@@ -127,8 +126,18 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                       <span className="text-[11px] text-muted/70">Internal only · adds your name + date</span>
                     </div>
                   </div>
-                  {/* Reservation custom fields — editable, pushes to Guesty */}
-                  <ReservationFieldsEditor reservationId={r.id} fields={r.customFields} />
+                  {/* Reservation status — real booking facts pulled from Guesty */}
+                  <div className="rounded-lg border border-line bg-white p-2.5">
+                    <div className="font-bold text-ink flex items-center gap-1.5"><Info size={13} /> Reservation status</div>
+                    <div className="mt-1.5 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-muted">
+                      <div className="flex items-start gap-1.5"><Globe size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Channel:</b> {ch}{(pol.verify || pol.deposit) ? ` (${[pol.verify ? 'verify ID' : '', pol.deposit ? 'deposit' : ''].filter(Boolean).join(' + ')})` : ''}</span></div>
+                      <div className="flex items-start gap-1.5"><CreditCard size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Payment:</b> {r.status.paidFull ? <span className="text-emerald-700 font-semibold">Paid in full</span> : <span className="text-amber-800 font-semibold">Balance due {money(r.status.balance)}</span>}</span></div>
+                      <div className="flex items-start gap-1.5"><Car size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Parking:</b> {r.status.parking != null ? `on booking — ${money(r.status.parking)}${r.status.paidFull ? ' (paid)' : ' (in balance)'}` : 'not on this booking — confirm if they need it'}</span></div>
+                      <div className="flex items-start gap-1.5"><CalendarDays size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Stay:</b> {r.status.nights} {r.status.nights === 1 ? 'night' : 'nights'}{r.status.checkOut ? ` · checks out ${new Date(r.status.checkOut + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}</span></div>
+                      {r.status.addOns.length > 0 && <div className="flex items-start gap-1.5"><Tag size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Add-ons:</b> {r.status.addOns.map(a => `${a.t} ${money(a.amt)}`).join(', ')}</span></div>}
+                      <div className="flex items-start gap-1.5"><ClipboardCheck size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Check-in form / ID:</b> confirm completed on the call</span></div>
+                    </div>
+                  </div>
                   {/* Channel checks — most important */}
                   <div>
                     <div className="font-bold text-ink flex items-center gap-1.5"><ShieldCheck size={13} /> {ch} booking — pre-arrival checks</div>
