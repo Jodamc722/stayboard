@@ -2,6 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
+import { customFieldNameMap } from '@/lib/custom-fields'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +26,10 @@ export default async function ReservationDetail({ params }: { params: { id: stri
         .order('sent_at', { ascending: true })
         .limit(200)).data ?? []
     : []
+
+  const cfMap = await customFieldNameMap()
+  const idOf = (cf: any) => String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
+  const labelOf = (cf: any) => String(cf?.fieldName || cf?.name || cfMap[idOf(cf)] || '').trim().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 
   return (
     <Shell>
@@ -54,7 +59,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
           {(() => {
             const cleaned = (Array.isArray(r.custom_fields) ? r.custom_fields : [])
               .filter((cf: any) => {
-                const label = cf.fieldName || cf.name
+                const label = labelOf(cf)
                 if (!label || !label.trim() || label.trim() === '—') return false
                 const v = cf.value
                 if (v === null || v === undefined || v === '' || v === false) return false
@@ -68,7 +73,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
               <dl className="space-y-2">
                 {cleaned.map((cf: any, i: number) => (
                   <div key={i} className="flex items-start justify-between gap-3 text-sm">
-                    <dt className="text-slate-500">{cf.fieldName || cf.name}</dt>
+                    <dt className="text-slate-500">{labelOf(cf)}</dt>
                     <dd className="text-right"><CFValue cf={cf} /></dd>
                   </div>
                 ))}
