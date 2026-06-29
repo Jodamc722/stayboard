@@ -19,25 +19,30 @@ export type ChannelPolicy = {
   channel: Channel
   verify: boolean
   deposit: boolean
+  merchantOfRecord: boolean
   checks: { label: string; tone: 'do' | 'warn' | 'ok' }[]
 }
 
 export function channelPolicy(channel: Channel): ChannelPolicy {
+  // Merchant of record = the OTA collects the payment (we don't chase it). Airbnb/Booking.com/Expedia.
+  const merchantOfRecord = channel === 'Airbnb' || channel === 'Booking.com' || channel === 'Expedia'
+  // Verify guest ID on Direct + Vrbo. Collect a security deposit on Direct + Expedia + Vrbo.
   const verify = channel === 'Direct' || channel === 'Vrbo'
   const deposit = channel === 'Direct' || channel === 'Expedia' || channel === 'Vrbo'
   const checks: ChannelPolicy['checks'] = []
   if (channel === 'Airbnb') {
-    checks.push({ label: 'No ID check or deposit needed - Airbnb verifies the guest and AirCover covers damage. Focus on welcome + logistics.', tone: 'ok' })
+    checks.push({ label: 'Airbnb is merchant of record - payment is collected by Airbnb, the guest is verified, and AirCover covers damage. No deposit or ID check needed.', tone: 'ok' })
   } else if (channel === 'Booking.com') {
-    checks.push({ label: 'Confirm the card on file actually charged (Booking.com cards are often virtual and can decline).', tone: 'warn' })
-    checks.push({ label: 'No separate ID check or deposit required.', tone: 'ok' })
+    checks.push({ label: 'Booking.com is merchant of record - payment is collected by the platform. No security deposit or ID check needed.', tone: 'ok' })
   } else {
-    if (verify) checks.push({ label: 'VERIFY guest identity - confirm name and get a photo ID on file (this channel does not verify for us).', tone: 'warn' })
-    if (deposit) checks.push({ label: 'CONFIRM the security deposit was collected / authorized before arrival.', tone: 'warn' })
-    if (channel === 'Direct') checks.push({ label: 'CONFIRM full payment has cleared (direct booking).', tone: 'warn' })
-    if (channel === 'Expedia') checks.push({ label: 'ID verification not required for Expedia - deposit only.', tone: 'ok' })
+    if (merchantOfRecord) checks.push({ label: `${channel} is merchant of record - payment is collected by the platform.`, tone: 'ok' })
+    else checks.push({ label: 'Not an OTA merchant of record - we collect the payment ourselves.', tone: 'warn' })
+    if (verify) checks.push({ label: 'VERIFY guest identity - confirm name and get a photo ID on file.', tone: 'warn' })
+    if (deposit) checks.push({ label: 'COLLECT a security deposit before arrival.', tone: 'warn' })
+    if (channel === 'Direct') checks.push({ label: 'CONFIRM full payment has cleared (we collect directly).', tone: 'warn' })
+    if (channel === 'Expedia') checks.push({ label: 'ID verification not required for Expedia.', tone: 'ok' })
   }
-  return { channel, verify, deposit, checks }
+  return { channel, verify, deposit, merchantOfRecord, checks }
 }
 
 export type BuildingGuide = {
