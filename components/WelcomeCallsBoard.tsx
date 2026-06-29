@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, Car, KeyRound, Utensils, Coffee, ShoppingCart, Umbrella, Lightbulb, ChevronDown, Info, CreditCard, CalendarDays, Tag, ClipboardCheck, Globe, DollarSign } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
 
-type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; status: { paidFull: boolean; balance: number; currency: string; parking: number | null; addOns: { t: string; amt: number }[]; nights: number; checkOut: string } }
+type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; dueToday: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; status: { paidFull: boolean; balance: number; currency: string; parking: number | null; addOns: { t: string; amt: number }[]; nights: number; checkOut: string } }
 
 export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
@@ -48,7 +48,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const doneCount = rows.length - pending.length
 
   let shown = filter === 'due' ? duePending : filter === 'pending' ? pending : rows
-  shown = [...shown].sort((a, b) => a.prio - b.prio || (b.value - a.value) || a.check_in.localeCompare(b.check_in))
+  shown = [...shown].sort((a, b) => (Number(b.dueToday) - Number(a.dueToday)) || a.prio - b.prio || (b.value - a.value) || a.check_in.localeCompare(b.check_in))
 
   return (
     <div className="space-y-4">
@@ -67,7 +67,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
         </div>
       </div>
 
-      <p className="text-[12px] text-muted">Due within <b>48 hours of arrival</b>. Priority buildings (17West, Arya, Elser, 7071, Amrit) first, then by reservation value (highest first). Tap <b>Script</b> on any guest for a tailored call guide. Marking a call logs who did it and your note to the reservation (internal only).</p>
+      <p className="text-[12px] text-muted"><b>Due today</b> (arriving today) sort to the very top, then by importance — priority buildings (17West, Arya, Elser, 7071, Amrit), then reservation value (highest first). Tap <b>Script</b> on any guest for a tailored call guide. Marking a call logs who did it and your note to the reservation (internal only).</p>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
 
@@ -89,7 +89,8 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                   {r.value > 0 && <span className="text-[12px] font-bold text-emerald-700">{money(r.value)}</span>}
                   <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{ch}</span>
                   {r.prio === 0 && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-100 text-brand-700">Priority</span>}
-                  {r.due && !r.done && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Clock size={10} /> Due</span>}
+                  {r.dueToday && !r.done && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white inline-flex items-center gap-0.5"><Clock size={10} /> Today</span>}
+                  {r.due && !r.dueToday && !r.done && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Clock size={10} /> Due</span>}
                   {r.done && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 inline-flex items-center gap-0.5"><Check size={10} /> Called</span>}
                   {(pol.verify || pol.deposit) && !r.done && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 inline-flex items-center gap-0.5"><ShieldCheck size={10} /> {pol.verify && pol.deposit ? 'Verify + Deposit' : pol.verify ? 'Verify ID' : 'Deposit'}</span>}
                   {r.sensitive && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><ShieldAlert size={10} /> Sensitive</span>}
