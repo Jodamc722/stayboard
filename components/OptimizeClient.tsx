@@ -55,6 +55,8 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
   const [edited, setEdited] = useState<Content | null>(null)
   const [include, setInclude] = useState<Record<string, boolean>>({})
   const [pushedMsg, setPushedMsg] = useState<string | null>(null)
+  const [secBusy, setSecBusy] = useState<Record<string, boolean>>({})
+  const [aiGenerated, setAiGenerated] = useState(false)
 
   const selected = useMemo(() => listings.find(l => l.id === selectedId) || null, [listings, selectedId])
 
@@ -70,7 +72,44 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
   }, [listings, q])
 
   function pick(l: Listing) {
-    setSelectedId(l.id); setResult(null); setEdited(null); setInclude({}); setError(null); setPushedMsg(null)
+    setSelectedId(l.id); setResult(null); setEdited(null); setInclude({}); setError(null); setPushedMsg(null); setAiGenerated(false)
+    loadCurrent(l.id)
+  }
+
+  // Load the listing's CURRENT Guesty content (no AI) so every section is editable right away.
+  async function loadCurrent(listingId: string) {
+    setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null)
+    try {
+      const res = await fetch('/api/optimize-listing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, currentOnly: true }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+      const r = d as Result
+      setResult(r); setEdited({ ...r.proposed })
+      const inc: Record<string, boolean> = {}
+      for (const f of FIELDS) inc[f.key] = false
+      setInclude(inc)
+    } catch (e: any) { setError(e?.message || String(e)) } finally { setBusy(false) }
+  }
+
+  // Optimize just ONE section with AI, leaving the others untouched.
+  async function optimizeSection(k: keyof Content) {
+    if (!selected || secBusy[k]) return
+    setSecBusy(s => ({ ...s, [k]: true })); setError(null); setPushedMsg(null)
+    try {
+      const res = await fetch('/api/optimize-listing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId: selected.id, section: k, currentText: (edited as any)?.[k] || '' }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+      const text = String(d.text || '')
+      setField(k, text)
+      setResult(prev => prev ? { ...prev, proposed: { ...prev.proposed, [k]: text } } : prev)
+      setInclude(p => ({ ...p, [k]: true }))
+    } catch (e: any) { setError(e?.message || String(e)) } finally { setSecBusy(s => ({ ...s, [k]: false })) }
   }
 
   async function generate() {
@@ -86,6 +125,7 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
       const r = d as Result
       setResult(r)
       setEdited({ ...r.proposed })
+      setAiGenerated(true)
       const inc: Record<string, boolean> = {}
       for (const f of FIELDS) inc[f.key] = !!(r.proposed as any)[f.key]?.trim()
       setInclude(inc)
@@ -193,7 +233,7 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                 <button onClick={generate} disabled={busy}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
                   {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
-                  {busy ? 'Generating…' : result ? 'Regenerate' : 'Generate with AI'}
+                  {busy ? 'Working…' : aiGenerated ? 'Regenerate all with AI' : 'Optimize all with AI'}
                 </button>
               </div>
               <p className="text-[12px] text-muted mt-3 flex items-start gap-1.5 max-w-2xl">
@@ -207,7 +247,7 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
               </div>
             )}
             {busy && !result && (
-              <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Writing fresh copy from this listing&apos;s real data…</div>
+              <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading this listing&apos;s content…</div>
             )}
 
             {result && edited && (
@@ -233,9 +273,14 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                           <span className="text-sm font-semibold text-ink">{f.label}</span>
                           <span className="text-[11px] text-muted">{on ? 'will push' : 'skipped'}</span>
                         </label>
-                        <button onClick={() => resetField(f.key)} className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-brand-700">
-                          <RotateCcw size={11} /> reset to AI
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => optimizeSection(f.key)} disabled={!!secBusy[f.key]} title="Rewrite just this section with AI" className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 rounded-md px-2 py-0.5 disabled:opacity-50">
+                            <Sparkles size={11} className={secBusy[f.key] ? 'animate-pulse' : ''} /> {secBusy[f.key] ? 'Optimizing…' : 'Optimize'}
+                          </button>
+                          <button onClick={() => resetField(f.key)} className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-brand-700">
+                            <RotateCcw size={11} /> reset
+                          </button>
+                        </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
@@ -243,7 +288,7 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                           <div className="text-[13px] text-muted whitespace-pre-wrap leading-relaxed rounded-lg bg-app border border-line px-3 py-2 min-h-[44px]">{cur || <span className="italic">empty</span>}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-1 flex items-center gap-1"><Sparkles size={10} /> Proposed (editable)</div>
+                          <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-1 flex items-center gap-1"><Sparkles size={10} /> Editable — what will push</div>
                           <textarea value={val} onChange={e => setField(f.key, e.target.value)} rows={f.rows}
                             className={`w-full text-[13px] text-ink leading-relaxed rounded-lg border px-3 py-2 focus:outline-none ${over ? 'border-rose-300 focus:border-rose-500' : 'border-line focus:border-brand-500'}`} />
                           <div className={`text-[11px] mt-1 ${over ? 'text-rose-600 font-semibold' : 'text-muted'}`}>
