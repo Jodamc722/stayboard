@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { Sparkles, Wand2, AlertTriangle, Info, UploadCloud, Check, RotateCcw, RefreshCw, MessageSquarePlus } from 'lucide-react'
+import { Sparkles, Wand2, AlertTriangle, Info, UploadCloud, Check, RotateCcw, RefreshCw, MessageSquarePlus, Pencil } from 'lucide-react'
 
 type Content = { title: string; summary: string; space: string; access: string; neighborhood: string; transit: string; notes: string }
 type Result = {
@@ -66,6 +66,27 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     } finally {
       setBusy(false)
     }
+  }
+
+  // Load the CURRENT Guesty content into editable fields (no AI) so you can hand-edit any section and
+  // push it without running optimization. Uses the route's currentOnly mode (proposed === current).
+  async function loadCurrent() {
+    if (busy) return
+    setWasRecreate(false)
+    setOpen(true); setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null); setSectionMsg({})
+    try {
+      const res = await fetch('/api/optimize-listing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, currentOnly: true }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+      const r = d as Result
+      setResult(r); setEdited({ ...r.proposed })
+      const inc: Record<string, boolean> = {}
+      for (const f of FIELDS) inc[f.key] = !!(r.proposed as any)[f.key]?.trim()
+      setInclude(inc)
+    } catch (e: any) { setError(e?.message || String(e)) } finally { setBusy(false) }
   }
 
   function setField(k: keyof Content, v: string) { setEdited(p => p ? { ...p, [k]: v } : p); setPushedMsg(null); setSectionMsg(m => ({ ...m, [k]: '' })) }
@@ -162,6 +183,10 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
             className="mt-2 w-full sm:w-[420px] text-[12px] rounded-lg border border-line bg-app px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={loadCurrent} disabled={busy} title="Load the current Guesty title + descriptions to edit by hand and push \u2014 no AI"
+            className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
+            <Pencil size={15} /> Edit current
+          </button>
           <button onClick={() => generate(true)} disabled={busy} title="Brand-new title + all descriptions with a fresh angle"
             className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2.5 text-sm font-semibold hover:bg-brand-50 disabled:opacity-50">
             <Sparkles size={15} /> Recreate (fresh feel)
