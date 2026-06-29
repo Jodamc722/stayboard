@@ -7,7 +7,7 @@ type Flagged = { id: string; name: string; building: string | null; horizonDays:
 type Scan = {
   ok?: boolean; error?: string
   target?: number; threshold?: number; generatedAt?: string
-  totalActive?: number; scanned?: number; flaggedCount?: number; flagged?: Flagged[]
+  totalActive?: number; scanned?: number; checked?: number; flaggedCount?: number; flagged?: Flagged[]
   errorsCount?: number
 }
 
@@ -41,7 +41,7 @@ export function AvailabilityAlert() {
   if (flagged.length === 0) {
     return (
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 text-[13px] text-emerald-800 flex items-center gap-2">
-        <Check size={14} /> All {data.totalActive ?? 0} active listings are bookable past {threshold} days. Target {target}.
+        <Check size={14} /> {data.checked ?? data.totalActive ?? 0} of {data.totalActive ?? 0} active listings checked — none bookable under {threshold} days. Target {target}.
       </div>
     )
   }
@@ -52,7 +52,7 @@ export function AvailabilityAlert() {
         <span className="flex items-center gap-2 text-[13px] font-semibold text-amber-800">
           <AlertTriangle size={15} />
           {flagged.length} active {flagged.length === 1 ? 'listing is' : 'listings are'} bookable under {threshold} days
-          <span className="font-normal text-amber-700/80">(target {target})</span>
+          <span className="font-normal text-amber-700/80">(target {target} · {data.checked ?? 0}/{data.totalActive ?? 0} checked)</span>
         </span>
         <ChevronDown size={15} className={`text-amber-700 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
