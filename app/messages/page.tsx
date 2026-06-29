@@ -13,7 +13,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   sms: 'SMS', email: 'Email', whatsapp: 'WhatsApp', other: 'Other'
 }
 
-type Msg = { conversation_id: string; sender: string; sent_at: string }
+type Msg = { conversation_id: string; sender: string; sender_name?: string | null; sent_at: string }
 
 type Kpis = {
   avgFirstMs: number | null
@@ -26,6 +26,7 @@ type Kpis = {
   sampleConvos: number
   sampleReplies: number
   awaitingIds: Set<string>
+  lastResponderById: Map<string, string>
 }
 
 const HOUR_MS = 60 * 60 * 1000
@@ -38,18 +39,24 @@ export default async function MessagesPage() {
   const [{ data: convos }, { data: sync }, { data: msgs }] = await Promise.all([
     supabase
       .from('guesty_conversations')
-      .select('id, reservation_id, guest_name, channel, last_message_at, last_message_preview, unread_count')
+      .select('id, reservation_id, listing_id, guest_name, channel, last_message_at, last_message_preview, unread_count')
       .order('last_message_at', { ascending: false })
       .limit(100),
     supabase.from('guesty_sync_status').select('last_sync_at').eq('entity', 'conversations').maybeSingle(),
     supabase
       .from('guesty_messages')
-      .select('conversation_id, sender, sent_at')
+      .select('conversation_id, sender, sender_name, sent_at')
       .order('sent_at', { ascending: false })
       .limit(4000)
   ])
 
   const list = convos ?? []
+  const lids = Array.from(new Set(list.map((c: any) => c.listing_id).filter(Boolean)))
+  const unitById: Record<string, string> = {}
+  if (lids.length) {
+    const { data: ls } = await supabase.from('guesty_listings').select('id, nickname, title').in('id', lids as string[])
+    ;(ls ?? []).forEach((l: any) => { const n = String(l.nickname || l.title || ''); const m = n.match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/); unitById[l.id] = m ? m[1] : '' })
+  }
   const kpis = computeKpis((msgs as Msg[] | null) ?? [], list)
 
   return (
@@ -119,6 +126,7 @@ export default async function MessagesPage() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="font-medium text-ink truncate">{c.guest_name || 'Guest'}</span>
                       <span className="text-[10px] text-muted uppercase tracking-[0.08em] font-semibold flex-shrink-0">{CHANNEL_LABELS[c.channel] || c.channel}</span>
+                      {unitById[c.listing_id] && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">Unit {unitById[c.listing_id]}</span>}
                       {awaiting && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Latest message is from the guest — awaiting host reply">
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" /> Awaiting reply
@@ -130,6 +138,9 @@ export default async function MessagesPage() {
                   <p className={`text-sm truncate mt-0.5 ${c.unread_count > 0 ? 'text-ink font-medium' : 'text-muted'}`}>
                     {c.last_message_preview || <span className="italic text-line">(no preview)</span>}
                   </p>
+                  {!awaiting && kpis.lastResponderById.get(c.id) && (
+                    <p className="text-[10px] text-muted mt-0.5">Last replied by {kpis.lastResponderById.get(c.id)}</p>
+                  )}
                 </div>
                 {c.unread_count > 0 && (
                   <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-brand-500 text-white text-[10px] font-semibold flex-shrink-0">{c.unread_count}</span>
@@ -166,6 +177,7 @@ function computeKpis(msgs: Msg[], convos: any[]): Kpis {
 
   const firstResponseGaps: number[] = [] // ms, per guest→host reply
   const awaitingIds = new Set<string>()
+  const lastResponderById = new Map<string, string>()
   let lastIsGuestConvos = 0
   let convosWithThreads = 0
 
@@ -179,6 +191,8 @@ function computeKpis(msgs: Msg[], convos: any[]): Kpis {
     if (last.sender === 'guest') {
       awaitingIds.add(cid)
       lastIsGuestConvos++
+    } else if (last.sender === 'host') {
+      lastResponderById.set(cid, last.sender_name || 'Team')
     }
 
     // First-response gaps: each guest message immediately followed (in time) by a host
@@ -241,7 +255,8 @@ function computeKpis(msgs: Msg[], convos: any[]): Kpis {
     score,
     sampleConvos: convosWithThreads,
     sampleReplies: firstResponseGaps.length,
-    awaitingIds
+    awaitingIds,
+    lastResponderById
   }
 }
 
