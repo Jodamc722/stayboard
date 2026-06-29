@@ -119,23 +119,6 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-  const resguest = new URL(req.url).searchParams.get('resguest')
-  if (resguest) {
-    const sb = supabaseAdmin()
-    const { data } = await sb.from('guesty_reservations').select('id, guest_name, guest_phone, source, raw').ilike('guest_name', `%${resguest}%`).limit(4)
-    const out = (data || []).map((r: any) => {
-      const g = (r.raw && typeof r.raw === 'object') ? (r.raw.guest || {}) : {}
-      return {
-        id: r.id, name: r.guest_name, source: r.source, mapped_phone: r.guest_phone,
-        guestKeys: Object.keys(g),
-        g_phone: g.phone ?? null, g_phones: g.phones ?? null, g_contactPhone: g.contactPhone ?? null,
-        g_phoneNumbers: g.phoneNumbers ?? null, g_hometown: g.hometown ?? null, guestId: g._id ?? g.id ?? null,
-        raw_top_phone: (r.raw || {}).phone ?? (r.raw || {}).guestPhone ?? null,
-      }
-    })
-    return NextResponse.json({ count: out.length, out })
-  }
-
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'
   try {
     const dayKey = ymd(new Date())
