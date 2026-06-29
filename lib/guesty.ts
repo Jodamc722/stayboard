@@ -202,12 +202,16 @@ function mapListing(l: any) {
 }
 
 function mapConversation(c: any) {
+  // Guesty embeds the guest + reservation(s) + listing under raw.meta (NOT at top level).
+  const meta: any = c.meta || {}
+  const res0: any = Array.isArray(meta.reservations) && meta.reservations.length ? meta.reservations[0] : null
+  const lst: any = res0?.listing
   return {
     id:                   c._id || c.id,
-    reservation_id:       c.reservationId || c.reservation?._id || null,
-    listing_id:           c.listingId || c.listing?._id || null,
-    guest_name:           c.guest?.fullName || c.lastMessage?.from?.fullName || null,
-    channel:              (c.channel || c.lastMessage?.module || 'other').toLowerCase(),
+    reservation_id:       res0?._id || c.reservationId || c.reservation?._id || null,
+    listing_id:           (lst && (lst._id || lst.id)) || c.listingId || c.listing?._id || null,
+    guest_name:           meta.guest?.fullName || c.guest?.fullName || c.lastMessage?.from?.fullName || null,
+    channel:              (c.channel || c.lastMessage?.module || res0?.source || 'other').toLowerCase(),
     last_message_at:      c.lastMessageAt || c.lastMessageReceivedAt || c.updatedAt || c.createdAt || null,
     last_message_preview: (c.lastMessage?.body || '').slice(0, 200) || null,
     unread_count:         c.unreadCount ?? 0,
