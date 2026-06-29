@@ -45,7 +45,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
     const digits = phone.replace(/[^+\d]/g, '')
     try { navigator.clipboard.writeText(digits) } catch { /* ignore */ }
     setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 2500)
-    window.open('https://cp.talkroute.com', 'talkroute')
+    window.open('https://my.talkroute.com/home/keypad', 'talkroute')
   }
 
   const money = (n: number) => n ? '$' + Math.round(n).toLocaleString() : ''
