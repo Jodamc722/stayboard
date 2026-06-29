@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   // Mirror locally so StayBoard reflects the new order immediately.
   try {
     const newRaw = { ...raw, pictures: reordered, _lastOptimized: new Date().toISOString() }
-    const update: any = { raw: newRaw }
+    const update: any = { raw: newRaw, last_optimized: new Date().toISOString() }
     if (Array.isArray((row as any).pictures)) update.pictures = reordered
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
