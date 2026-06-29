@@ -15,6 +15,11 @@ const MAX_PHOTOS = 40 // keep total vision input tokens under the org's 10k/min 
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
+// Guarantee every photo ends up with a caption: if the model skips one, fall back to a clean
+// category-based label so no photo is ever left without a guest-facing description.
+const CAT_CAPTION: Record<string, string> = { living: 'Living area', kitchen: 'Kitchen', dining: 'Dining area', bedroom: 'Bedroom', bathroom: 'Bathroom', outdoor: 'Outdoor space', view: 'View from the property', amenity: 'Building amenity', exterior: 'Building exterior', detail: 'Property detail', other: 'Property photo' }
+const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string) => (m?.caption && m.caption.trim()) || (existing && existing.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
+
 // Tolerant JSON reader for vision output. The model occasionally returns slightly long or truncated
 // JSON (one description per photo over many photos); rather than hard-failing, we salvage the largest
 // well-formed prefix by cutting at the last clean element boundary and closing any open brackets.
@@ -150,7 +155,7 @@ Ordering principles (in priority):
 
 Return ONLY valid JSON, no prose, in exactly this shape:
 {"order":[<photo numbers in best order>],"items":[{"n":<photo number>,"kind":"<property|stock>","category":"<living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other>","reason":"<<=14 words why it's placed here, grounded in the image>","caption":"<<=8 word guest-facing caption describing what the photo shows, e.g. 'Bright open-plan living room' or 'King bedroom with balcony'; NEVER include a unit/room/listing number>","remove":<true|false>,"removeReason":"<if remove true: <=14 words why; else empty>"}],"heroSuggestion":{"n":<photo number or null>,"why":"<<=14 words, only if one of these would beat the current cover photo, else null>"},"assessment":{"quality":<0-100 overall photo-SET quality for converting bookings: lighting, sharpness, composition, staging, professional feel>,"coverage":"<<=16 words: which key spaces are well-shown vs missing>","notes":["<<=16 words concrete improvement>","..."]}}
-"order" MUST be a permutation of 1..${toOrder.length} (every photo exactly once).`
+"order" MUST be a permutation of 1..${toOrder.length} (every photo exactly once). "items" MUST contain ONE entry for EVERY photo number 1..${toOrder.length} - never skip a photo - and EVERY entry\'s "caption" must be a non-empty, specific guest-facing description.`
 
   const USR = `Property: ${str(listing.title) || str(listing.nickname) || 'listing'} (${str(listing.building) || 'building'}). ${toOrder.length} photos to order (the host's cover photo is separate and stays first). Order them now.`
   const USR2 = guidance ? `${USR}\n\nHOST CORRECTION — apply this exactly, it overrides your default judgement: ${guidance}` : USR
@@ -251,7 +256,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
     heroId: hero._id,
     currentOrder: allPics.map(p => p._id),
     proposedOrder,
-    photos: allPics.map(p => ({ _id: p._id, url: p.url, ...(meta[p._id] || {}), caption: (meta[p._id]?.caption || p.caption || '') })),
+    photos: allPics.map(p => ({ _id: p._id, url: p.url, ...(meta[p._id] || {}), caption: captionFor(meta[p._id], p.caption) })),
     heroSuggestion,
     assessment,
     recommendRemove,
