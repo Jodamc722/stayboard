@@ -147,6 +147,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${lastOptimized ? 'bg-emerald-50 text-emerald-700' : 'bg-app text-muted'}`}>
               <Sparkles size={11} /> {lastOptimized ? `Last optimized ${lastOptimized}` : 'Not optimized yet'}
             </span>
+            <a href={`https://app.guesty.com/properties/${listing.id}/property/v2`} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold bg-app text-brand-700 hover:bg-brand-50">
+              <ExternalLink size={11} /> Open property in Guesty
+            </a>
           </div>
         </div>
         <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${opt.ring}`} title="Optimize score">
@@ -216,7 +220,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
           <Panel title="Recent reviews" sub={`${reviews.length} pulled · reply to any of them right here`}>
             <ListingReviews
-              reviews={reviews.slice(0, 20).map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply }))}
+              reviews={reviews.slice(0, 20).map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply, excluded: !!r.excluded_from_score }))}
                listingName={name}
             />
           </Panel>
