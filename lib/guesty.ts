@@ -77,9 +77,11 @@ export async function getToken(force = false): Promise<string> {
 // ------------------------------------------------------------
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   let attempt = 0
+  let forceRefresh = false
   while (true) {
     attempt++
-    const token = await getToken(attempt > 1)
+    const token = await getToken(forceRefresh)
+    forceRefresh = false
     const r = await fetch(`${BASE}${path}`, {
       ...init,
       headers: {
@@ -89,9 +91,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       },
       cache: 'no-store'
     })
-    if (r.status === 401 && attempt === 1) continue                  // force refresh + retry once
-    if (r.status === 429 && attempt < 4) {                            // backoff on rate limit
-      const wait = Math.min(2000 * attempt, 8000)
+    if (r.status === 401 && attempt === 1) { forceRefresh = true; continue } // refresh token once on real auth failure
+    if (r.status === 429 && attempt < 6) {                            // back off + retry, REUSING the same token (don't hammer the token endpoint)
+      const wait = Math.min(1000 * attempt, 8000)
       await new Promise(res => setTimeout(res, wait))
       continue
     }
