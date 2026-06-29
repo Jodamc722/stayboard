@@ -42,8 +42,8 @@ function Section({ icon: Icon, title, count, accent, children }: { icon: any; ti
   )
 }
 
-export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, overdue, sentiment }: {
-  reviews: Review[]; approvals: Approval[]; messages: Message[]; welcome: Welcome[]; checkIns: CheckIn[]; overdue: Overdue[]; sentiment: Sentiment[]
+export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOther = 0, checkIns, overdue, sentiment }: {
+  reviews: Review[]; approvals: Approval[]; messages: Message[]; welcome: Welcome[]; welcomeOther?: number; checkIns: CheckIn[]; overdue: Overdue[]; sentiment: Sentiment[]
 }) {
   const router = useRouter()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -57,7 +57,7 @@ export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, o
   const liveReviews = reviews.filter(r => !postedIds[r.id] && !dismissedIds[r.id])
   const liveApprovals = approvals.filter(a => !decided[a.id])
 
-  const totalOpen = liveReviews.length + liveApprovals.length + messages.length + welcome.length + checkIns.length + overdue.length + sentiment.length
+  const totalOpen = liveReviews.length + liveApprovals.length + messages.length + welcome.length + welcomeOther + checkIns.length + overdue.length + sentiment.length
 
   async function draftAI(r: Review, instruction?: string) {
     setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
@@ -227,20 +227,29 @@ export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, o
         </Section>
       )}
 
-      {/* 5. Welcome calls due */}
-      {welcome.length > 0 && (
-        <Section icon={PhoneCall} title="Welcome calls due" count={welcome.length} accent="bg-emerald-100 text-emerald-700">
-          <ul className="divide-y divide-line/70">
-            {welcome.slice(0, 6).map(w => (
-              <li key={w.id} className="px-4 py-3 flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-medium text-ink">{w.guest}</span>
-                {w.unit ? <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">Unit {w.unit}</span> : (w.listing_name && <span className="text-[11px] text-muted truncate">{w.listing_name}</span>)}
-                {w.today ? <span className="text-[10px] font-bold text-white bg-red-500 px-1.5 py-0.5 rounded">TODAY</span> : <span className="text-[10px] text-muted">in by {fmtDate(w.check_in)}</span>}
-                <Link href="/welcome-calls" className="ml-auto text-[11px] font-semibold text-brand-700 inline-flex items-center gap-0.5 hover:underline">Call <ChevronRight size={12} /></Link>
-              </li>
-            ))}
-          </ul>
-          {welcome.length > 6 && <FooterLink href="/welcome-calls" label={`View all ${welcome.length} calls`} />}
+      {/* 5. Welcome calls due — only LUX + >=$1k shown individually; the rest roll up to a count */}
+      {(welcome.length > 0 || welcomeOther > 0) && (
+        <Section icon={PhoneCall} title="Priority welcome calls" count={welcome.length + welcomeOther} accent="bg-emerald-100 text-emerald-700">
+          {welcome.length > 0 && (
+            <ul className="divide-y divide-line/70">
+              {welcome.slice(0, 8).map(w => (
+                <li key={w.id} className="px-4 py-3 flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-ink">{w.guest}</span>
+                  {w.unit ? <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">Unit {w.unit}</span> : (w.listing_name && <span className="text-[11px] text-muted truncate">{w.listing_name}</span>)}
+                  {(w as any).value >= 1000 && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">${Math.round((w as any).value).toLocaleString()}</span>}
+                  {w.today ? <span className="text-[10px] font-bold text-white bg-red-500 px-1.5 py-0.5 rounded">TODAY</span> : <span className="text-[10px] text-muted">in by {fmtDate(w.check_in)}</span>}
+                  <Link href="/welcome-calls" className="ml-auto text-[11px] font-semibold text-brand-700 inline-flex items-center gap-0.5 hover:underline">Call <ChevronRight size={12} /></Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          {welcomeOther > 0 && (
+            <Link href="/welcome-calls" className="flex items-center justify-between px-4 py-2.5 text-[12px] text-muted border-t border-line hover:bg-app transition-colors">
+              <span>+{welcomeOther} routine call{welcomeOther === 1 ? '' : 's'} needed (standard rate)</span>
+              <span className="font-semibold text-brand-700 inline-flex items-center gap-0.5">Open Welcome Calls <ArrowUpRight size={13} /></span>
+            </Link>
+          )}
+          {welcome.length > 0 && welcomeOther === 0 && <FooterLink href="/welcome-calls" label="Open Welcome Calls" />}
         </Section>
       )}
 
