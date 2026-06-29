@@ -28,9 +28,14 @@ function parseJson(raw: string): any | null {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Auth: allow the Vercel cron (CRON_SECRET bearer) OR a logged-in user.
+  const authHeader = req.headers.get('authorization') || ''
+  const cronOk = !!process.env.CRON_SECRET && authHeader === ('Bearer ' + process.env.CRON_SECRET)
+  if (!cronOk) {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured' }, { status: 503 })
 
