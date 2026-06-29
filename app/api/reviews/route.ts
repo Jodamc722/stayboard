@@ -70,7 +70,7 @@ export async function GET(req: Request) {
       const shape = (r: any, m: any) => ({
         id: r.id,
         rating: r.rating != null ? Number(r.rating) : null,
-        content: String(r.content || '').slice(0, 400),
+        content: String(r.content || '').slice(0, 4000),
         channel: r.channel || '',
         listingId: r.listing_id,
         guest: r.guest_name,
@@ -173,11 +173,11 @@ export async function GET(req: Request) {
       return {
         id: v._id ?? v.id ?? v.externalReviewId ?? Math.random().toString(36).slice(2),
         rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
-        content: String(typeof content === 'string' ? content : '').slice(0, 400),
+        content: String(typeof content === 'string' ? content : '').slice(0, 4000),
         channel, listingId, guest,
         created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
         hasReply: repliedArr || !!(replyFlat && String(replyFlat).trim()),
-        reply: String(replyText || '').slice(0, 500) || null
+        reply: String(replyText || '').slice(0, 4000) || null
       }
     }).filter((x: any) => x.id && (x.content || x.rating != null))
 
