@@ -50,6 +50,7 @@ function draftReply(r: Review): string {
 
 const ratingFrac = (n: number | null) => n == null ? -1 : (n <= 5 ? n / 5 : n / 10)
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
+const fmtDate = (s?: string) => { if (!s) return ""; const d = new Date(s); return isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) }
 
 export function ReviewsPanel() {
   const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string }>({ loading: true })
@@ -252,13 +253,14 @@ export function ReviewsPanel() {
                   </span>
                   <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                   {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Replied</span>
                 </div>
-                {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+                {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
                 {r.reply ? (
                   <div className="mt-2 flex gap-1.5 text-xs text-ink bg-app border border-line rounded-lg p-2">
                     <MessageSquare size={12} className="text-brand-600 shrink-0 mt-0.5" />
-                    <span className="line-clamp-4">{r.reply}</span>
+                    <span className="whitespace-pre-wrap leading-relaxed">{r.reply}</span>
                   </div>
                 ) : (
                   <p className="text-[10px] text-muted mt-1.5 italic">Reply posted (text not returned by the channel).</p>
@@ -282,9 +284,10 @@ export function ReviewsPanel() {
                     </span>
                     <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                     {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
                     <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><PlugZap size={11} /> {r.reason || 'Not synced'}</span>
                   </div>
-                  {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+                  {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
                 </li>
              )) }
             </ul>
@@ -305,9 +308,10 @@ export function ReviewsPanel() {
                     </span>
                     <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                     {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
                     <button onClick={() => undismiss(r)} disabled={rowBusy[r.id]} className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">Undo</button>
                   </div>
-                  {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+                  {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
                 </li>
               ))}
             </ul>
@@ -329,8 +333,9 @@ export function ReviewsPanel() {
                 </span>
                 <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                 {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
               </div>
-              {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+              {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
 
               <div className="mt-2">
                 <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={4}
