@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
   const nameOf = (lid: any) => listingMeta[String(lid)]?.name || 'Unknown'
   const buildingOf = (lid: any) => rollupBuilding(listingMeta[String(lid)]?.building)
   const reviewable = (lid: any) => { const m = listingMeta[String(lid)]; return !!m && !DEAD.test(m.status) && m.building.toLowerCase() !== 'waves' }
+  // Ratings come on MIXED scales (Airbnb /5, Booking & Vrbo /10). Normalize EVERY rating to a 5-star scale before use.
+  const normStar = (n: any): number | null => { const v = Number(n); if (!Number.isFinite(v) || v <= 0) return null; return Math.round((v <= 5 ? v : v / 2) * 100) / 100 }
 
   const safe = async <T>(p: PromiseLike<T>, fb: T): Promise<T> => { try { return await p } catch { return fb } }
   const cnt = async (q: any) => { const r = await safe(q, { count: 0 } as any); return (r as any).count || 0 }
@@ -81,9 +83,36 @@ export async function POST(req: NextRequest) {
         if (input?.min_rating != null) q = q.gte('rating', Number(input.min_rating))
         if (input?.max_rating != null) q = q.lte('rating', Number(input.max_rating))
         const { data } = await q
-        let rows = (data || []).filter((r: any) => reviewable(r.listing_id)).map((r: any) => ({ property: nameOf(r.listing_id), building: buildingOf(r.listing_id), rating: r.rating, channel: r.channel, guest: r.guest_name, answered: !!r.has_reply, date: String(r.created_at).slice(0, 10), text: String(r.content || '').slice(0, 280) }))
+        let rows = (data || []).filter((r: any) => reviewable(r.listing_id)).map((r: any) => ({ property: nameOf(r.listing_id), building: buildingOf(r.listing_id), rating: normStar(r.rating), rating_scale: '/5', channel: r.channel, guest: r.guest_name, answered: !!r.has_reply, date: String(r.created_at).slice(0, 10), text: String(r.content || '').slice(0, 280) }))
         if (input?.building) rows = rows.filter((x: any) => x.building.toLowerCase().includes(String(input.building).toLowerCase()))
         return { count: rows.length, reviews: rows.slice(0, clampLimit(input?.limit)) }
+      }
+      if (name === 'review_summary') {
+        // Pull ALL reviews (no row cap) so building/portfolio counts are complete. Count = every review on
+        // the matched units; the AVERAGE uses only score-eligible (non-excluded) reviews.
+        const { data } = await db.from('guesty_reviews').select('listing_id,rating,has_reply,excluded_from_score').limit(10000)
+        let rows = (data || []).filter((r: any) => reviewable(r.listing_id))
+        if (input?.building) rows = rows.filter((r: any) => buildingOf(r.listing_id).toLowerCase().includes(String(input.building).toLowerCase()))
+        if (input?.id) rows = rows.filter((r: any) => String(r.listing_id) === String(input.id))
+        else if (input?.name) rows = rows.filter((r: any) => nameOf(r.listing_id).toLowerCase().includes(String(input.name).toLowerCase()))
+        const scored = rows.filter((r: any) => r.excluded_from_score !== true)
+        const vals = scored.map((r: any) => normStar(r.rating)).filter((v: any): v is number => v != null)
+        const dist: Record<string, number> = { '5': 0, '4': 0, '3': 0, '2': 0, '1': 0 }
+        vals.forEach(v => { const bk = Math.max(1, Math.min(5, Math.round(v))); dist[String(bk)]++ })
+        const byUnit: Record<string, { name: string; count: number; sum: number; rated: number }> = {}
+        rows.forEach((r: any) => { const k = String(r.listing_id); if (!byUnit[k]) byUnit[k] = { name: nameOf(r.listing_id), count: 0, sum: 0, rated: 0 }; byUnit[k].count++; if (r.excluded_from_score !== true) { const v = normStar(r.rating); if (v != null) { byUnit[k].rated++; byUnit[k].sum += v } } })
+        const units = Object.values(byUnit).map(u => ({ name: u.name, reviews: u.count, avg: u.rated ? Math.round((u.sum / u.rated) * 100) / 100 : null })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
+        return {
+          scope: input?.building ? `building: ${input.building}` : (input?.name ? `unit: ${input.name}` : (input?.id ? `unit id: ${input.id}` : 'whole portfolio')),
+          rating_scale: '/5 (Airbnb /5; Booking & Vrbo normalized from /10)',
+          review_count: rows.length,
+          rated_count: vals.length,
+          avg_rating: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null,
+          distribution_by_star: dist,
+          unanswered: rows.filter((r: any) => !r.has_reply).length,
+          units_covered: units.length,
+          lowest_units: units.slice(0, 8),
+        }
       }
       if (name === 'search_reservations') {
         let q = db.from('guesty_reservations').select('guest_name,listing_name,nights,money_total,status,source,check_in,check_out').limit(clampLimit(input?.limit, 30))
@@ -115,8 +144,8 @@ export async function POST(req: NextRequest) {
         if (!l) return { error: 'listing not found' }
         const raw = l.raw || {}; const pub = raw.publicDescription || {}
         const { data: revs } = await db.from('guesty_reviews').select('rating').eq('listing_id', l.id).eq('excluded_from_score', false)
-        const rr = (revs || []).map((x: any) => Number(x.rating)).filter(Number.isFinite)
-        return { name: l.nickname || l.title, building: rollupBuilding(l.building), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city, amenities_count: Array.isArray(l.amenities) ? l.amenities.length : (Array.isArray(raw.amenities) ? raw.amenities.length : 0), photo_count: Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(raw.pictures) ? raw.pictures.length : 0), has_title: !!l.title, description_sections_filled: Object.keys(pub).filter(k => pub[k]), review_count: rr.length, avg_rating: rr.length ? Math.round((rr.reduce((a, b) => a + b, 0) / rr.length) * 100) / 100 : null, last_optimized: l.last_optimized || raw._lastOptimized || null }
+        const rr = (revs || []).map((x: any) => normStar(x.rating)).filter((v: any): v is number => v != null)
+        return { name: l.nickname || l.title, building: rollupBuilding(l.building), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city, amenities_count: Array.isArray(l.amenities) ? l.amenities.length : (Array.isArray(raw.amenities) ? raw.amenities.length : 0), photo_count: Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(raw.pictures) ? raw.pictures.length : 0), has_title: !!l.title, description_sections_filled: Object.keys(pub).filter(k => pub[k]), review_count: rr.length, avg_rating: rr.length ? Math.round((rr.reduce((a, b) => a + b, 0) / rr.length) * 100) / 100 : null, rating_scale: '/5', last_optimized: l.last_optimized || raw._lastOptimized || null }
       }
       if (name === 'unread_conversations') {
         const { data } = await db.from('guesty_conversations').select('guest_name,channel,unread_count,last_message_preview,last_message_at').gt('unread_count', 0).order('last_message_at', { ascending: false }).limit(clampLimit(input?.limit, 40))
@@ -192,6 +221,7 @@ export async function POST(req: NextRequest) {
 
   const tools = [
     { name: 'search_reviews', description: 'Search guest reviews. Filter by answered ("answered"|"unanswered"|"all"), days (lookback), min_rating, max_rating, building. Returns property, rating, channel, guest, text, answered.', input_schema: { type: 'object', properties: { answered: { type: 'string' }, days: { type: 'number' }, min_rating: { type: 'number' }, max_rating: { type: 'number' }, building: { type: 'string' }, limit: { type: 'number' } } } },
+    { name: 'review_summary', description: 'Aggregate review score for a BUILDING, a unit (name/id), or the whole portfolio (no args = portfolio). Returns avg_rating on a 5-STAR scale (Airbnb /5; Booking & Vrbo normalized from /10), review_count, star distribution, unanswered count, and the lowest-rated units. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.', input_schema: { type: 'object', properties: { building: { type: 'string' }, name: { type: 'string' }, id: { type: 'string' } } } },
     { name: 'search_reservations', description: 'Search reservations. type: "checkin"|"checkout"|"inhouse"|"range". For range use from/to (YYYY-MM-DD on check_in). Filter by building, status. Returns guest, listing, nights, money_total, dates.', input_schema: { type: 'object', properties: { type: { type: 'string' }, date: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, building: { type: 'string' }, status: { type: 'string' }, limit: { type: 'number' } } } },
     { name: 'search_listings', description: 'List/search listings (units). Filter by building, status, query (name match). Returns id, name, building, status, beds/baths/sleeps, city.', input_schema: { type: 'object', properties: { building: { type: 'string' }, status: { type: 'string' }, query: { type: 'string' }, limit: { type: 'number' } } } },
     { name: 'listing_detail', description: 'Full detail for ONE listing by name or id: amenities count, photo count, description sections filled, review count + avg rating, last optimized.', input_schema: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'string' } } } },
@@ -209,7 +239,7 @@ Talk like a real, smart operator — the way an excellent chief of staff actuall
 
 Be genuinely smart: interpret data, don't just repeat it. Find what matters, reason about WHY, connect signals across reviews, messages, field work and revenue, and tell Jon what you'd do and why.
 
-YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. If a tool returns empty, say that data isn't synced rather than guessing. You know Guesty COLD: you also have guesty_config (per-unit check-in/out times, min/max nights, instant book, cancellation, house rules, and custom fields incl. door/access codes) and portfolio (portfolio-wide counts). Chain as many tool calls as you need to dig in - think of it as sending yourself in to investigate. WELCOME CALLS are a priority pre-arrival workflow: a welcome_call custom field tracks whether each guest got their call before arrival - use the welcome_calls tool to surface who still needs one (and flag any sensitive-guest stays), and bring it up proactively when Jon asks about upcoming arrivals.
+YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. REVIEW RATINGS are on a 5-STAR scale (Airbnb is /5; Booking.com and Vrbo are /10 and are normalized to /5) - an average rating is ALWAYS between 1.0 and 5.0, NEVER sum ratings; for ANY \"average review score/rating\" question (a building, a unit, or the portfolio) call review_summary and quote its avg_rating instead of averaging numbers yourself. If a tool returns empty, say that data isn't synced rather than guessing. You know Guesty COLD: you also have guesty_config (per-unit check-in/out times, min/max nights, instant book, cancellation, house rules, and custom fields incl. door/access codes) and portfolio (portfolio-wide counts). Chain as many tool calls as you need to dig in - think of it as sending yourself in to investigate. WELCOME CALLS are a priority pre-arrival workflow: a welcome_call custom field tracks whether each guest got their call before arrival - use the welcome_calls tool to surface who still needs one (and flag any sensitive-guest stays), and bring it up proactively when Jon asks about upcoming arrivals.
 
 TEAMS: work is run by three teams — CCS, Miami, Broward. Organize dispatched actions by team. Refer to buildings by rolled-up name (Botanica, Oasis, Arya).
 
