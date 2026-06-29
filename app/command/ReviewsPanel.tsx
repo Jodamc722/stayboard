@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap } from 'lucide-react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle } from 'lucide-react'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
 
 const SIGN = '— Stay Hospitality'
 
@@ -53,7 +53,7 @@ const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
 
 export function ReviewsPanel() {
   const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string }>({ loading: true })
-  const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped'>('needs')
+  const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped' | 'dismissed'>('needs')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [posted, setPosted] = useState<Record<string, boolean>>({})
@@ -65,6 +65,7 @@ export function ReviewsPanel() {
   const [allAi, setAllAi] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [dismissedLocal, setDismissedLocal] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     fetch('/api/reviews').then(r => r.json())
@@ -84,13 +85,15 @@ export function ReviewsPanel() {
   // Filter by building / unit / channel via the search box (matches the listing name + channel).
   const q = query.trim().toLowerCase()
   const matchQ = (r: Review) => !q || `${r.listing_name || ''} ${r.channel || ''}`.toLowerCase().includes(q)
+  const isDismissed = (r: Review) => !!r.dismissed || !!dismissedLocal[r.id]
   const needs = (s.reviews || [])
-    .filter(r => !r.hasReply && !posted[r.id] && matchQ(r))
+    .filter(r => !r.hasReply && !posted[r.id] && !isDismissed(r) && matchQ(r))
     .sort((a, b) => sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating))
   const replied = (s.reviews || [])
     .filter(r => (r.hasReply || posted[r.id]) && matchQ(r))
     .sort((a, b) => (postedAt[b.id] || 0) - (postedAt[a.id] || 0) || (b.created_at || '').localeCompare(a.created_at || ''))
   const unmapped = (s.unmapped || []).filter(matchQ)
+  const dismissedList = (s.reviews || []).filter(r => isDismissed(r) && matchQ(r))
   const selectedIds = needs.filter(r => selected[r.id])
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
@@ -153,6 +156,26 @@ export function ReviewsPanel() {
     }
   }
 
+  async function dismiss(r: Review) {
+    setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
+    setDismissedLocal(d => ({ ...d, [r.id]: true }))
+    try {
+      const res = await fetch('/api/reviews/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId: r.id }) })
+      const d = await res.json().catch(() => ({})); if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+    } catch (e: any) { setErr(e?.message || String(e)); setDismissedLocal(d => ({ ...d, [r.id]: false })) }
+    finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
+  }
+  async function undismiss(r: Review) {
+    setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
+    try {
+      const res = await fetch('/api/reviews/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId: r.id, undo: true }) })
+      const d = await res.json().catch(() => ({})); if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+      setDismissedLocal(d => ({ ...d, [r.id]: false }))
+      setS(prev => ({ ...prev, reviews: (prev.reviews || []).map(x => x.id === r.id ? { ...x, dismissed: false } : x) }))
+    } catch (e: any) { setErr(e?.message || String(e)) }
+    finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
+  }
+
   return (
     <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden lg:col-span-3">
       <div className="px-4 py-3 border-b border-line">
@@ -172,6 +195,10 @@ export function ReviewsPanel() {
           <button onClick={() => setTab('unmapped')}
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'unmapped' ? 'bg-slate-600 text-white' : 'text-muted border border-line hover:bg-app'}`} title="Reviews on listings not synced to their channel — shown for visibility, can't be replied to, and never count toward scores">
             <PlugZap size={12} /> Not synced <span className={`ml-0.5 px-1 rounded ${tab === 'unmapped' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : unmapped.length}</span>
+          </button>
+          <button onClick={() => setTab('dismissed')}
+            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'dismissed' ? 'bg-slate-600 text-white' : 'text-muted border border-line hover:bg-app'}`} title="Reviews you cleared as no-reply-needed — off the list but still counted in scores">
+            <XCircle size={12} /> Dismissed <span className={`ml-0.5 px-1 rounded ${tab === 'dismissed' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : dismissedList.length}</span>
           </button>
           {tab === 'needs' && !s.loading && needs.length > 0 && (
             <div className="ml-auto flex items-center gap-1.5">
@@ -263,6 +290,29 @@ export function ReviewsPanel() {
             </ul>
           </>
         )
+      ) : tab === 'dismissed' ? (
+        dismissedList.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted">No dismissed reviews.</div>
+        ) : (
+          <>
+            <div className="px-4 pt-3 pb-1 text-[11px] text-muted">Reviews you cleared as &ldquo;no reply needed.&rdquo; They still count toward your scores — they&rsquo;re just off the reply list. Hit Undo to move one back.</div>
+            <ul className="divide-y divide-line/70">
+              {dismissedList.map(r => (
+                <li key={r.id} className="px-4 py-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                      <Star size={11} /> {fmtRating(r.rating)}
+                    </span>
+                    <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
+                    {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                    <button onClick={() => undismiss(r)} disabled={rowBusy[r.id]} className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">Undo</button>
+                  </div>
+                  {r.content && <p className="text-xs text-muted mt-1.5 line-clamp-3">{r.content}</p>}
+                </li>
+              ))}
+            </ul>
+          </>
+        )
       ) : needs.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-muted">All caught up on reviews. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
       ) : (
@@ -299,6 +349,10 @@ export function ReviewsPanel() {
                     disabled={aiBusy[r.id] || rowBusy[r.id]}
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
                     Rephrase…
+                  </button>
+                  <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
+                    <XCircle size={12} /> Dismiss
                   </button>
                   <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>
