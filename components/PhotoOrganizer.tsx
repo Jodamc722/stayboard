@@ -20,6 +20,8 @@ const CAT_COLORS: Record<string, string> = {
   detail: 'bg-zinc-100 text-zinc-600', other: 'bg-zinc-100 text-zinc-600',
 }
 
+const CATS = ['living', 'kitchen', 'dining', 'bedroom', 'bathroom', 'outdoor', 'view', 'amenity', 'exterior', 'detail', 'other']
+
 export function PhotoOrganizer({ listingId, name }: { listingId: string; name: string }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -36,13 +38,14 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
   const [toRemove, setToRemove] = useState<Set<string>>(new Set())
   const [dragId, setDragId] = useState<string | null>(null)
+  const [guidance, setGuidance] = useState('')
 
-  async function analyze(hero?: string) {
+  async function analyze(hero?: string, guidanceText?: string) {
     setBusy(true); setError(null); setPushedMsg(null)
     try {
       const r = await fetch('/api/optimize-photos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, ...(hero ? { heroId: hero } : {}) }),
+        body: JSON.stringify({ listingId, ...(hero ? { heroId: hero } : {}), ...(guidanceText && guidanceText.trim() ? { guidance: guidanceText.trim() } : {}) }),
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Failed to analyze photos.')
@@ -80,6 +83,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   }
   function setCaption(id: string, v: string) {
     setPhotos(prev => ({ ...prev, [id]: { ...prev[id], caption: v } }))
+  }
+  function setCategory(id: string, v: string) {
+    setPhotos(prev => ({ ...prev, [id]: { ...prev[id], category: v } }))
   }
 
   async function push() {
@@ -178,6 +184,17 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 </div>
               </div>
 
+              <div className="rounded-xl border border-brand-200 bg-brand-50/40 px-3 py-2.5 flex items-center gap-2 flex-wrap">
+                <Wand2 size={14} className="text-brand-600 shrink-0" />
+                <input value={guidance} onChange={e => setGuidance(e.target.value)}
+                  placeholder="Tell the AI what to fix — e.g. &lsquo;the dining photos are tagged amenity, classify them as dining&rsquo;"
+                  className="flex-1 min-w-[220px] text-[12px] rounded-lg border border-line bg-white px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-200" />
+                <button onClick={() => analyze(heroId || undefined, guidance)} disabled={busy || !guidance.trim()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12px] font-semibold hover:bg-brand-700 disabled:opacity-50">
+                  <Wand2 size={13} /> Apply correction &amp; re-run
+                </button>
+              </div>
+
               <ol className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {order.map((id, idx) => {
                   const p = photos[id]; if (!p) return null
@@ -199,7 +216,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={p.url} alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
                       <div className="p-2 space-y-1">
-                        {p.category && <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded ${CAT_COLORS[p.category] || CAT_COLORS.other}`}>{p.category}</span>}
+                        <select value={p.category || 'other'} onChange={e => setCategory(id, e.target.value)} title="Photo category — correct the AI's tag" className={`text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300 ${CAT_COLORS[p.category || 'other'] || CAT_COLORS.other}`}>
+                          {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                         {p.reason && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
                         <input value={p.caption || ''} onChange={e => setCaption(id, e.target.value)} placeholder="Add a description…" title="Guest-facing photo description — pushed to Guesty" className="w-full text-[11px] rounded border border-line bg-white px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-200" />
                         {!isHero && (
