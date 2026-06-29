@@ -19,9 +19,15 @@ export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: numbe
     if (!key) return
     try {
       const res = await fetch(key)
-      const json = await res.json()
+      const json = await res.json().catch(() => null)
+      // Don't cache transient failures (e.g. a momentary 401 during a deploy) as if they were data —
+      // that would stick a stale error on the page. Only successful responses are cached + shown.
+      if (!res.ok || (json && json.error)) {
+        if (mounted.current) setError((json && json.error) ? String(json.error) : `Request failed (${res.status})`)
+        return
+      }
       CACHE.set(key, { data: json, at: Date.now() })
-      if (mounted.current) { setData(json); setError(json?.error ?? null) }
+      if (mounted.current) { setData(json); setError(null) }
     } catch (e: any) {
       if (mounted.current) setError(e?.message || String(e))
     } finally {
