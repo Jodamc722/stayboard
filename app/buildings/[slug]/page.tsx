@@ -35,7 +35,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
   const { data: all } = await supabase
     .from('guesty_listings')
-    .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, max_occupancy, address_city, address_state, amenities, pictures, raw')
+    .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, max_occupancy, address_city, address_state, amenities, pictures, raw, last_optimized, photo_score')
     .limit(1000)
 
   const units = (all ?? []).filter((l: any) => rollupBuilding(l.building).toLowerCase() === target)
@@ -144,8 +144,8 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
               <div className="px-4 py-2 border-t border-line flex items-center justify-between gap-2 text-[11px] font-medium flex-wrap">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 ${l.raw?._lastOptimized ? 'text-emerald-700' : 'text-muted'}`} title="Last time content or photos were pushed">
-                    <Sparkles size={11} /> {l.raw?._lastOptimized ? `Optimized ${new Date(l.raw._lastOptimized).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'Not optimized'}
+                  <span className={`inline-flex items-center gap-1 ${(l.last_optimized || l.raw?._lastOptimized) ? 'text-emerald-700' : 'text-muted'}`} title="Last time content or photos were pushed">
+                    <Sparkles size={11} /> {(l.last_optimized || l.raw?._lastOptimized) ? `Optimized ${new Date(l.last_optimized || l.raw._lastOptimized).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'Not optimized'}
                   </span>
                   {(notResponded[l.id] || 0) > 0 && (
                     <span className="inline-flex items-center gap-1 text-amber-700" title="Reviews with no host reply">
