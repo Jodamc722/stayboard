@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
-import { GeneratePlanButton } from '@/components/OpsPlanUI'
+import { GeneratePlanButton, BuildWeeklyPlanButton } from '@/components/OpsPlanUI'
 import { ClipboardList, ArrowUpRight } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -14,7 +14,7 @@ export default async function PlansPage() {
 
   const { data: plans } = await supabase
     .from('ops_plans')
-    .select('id,title,summary,status,created_at,created_by,source')
+    .select('id,title,summary,status,created_at,created_by,source,kind,week_of')
     .order('created_at', { ascending: false })
     .limit(40)
 
@@ -23,10 +23,13 @@ export default async function PlansPage() {
       <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Ops Plans</h1>
-          <p className="text-sm text-muted mt-1">Generate a plan from live data, dispatch by team, and track it to done.</p>
+          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Action Plan</h1>
+          <p className="text-sm text-muted mt-1">Build a plan for the week ahead &mdash; field actions scheduled by each unit&rsquo;s next vacant day, pushed to Breezeway and tracked to done.</p>
         </div>
-        <GeneratePlanButton />
+        <div className="flex items-center gap-2">
+          <GeneratePlanButton />
+          <BuildWeeklyPlanButton />
+        </div>
       </header>
 
       {(plans ?? []).length === 0 ? (
@@ -41,7 +44,7 @@ export default async function PlansPage() {
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-ink text-sm truncate">{p.title || 'Ops plan'}</div>
                   <div className="text-xs text-muted truncate mt-0.5">{p.summary || ''}</div>
-                  <div className="text-[11px] text-muted mt-1">{new Date(p.created_at).toLocaleString()} - {p.source === 'morning-auto' ? 'auto' : 'manual'}{p.created_by ? ` - ${p.created_by.split('@')[0]}` : ''}</div>
+                  <div className="text-[11px] text-muted mt-1">{p.kind === 'weekly' ? 'Weekly action plan' : 'Ops plan'} · {new Date(p.created_at).toLocaleString()}{p.created_by ? ` · ${p.created_by.split('@')[0]}` : ''}</div>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${p.status === 'closed' ? 'bg-ink text-white' : p.status === 'sent' ? 'bg-emerald-50 text-emerald-700' : 'bg-app text-muted'}`}>{p.status}</span>
                 <ArrowUpRight size={15} className="text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
