@@ -25,7 +25,7 @@ export default async function WelcomeCallsPage() {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const toDate = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
   const { data } = await sb.from('guesty_reservations')
-    .select('id,guest_name,guest_phone,listing_name,check_in,status,money_total,custom_fields,source')
+    .select('id,guest_name,guest_phone,listing_name,check_in,check_out,nights,status,money_total,money_paid,money_balance,money_currency,custom_fields,source,raw')
     .gte('check_in', today).lte('check_in', toDate).order('check_in').limit(500)
 
   const fieldVal = (cf: any, kw: string) => {
@@ -54,7 +54,28 @@ export default async function WelcomeCallsPage() {
         value: Number(r.money_total) || 0,
         source: r.source || '',
         notes: (Array.isArray(r.custom_fields) ? ((r.custom_fields.find((c: any) => /reservation[_ ]?notes/i.test(String(c?.fieldName || c?.name || ''))) || {}).value) : '') || '',
-        customFields: (Array.isArray(r.custom_fields) ? r.custom_fields.map((c: any) => ({ fieldId: String(c?.fieldId?._id || c?.fieldId || c?.field?._id || c?._id || ''), name: String(c?.fieldName || c?.name || c?.fieldId?.name || ''), value: typeof c?.value === 'string' ? c.value : (c?.value == null ? '' : String(c.value)) })).filter((c: any) => c.fieldId && c.name) : []),
+        status: (() => {
+          const m = (r.raw && typeof r.raw === 'object') ? (r.raw.money || {}) : {}
+          const balance = typeof m.balanceDue === 'number' ? m.balanceDue : (Number(r.money_balance) || 0)
+          const total = Number(r.money_total) || 0
+          const paidFull = m.isFullyPaid === true || (total > 0 && balance <= 0.01)
+          const items = Array.isArray(m.invoiceItems) ? m.invoiceItems : []
+          const NOTABLE = /park|pet|resort|early\s*check|late\s*check|crib|baby|amenit|pool\s*heat|extra\s*guest|luggage|transfer|airport/i
+          const STD = /accommodation|cleaning|markup|revenue|host channel|management|commission|tourism|tax|booking fee|marketing|length of stay|verify|resolution/i
+          const addOns = items
+            .map((it: any) => ({ t: String(it.title || it.name || '').trim(), amt: Number(it.amount) || 0 }))
+            .filter((x: any) => x.t && NOTABLE.test(x.t) && !STD.test(x.t))
+          const parking = addOns.find((x: any) => /park/i.test(x.t)) || null
+          return {
+            paidFull,
+            balance,
+            currency: r.money_currency || 'USD',
+            parking: parking ? parking.amt : null,
+            addOns: addOns.filter((x: any) => !/park/i.test(x.t)).slice(0, 4),
+            nights: Number(r.nights) || Number((r.raw || {}).nightsCount) || 0,
+            checkOut: String(r.check_out || '').slice(0, 10),
+          }
+        })(),
         done: truthy(fieldVal(r.custom_fields, 'welcome')),
         calledBy: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._by || '',
         calledAt: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._at || '',
