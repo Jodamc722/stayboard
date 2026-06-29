@@ -30,6 +30,11 @@ function unitOf(listingName: string): string {
   return m ? m[1] : ''
 }
 
+// Welcome calls: only LUX buildings + any reservation >= $1k are surfaced as individual calls in Mission
+// Control; everything else rolls up to a count. Adjust this list as the luxury portfolio changes.
+const LUX_BUILDINGS = ['17 west', '17west', 'arya', 'elser', 'amrit', '7071', 'waldorf', 'baccarat', 'bentley']
+const LUX_MIN_VALUE = 1000
+
 export default async function CommandCenterPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -63,7 +68,7 @@ export default async function CommandCenterPage() {
       .eq('approval_required', true).order('created_at', { ascending: false }).limit(40),
     sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, nights, money_total')
       .eq('check_in', todayStr).neq('status', 'canceled').limit(60),
-    sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, custom_fields, status')
+    sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, custom_fields, status, money_total')
       .gte('check_in', todayStr).lte('check_in', in2).order('check_in').limit(120),
     sb.from('guesty_conversation_sentiment').select('conversation_id, guest_name, listing_id, channel, band, dissatisfied, awaiting_reply, top_issue, guest_excerpt, last_message_at, status')
       .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
@@ -83,8 +88,15 @@ export default async function CommandCenterPage() {
     return true
   }
 
+  // Exclude reviews already dismissed ('no reply needed') so they do NOT repopulate after close-out.
+  const dismissedSet = new Set<string>()
+  try {
+    const { data: dz } = await sb.from('guesty_reviews').select('id').eq('dismissed', true).gte('created_at', sixtyAgo)
+    ;(dz ?? []).forEach((d: any) => dismissedSet.add(d.id))
+  } catch { /* dismissed column may not exist yet */ }
+
   const reviewItems = (reviewsRes.data ?? [])
-    .filter((r: any) => liveListing(r.listing_id))
+    .filter((r: any) => liveListing(r.listing_id) && !dismissedSet.has(r.id))
     .map((r: any) => ({
       id: r.id, rating: r.rating != null ? Number(r.rating) : null,
       content: String(r.content || '').slice(0, 4000), channel: r.channel || '',
@@ -113,8 +125,15 @@ export default async function CommandCenterPage() {
   const fieldVal = (cf: any, kw: string) => Array.isArray(cf) ? (cf.find((c: any) => String(c?.fieldName || c?.name || '').toLowerCase().includes(kw)) || {}).value : undefined
   const welcomeDue = (welcomeRes.data ?? [])
     .filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed' && !truthy(fieldVal(r.custom_fields, 'welcome')))
-    .map((r: any) => ({ id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10), today: String(r.check_in).slice(0, 10) <= todayStr }))
-    .sort((a: any, b: any) => (a.today === b.today ? 0 : a.today ? -1 : 1))
+    .map((r: any) => {
+      const lname = String(r.listing_name || '').toLowerCase()
+      const value = Number(r.money_total) || 0
+      const lux = LUX_BUILDINGS.some(b => lname.includes(b))
+      return { id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10), today: String(r.check_in).slice(0, 10) <= todayStr, value, important: lux || value >= LUX_MIN_VALUE }
+    })
+    .sort((a: any, b: any) => (a.today === b.today ? 0 : a.today ? -1 : 1) || (b.value - a.value))
+  const welcomeImportant = welcomeDue.filter((w: any) => w.important)
+  const welcomeOtherCount = welcomeDue.length - welcomeImportant.length
 
   const checkIns = (checkInsRes.data ?? []).map((r: any) => ({ id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), nights: Number(r.nights) || 0 }))
 
@@ -170,7 +189,8 @@ export default async function CommandCenterPage() {
             reviews={reviewItems}
             approvals={approvals}
             messages={messages}
-            welcome={welcomeDue}
+            welcome={welcomeImportant}
+            welcomeOther={welcomeOtherCount}
             checkIns={checkIns}
             overdue={overdue}
             sentiment={sentiment}
