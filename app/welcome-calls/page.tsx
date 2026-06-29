@@ -4,6 +4,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { WelcomeCallsBoard } from '@/components/WelcomeCallsBoard'
 import { PhoneCall } from 'lucide-react'
+import { getToken } from '@/lib/guesty'
+import { unstable_cache } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +17,35 @@ function rollupBuilding(raw: any): string {
   if (s.includes('oasis') || /mahogany|royal\s*palm|bougainvillea|bamboo|sapodilla|jasmine/.test(s)) return 'Oasis'
   return String(raw)
 }
+
+// Some Airbnb reservations embed only a STUB guest (id + name, no phone) even though Guesty has the
+// number on the guest record. For any displayed reservation missing a phone we fetch /guests/{id} and
+// fill it in. Cached 30 min, gentle concurrency to respect Guesty's rate limit.
+const guestPhones = unstable_cache(async (ids: string[]) => {
+  const map: Record<string, string> = {}
+  if (!ids.length) return map
+  let tok = ''
+  try { tok = await getToken() } catch { return map }
+  const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+  const queue = [...ids]
+  async function worker() {
+    while (queue.length) {
+      const id = queue.shift()
+      if (!id) break
+      try {
+        const r = await fetch(`${BASE}/guests/${id}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' })
+        if (r.ok) {
+          const g: any = await r.json()
+          const ph = g?.phone || (Array.isArray(g?.phones) && g.phones.length ? (typeof g.phones[0] === 'string' ? g.phones[0] : (g.phones[0]?.number || g.phones[0]?.phone)) : '')
+          if (ph) map[id] = String(ph)
+        }
+      } catch { /* skip */ }
+      await new Promise(res => setTimeout(res, 120))
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  return map
+}, ['welcome-guest-phones'], { revalidate: 1800 })
 
 export default async function WelcomeCallsPage() {
   const supabase = createClient()
@@ -38,8 +69,8 @@ export default async function WelcomeCallsPage() {
   // Calls are due in the 48h-to-arrival window. Priority buildings get called first.
   const dueDate = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
   const PRIORITY = ['17west', '17 west', 'arya', 'elser', '7071', 'amrit']
-  const rows = (data || [])
-    .filter((r: any) => !/cancel|declin/i.test(String(r.status || '')))
+  const recs = (data || []).filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed')
+  const rows = recs
     .map((r: any) => {
       const listing = r.listing_name || ''
       const check_in = String(r.check_in).slice(0, 10)
@@ -85,6 +116,17 @@ export default async function WelcomeCallsPage() {
         prio: PRIORITY.some(k => lname.includes(k)) ? 0 : 1,       // priority buildings first
       }
     })
+
+  // Backfill phones for displayed (confirmed) reservations whose embedded guest is just a stub.
+  const missing = rows.map((row: any, i: number) => ({ row, i })).filter((x: any) => !x.row.phone && recs[x.i]?.raw?.guest?._id)
+  if (missing.length) {
+    const ids = Array.from(new Set(missing.map((x: any) => recs[x.i].raw.guest._id as string)))
+    const pmap = await guestPhones(ids)
+    for (const x of missing) {
+      const gid = recs[x.i].raw.guest._id
+      if (gid && pmap[gid]) x.row.phone = pmap[gid]
+    }
+  }
 
   return (
     <Shell>
