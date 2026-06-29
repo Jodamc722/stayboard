@@ -1,52 +1,66 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
+import { MessageThread } from '@/components/MessageThread'
+import { ArrowLeft } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
-export default async function MessageThread({ params }: { params: { id: string } }) {
+const CHANNEL_LABELS: Record<string, string> = {
+  airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', homeaway: 'VRBO', booking: 'Booking', 'booking.com': 'Booking',
+  bookingcom: 'Booking', sms: 'SMS', email: 'Email', whatsapp: 'WhatsApp', other: 'Other',
+}
+
+function unitOf(listingName: string): string {
+  const m = String(listingName || '').match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/)
+  return m ? m[1] : ''
+}
+
+export default async function MessageThreadPage({ params }: { params: { id: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  const sb = supabaseAdmin()
   const [{ data: convo }, { data: msgs }] = await Promise.all([
-    supabase.from('guesty_conversations').select('*').eq('id', params.id).maybeSingle(),
-    supabase.from('guesty_messages').select('*').eq('conversation_id', params.id).order('sent_at', { ascending: true }).limit(500)
+    sb.from('guesty_conversations').select('id, reservation_id, listing_id, guest_name, channel, raw').eq('id', params.id).maybeSingle(),
+    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at').eq('conversation_id', params.id).order('sent_at', { ascending: true }).limit(500),
   ])
   if (!convo) notFound()
-  const messages = msgs ?? []
+
+  // Unit / listing name for the header + modal.
+  let listingName = ''
+  if (convo.listing_id) {
+    const { data: l } = await sb.from('guesty_listings').select('nickname, title').eq('id', convo.listing_id).maybeSingle()
+    listingName = l?.nickname || l?.title || ''
+  }
+
+  // Reservation details for the pop-up.
+  let reservation: any = null
+  if (convo.reservation_id) {
+    const { data: r } = await sb.from('guesty_reservations')
+      .select('id, guest_name, guest_phone, listing_name, check_in, check_out, nights, status, money_total, money_balance, money_currency, source')
+      .eq('id', convo.reservation_id).maybeSingle()
+    if (r) reservation = r
+  }
+
+  const channel = CHANNEL_LABELS[String(convo.channel || '').toLowerCase()] || convo.channel || ''
+  const unit = unitOf(listingName || reservation?.listing_name || '')
+  const guest = convo.guest_name || reservation?.guest_name || 'Guest'
 
   return (
     <Shell>
-      <Link href="/messages" className="text-xs text-slate-500 hover:text-slate-900">← All conversations</Link>
-      <header className="mt-3 mb-6 flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{convo.guest_name || 'Guest'}</h1>
-          <p className="text-sm text-slate-500">
-            {(convo.channel || '').toUpperCase()}
-            {convo.reservation_id && <> · <Link href={`/reservations/${convo.reservation_id}`} className="text-brand-600 hover:underline">View reservation</Link></>}
-          </p>
-        </div>
-      </header>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-        {messages.length === 0 ? (
-          <p className="text-center text-slate-400 py-8">No messages cached for this thread yet. Sync to pull latest.</p>
-        ) : (
-          <div className="space-y-3">
-            {messages.map((m: any) => (
-              <div key={m.id} className={`flex ${m.sender === 'guest' ? 'justify-start' : 'justify-end'}`}>
-                <div className={`max-w-[70%] rounded-2xl px-3 py-2 text-sm ${m.sender === 'guest' ? 'bg-slate-100 text-slate-900' : 'bg-brand-500 text-white'}`}>
-                  <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${m.sender === 'guest' ? 'text-slate-500' : 'text-white/70'}`}>{m.sender_name || m.sender}</div>
-                  <div>{m.body}</div>
-                  <div className={`text-[10px] mt-0.5 ${m.sender === 'guest' ? 'text-slate-400' : 'text-white/70'}`}>{m.sent_at ? new Date(m.sent_at).toLocaleString() : ''}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <Link href="/messages" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-3"><ArrowLeft size={15} /> All conversations</Link>
+      <MessageThread
+        conversationId={convo.id}
+        channel={channel}
+        guest={guest}
+        unit={unit}
+        initialMessages={(msgs ?? []) as any}
+        reservation={reservation}
+      />
     </Shell>
   )
 }
