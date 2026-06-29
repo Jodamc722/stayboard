@@ -17,10 +17,18 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [saved, setSaved] = useState<string | null>(null)
 
   async function mark(id: string, done: boolean) {
+    let by = ''
+    if (done) {
+      const last = (typeof window !== 'undefined' && window.localStorage.getItem('wc_caller_name')) || ''
+      const entered = window.prompt('Your name (who made this welcome call)?', last)
+      if (entered === null) return
+      by = entered.trim()
+      if (by) { try { window.localStorage.setItem('wc_caller_name', by) } catch { /* ignore */ } }
+    }
     const note = done ? (draft[id] || '').trim() : ''
     setBusy(id); setError(null)
     try {
-      const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, done, note }) })
+      const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, done, note, by }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update Guesty.')
       setRows(prev => prev.map(x => x.id === id ? { ...x, done, calledBy: done ? (j.by || x.calledBy) : '', calledAt: done ? (j.at || '') : '', notes: (done && j.notes) ? j.notes : x.notes } : x))
       if (done) setDraft(d => ({ ...d, [id]: '' }))
