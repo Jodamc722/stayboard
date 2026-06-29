@@ -51,7 +51,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const sb = supabaseAdmin()
   const { data: listing } = await sb
     .from('guesty_listings')
-    .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, beds, max_occupancy, address_full, address_city, address_state, amenities, pictures, tags, raw')
+    .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, beds, max_occupancy, address_full, address_city, address_state, amenities, pictures, tags, raw, last_optimized, photo_score')
     .eq('id', params.id)
     .maybeSingle()
 
@@ -70,7 +70,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const buildingName = rollupBuilding(listing.building)
   const streetAddress = (listing as any).address_full || raw?.address?.full || null
   // When the listing was last pushed/optimized (content or photo order). Shown so the team can see freshness at a glance.
-  const lastOptIso: string | null = (typeof raw?._lastOptimized === 'string' ? raw._lastOptimized : null)
+  const lastOptIso: string | null = ((listing as any).last_optimized || (typeof raw?._lastOptimized === 'string' ? raw._lastOptimized : null)) || null
   const lastOptimized = lastOptIso ? new Date(lastOptIso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null
 
   // Direct links to the live listing on each OTA, built from the Guesty channel integrations.
