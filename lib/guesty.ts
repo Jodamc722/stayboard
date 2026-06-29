@@ -311,6 +311,28 @@ export async function syncListings(maxPages = 20, since: string | null = null): 
     const results = data.results || []
     const rows = results.map(mapListing)
     if (rows.length === 0) break
+    // Preserve StayBoard's locally-injected annotations (underscore-prefixed keys Guesty never returns,
+    // e.g. _lastOptimized, _lastRecreated, _photoScore). Without this, every sync overwrites `raw` with
+    // Guesty's copy and wipes them — which is why the "last optimized" date wasn't sticking.
+    try {
+      const ids = (rows as any[]).map(r => r.id).filter(Boolean)
+      if (ids.length) {
+        const { data: existing } = await sb.from('guesty_listings').select('id, raw').in('id', ids)
+        const annoById: Record<string, Record<string, any>> = {}
+        for (const e of (existing || []) as any[]) {
+          const er = e.raw
+          if (er && typeof er === 'object') {
+            const anno: Record<string, any> = {}
+            for (const k of Object.keys(er)) if (k.startsWith('_')) anno[k] = er[k]
+            if (Object.keys(anno).length) annoById[e.id] = anno
+          }
+        }
+        for (const r of rows as any[]) {
+          const anno = annoById[r.id]
+          if (anno && r.raw && typeof r.raw === 'object') r.raw = { ...r.raw, ...anno }
+        }
+      }
+    } catch { /* best effort — if the merge fails, the sync still proceeds */ }
     const { error } = await sb.from('guesty_listings').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert listings: ${error.message}`)
     total += rows.length
