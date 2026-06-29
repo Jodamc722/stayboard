@@ -307,7 +307,8 @@ export function computeScore(listing: any, opts?: {
 
   const title = scoreTitle(name)
   const description = scoreDescription(pub)
-  const settings = scoreSettings(raw, photoCount)
+  const photoScore = (listing?.photo_score && typeof listing.photo_score === 'object') ? listing.photo_score : (raw._photoScore || null)
+  const settings = scoreSettings({ ...raw, _photoScore: photoScore }, photoCount)
   const amen = scoreAmenities(amenities, {
     isBeach: opts?.isBeach,
     siblingNorm: opts?.siblingAmenities ? normAmenities(opts.siblingAmenities) : undefined,
