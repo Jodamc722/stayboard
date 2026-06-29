@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle } from 'lucide-react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
 
@@ -274,7 +274,7 @@ export function ReviewsPanel() {
           <div className="px-4 py-8 text-center text-sm text-muted">No unsynced listings. Everything is connected. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
         ) : (
           <>
-            <div className="px-4 pt-3 pb-1 text-[11px] text-muted">These reviews are on listings that aren't synced to their channel — shown for visibility only. They can't be replied to here and <b>don't count toward the average or health score</b> (positive or negative).</div>
+            <div className="px-4 pt-3 pb-1 text-[11px] text-muted">These reviews are on listings no longer connected to their channel, so <b>they can't be replied to</b> — shown here for visibility only. Confirmed: they are <b>excluded from your health and OTA scores</b> (positive or negative), so they are not helping or hurting your numbers.</div>
             <ul className="divide-y divide-line/70">
               {unmapped.map(r => (
                 <li key={r.id} className="px-4 py-3 border-l-[3px] border-slate-300 bg-slate-50/40">
@@ -285,6 +285,7 @@ export function ReviewsPanel() {
                     <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                     {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
                 {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
+                    <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><Ban size={11} /> Can't reply</span>
                     <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><PlugZap size={11} /> {r.reason || 'Not synced'}</span>
                   </div>
                   {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
