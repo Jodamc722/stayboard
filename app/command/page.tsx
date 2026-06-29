@@ -29,7 +29,7 @@ export default async function CommandCenterPage() {
     { data: awaiting },
   ] = await Promise.all([
     // Unanswered reviews — may be empty before first sync; degrades to 0
-    supabase.from('guesty_reviews').select('*', { count: 'exact', head: true }).eq('has_reply', false),
+    supabase.from('guesty_reviews').select('*', { count: 'exact', head: true }).eq('has_reply', false).gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()),
     // Unread messages — sum unread_count across conversations
     supabase.from('guesty_conversations').select('unread_count'),
     // Overdue open work
