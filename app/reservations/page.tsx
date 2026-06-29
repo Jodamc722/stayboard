@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { DateFilter } from '@/components/DateFilter'
+import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { CalendarDays, LogIn, LogOut, Users, DollarSign, Clock, RefreshCw, AlertTriangle } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -117,6 +118,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
     supabase.from('guesty_sync_status').select('last_sync_at, last_error, items_synced').eq('entity', 'reservations').maybeSingle()
   ])
 
+  const cfMap = await customFieldNameMap()
   const up = upcoming ?? []
   const pastRows = past ?? []
 
@@ -198,9 +200,9 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
                     </h2>
                     <span className="text-[10px] uppercase tracking-wider text-muted font-semibold tabular-nums">{sec.rows.length}</span>
                   </div>
-                  <ResRows rows={sec.rows} todayStr={todayStr} />
+                  <ResRows rows={sec.rows} todayStr={todayStr} cfMap={cfMap} />
                 </section>
-              ))}
+             )) }
             </div>
           )}
 
@@ -213,7 +215,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
                 </h2>
                 <span className="text-[10px] uppercase tracking-wider text-muted font-semibold tabular-nums">{Math.min(pastRows.length, 40)}</span>
               </div>
-              <ResRows rows={pastRows.slice(0, 40)} todayStr={todayStr} muted />
+              <ResRows rows={pastRows.slice(0, 40)} todayStr={todayStr} muted cfMap={cfMap} />
             </section>
           )}
         </>
@@ -223,7 +225,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
 }
 
 // ── Row list ─────────────────────────────────────────────────────────────────
-function ResRows({ rows, todayStr, muted }: { rows: any[]; todayStr: string; muted?: boolean }) {
+function ResRows({ rows, todayStr, muted, cfMap }: { rows: any[]; todayStr: string; muted?: boolean; cfMap: Record<string, string> }) {
   return (
     <>
       {/* Column header — desktop */}
@@ -238,8 +240,10 @@ function ResRows({ rows, todayStr, muted }: { rows: any[]; todayStr: string; mut
           const cur = r.money_currency || 'USD'
           const building = rollupBuilding(r.listing_name)
           const canceled = /cancel|declin/i.test(r.status || '')
+          const cf = filledCustomFields(r.custom_fields, cfMap)
           return (
-            <div key={r.id} className={`grid grid-cols-2 md:grid-cols-[1.6fr_1.3fr_120px_56px_92px] gap-x-3 gap-y-1 px-4 py-3 items-center ${muted ? 'opacity-80' : ''} hover:bg-app transition-colors`}>
+            <div key={r.id} className={`${muted ? 'opacity-80' : ''} hover:bg-app transition-colors`}>
+              <div className="grid grid-cols-2 md:grid-cols-[1.6fr_1.3fr_120px_56px_92px] gap-x-3 gap-y-1 px-4 py-3 items-center">
               {/* Guest */}
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -280,6 +284,16 @@ function ResRows({ rows, todayStr, muted }: { rows: any[]; todayStr: string; mut
                   <div className="text-[10px] text-amber-700 tabular-nums">{fmtMoney(owed, cur)} due</div>
                 )}
               </div>
+              </div>
+              {cf.length > 0 && (
+                <div className="px-4 pb-2.5 -mt-1 flex flex-wrap gap-1">
+                  {cf.map((f, i) => (
+                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-line whitespace-nowrap">
+                      <span className="text-slate-400">{f.name}:</span> {f.value.length > 32 ? f.value.slice(0, 32) + '…' : f.value}
+                    </span>
+                 )) }
+                </div>
+              )}
             </div>
           )
         })}
