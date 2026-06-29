@@ -39,6 +39,14 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   async function copyPhone(id: string, phone: string) {
     try { await navigator.clipboard.writeText(phone); setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 1500) } catch { /* ignore */ }
   }
+  // Talkroute has no click-to-dial API, so we copy the number and open the Talkroute web phone
+  // (reusing one tab) for the caller to paste into the keypad. "Even if it just takes you there."
+  function callViaTalkroute(id: string, phone: string) {
+    const digits = phone.replace(/[^+\d]/g, '')
+    try { navigator.clipboard.writeText(digits) } catch { /* ignore */ }
+    setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 2500)
+    window.open('https://cp.talkroute.com', 'talkroute')
+  }
 
   const money = (n: number) => n ? '$' + Math.round(n).toLocaleString() : ''
   const who = (e: string) => e ? (e.split('@')[0] || e) : ''
@@ -98,9 +106,10 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                 <div className="text-[12px] text-muted mt-0.5">{r.listing} · checks in {new Date(r.check_in + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
                 {r.done && r.calledBy && <div className="text-[11px] text-emerald-700 mt-0.5">Called by {who(r.calledBy)}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}</div>}
                 {r.phone ? (
-                  <div className="text-[12px] mt-1 inline-flex items-center gap-2">
-                    <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>
-                    <button onClick={() => copyPhone(r.id, r.phone)} className="text-muted hover:text-ink inline-flex items-center gap-1">{copied === r.id ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}</button>
+                  <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
+                    <button onClick={() => callViaTalkroute(r.id, r.phone)} title="Copy number & open Talkroute to dial" className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</button>
+                    {copied === r.id ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={11} /> Copied &mdash; paste in Talkroute</span> : <button onClick={() => copyPhone(r.id, r.phone)} className="text-muted hover:text-ink inline-flex items-center gap-1"><Copy size={11} /> Copy</button>}
+                    <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} className="text-muted/70 hover:text-ink" title="Dial with your device's default phone app instead">device</a>
                   </div>
                 ) : <div className="text-[11px] text-muted/70 mt-1">No phone on file</div>}
               </div>
