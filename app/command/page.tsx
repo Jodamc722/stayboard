@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { BrainConsole } from '@/components/BrainConsole'
 import { GeneratePlanButton } from '@/components/OpsPlanUI'
+import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import {
   Sparkles, Star, MessageSquare, AlertTriangle, LogIn, ClipboardCheck,
   ArrowUpRight, ListChecks,
@@ -71,6 +72,11 @@ export default async function CommandCenterPage() {
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {cards.map(c => <AlertCard key={c.label} {...c} />)}
         </div>
+      </div>
+
+      {/* Availability monitor — active listings bookable under 400 days */}
+      <div className="mb-6">
+        <AvailabilityAlert />
       </div>
 
       {/* HERO — Eve console */}
