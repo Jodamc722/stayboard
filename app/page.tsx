@@ -67,10 +67,10 @@ export default async function HomePage() {
       .limit(2000),
     supabase.from('guesty_reservations')
       .select('id, guest_name, listing_name, nights, status, money_total, money_currency')
-      .in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_in', todayStr).order('listing_name').limit(50),
+      .in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_in', todayStr).order('listing_name').limit(500),
     supabase.from('guesty_reservations')
       .select('id, guest_name, listing_name, nights, status, money_total, money_currency')
-      .in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_out', todayStr).order('listing_name').limit(50),
+      .in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_out', todayStr).order('listing_name').limit(500),
     // Revenue: reservations arriving in the next 7 days.
     supabase.from('guesty_reservations')
       .select('money_total, status, check_in')
