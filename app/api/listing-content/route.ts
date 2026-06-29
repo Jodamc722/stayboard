@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     const mergedPub = { ...pub, ...publicDescription }
     const isRecreate = (body as any)?.recreate === true
     const newRaw = { ...raw, publicDescription: mergedPub, _lastOptimized: new Date().toISOString(), ...(isRecreate ? { _lastRecreated: new Date().toISOString() } : {}), ...(title ? { title } : {}) }
-    const update: any = { raw: newRaw }
+    const update: any = { raw: newRaw, last_optimized: new Date().toISOString(), ...(isRecreate ? { last_recreated: new Date().toISOString() } : {}) }
     if (title) update.title = title
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
