@@ -1,10 +1,11 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2, KeyRound } from 'lucide-react'
+import { UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2, KeyRound, SlidersHorizontal } from 'lucide-react'
+import { FEATURES } from '@/lib/features'
 
-type Row = { email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'; invited_by: string | null; created_at: string; last_invited_at: string | null }
+type Row = { email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'; features?: Record<string, boolean> | null; invited_by: string | null; created_at: string; last_invited_at: string | null }
 
-export function UsersAdmin({ myEmail }: { myEmail: string }) {
+export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boolean }) {
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -42,6 +43,18 @@ export function UsersAdmin({ myEmail }: { myEmail: string }) {
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update.')
       load()
     } catch (e: any) { setError(e.message || String(e)) }
+  }
+
+  // Owner-only: toggle one page on/off for a user. Stored as features[key]=false (off); absent/true = on.
+  async function setFeature(email: string, key: string, enabled: boolean) {
+    setError(null); setMsg(null)
+    const u = rows.find(r => r.email === email)
+    const features = { ...(u?.features || {}), [key]: enabled }
+    setRows(rs => rs.map(r => r.email === email ? { ...r, features } : r))   // optimistic
+    try {
+      const r = await fetch('/api/users', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, features }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update page access.')
+    } catch (e: any) { setError(e.message || String(e)); load() }
   }
 
   async function resetPw(email: string) {
@@ -132,6 +145,23 @@ export function UsersAdmin({ myEmail }: { myEmail: string }) {
                     <button onClick={() => resetPw(u.email)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><KeyRound size={13} /> Password</button>
                     <button onClick={() => del(u.email)} disabled={me || u.email === 'jon@stay-hospitality.com'} title={u.email === 'jon@stay-hospitality.com' ? 'The owner account cannot be deleted' : 'Delete user'} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:text-rose-700 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 size={13} /> Delete</button>
                   </div>
+                  {isOwner && u.email !== 'jon@stay-hospitality.com' && (
+                    <details className="basis-full mt-1">
+                      <summary className="text-[12px] font-semibold text-brand-700 cursor-pointer inline-flex items-center gap-1.5 select-none"><SlidersHorizontal size={13} /> Page access ({FEATURES.filter(fe => (u.features?.[fe.key]) !== false).length}/{FEATURES.length})</summary>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {FEATURES.map(fe => {
+                          const on = (u.features?.[fe.key]) !== false
+                          return (
+                            <button key={fe.key} onClick={() => setFeature(u.email, fe.key, !on)}
+                              className={`text-[11px] px-2 py-1 rounded-md border transition-colors ${on ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100' : 'bg-app border-line text-muted hover:bg-white'}`}>
+                              {on ? <Check size={10} className="inline -mt-0.5 mr-0.5" /> : <Ban size={10} className="inline -mt-0.5 mr-0.5" />}{fe.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <p className="text-[10px] text-muted mt-1.5">Green = visible. Off = hidden from their menu and blocked if they type the URL. New pages are on by default. Only you (owner) can change this.</p>
+                    </details>
+                  )}
                 </li>
               )
             })}
