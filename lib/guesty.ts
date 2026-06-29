@@ -104,6 +104,29 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // ------------------------------------------------------------
+// Availability calendar (read-only) — how far out a listing is bookable
+// ------------------------------------------------------------
+export type CalDay = { date?: string; status?: string; allotment?: number | null }
+
+// Retrieve the optimized/minified calendar for one listing over a date range.
+// Response shape varies ({data:[...]} | {data:{days:[...]}} | [...]) so we read defensively.
+export async function getListingCalendar(listingId: string, startDate: string, endDate: string): Promise<CalDay[]> {
+  const payload = await api<any>(`/availability-pricing/api/calendar/listings/minified/${listingId}?startDate=${startDate}&endDate=${endDate}&includeAllotment=true&view=compact`)
+  const days = Array.isArray(payload) ? payload
+    : Array.isArray(payload?.data) ? payload.data
+    : Array.isArray(payload?.data?.days) ? payload.data.days
+    : Array.isArray(payload?.days) ? payload.days
+    : []
+  return days as CalDay[]
+}
+
+// A calendar day is bookable if (multi-unit) allotment > 0, else status === 'available'.
+export function dayIsAvailable(d: CalDay): boolean {
+  if (typeof d.allotment === 'number') return d.allotment > 0
+  return d.status === 'available'
+}
+
+// ------------------------------------------------------------
 // Field mappers (Guesty raw -> Supabase schema)
 // ------------------------------------------------------------
 function nightsBetween(ci?: string, co?: string): number | null {
