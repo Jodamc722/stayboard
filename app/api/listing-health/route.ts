@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, rollupBuildingHealth, type HealthReview } from '@/lib/health-score'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { marketOf, isLux, isVendorManaged, MARKETS } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -70,11 +71,20 @@ export async function GET() {
       const building = rollupBuilding(l.building)
       const reviews = byListing.get(l.id) || []
       const h = computeListingHealth(l, reviews, { openWork: openByBuilding[building] || 0 })
+      const nm = l.title || l.nickname || l.id
+      const lux = isLux(l.building || building, nm)
+      const market = marketOf(l.building || building, l.address_city, nm)
+      const vendorManaged = isVendorManaged(l.building || building, nm)
       return {
         id: l.id,
-        name: l.title || l.nickname || l.id,
+        name: nm,
         building: building !== 'Unassigned' ? building : null,
         unit: l.unit || null,
+        city: l.address_city || null,
+        market,
+        tier: lux ? 'Lux' : 'Other',
+        lux,
+        vendorManaged,
         score: h.score,
         band: h.band,
         unrated: h.unrated,
@@ -86,7 +96,7 @@ export async function GET() {
         topIssue: h.review.topIssue,
         breakdown: h.breakdown,
         channels: h.channels.map(c => ({ label: c.label, score: c.score, band: c.band, avgStars: c.avgStars, reviewCount: c.reviewCount, responseRate: c.responseRate, badge: c.badge })),
-        issues: h.issues.map(i => ({ severity: i.severity, title: i.title, action: i.action, owner: i.owner })),
+        issues: h.issues.map(i => ({ severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain })),
       }
     }).sort((a: any, b: any) => (a.unrated ? 1 : 0) - (b.unrated ? 1 : 0) || a.score - b.score)
 
@@ -104,6 +114,41 @@ export async function GET() {
       return { name: g.name, units: g.units, score: r.score, band: r.band, mean: r.mean, weak: r.weak, min: r.min }
     }).sort((a, b) => (a.score ?? 999) - (b.score ?? 999))
 
+    // ---- Flattened, prioritized PORTFOLIO ACTION list (each listing's issues, tagged w/ market+tier) ----
+    const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+    const actions = scored.flatMap((l: any) =>
+      (l.issues || []).map((i: any) => ({
+        listingId: l.id, listing: l.name, building: l.building, unit: l.unit,
+        market: l.market, tier: l.tier, lux: l.lux, vendorManaged: l.vendorManaged,
+        score: l.score, band: l.band,
+        severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain || 0,
+      }))
+    ).sort((a: any, b: any) =>
+      (SEV_RANK[a.severity] - SEV_RANK[b.severity]) ||
+      (b.gain - a.gain) ||
+      (a.score - b.score)
+    )
+
+    // ---- Segment summary: counts + avg score by market x tier ----
+    const segKey = (m: string, t: string) => m + ' · ' + t
+    const segMap = new Map<string, { market: string; tier: string; units: number; scoreSum: number; rated: number; criticalActions: number; openActions: number }>()
+    for (const l of scored as any[]) {
+      const k = segKey(l.market, l.tier)
+      const g = segMap.get(k) || { market: l.market, tier: l.tier, units: 0, scoreSum: 0, rated: 0, criticalActions: 0, openActions: 0 }
+      g.units += 1
+      if (!l.unrated) { g.scoreSum += l.score; g.rated += 1 }
+      g.openActions += (l.issues || []).length
+      g.criticalActions += (l.issues || []).filter((i: any) => i.severity === 'critical' || i.severity === 'high').length
+      segMap.set(k, g)
+    }
+    const segments = Array.from(segMap.values())
+      .map(g => ({ market: g.market, tier: g.tier, units: g.units, avgScore: g.rated ? Math.round(g.scoreSum / g.rated) : null, openActions: g.openActions, criticalActions: g.criticalActions }))
+      .sort((a, b) => MARKETS.indexOf(a.market as any) - MARKETS.indexOf(b.market as any) || (a.tier === 'Lux' ? -1 : 1))
+
+    // distinct cities seen (to refine the Broward/Miami map if needed)
+    const cityCount: Record<string, number> = {}
+    for (const l of scored as any[]) { const c = l.city || '(none)'; cityCount[c] = (cityCount[c] || 0) + 1 }
+
     const rated = scored.filter((s: any) => !s.unrated)
     const withReviews = scored.filter((s: any) => s.reviewCount > 0)
     const count = (b: string) => scored.filter((s: any) => s.band === b).length
@@ -117,7 +162,7 @@ export async function GET() {
     }
 
     const dataPending = ['Conversion / CTR', 'Price vs. comps', 'Calendar openness', 'Live badge status', 'Acceptance & host-cancellation rate']
-    return NextResponse.json({ summary, listings: scored, buildings, dataPending })
+    return NextResponse.json({ summary, listings: scored, buildings, actions, segments, cities: cityCount, dataPending })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 200 })
   }
