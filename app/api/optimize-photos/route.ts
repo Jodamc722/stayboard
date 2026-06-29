@@ -95,6 +95,8 @@ export async function POST(req: NextRequest) {
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   // Optional: the human's chosen hero _id to keep locked at position 1.
   const lockedHeroId: string | null = typeof body?.heroId === 'string' && body.heroId ? body.heroId : null
+  // Optional free-text host correction/guidance to steer the re-run (e.g. fix a mis-tagged photo).
+  const guidance: string = typeof body?.guidance === 'string' ? body.guidance.trim().slice(0, 600) : ''
 
   const sb = supabaseAdmin()
   const { data: listing, error } = await sb.from('guesty_listings')
@@ -151,6 +153,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
 "order" MUST be a permutation of 1..${toOrder.length} (every photo exactly once).`
 
   const USR = `Property: ${str(listing.title) || str(listing.nickname) || 'listing'} (${str(listing.building) || 'building'}). ${toOrder.length} photos to order (the host's cover photo is separate and stays first). Order them now.`
+  const USR2 = guidance ? `${USR}\n\nHOST CORRECTION — apply this exactly, it overrides your default judgement: ${guidance}` : USR
 
   let modelJson: any = null
   let modelErr: string | null = null
@@ -161,7 +164,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
       body: JSON.stringify({
         model: 'claude-sonnet-4-6', max_tokens: 8000,
         system: SYS,
-        messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: USR2 }, ...photoBlocks] }],
       }),
     })
     const j = await r.json().catch(() => null)
