@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
+import { featureForPath, featureEnabled } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star,
@@ -65,11 +66,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname()
   const [email, setEmail] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [isOwner, setIsOwner] = useState(false)
+  const [features, setFeatures] = useState<Record<string, boolean> | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || null))
-    fetch('/api/access/me').then(r => r.json()).then(j => setIsAdmin(!!j?.isAdmin)).catch(() => {})
+    fetch('/api/access/me').then(r => r.json()).then(j => { setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner); setFeatures(j?.features && typeof j.features === 'object' ? j.features : {}) }).catch(() => {})
   }, [])
 
   async function signOut() {
@@ -82,10 +85,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const isActive = (to: string) => path === to || (to !== '/' && path?.startsWith(to))
 
-  // Admins get a Users link in Settings.
-  const sections = SECTIONS.map(sec => sec.title === 'Settings' && isAdmin
-    ? { ...sec, items: [...sec.items, { to: '/users', label: 'Users & access', Icon: UserCog }] }
-    : sec)
+  // Hide pages a user doesn't have access to (owner always sees all). Then add the admin-only Users link.
+  const canSee = (to: string) => {
+    if (isOwner) return true
+    const feat = featureForPath(to)
+    return !feat || featureEnabled(features, feat.key)
+  }
+  const sections = SECTIONS
+    .map(sec => sec.title === 'Settings' && isAdmin
+      ? { ...sec, items: [...sec.items, { to: '/users', label: 'Users & access', Icon: UserCog }] }
+      : sec)
+    .map(sec => ({ ...sec, items: sec.items.filter(it => it.to === '/users' || canSee(it.to)) }))
+    .filter(sec => sec.items.length > 0)
 
   return (
     <div className="min-h-screen flex bg-app">
