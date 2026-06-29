@@ -5,9 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getToken } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 function rollupBuilding(raw: any): string {
   const s = String(raw || '').toLowerCase()
@@ -215,6 +217,32 @@ export async function POST(req: NextRequest) {
         const out = mode === 'pending' ? pending : mode === 'done' ? list.filter((x: any) => x.welcome_call_done) : list
         return { window_days: win, total: list.length, welcome_done: list.length - pending.length, welcome_pending: pending.length, sensitive_upcoming: list.filter((x: any) => x.sensitive_guest).length, reservations: out.slice(0, 100) }
       }
+      if (name === 'knowledge_search') {
+        let q = db.from('eve_knowledge').select('type, scope, title, content, evidence_count, updated_at').order('evidence_count', { ascending: false }).limit(clampLimit(input?.limit, 40))
+        if (input?.type) q = q.eq('type', input.type)
+        const { data, error } = await q
+        if (error) return { error: 'Knowledge base not set up yet - run migration 008 and POST /api/eve/learn.' }
+        let rows = (data || [])
+        if (input?.query) rows = rows.filter((r: any) => String(r.title + ' ' + (r.content || '') + ' ' + r.scope).toLowerCase().includes(String(input.query).toLowerCase()))
+        if (input?.building) rows = rows.filter((r: any) => String(r.scope).toLowerCase().includes(String(input.building).toLowerCase()) || r.scope === 'portfolio')
+        return { count: rows.length, knowledge: rows.slice(0, clampLimit(input?.limit, 40)) }
+      }
+      if (name === 'guesty_live') {
+        let token: string | null = null
+        try { token = await getToken() } catch { token = null }
+        if (!token) return { error: 'Guesty token unavailable right now.' }
+        const kind = String(input?.kind || '').toLowerCase()
+        const id = String(input?.id || '').trim()
+        let url = ''
+        if (kind === 'reservation' && id) url = `${GBASE}/reservations/${encodeURIComponent(id)}`
+        else if (kind === 'listing' && id) url = `${GBASE}/listings/${encodeURIComponent(id)}`
+        else if (kind === 'path' && input?.path) url = `${GBASE}/${String(input.path).replace(/^\//, '')}`
+        else return { error: 'Provide kind=reservation|listing|path with id (reservation/listing) or path (raw Guesty GET path).' }
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' })
+        const txt = await r.text().catch(() => '')
+        if (!r.ok) return { error: `Guesty ${r.status}: ${txt.slice(0, 200)}` }
+        try { return { kind, id, source: 'live Guesty', data: JSON.parse(txt) } } catch { return { kind, id, source: 'live Guesty', raw: txt.slice(0, 4000) } }
+      }
       return { error: `unknown tool ${name}` }
     } catch (e: any) { return { error: String(e?.message || e).slice(0, 160) } }
   }
@@ -230,6 +258,8 @@ export async function POST(req: NextRequest) {
     { name: 'revenue', description: 'Revenue summary over reservations in a check-in date range (from/to YYYY-MM-DD), optional building. Returns reservations, revenue, nights, ADR.', input_schema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, building: { type: 'string' } } } },
     { name: 'guesty_config', description: 'Deep Guesty operational config for ONE listing (by name or id): check-in/out times, min/max nights, instant book, cancellation policy, property/room type, tags, address, house rules, whether check-in instructions exist, and CUSTOM FIELDS (door/access codes often live here). Use this to answer anything about how a unit is set up in Guesty.', input_schema: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'string' } } } },
     { name: 'portfolio', description: 'Portfolio-wide awareness: total units and counts broken down by building and by status. Use for "how many", "across the portfolio", coverage questions.', input_schema: { type: 'object', properties: {} } },
+    { name: 'knowledge_search', description: 'Eve LEARNED-KNOWLEDGE base, auto-mined from guest messages, reviews and complaints: top FAQs guests ask (with the fix to pre-empt them) and recurring complaint categories (portfolio + per building). Filter by type ("faq"|"complaint"|"insight"|"fact"), query, building. Use it for "what do guests ask most", "biggest complaint drivers", or to ground any recommendation in real patterns.', input_schema: { type: 'object', properties: { type: { type: 'string' }, query: { type: 'string' }, building: { type: 'string' }, limit: { type: 'number' } } } },
+    { name: 'guesty_live', description: 'Go DIRECTLY to the live Guesty API when the synced data is missing or you need the freshest record. kind: "reservation"|"listing" with id, OR "path" with a raw Guesty GET path (e.g. path="reservations?limit=5&sort=-createdAt"). Read-only. Use this to be resourceful when the cached tools do not have what you need.', input_schema: { type: 'object', properties: { kind: { type: 'string' }, id: { type: 'string' }, path: { type: 'string' } } } },
     { name: 'welcome_calls', description: 'Pre-arrival WELCOME CALL tracker. Lists upcoming check-ins (default next 7 days; set days up to 30) and whether each guest\'s welcome call is done (from the welcome_call custom field), plus a sensitive-guest flag. status: "pending"|"done"|"all" (default all). Optional building. Returns counts (welcome_done, welcome_pending, sensitive_upcoming) and the reservations. Use this whenever asked who needs a welcome call or about pre-arrival prep.', input_schema: { type: 'object', properties: { days: { type: 'number' }, status: { type: 'string' }, building: { type: 'string' } } } },
   ]
 
@@ -239,7 +269,7 @@ Talk like a real, smart operator — the way an excellent chief of staff actuall
 
 Be genuinely smart: interpret data, don't just repeat it. Find what matters, reason about WHY, connect signals across reviews, messages, field work and revenue, and tell Jon what you'd do and why.
 
-YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. REVIEW RATINGS are on a 5-STAR scale (Airbnb is /5; Booking.com and Vrbo are /10 and are normalized to /5) - an average rating is ALWAYS between 1.0 and 5.0, NEVER sum ratings; for ANY \"average review score/rating\" question (a building, a unit, or the portfolio) call review_summary and quote its avg_rating instead of averaging numbers yourself. If a tool returns empty, say that data isn't synced rather than guessing. You know Guesty COLD: you also have guesty_config (per-unit check-in/out times, min/max nights, instant book, cancellation, house rules, and custom fields incl. door/access codes) and portfolio (portfolio-wide counts). Chain as many tool calls as you need to dig in - think of it as sending yourself in to investigate. WELCOME CALLS are a priority pre-arrival workflow: a welcome_call custom field tracks whether each guest got their call before arrival - use the welcome_calls tool to surface who still needs one (and flag any sensitive-guest stays), and bring it up proactively when Jon asks about upcoming arrivals.
+YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. REVIEW RATINGS are on a 5-STAR scale (Airbnb is /5; Booking.com and Vrbo are /10 and are normalized to /5) - an average rating is ALWAYS between 1.0 and 5.0, NEVER sum ratings; for ANY \"average review score/rating\" question (a building, a unit, or the portfolio) call review_summary and quote its avg_rating instead of averaging numbers yourself. If a tool returns empty, say that data isn't synced rather than guessing. You know Guesty COLD: you also have guesty_config (per-unit check-in/out times, min/max nights, instant book, cancellation, house rules, and custom fields incl. door/access codes) and portfolio (portfolio-wide counts). Chain as many tool calls as you need to dig in - think of it as sending yourself in to investigate. WELCOME CALLS are a priority pre-arrival workflow: a welcome_call custom field tracks whether each guest got their call before arrival - use the welcome_calls tool to surface who still needs one (and flag any sensitive-guest stays), and bring it up proactively when Jon asks about upcoming arrivals. You also LEARN from the data: knowledge_search is your auto-mined knowledge base (top guest FAQs + the fix, recurring complaint categories per building) - use it for FAQ / complaint-pattern questions and to ground recommendations in real patterns. And you can reach the LIVE Guesty API directly via guesty_live when the synced data is missing or you need the freshest record - be resourceful and go get it rather than saying you don't have it.
 
 TEAMS: work is run by three teams — CCS, Miami, Broward. Organize dispatched actions by team. Refer to buildings by rolled-up name (Botanica, Oasis, Arya).
 
