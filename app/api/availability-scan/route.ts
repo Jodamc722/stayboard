@@ -103,8 +103,19 @@ export async function GET(req: NextRequest) {
       const t = new Date(); const sD = ymd(t); const eD = ymd(new Date(t.getTime() + 600 * 86400000))
       const tok = await getToken()
       const rr = await fetch(`https://open-api.guesty.com/v1/availability-pricing/api/calendar/listings/minified/${probe}?startDate=${sD}&endDate=${eD}&includeAllotment=true&view=compact`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' })
-      const body = await rr.text()
-      return NextResponse.json({ status: rr.status, len: body.length, body: body.slice(0, 1600) })
+      const j = JSON.parse(await rr.text())
+      const cal: any[] = j?.data?.days?.calendar || j?.data?.calendar || []
+      const tally: Record<string, number> = {}
+      let furthestNoBw: string | null = null
+      let furthestNoBlocks: string | null = null
+      for (const d of cal) {
+        const bl = d?.blocks || {}
+        for (const k of Object.keys(bl)) { if (bl[k]) tally[k] = (tally[k] || 0) + 1 }
+        if (!bl.bw && d?.date) furthestNoBw = d.date
+        const anyBlock = Object.keys(bl).some(k => bl[k])
+        if (!anyBlock && d?.date) furthestNoBlocks = d.date
+      }
+      return NextResponse.json({ status: rr.status, calLen: cal.length, firstDay: cal[0], lastDay: cal[cal.length - 1], blockKeyTally: tally, furthestNoBw, furthestNoBlocks })
     } catch (e: any) { return NextResponse.json({ probeError: String(e?.message || e).slice(0, 500) }, { status: 200 }) }
   }
 
