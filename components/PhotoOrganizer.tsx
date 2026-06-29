@@ -101,7 +101,10 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Failed to push order.')
-      setPushedMsg(`Pushed to Guesty: ${j.count} photos (order + descriptions)${j.removed ? `, ${j.removed} removed` : ''}. Syncs to all channels shortly.`)
+      const base = `${j.count} photos (order + descriptions)${j.removed ? `, ${j.removed} removed` : ''}`
+      setPushedMsg(j.verified
+        ? `\u2713 Pushed to Guesty and verified live: ${base}. Now syncing to all channels (Airbnb, Vrbo, etc.).`
+        : `Pushed to Guesty: ${base}. ${j.verifyNote || 'Guesty is applying it across channels \u2014 give it a moment.'}`)
       setToRemove(new Set())
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
