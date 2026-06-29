@@ -34,7 +34,12 @@ export async function GET() {
   const { error } = await requireAdmin()
   if (error) return error
   const sb = supabaseAdmin()
-  const { data, error: e } = await sb.from('app_users').select('email, role, status, invited_by, created_at, last_invited_at').order('created_at', { ascending: true })
+  let { data, error: e } = await sb.from('app_users').select('email, role, status, features, invited_by, created_at, last_invited_at').order('created_at', { ascending: true })
+  if (e) {
+    // The features column may not exist yet (pre-migration 005) — fall back so the page still loads.
+    const fb = await sb.from('app_users').select('email, role, status, invited_by, created_at, last_invited_at').order('created_at', { ascending: true })
+    data = fb.data as any; e = fb.error
+  }
   if (e) return NextResponse.json({ error: `Could not load users: ${e.message}. Has the app_users table been created?` }, { status: 500 })
   return NextResponse.json({ users: data || [] })
 }
@@ -99,6 +104,10 @@ export async function PATCH(req: NextRequest) {
   const patch: any = {}
   if (body?.role === 'admin' || body?.role === 'member') patch.role = body.role
   if (body?.status === 'active' || body?.status === 'disabled') patch.status = body.status
+  if (body?.features && typeof body.features === 'object' && !Array.isArray(body.features)) {
+    if (clean(access.email) !== 'jon@stay-hospitality.com') return NextResponse.json({ error: 'Only the owner can change page access.' }, { status: 403 })
+    if (email !== 'jon@stay-hospitality.com') patch.features = body.features  // owner always keeps all pages
+  }
   if (Object.keys(patch).length === 0 && !password) return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 })
   // Guard: never let an admin lock themselves out of admin or disable themselves.
   if (email === access.email && (patch.role === 'member' || patch.status === 'disabled')) {
