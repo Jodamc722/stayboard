@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     const { data: row } = await sb.from('guesty_listings').select('raw').eq('id', listingId).maybeSingle()
     const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
     const newRaw = { ...raw, amenities: updated }
-    await sb.from('guesty_listings').update({ amenities: updated, raw: newRaw }).eq('id', listingId)
+    await sb.from('guesty_listings').update({ amenities: updated, raw: newRaw, amenities_pushed_at: new Date().toISOString() }).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 
   return NextResponse.json({ ok: true, amenities: updated, count: updated.length })
