@@ -83,6 +83,15 @@ export async function GET(req: Request) {
       // Active (mapped, synced) reviews are draftable + count toward scores. Unmapped reviews
       // (listing not synced, inactive, or flagged not-mapped-on-channel) are shown separately,
       // can't be replied to, and never count toward the average / health score.
+      // Resilient: which of these reviews has the team dismissed ("no reply needed")? The `dismissed`
+      // column may not exist yet (pre-migration) — if so this just yields an empty set.
+      const dismissedIds = new Set<string>()
+      try {
+        const { data: dz } = await sb.from('guesty_reviews').select('id').eq('dismissed', true)
+          .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString())
+        ;(dz || []).forEach((d: any) => dismissedIds.add(d.id))
+      } catch { /* column not present yet */ }
+
       const reviews: any[] = []
       const unmapped: any[] = []
       for (const r of rows as any[]) {
@@ -93,7 +102,7 @@ export async function GET(req: Request) {
         else if (DEAD_STATUSES.has(m.status)) reason = 'Listing inactive'
         else if (r.excluded_from_score) reason = r.exclude_reason || 'Not mapped on channel'
         if (reason) unmapped.push({ ...shape(r, m), reason })
-        else reviews.push(shape(r, m))
+        else reviews.push({ ...shape(r, m), dismissed: dismissedIds.has(r.id) })
       }
 
       return NextResponse.json({ reviews, unmapped })
