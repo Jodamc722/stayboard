@@ -5,12 +5,13 @@ import { useMemo, useState } from 'react'
 import { useCachedFetch } from '@/lib/swr'
 import Link from 'next/link'
 import { Shell } from '@/components/Shell'
-import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Building2, Wrench, ArrowRight, Info } from 'lucide-react'
+import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Building2, Wrench, ArrowRight, Info, Crown, MapPin, ListChecks } from 'lucide-react'
 
 type Channel = { label: string; score: number; band: string; avgStars: number | null; reviewCount: number; responseRate: number | null; badge: string | null }
 type Issue = { severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string }
 type Row = {
   id: string; name: string; building: string | null; unit: string | null
+  market: string; tier: string; lux: boolean; vendorManaged: boolean; city: string | null
   score: number; band: string; unrated: boolean; optimizeScore: number
   avgStars: number | null; reviewCount: number; responseRate: number | null
   recurring: string[]; topIssue: string | null
@@ -18,7 +19,9 @@ type Row = {
   channels: Channel[]; issues: Issue[]
 }
 type Bld = { name: string; units: number; score: number | null; band: string; mean: number | null; weak: number; min: number | null }
-type Data = { summary: any; listings: Row[]; buildings: Bld[]; dataPending: string[]; error?: string }
+type Action = { listingId: string; listing: string; building: string | null; unit: string | null; market: string; tier: string; lux: boolean; vendorManaged: boolean; score: number; band: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string; gain: number }
+type Segment = { market: string; tier: string; units: number; avgScore: number | null; openActions: number; criticalActions: number }
+type Data = { summary: any; listings: Row[]; buildings: Bld[]; actions: Action[]; segments: Segment[]; cities: Record<string, number>; dataPending: string[]; error?: string }
 
 const BAND: Record<string, { ring: string; text: string; bg: string; dot: string; label: string }> = {
   elite: { ring: 'ring-emerald-300', text: 'text-emerald-700', bg: 'bg-emerald-50', dot: 'bg-emerald-500', label: 'Elite' },
@@ -39,8 +42,11 @@ export default function HealthPage() {
   const { data, loading } = useCachedFetch<Data>('/api/listing-health')
   const [q, setQ] = useState('')
   const [band, setBand] = useState<'all' | 'critical' | 'risk' | 'watch' | 'healthy'>('all')
-  const [view, setView] = useState<'units' | 'buildings'>('units')
+  const [view, setView] = useState<'actions' | 'units' | 'buildings'>('actions')
   const [open, setOpen] = useState<string | null>(null)
+  const [market, setMarket] = useState<'all' | 'Miami' | 'Broward' | 'North'>('all')
+  const [tier, setTier] = useState<'all' | 'Lux' | 'Other'>('all')
+  const [sev, setSev] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all')
 
 
   const rows = useMemo(() => {
@@ -49,6 +55,15 @@ export default function HealthPage() {
     if (q.trim()) { const s = q.toLowerCase(); r = r.filter(x => x.name.toLowerCase().includes(s) || (x.building || '').toLowerCase().includes(s) || (x.topIssue || '').toLowerCase().includes(s)) }
     return r
   }, [data, q, band])
+
+  const actionRows = useMemo(() => {
+    let a = data?.actions ? [...data.actions] : []
+    if (market !== 'all') a = a.filter(x => x.market === market)
+    if (tier !== 'all') a = a.filter(x => x.tier === tier)
+    if (sev !== 'all') a = a.filter(x => x.severity === sev)
+    if (q.trim()) { const t = q.toLowerCase(); a = a.filter(x => x.listing.toLowerCase().includes(t) || (x.building || '').toLowerCase().includes(t) || x.title.toLowerCase().includes(t) || x.owner.toLowerCase().includes(t)) }
+    return a
+  }, [data, market, tier, sev, q])
 
   const s = data?.summary
 
@@ -85,8 +100,8 @@ export default function HealthPage() {
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, issue…" className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-line bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </div>
             <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
-              {(['units', 'buildings'] as const).map(v => (
-                <button key={v} onClick={() => setView(v)} className={`px-3 py-2 font-medium capitalize ${view === v ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{v}</button>
+              {(['actions', 'units', 'buildings'] as const).map(v => (
+                <button key={v} onClick={() => setView(v)} className={`px-3 py-2 font-medium capitalize ${view === v ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{v === 'actions' ? 'Action board' : v}</button>
               ))}
             </div>
             {view === 'units' && (
@@ -96,9 +111,85 @@ export default function HealthPage() {
                 ))}
               </div>
             )}
+            {view === 'actions' && (<>
+              <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
+                {(['all', 'Miami', 'Broward', 'North'] as const).map(m => (
+                  <button key={m} onClick={() => setMarket(m)} className={`px-3 py-2 font-medium ${market === m ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{m === 'all' ? 'All markets' : m}</button>
+                ))}
+              </div>
+              <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
+                {(['all', 'Lux', 'Other'] as const).map(t => (
+                  <button key={t} onClick={() => setTier(t)} className={`px-3 py-2 font-medium ${tier === t ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{t === 'all' ? 'All tiers' : t}</button>
+                ))}
+              </div>
+              <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
+                {(['all', 'critical', 'high', 'medium', 'low'] as const).map(sv => (
+                  <button key={sv} onClick={() => setSev(sv)} className={`px-3 py-2 font-medium capitalize ${sev === sv ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{sv}</button>
+                ))}
+              </div>
+            </>)}
           </div>
 
-          {view === 'buildings' ? (
+          {view === 'actions' ? (
+            <>
+              {/* Segment scoreboard: market x tier */}
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5 mb-4">
+                {data!.segments.filter(sg => sg.units > 0).map(sg => {
+                  const active = market === sg.market && tier === sg.tier
+                  return (
+                    <button key={sg.market + sg.tier} onClick={() => { setMarket(active ? 'all' : sg.market as any); setTier(active ? 'all' : sg.tier as any) }}
+                      className={`text-left rounded-xl border px-3 py-2.5 transition ${active ? 'border-brand-300 bg-brand-50 ring-1 ring-brand-200' : 'border-line bg-white hover:bg-app'}`}>
+                      <div className="flex items-center gap-1 text-[11px] font-semibold text-ink">
+                        {sg.tier === 'Lux' ? <Crown size={11} className="text-amber-500" /> : <MapPin size={11} className="text-muted" />}
+                        {sg.market} · {sg.tier}
+                      </div>
+                      <div className="text-xl font-bold tabular-nums text-ink mt-1">{sg.avgScore ?? '—'}</div>
+                      <div className="text-[10px] text-muted">{sg.units} units · {sg.openActions} actions{sg.criticalActions > 0 && <span className="text-rose-600 font-semibold"> · {sg.criticalActions} urgent</span>}</div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {actionRows.length === 0 ? (
+                <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No actions match these filters — nothing pending here.</div>
+              ) : (
+                <div className="space-y-4">
+                  {(['critical', 'high', 'medium', 'low'] as const).map(level => {
+                    const group = actionRows.filter(a => a.severity === level)
+                    if (group.length === 0) return null
+                    return (
+                      <div key={level}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className={`text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${SEV[level]}`}>{level}</span>
+                          <span className="text-[12px] text-muted">{group.length} action{group.length > 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="rounded-2xl border border-line bg-white overflow-hidden">
+                          {group.map((a, k) => (
+                            <div key={a.listingId + k} className="border-b border-line last:border-0 px-4 py-3 flex items-start gap-3 hover:bg-app/50">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[13px] font-semibold text-ink">{a.title}</span>
+                                  {a.gain > 0 && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">+{a.gain} pts</span>}
+                                </div>
+                                <div className="text-[12px] text-muted mt-1">{a.action}</div>
+                                <div className="text-[11px] mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                                  <Link href={`/listings/${a.listingId}`} className="font-semibold text-brand-700 hover:text-brand-800 inline-flex items-center gap-1">{a.listing} <ArrowRight size={11} /></Link>
+                                  <span className="inline-flex items-center gap-1 text-muted">{a.tier === 'Lux' ? <Crown size={10} className="text-amber-500" /> : null}{a.market} · {a.tier}</span>
+                                  {a.vendorManaged && <span className="text-[10px] text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded">vendor-managed</span>}
+                                  <span className="inline-flex items-center gap-1 text-brand-700 font-medium"><Wrench size={11} /> {a.owner}</span>
+                                  <span className="text-muted">score {a.score}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          ) : view === 'buildings' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {data!.buildings.map(b => {
                 const ui = BAND[b.band] || BAND.neutral
@@ -131,6 +222,9 @@ export default function HealthPage() {
                         <div className="text-sm font-semibold text-ink truncate">{r.name}</div>
                         <div className="text-[11px] text-muted flex flex-wrap gap-x-2.5 gap-y-0.5 mt-0.5">
                           {r.building && <span className="inline-flex items-center gap-1"><Building2 size={10} /> {r.building}</span>}
+                          <span className="text-muted">{r.market}</span>
+                          {r.lux && <span className="text-[10px] text-amber-700 bg-amber-50 px-1 rounded inline-flex items-center gap-0.5"><Crown size={9} className="text-amber-500" />Lux</span>}
+                          {r.vendorManaged && <span className="text-[10px] text-violet-700 bg-violet-50 px-1 rounded">vendor</span>}
                           {r.avgStars != null && <span className="inline-flex items-center gap-0.5"><Star size={10} className="text-amber-500 fill-amber-500" />{r.avgStars} · {r.reviewCount}</span>}
                           {r.responseRate != null && <span>{r.responseRate}% replied</span>}
                           <span>optimize {r.optimizeScore}</span>
