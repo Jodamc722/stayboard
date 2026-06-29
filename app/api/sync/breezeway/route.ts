@@ -67,6 +67,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, count: arr.length, sample: arr.slice(0, 5).map((p: any) => ({ id: p?.id, name: p?.name, employee_code: p?.employee_code ?? null })) })
     }
 
+    // 4b) SYNC properties into breezeway_properties (Guesty id -> home_id map for task creation).
+    if (params.get('sync') === 'properties') {
+      const all: any[] = []
+      for (let page = 1; page <= 12; page++) {
+        const r = await bzApi(`/property?limit=100&page=${page}`)
+        if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
+        const arr = asArray(r.data)
+        all.push(...arr)
+        const total = r.data?.total_results ?? r.data?.total ?? null
+        if (arr.length < 100) break
+        if (total && all.length >= total) break
+      }
+      const rows = all.filter((p: any) => p?.id != null).map((p: any) => ({
+        home_id: Number(p.id),
+        reference_property_id: p?.reference_property_id != null ? String(p.reference_property_id) : null,
+        name: p?.name || null,
+        status: p?.status || null,
+        updated_at: new Date().toISOString(),
+      }))
+      const db = supabaseAdmin()
+      const { error } = await db.from('breezeway_properties').upsert(rows, { onConflict: 'home_id' })
+      if (error) return NextResponse.json({ error: `breezeway_properties upsert: ${error.message}. Run migration 009.` }, { status: 200 })
+      const mapped = rows.filter((r: any) => r.reference_property_id).length
+      return NextResponse.json({ ok: true, synced: rows.length, withGuestyId: mapped })
+    }
+
     // 5) RECONCILE: every Breezeway property vs our Guesty listings + upcoming reservations.
     //    Flags Breezeway properties that are NOT an active Guesty listing and have no
     //    upcoming reservations — i.e. stale entries that can be removed from Breezeway.
