@@ -1,9 +1,8 @@
-// Read-only availability monitor. For every ACTIVE listing, reads its Guesty calendar over the next
-// ~600 days and computes the "bookable horizon" = how many days out a guest can still place a booking
-// (the furthest date still inside the listing's booking window; Guesty marks dates beyond the window
-// with a `bw` block). Flags any active listing whose horizon is under THRESHOLD days (target TARGET).
-// Powers the Command Center alert. Does NOT change anything in Guesty. Gentle on Guesty's rate limit:
-// pre-warms one token, low concurrency + jittered pacing, and a single retry pass for any failures.
+// Read-only availability monitor for the Command Center. For each ACTIVE listing we only need to know
+// whether a guest could still book ~400 days out, so PASS 1 fetches a single calendar day at today+400
+// (tiny payload) and checks for a `bw` (booking-window) block. Only the listings that fail get PASS 2,
+// a full ~600-day read to compute their exact bookable horizon. An internal deadline guarantees the
+// route always returns JSON (never a platform timeout). Does NOT change anything in Guesty.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -13,12 +12,13 @@ import { unstable_cache } from 'next/cache'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-const TARGET = 600     // days we want every active listing bookable out to
-const THRESHOLD = 400  // alert if bookable horizon is under this
-const CONCURRENCY = 3
+const TARGET = 600
+const THRESHOLD = 400
+const PASS1_CONCURRENCY = 4
+const PASS2_CONCURRENCY = 2
+const DEADLINE_MS = 80000
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-
 function ymd(d: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 }
@@ -30,16 +30,20 @@ function daysBetween(fromYmd: string, toYmd: string): number {
 
 type Lst = { id: string; nickname: string | null; title: string | null; building: string | null }
 type Flagged = { id: string; name: string; building: string | null; horizonDays: number; furthestDate: string | null }
+const nameOf = (l: Lst) => l.nickname || l.title || l.id
 
-// Returns horizon days, or null on failure (so the caller can retry).
-async function horizonFor(l: Lst, startStr: string, endStr: string): Promise<number | null> {
-  const days = await getListingCalendar(l.id, startStr, endStr)
-  if (days.length === 0) return null
-  let furthest: string | null = null
-  for (const d of days) {
-    if (d?.date && dayIsAvailable(d) && (!furthest || d.date > furthest)) furthest = d.date
+async function pool<T>(items: T[], n: number, deadline: number, fn: (it: T) => Promise<void>) {
+  const queue = [...items]
+  async function worker() {
+    while (queue.length && Date.now() < deadline) {
+      const it = queue.shift()
+      if (it === undefined) break
+      await fn(it)
+      await sleep(60 + Math.floor(Math.random() * 90))
+    }
   }
-  return furthest ? daysBetween(startStr, furthest) : 0
+  await Promise.all(Array.from({ length: Math.min(n, items.length || 1) }, worker))
+  return queue.length // leftover (not reached before deadline)
 }
 
 async function runScan() {
@@ -51,52 +55,42 @@ async function runScan() {
   if (error) throw new Error(error.message)
   const active = (listings ?? []) as Lst[]
 
-  // Pre-warm a single shared token so the workers don't each trigger an auth refresh.
-  try { await getToken() } catch { /* ignore */ }
+  try { await getToken() } catch { /* prewarm */ }
 
   const today = new Date()
   const startStr = ymd(today)
-  const endStr = ymd(new Date(today.getTime() + (TARGET + 5) * 86400000))
+  const probeStr = ymd(new Date(today.getTime() + THRESHOLD * 86400000))   // the +400d day
+  const fullEndStr = ymd(new Date(today.getTime() + (TARGET + 5) * 86400000))
+  const deadline = Date.now() + DEADLINE_MS
 
-  const horizons = new Map<string, number>()
-  const failed: Lst[] = []
-
-  const queue = [...active]
-  async function worker() {
-    while (queue.length) {
-      const l = queue.shift()
-      if (!l) break
-      try {
-        const h = await horizonFor(l, startStr, endStr)
-        if (h == null) failed.push(l); else horizons.set(l.id, h)
-      } catch { failed.push(l) }
-      await sleep(80 + Math.floor(Math.random() * 120))
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, active.length || 1) }, worker))
-
-  // One gentle retry pass (sequential, slower) for anything that rate-limited.
+  // PASS 1 — single-day probe at +400d.
+  const candidates: Lst[] = []
   const errors: string[] = []
-  if (failed.length) {
-    await sleep(3000)
-    for (const l of failed) {
-      const name = l.nickname || l.title || l.id
-      try {
-        const h = await horizonFor(l, startStr, endStr)
-        if (h == null) errors.push(`${name}: empty calendar`); else horizons.set(l.id, h)
-      } catch (e: any) {
-        errors.push(`${name}: ${String(e?.message || e).slice(0, 100)}`)
-      }
-      await sleep(300)
+  let checked = 0
+  const leftover1 = await pool(active, PASS1_CONCURRENCY, deadline, async (l) => {
+    try {
+      const days = await getListingCalendar(l.id, probeStr, probeStr)
+      checked++
+      const d = days[0]
+      if (!d || !dayIsAvailable(d)) candidates.push(l) // no day or beyond booking window
+    } catch (e: any) {
+      errors.push(`${nameOf(l)}: ${String(e?.message || e).slice(0, 90)}`)
     }
-  }
+  })
 
+  // PASS 2 — exact horizon only for flagged candidates.
   const flagged: Flagged[] = []
-  for (const l of active) {
-    const h = horizons.get(l.id)
-    if (h == null) continue
-    if (h < THRESHOLD) flagged.push({ id: l.id, name: l.nickname || l.title || l.id, building: l.building, horizonDays: h, furthestDate: null })
-  }
+  await pool(candidates, PASS2_CONCURRENCY, deadline + 20000, async (l) => {
+    try {
+      const days = await getListingCalendar(l.id, startStr, fullEndStr)
+      let furthest: string | null = null
+      for (const d of days) if (d?.date && dayIsAvailable(d) && (!furthest || d.date > furthest)) furthest = d.date
+      const h = furthest ? daysBetween(startStr, furthest) : 0
+      flagged.push({ id: l.id, name: nameOf(l), building: l.building, horizonDays: h, furthestDate: furthest })
+    } catch {
+      flagged.push({ id: l.id, name: nameOf(l), building: l.building, horizonDays: -1, furthestDate: null })
+    }
+  })
   flagged.sort((a, b) => a.horizonDays - b.horizonDays)
 
   return {
@@ -105,11 +99,12 @@ async function runScan() {
     threshold: THRESHOLD,
     generatedAt: new Date().toISOString(),
     totalActive: active.length,
-    scanned: horizons.size,
+    checked,
+    notReached: leftover1,
     flaggedCount: flagged.length,
     flagged,
     errorsCount: errors.length,
-    errors: errors.slice(0, 10),
+    errors: errors.slice(0, 8),
   }
 }
 
