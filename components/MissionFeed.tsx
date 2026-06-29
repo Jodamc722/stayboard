@@ -199,7 +199,7 @@ export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, o
           <ul className="divide-y divide-line/70">
             {messages.slice(0, 6).map(m => (
               <li key={m.id} className="px-4 py-3">
-                <Link href="/messages" className="block group">
+                <Link href={`/messages/${m.id}`} className="block group">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-ink group-hover:text-brand-700">{m.guest}</span>
                     {m.unit && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">Unit {m.unit}</span>}
