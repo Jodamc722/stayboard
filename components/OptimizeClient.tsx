@@ -188,6 +188,7 @@ export function OptimizeClient({ listings }: { listings: Listing[] }) {
                     {selected.bathrooms != null && <span className="inline-flex items-center gap-1"><Bath size={12} />{selected.bathrooms} ba</span>}
                     {selected.max_occupancy != null && <span className="inline-flex items-center gap-1"><Users size={12} />sleeps {selected.max_occupancy}</span>}
                   </div>
+                  <a href={`https://app.guesty.com/properties/${selected.id}/property/v2`} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-brand-600 hover:text-brand-700">Open property in Guesty ↗</a>
                 </div>
                 <button onClick={generate} disabled={busy}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
