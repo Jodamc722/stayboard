@@ -16,7 +16,7 @@ const TARGET = 600
 const THRESHOLD = 400
 const PASS1_CONCURRENCY = 4
 const PASS2_CONCURRENCY = 2
-const DEADLINE_MS = 80000
+const DEADLINE_MS = 40000
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 function ymd(d: Date): string {
@@ -80,7 +80,7 @@ async function runScan() {
 
   // PASS 2 — exact horizon only for flagged candidates.
   const flagged: Flagged[] = []
-  await pool(candidates, PASS2_CONCURRENCY, deadline + 20000, async (l) => {
+  await pool(candidates, PASS2_CONCURRENCY, deadline + 8000, async (l) => {
     try {
       const days = await getListingCalendar(l.id, startStr, fullEndStr)
       let furthest: string | null = null
