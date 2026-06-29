@@ -15,6 +15,52 @@ const MAX_PHOTOS = 40 // keep total vision input tokens under the org's 10k/min 
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
+// Tolerant JSON reader for vision output. The model occasionally returns slightly long or truncated
+// JSON (one description per photo over many photos); rather than hard-failing, we salvage the largest
+// well-formed prefix by cutting at the last clean element boundary and closing any open brackets.
+// Downstream code already tolerates a partial items/order array (it fills in any omitted photos).
+function closeOpenBrackets(s: string): string {
+  let inStr = false, esc = false
+  const st: string[] = []
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (esc) { esc = false; continue }
+    if (c === '\\') { if (inStr) esc = true; continue }
+    if (c === '"') { inStr = !inStr; continue }
+    if (inStr) continue
+    if (c === '{') st.push('}')
+    else if (c === '[') st.push(']')
+    else if (c === '}' || c === ']') st.pop()
+  }
+  let out = s
+  if (inStr) out += '"'
+  for (let i = st.length - 1; i >= 0; i--) out += st[i]
+  return out
+}
+function safeParseModelJson(text: string): any {
+  const start = text.indexOf('{')
+  if (start < 0) return null
+  const s = text.slice(start).trim()
+  try { return JSON.parse(s) } catch { /* fall through to repair */ }
+  // Find the last position at a clean value boundary (after a closed bracket/string, or before a
+  // dangling comma) that is not inside a string.
+  let inStr = false, esc = false, lastSafe = -1
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (esc) { esc = false; continue }
+    if (c === '\\') { if (inStr) esc = true; continue }
+    if (c === '"') { inStr = !inStr; if (!inStr) lastSafe = i + 1; continue }
+    if (inStr) continue
+    if (c === '}' || c === ']') lastSafe = i + 1
+    else if (c === ',') lastSafe = i
+  }
+  if (lastSafe > 0) {
+    const cut = s.slice(0, lastSafe).replace(/,\s*$/, '')
+    try { return JSON.parse(closeOpenBrackets(cut)) } catch { /* try whole */ }
+  }
+  try { return JSON.parse(closeOpenBrackets(s)) } catch { return null }
+}
+
 // Downsize Guesty/Cloudinary images before sending to vision. Each image otherwise costs thousands of
 // input tokens; a ~420px-wide rendition costs ~90, letting us order many photos within tight rate tiers.
 function smallUrl(u: string): string {
@@ -113,7 +159,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 3500,
+        model: 'claude-sonnet-4-6', max_tokens: 8000,
         system: SYS,
         messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }],
       }),
@@ -122,8 +168,8 @@ Return ONLY valid JSON, no prose, in exactly this shape:
     if (!r.ok) { modelErr = `AI ${r.status}: ${str(j?.error?.message).slice(0, 180)}` }
     else {
       const text = str(j?.content?.[0]?.text)
-      const m = text.match(/\{[\s\S]*\}/)
-      if (m) modelJson = JSON.parse(m[0])
+      modelJson = safeParseModelJson(text)
+      if (!modelJson) modelErr = 'AI returned unparseable output.'
     }
   } catch (e) { modelErr = String(e).slice(0, 180) }
 
