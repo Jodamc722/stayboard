@@ -117,6 +117,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
   const isBeach = /beach/i.test(String(listing.address_city || ''))
   const res = computeScore(listing, { avgRating, reviewCount: reviews.length, isBeach, siblingAmenities })
+  // If the historical optimize stamp was lost (pre-dedicated-column), infer "optimized" from complete
+  // content: a real title + 5+ of the 6 description sections filled is unmistakably optimized copy.
+  const contentOptimized = !!(name && name !== 'Untitled unit' && res.description.sections.length >= 5)
   const optimizeScore = res.overall
   const opt = bandUi(res.band)
 
@@ -144,8 +147,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           </div>
           {streetAddress && <div className="text-[12px] text-muted mt-1.5 inline-flex items-center gap-1.5"><MapPin size={12} /> {streetAddress}</div>}
           <div className="text-[12px] mt-1.5 inline-flex items-center gap-1.5">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${lastOptimized ? 'bg-emerald-50 text-emerald-700' : 'bg-app text-muted'}`}>
-              <Sparkles size={11} /> {lastOptimized ? `Last optimized ${lastOptimized}` : 'Not optimized yet'}
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${(lastOptimized || contentOptimized) ? 'bg-emerald-50 text-emerald-700' : 'bg-app text-muted'}`}>
+              <Sparkles size={11} /> {lastOptimized ? `Last optimized ${lastOptimized}` : (contentOptimized ? 'Optimized' : 'Not optimized yet')}
             </span>
             <a href={`https://app.guesty.com/properties/${listing.id}/property/v2`} target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold bg-app text-brand-700 hover:bg-brand-50">
