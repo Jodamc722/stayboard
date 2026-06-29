@@ -317,8 +317,10 @@ export async function syncListings(maxPages = 20, since: string | null = null): 
     try {
       const ids = (rows as any[]).map(r => r.id).filter(Boolean)
       if (ids.length) {
-        const { data: existing } = await sb.from('guesty_listings').select('id, raw').in('id', ids)
+        const { data: existing } = await sb.from('guesty_listings').select('id, raw, amenities, amenities_pushed_at').in('id', ids)
         const annoById: Record<string, Record<string, any>> = {}
+        const protAmenById: Record<string, any[]> = {}
+        const PROT_MS = 30 * 60 * 1000
         for (const e of (existing || []) as any[]) {
           const er = e.raw
           if (er && typeof er === 'object') {
@@ -326,10 +328,15 @@ export async function syncListings(maxPages = 20, since: string | null = null): 
             for (const k of Object.keys(er)) if (k.startsWith('_')) anno[k] = er[k]
             if (Object.keys(anno).length) annoById[e.id] = anno
           }
+          const pAt = e.amenities_pushed_at
+          if (pAt && (Date.now() - new Date(pAt).getTime()) < PROT_MS && Array.isArray(e.amenities)) protAmenById[e.id] = e.amenities
         }
         for (const r of rows as any[]) {
           const anno = annoById[r.id]
           if (anno && r.raw && typeof r.raw === 'object') r.raw = { ...r.raw, ...anno }
+          // Just-pushed amenities: keep the local set so a stale Guesty pull can't revert it before it propagates.
+          const pa = protAmenById[r.id]
+          if (pa) { r.amenities = pa; if (r.raw && typeof r.raw === 'object') r.raw = { ...r.raw, amenities: pa } }
         }
       }
     } catch { /* best effort — if the merge fails, the sync still proceeds */ }
