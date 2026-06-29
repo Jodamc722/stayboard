@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
         return { count: rows.length, listings: rows.slice(0, clampLimit(input?.limit, 50)) }
       }
       if (name === 'listing_detail') {
-        let q = db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_city,amenities,pictures,raw')
+        let q = db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_city,amenities,pictures,raw,last_optimized')
         if (input?.id) q = q.eq('id', input.id)
         else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
         const { data } = await q.limit(1)
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
         const raw = l.raw || {}; const pub = raw.publicDescription || {}
         const { data: revs } = await db.from('guesty_reviews').select('rating').eq('listing_id', l.id).eq('excluded_from_score', false)
         const rr = (revs || []).map((x: any) => Number(x.rating)).filter(Number.isFinite)
-        return { name: l.nickname || l.title, building: rollupBuilding(l.building), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city, amenities_count: Array.isArray(l.amenities) ? l.amenities.length : (Array.isArray(raw.amenities) ? raw.amenities.length : 0), photo_count: Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(raw.pictures) ? raw.pictures.length : 0), has_title: !!l.title, description_sections_filled: Object.keys(pub).filter(k => pub[k]), review_count: rr.length, avg_rating: rr.length ? Math.round((rr.reduce((a, b) => a + b, 0) / rr.length) * 100) / 100 : null, last_optimized: raw._lastOptimized || null }
+        return { name: l.nickname || l.title, building: rollupBuilding(l.building), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city, amenities_count: Array.isArray(l.amenities) ? l.amenities.length : (Array.isArray(raw.amenities) ? raw.amenities.length : 0), photo_count: Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(raw.pictures) ? raw.pictures.length : 0), has_title: !!l.title, description_sections_filled: Object.keys(pub).filter(k => pub[k]), review_count: rr.length, avg_rating: rr.length ? Math.round((rr.reduce((a, b) => a + b, 0) / rr.length) * 100) / 100 : null, last_optimized: l.last_optimized || raw._lastOptimized || null }
       }
       if (name === 'unread_conversations') {
         const { data } = await db.from('guesty_conversations').select('guest_name,channel,unread_count,last_message_preview,last_message_at').gt('unread_count', 0).order('last_message_at', { ascending: false }).limit(clampLimit(input?.limit, 40))
