@@ -96,7 +96,7 @@ export async function GET() {
         topIssue: h.review.topIssue,
         breakdown: h.breakdown,
         channels: h.channels.map(c => ({ label: c.label, score: c.score, band: c.band, avgStars: c.avgStars, reviewCount: c.reviewCount, responseRate: c.responseRate, badge: c.badge })),
-        issues: h.issues.map(i => ({ severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain })),
+        issues: h.issues.map(i => ({ key: i.key, severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain })),
       }
     }).sort((a: any, b: any) => (a.unrated ? 1 : 0) - (b.unrated ? 1 : 0) || a.score - b.score)
 
@@ -121,7 +121,7 @@ export async function GET() {
         listingId: l.id, listing: l.name, building: l.building, unit: l.unit,
         market: l.market, tier: l.tier, lux: l.lux, vendorManaged: l.vendorManaged,
         score: l.score, band: l.band,
-        severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain || 0,
+        key: i.key, severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain || 0,
       }))
     ).sort((a: any, b: any) =>
       (SEV_RANK[a.severity] - SEV_RANK[b.severity]) ||
