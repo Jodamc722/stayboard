@@ -67,5 +67,27 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 
-  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount })
+  // Verify the write actually landed: re-read the listing from Guesty and confirm the new order is live.
+  let verified = false
+  let verifyNote = ''
+  try {
+    const vr = await fetch(`${BASE}/listings/${encodeURIComponent(listingId)}?fields=pictures`, {
+      headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' }, cache: 'no-store',
+    })
+    if (vr.ok) {
+      const vj: any = await vr.json().catch(() => ({}))
+      const live: any[] = Array.isArray(vj?.pictures) ? vj.pictures : (Array.isArray(vj?.data?.pictures) ? vj.data.pictures : [])
+      const liveIds = live.map((p: any) => String(p?._id ?? ''))
+      const wantIds = reordered.map((p: any) => String(p?._id ?? ''))
+      const head = Math.min(8, wantIds.length)
+      const countOk = liveIds.length === wantIds.length
+      const orderOk = head > 0 && wantIds.slice(0, head).every((id, i) => liveIds[i] === id)
+      verified = countOk && orderOk
+      if (!verified) verifyNote = `Guesty currently shows ${liveIds.length} photo(s); it may still be applying the new order across channels.`
+    } else {
+      verifyNote = 'Pushed, but could not immediately re-read the listing to verify (Guesty may still be applying it).'
+    }
+  } catch { verifyNote = 'Pushed, but could not immediately re-read the listing to verify (Guesty may still be applying it).' }
+
+  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount, verified, verifyNote, guestyStatus: r.status })
 }
