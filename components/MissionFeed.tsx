@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import {
   Star, MessageSquare, ClipboardCheck, AlertTriangle, LogIn, PhoneCall,
-  Send, Sparkles, Check, X, ArrowUpRight, CheckCircle2, Frown, ChevronRight,
+  Send, Sparkles, Check, X, ArrowUpRight, CheckCircle2, Frown, ChevronRight, XCircle,
 } from 'lucide-react'
 
 const SIGN_HINT = ''
@@ -50,21 +50,22 @@ export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, o
   const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({})
   const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({})
   const [postedIds, setPostedIds] = useState<Record<string, boolean>>({})
+  const [dismissedIds, setDismissedIds] = useState<Record<string, boolean>>({})
   const [decided, setDecided] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string | null>(null)
 
-  const liveReviews = reviews.filter(r => !postedIds[r.id])
+  const liveReviews = reviews.filter(r => !postedIds[r.id] && !dismissedIds[r.id])
   const liveApprovals = approvals.filter(a => !decided[a.id])
 
   const totalOpen = liveReviews.length + liveApprovals.length + messages.length + welcome.length + checkIns.length + overdue.length + sentiment.length
 
-  async function draftAI(r: Review) {
+  async function draftAI(r: Review, instruction?: string) {
     setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
         const res = await fetch('/api/reviews/draft', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, currentDraft: drafts[r.id] || '' }),
+          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction, currentDraft: drafts[r.id] || '' }),
         })
         const d = await res.json()
         if (res.ok && d.draft) { setDrafts(x => ({ ...x, [r.id]: d.draft })); return }
@@ -74,6 +75,14 @@ export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, o
       }
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setAiBusy(b => ({ ...b, [r.id]: false })) }
+  }
+
+  async function dismiss(r: Review) {
+    setDismissedIds(d => ({ ...d, [r.id]: true })); setErr(null)
+    try {
+      const res = await fetch('/api/reviews/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId: r.id }) })
+      const d = await res.json().catch(() => ({})); if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+    } catch (e: any) { setErr(e?.message || String(e)); setDismissedIds(d => ({ ...d, [r.id]: false })) }
   }
 
   async function postReview(r: Review) {
@@ -184,6 +193,8 @@ export function MissionFeed({ reviews, approvals, messages, welcome, checkIns, o
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <button onClick={() => postReview(r)} disabled={!!rowBusy[r.id] || !(drafts[r.id] || '').trim()} className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"><Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}</button>
                     <button onClick={() => draftAI(r)} disabled={!!aiBusy[r.id] || !!rowBusy[r.id]} className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50"><Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : (drafts[r.id] ? 'Rewrite with AI' : 'Draft with AI')}</button>
+                    <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional)'); if (i && i.trim()) draftAI(r, i.trim()) }} disabled={!!aiBusy[r.id] || !!rowBusy[r.id]} className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">Rephrase…</button>
+                    <button onClick={() => dismiss(r)} disabled={!!rowBusy[r.id]} title="No reply needed — clear it off the list (does not affect scores)" className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50"><XCircle size={12} /> Dismiss</button>
                   </div>
                 </div>
               </li>
