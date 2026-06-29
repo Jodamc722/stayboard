@@ -13,11 +13,11 @@ export const maxDuration = 45
 
 const SECTION_DEFS: { key: string; label: string; guide: string }[] = [
   { key: 'summary', label: 'Summary', guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, REAL perk only if the data supports it; state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. ALWAYS END the summary with a short standalone closing line that nudges guests to read the important notes, phrased like: \"Please see Other things to note before booking.\" (keep it within the 500-char cap). Most important field.' },
-  { key: 'space', label: 'The space', guide: 'The SELLING section — make the reader want to book. Walk them through the home the way the PHOTOS show it: open with the single most compelling, true visual highlight (the view, the natural light, the kitchen, the pool), then room-by-room in short labeled lines or tight paragraphs (17 West house style): bedrooms + bed types, bathrooms, kitchen, living/dining, outdoor space, views, standout finishes, building amenities (pool, gym, parking). Keep it INVITING and broad - describe what the home offers in warm, confident strokes and list its real features. Use the photos to stay accurate and CONFIRM claims, but do NOT over-specify fine detail (exact materials, brands, precise finishes) unless you are 100% sure from a photo or the data; when unsure stay general (e.g. a bright open living area, a full kitchen, ample outdoor space) rather than risk a wrong specific. Lead with benefits (how it FEELS to stay), not a dry inventory. Concrete, vivid, scannable. ~700-1300 characters.' },
+  { key: 'space', label: 'The space', guide: 'The SELLING section — make the reader want to book. Walk them through the home the way the PHOTOS show it: open with the single most compelling, true visual highlight (the view, the natural light, the kitchen, the pool), then room-by-room in short labeled lines or tight paragraphs (17 West house style): bedrooms + bed types, bathrooms, kitchen, living/dining, outdoor space, views, standout finishes, building amenities (pool, gym, parking). Keep it INVITING and broad - describe what the home offers in warm, confident strokes and list its real features. Use the photos to stay accurate and CONFIRM claims, but do NOT over-specify fine detail (exact materials, brands, precise finishes) unless you are 100% sure from a photo or the data; when unsure stay general (e.g. a bright open living area, a full kitchen, ample outdoor space) rather than risk a wrong specific. Lead with benefits (how it FEELS to stay), not a dry inventory. ALWAYS surface the practical amenities guests actively search for and that drive bookings, as a hyphenated list - e.g. pool / hot tub, in-unit OR on-site LAUNDRY (say if it is coin- or pay-app operated), free or paid parking, full kitchen, fast WiFi + workspace, elevator, gym, A/C, private balcony/outdoor space, beach or pool access. Include the building amenities and the high-level feel of the area (walkable, beachy, lively) - the important draws guests want, not fine specifics. Concrete, vivid, scannable. ~800-1400 characters.' },
   { key: 'access', label: 'Guest access', guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if the data indicates it. NEVER include the street address, unit number, real codes, phone, or URLs. ~300-700 characters.' },
   { key: 'neighborhood', label: 'Neighborhood', guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Highlight genuinely desirable, KEY draws - do NOT pad with trivial conveniences (a laundromat, convenience store, ATM, gas station, pharmacy). Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it. ~500-1000 characters.' },
   { key: 'transit', label: 'Getting around', guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances. ~250-600 characters.' },
-  { key: 'notes', label: 'Other notes', guide: 'Standardized "Listing Notes" - write as short, scannable lines (one per item), factual and welcoming. NEVER mention the cancellation policy or refunds anywhere in this section. Include these lines, lightly adapted to this listing: (1) ONLY IF facts.minAge21 is true: "The primary guest must be 21 years or older to check in"; (2) "No smoking or parties permitted"; (3) "Guests must sign the rental agreement and check-in form before arrival - these are mandatory to confirm your reservation and receive access instructions"; (4) "Please review all house rules prior to arrival for a seamless experience"; (5) "Only initial consumables (toiletries, coffee, paper products) are provided; additional supplies can be requested for a small fee"; (6) "Mid-stay cleaning services are available upon request for an additional fee"; (7) "Additional accessibility details and building policies available upon request before booking". ~400-800 characters.' },
+  { key: 'notes', label: 'Other notes', guide: 'Standardized "Listing Notes" - write as short, scannable lines, ONE PER ITEM each starting with "- " (hyphen + space), factual and welcoming. NEVER mention the cancellation policy or refunds anywhere in this section. Include these lines, lightly adapted to this listing: (1) ONLY IF facts.minAge21 is true: "The primary guest must be 21 years or older to check in"; (2) "No smoking or parties permitted"; (3) "Guests must sign the rental agreement and check-in form before arrival - these are mandatory to confirm your reservation and receive access instructions"; (4) "Please review all house rules prior to arrival for a seamless experience"; (5) "Only initial consumables (toiletries, coffee, paper products) are provided; additional supplies can be requested for a small fee"; (6) "Mid-stay cleaning services are available upon request for an additional fee"; (7) "Additional accessibility details and building policies available upon request before booking". ~400-800 characters.' },
 ]
 
 const TITLE_MAX = 50
@@ -70,6 +70,16 @@ export async function POST(req: NextRequest) {
     title: listing.title || raw.title || listing.nickname || '',
     summary: get('summary'), space: get('space'), access: get('access'),
     neighborhood: get('neighborhood'), transit: get('transit'), notes: get('notes'),
+  }
+
+  // Current-only mode: return the listing's EXISTING content (no AI) so the UI can show each section
+  // as an editable field immediately, without running optimization.
+  if (body?.currentOnly === true) {
+    return NextResponse.json({
+      listingId, titleMax: TITLE_MAX,
+      sections: SECTION_DEFS.map(sd => ({ key: sd.key, label: sd.label })),
+      current, proposed: current, rationale: '', warnings: [],
+    })
   }
 
   // Real location (used to identify the area + name real nearby places — NOT to print verbatim).
@@ -147,7 +157,7 @@ export async function POST(req: NextRequest) {
     const def = SECTION_DEFS.find(s => s.key === singleSection)
     if (!isTitle && !def) return NextResponse.json({ error: 'unknown section' }, { status: 400 })
     const guide = isTitle
-      ? `Title: hard limit ${TITLE_MAX} characters including spaces; front-load the strongest true differentiators (mobile cards truncate ~32 chars); Title Case; no emoji, repeated symbols, ALL-CAPS words, phone/email/URLs.`
+      ? `Title: aim for a FULL ~42-50 characters (hard limit ${TITLE_MAX}); front-load the strongest hook in the first ~32 chars (mobile truncates there), THEN fill toward 50 with specific unit/property details guests scan for (bed count/type, a standout amenity like Pool/Ocean View/Steps to Beach, the real area); Title Case; no emoji, repeated symbols, ALL-CAPS words, phone/email/URLs.`
       : `${def!.label}: ${def!.guide}`
     const SYS = `You are a senior short-term-rental listing copywriter for Stay Hospitality (South Florida). You are rewriting ONE field of the Guesty MASTER listing content, which syncs to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard.
 
@@ -209,6 +219,7 @@ ${JSON.stringify(currentDraft || (current as any)[singleSection] || '')}`
 GOALS
 1) MAXIMIZE VISIBILITY: OTAs rank complete, specific, keyword-rich, high-converting listings. Fill every section fully with REAL detail; lead with the strongest true differentiators.
 2) SET GREAT, HONEST EXPECTATIONS: lean into what guests genuinely praise (review signal); never over-promise. Accurate, complete copy earns better reviews and ranking over time.
+3) BE WORLD-CLASS, NEVER LAZY: this is a top property manager's flagship copy. Every section must be ROBUST, specific and benefit-led, written to DRIVE BOOKINGS - sell the experience, maximize SEO with the real keywords guests search, and speak directly to what guests want (space, cleanliness, location, and the amenities below). Thin, generic or templated copy loses rankings AND bookings - go deep with real, concrete detail.
 
 ABSOLUTE HONESTY (THE MOST IMPORTANT RULE)
 - Use ONLY facts present in the JSON below (data, location, current content, review signal, booking settings). If you are NOT certain of something — an exact distance, a specific restaurant/shop/attraction name, a drive time, an amenity, a view, a room count — DO NOT state it. Omit it or stay general. Never guess, never embellish, never invent.
@@ -227,9 +238,12 @@ PHOTOS (you can SEE them — use them)
 
 HOUSE STYLE (model the strong "17 West" formatting)
 - Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest true point. Vivid but never padded or flowery.
+- FORMAT LISTS WITH HYPHENS: any time you present a list of items - room-by-room in The space, the building/unit amenities, the lines in Other notes - put each item on its own line starting with "- " (hyphen + space). Never use bullet dots, asterisks, or numbered lists.
 
 TITLE RULES
-- Hard limit ${TITLE_MAX} characters including spaces. Front-load the strongest true differentiators (mobile cards truncate ~32 chars). Title Case. No emoji, no repeated symbols, no ALL-CAPS words (proper nouns OK), no phone/email/URLs.
+- AIM for a FULL, rich title - about 42-50 characters (USE the space; do not stop short at ~30). Hard limit ${TITLE_MAX} characters including spaces.
+- Front-load the single strongest hook in the first ~32 chars (mobile cards truncate there), THEN keep going to fill toward 50 with the specific unit/property details guests scan for: bed count/type (e.g. "2BR", "King"), a standout amenity (Pool, Ocean View, Rooftop, Steps to Beach), or the real area. Example shape: "Oceanview 2BR | Pool & Steps to South Beach".
+- Title Case. No emoji, no repeated symbols, no ALL-CAPS words (proper nouns OK), no phone/email/URLs.
 
 SECTION RULES (Guesty publicDescription fields)
 ${sectionSpec}
