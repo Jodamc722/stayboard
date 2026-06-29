@@ -106,24 +106,26 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 // ------------------------------------------------------------
 // Availability calendar (read-only) — how far out a listing is bookable
 // ------------------------------------------------------------
-export type CalDay = { date?: string; status?: string; allotment?: number | null }
+export type CalDay = { date?: string; status?: string; allotment?: number | null; blocks?: Record<string, any> | null }
 
-// Retrieve the optimized/minified calendar for one listing over a date range.
-// Response shape varies ({data:[...]} | {data:{days:[...]}} | [...]) so we read defensively.
+// Retrieve the optimized/minified calendar for one listing over a date range. The Guesty minified
+// response nests the day array at data.days.calendar; each day carries a `blocks` object (e.g. { b },
+// and { bw } when the date is beyond the listing's BOOKING WINDOW). We read the path defensively.
 export async function getListingCalendar(listingId: string, startDate: string, endDate: string): Promise<CalDay[]> {
   const payload = await api<any>(`/availability-pricing/api/calendar/listings/minified/${listingId}?startDate=${startDate}&endDate=${endDate}&includeAllotment=true&view=compact`)
-  const days = Array.isArray(payload) ? payload
-    : Array.isArray(payload?.data) ? payload.data
-    : Array.isArray(payload?.data?.days) ? payload.data.days
-    : Array.isArray(payload?.days) ? payload.days
-    : []
-  return days as CalDay[]
+  const days = payload?.data?.days?.calendar
+    ?? payload?.data?.calendar
+    ?? (Array.isArray(payload?.data) ? payload.data : null)
+    ?? (Array.isArray(payload) ? payload : [])
+  return Array.isArray(days) ? (days as CalDay[]) : []
 }
 
-// A calendar day is bookable if (multi-unit) allotment > 0, else status === 'available'.
+// "Bookable" for our horizon = the date is within the listing's booking window. Guesty marks dates
+// beyond the booking window with a `bw` block; other blocks (b/reservations/manual) still sit INSIDE
+// the window, so we ignore them here - we only care how far ahead a guest could place a booking.
 export function dayIsAvailable(d: CalDay): boolean {
-  if (typeof d.allotment === 'number') return d.allotment > 0
-  return d.status === 'available'
+  const bl = d.blocks || {}
+  return !bl.bw
 }
 
 // ------------------------------------------------------------
