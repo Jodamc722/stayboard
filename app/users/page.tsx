@@ -1,7 +1,7 @@
 // Admin-only user management page. Server component: verifies the caller is an admin via getAccess(),
 // then renders the client UsersAdmin UI. Non-admins see an "Admins only" notice.
 import { Shell } from '@/components/Shell'
-import { getAccess } from '@/lib/access'
+import { getAccess, isSuperadmin } from '@/lib/access'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { ShieldAlert } from 'lucide-react'
 import { redirect } from 'next/navigation'
@@ -22,7 +22,7 @@ export default async function UsersPage() {
           <ShieldAlert size={16} className="mt-0.5 flex-shrink-0" /> This page is for admins only. Ask an admin to manage access.
         </div>
       ) : (
-        <UsersAdmin myEmail={access.email || ''} />
+        <UsersAdmin myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
       )}
     </Shell>
   )
