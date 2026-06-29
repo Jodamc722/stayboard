@@ -252,7 +252,7 @@ function ResRows({ rows, todayStr, muted, cfMap }: { rows: any[]; todayStr: stri
                 <div className="flex items-center gap-1.5 mt-0.5">
                   {r.source && <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${sourceStyle(r.source)}`}>{r.source}</span>}
                   {r.status && <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusStyle(r.status)}`}>{String(r.status).replace(/_/g, ' ')}</span>}
-                  <a href={`https://app.guesty.com/reservations/${r.id}`} target="_blank" rel="noopener noreferrer" title="Open in Guesty" className="text-[10px] font-semibold text-muted hover:text-brand-700 whitespace-nowrap">Guesty ↗</a>
+                  <a href={`https://app.guesty.com/reservations/${r.id}/summary`} target="_blank" rel="noopener noreferrer" title="Open in Guesty" className="text-[10px] font-semibold text-muted hover:text-brand-700 whitespace-nowrap">Guesty ↗</a>
                 </div>
               </div>
 
