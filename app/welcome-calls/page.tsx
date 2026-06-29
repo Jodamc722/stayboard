@@ -81,6 +81,7 @@ export default async function WelcomeCallsPage() {
         calledAt: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._at || '',
         sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
         due: check_in <= dueDate,                                  // within 48h of arrival
+        dueToday: check_in <= today,                               // arriving today (call must happen today)
         prio: PRIORITY.some(k => lname.includes(k)) ? 0 : 1,       // priority buildings first
       }
     })
