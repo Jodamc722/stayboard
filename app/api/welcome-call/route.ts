@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
   const noteOnly = body?.noteOnly === true
   const done = body?.done !== false // default true (ignored when noteOnly)
   const value = typeof body?.value === 'string' ? body.value : (done ? 'Yes' : '')
-  const by = String(user.email || '').toLowerCase()
+  const by = (typeof body?.by === 'string' && body.by.trim()) ? body.by.trim().slice(0, 80) : String(user.email || '').toLowerCase()
   const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
   if (!reservationId) return NextResponse.json({ error: 'reservationId required' }, { status: 400 })
   if (noteOnly && !note) return NextResponse.json({ error: 'Type a note first.' }, { status: 400 })
