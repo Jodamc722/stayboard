@@ -30,10 +30,9 @@ function unitOf(listingName: string): string {
   return m ? m[1] : ''
 }
 
-// Welcome calls: only LUX buildings + any reservation >= $1k are surfaced as individual calls in Mission
-// Control; everything else rolls up to a count. Adjust this list as the luxury portfolio changes.
-const LUX_BUILDINGS = ['17 west', '17west', 'arya', 'elser', 'amrit', '7071', 'waldorf', 'baccarat', 'bentley']
-const LUX_MIN_VALUE = 1000
+// Command Center welcome calls: surface ONLY today's calls, and only the PRIORITY LUXE buildings
+// individually; the rest of today's calls roll up to a count. Edit this list as the luxe portfolio changes.
+const LUX_BUILDINGS = ['elser', 'amrit', '17 west', '17west', 'district 225', 'district225', 'nomad']
 
 export default async function CommandCenterPage() {
   const supabase = createClient()
@@ -123,15 +122,17 @@ export default async function CommandCenterPage() {
 
   const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
   const fieldVal = (cf: any, kw: string) => Array.isArray(cf) ? (cf.find((c: any) => String(c?.fieldName || c?.name || '').toLowerCase().includes(kw)) || {}).value : undefined
+  // Only TODAY's confirmed, not-yet-done welcome calls. Priority luxe buildings show individually;
+  // the rest of today's calls become a count (welcomeOtherCount).
   const welcomeDue = (welcomeRes.data ?? [])
-    .filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed' && !truthy(fieldVal(r.custom_fields, 'welcome')))
+    .filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed' && !truthy(fieldVal(r.custom_fields, 'welcome')) && String(r.check_in).slice(0, 10) === todayStr)
     .map((r: any) => {
       const lname = String(r.listing_name || '').toLowerCase()
       const value = Number(r.money_total) || 0
       const lux = LUX_BUILDINGS.some(b => lname.includes(b))
-      return { id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10), today: String(r.check_in).slice(0, 10) <= todayStr, value, important: lux || value >= LUX_MIN_VALUE }
+      return { id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10), today: true, value, important: lux }
     })
-    .sort((a: any, b: any) => (a.today === b.today ? 0 : a.today ? -1 : 1) || (b.value - a.value))
+    .sort((a: any, b: any) => b.value - a.value)
   const welcomeImportant = welcomeDue.filter((w: any) => w.important)
   const welcomeOtherCount = welcomeDue.length - welcomeImportant.length
 
