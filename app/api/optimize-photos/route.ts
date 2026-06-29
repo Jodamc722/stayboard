@@ -244,8 +244,9 @@ Return ONLY valid JSON, no prose, in exactly this shape:
     }
     if (assessment.quality != null) {
       try {
-        const newRaw = { ...raw, _photoScore: { score: assessment.quality, coverageNote: assessment.coverage, notes: assessment.notes, count: allPics.length, at: new Date().toISOString() } }
-        await sb.from('guesty_listings').update({ raw: newRaw }).eq('id', listingId)
+        const ps = { score: assessment.quality, coverageNote: assessment.coverage, notes: assessment.notes, count: allPics.length, at: new Date().toISOString() }
+        const newRaw = { ...raw, _photoScore: ps }
+        await sb.from('guesty_listings').update({ raw: newRaw, photo_score: ps }).eq('id', listingId)
       } catch { /* persist is best-effort */ }
     }
   }
