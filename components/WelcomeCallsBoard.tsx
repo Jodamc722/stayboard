@@ -113,7 +113,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                 ) : <div className="text-[11px] text-muted/70 mt-1">No phone on file</div>}
               </div>
               <div className="flex items-center gap-2">
-                <a href={`https://app.guesty.com/reservations/${r.id}`} target="_blank" rel="noopener noreferrer" title="Open this reservation in Guesty" className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink"><Globe size={13} /> Guesty</a>
+                <a href={`https://app.guesty.com/reservations/${r.id}/summary`} target="_blank" rel="noopener noreferrer" title="Open this reservation in Guesty" className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink"><Globe size={13} /> Guesty</a>
                 <button onClick={() => setOpenId(open ? null : r.id)} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold ${open ? 'border-brand-600 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink'}`}><ScrollText size={13} /> Script <ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /></button>
                 {r.done ? (
                   <button onClick={() => mark(r.id, false)} disabled={busy === r.id} className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink disabled:opacity-50">{busy === r.id ? <Loader2 size={13} className="animate-spin" /> : null} Undo</button>
