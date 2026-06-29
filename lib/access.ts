@@ -7,30 +7,31 @@ import { createClient } from './supabase-server'
 import { supabaseAdmin } from './supabase-admin'
 
 export type Role = 'admin' | 'member'
-export type Access = { user: any; email: string | null; role: Role | null; allowed: boolean; bootstrap: boolean }
+export type Access = { user: any; email: string | null; role: Role | null; allowed: boolean; bootstrap: boolean; features: Record<string, boolean> }
 
 const SUPERADMIN = 'jon@stay-hospitality.com'
 
 export async function getAccess(): Promise<Access> {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { user: null, email: null, role: null, allowed: false, bootstrap: false }
+  if (!user) return { user: null, email: null, role: null, allowed: false, bootstrap: false, features: {} }
   const email = String(user.email || '').toLowerCase()
-  if (email === SUPERADMIN) return { user, email, role: 'admin', allowed: true, bootstrap: false }
+  if (email === SUPERADMIN) return { user, email, role: 'admin', allowed: true, bootstrap: false, features: {} }
   try {
     const sb = supabaseAdmin()
-    const { data, error } = await sb.from('app_users').select('email, role, status').eq('email', email).maybeSingle()
-    if (error) return { user, email, role: 'member', allowed: true, bootstrap: true } // table not set up yet -> fail open
+    const { data, error } = await sb.from('app_users').select('email, role, status, features').eq('email', email).maybeSingle()
+    if (error) return { user, email, role: 'member', allowed: true, bootstrap: true, features: {} } // table not set up yet -> fail open
     if (!data) {
       // Not on the allowlist. If the allowlist has no active members yet, we're pre-setup -> allow.
       const { count } = await sb.from('app_users').select('email', { count: 'exact', head: true }).eq('status', 'active')
-      if (!count || count === 0) return { user, email, role: 'member', allowed: true, bootstrap: true }
-      return { user, email, role: null, allowed: false, bootstrap: false }
+      if (!count || count === 0) return { user, email, role: 'member', allowed: true, bootstrap: true, features: {} }
+      return { user, email, role: null, allowed: false, bootstrap: false, features: {} }
     }
-    if (data.status !== 'active') return { user, email, role: null, allowed: false, bootstrap: false }
-    return { user, email, role: data.role === 'admin' ? 'admin' : 'member', allowed: true, bootstrap: false }
+    if (data.status !== 'active') return { user, email, role: null, allowed: false, bootstrap: false, features: {} }
+    const features = (data.features && typeof data.features === 'object') ? data.features as Record<string, boolean> : {}
+    return { user, email, role: data.role === 'admin' ? 'admin' : 'member', allowed: true, bootstrap: false, features }
   } catch {
-    return { user, email, role: 'member', allowed: true, bootstrap: true }
+    return { user, email, role: 'member', allowed: true, bootstrap: true, features: {} }
   }
 }
 
