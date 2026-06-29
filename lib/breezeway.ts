@@ -82,3 +82,26 @@ export function mapBreezewayTask(t: any) {
     raw: t,
   }
 }
+
+// Create a task in Breezeway (POST /task). `body.name` is required; pass home_id (preferred,
+// integer) or reference_property_id. Returns the standard bzApi result; the created task is in
+// `.data` with id, type_task_status, report_url, scheduled_date, assignments.
+export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  return bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+}
+
+// Retrieve a single task by id (for status tracking / "action taken").
+export async function retrieveBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  return bzApi(`/task/${encodeURIComponent(String(taskId))}`)
+}
+
+// Normalize a Breezeway task status object to our lifecycle.
+export function normalizeTaskStatus(t: any): 'created' | 'in_progress' | 'completed' | 'approved' {
+  const st = t?.type_task_status || {}
+  const code = String(st.code || st.name || '').toLowerCase()
+  const stage = String(st.stage || '').toLowerCase()
+  if (code.includes('approv')) return 'approved'
+  if (t?.finished_at || code.includes('close') || code.includes('complet') || code.includes('finish') || stage === 'done') return 'completed'
+  if (t?.started_at || stage === 'in_progress' || code.includes('progress')) return 'in_progress'
+  return 'created'
+}
