@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getListingCalendar, dayIsAvailable } from '@/lib/guesty'
+import { getToken } from '@/lib/guesty'
 import { unstable_cache } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
@@ -95,6 +96,17 @@ export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  const probe = new URL(req.url).searchParams.get('probe')
+  if (probe) {
+    try {
+      const t = new Date(); const sD = ymd(t); const eD = ymd(new Date(t.getTime() + 600 * 86400000))
+      const tok = await getToken()
+      const rr = await fetch(`https://open-api.guesty.com/v1/availability-pricing/api/calendar/listings/minified/${probe}?startDate=${sD}&endDate=${eD}&includeAllotment=true&view=compact`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' })
+      const body = await rr.text()
+      return NextResponse.json({ status: rr.status, len: body.length, body: body.slice(0, 1600) })
+    } catch (e: any) { return NextResponse.json({ probeError: String(e?.message || e).slice(0, 500) }, { status: 200 }) }
+  }
 
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'
   try {
