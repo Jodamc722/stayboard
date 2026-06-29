@@ -50,6 +50,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
               : '—'}
           </div>
           <div className="text-xs uppercase text-slate-500">{r.source}</div>
+          <a href={`https://app.guesty.com/reservations/${params.id}`} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:text-brand-700 mt-1 inline-block">Open in Guesty ↗</a>
         </div>
       </header>
 
