@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
-import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw } from 'lucide-react'
+import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw, Headset } from 'lucide-react'
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
 type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push }
@@ -28,6 +28,8 @@ const catC = (c: string) => CAT[c] || 'bg-app text-muted'
 export default function OpsPlanPage() {
   const { data, loading, error, refresh } = useCachedFetch<Data>('/api/ops-plan/daily')
   const [open, setOpen] = useState<string | null>(null)
+  const [market, setMarket] = useState<'all' | 'Miami' | 'Broward' | 'North'>('all')
+  const [ccs, setCcs] = useState(false)  // include CCS (desk) work?
 
   return (
     <Shell>
@@ -36,6 +38,16 @@ export default function OpsPlanPage() {
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Ops Plan</h1>
         <p className="text-sm text-muted mt-1">Operational improvements for the next three days of checkouts &mdash; from guest feedback, audits, and preventative maintenance. Ranked luxe first. Push a field task to Breezeway to assign &amp; track it.</p>
       </header>
+
+      {data?.days && (
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          {(['all', 'Miami', 'Broward', 'North'] as const).map(m => (
+            <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m}</button>
+          ))}
+          <span className="mx-1 h-5 w-px bg-line" />
+          <button onClick={() => setCcs(c => !c)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border inline-flex items-center gap-1.5 ${ccs ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-muted border-line hover:text-ink'}`}><Headset size={13} /> CCS work {ccs ? 'on' : 'off'}</button>
+        </div>
+      )}
 
       {loading ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Building the daily plan…</div>
@@ -46,17 +58,23 @@ export default function OpsPlanPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {data.days.map(day => (
+          {data.days.map(day => {
+            const dayUnits = day.units
+              .filter(u => market === 'all' || u.market === market)
+              .map(u => ({ ...u, tasks: ccs ? u.tasks : u.tasks.filter(t => t.pushable) }))
+              .filter(u => u.tasks.length > 0)
+            const tCount = dayUnits.reduce((s, u) => s + u.tasks.length, 0)
+            return (
             <section key={day.date}>
               <div className="flex items-center gap-2 mb-2">
                 <h2 className="text-lg font-bold text-ink inline-flex items-center gap-1.5"><Calendar size={16} className="text-brand-600" /> {day.label}</h2>
-                <span className="text-[12px] text-muted">{day.date} · {day.unitCount} units · {day.taskCount} tasks</span>
+                <span className="text-[12px] text-muted">{day.date} · {dayUnits.length} units · {tCount} tasks</span>
               </div>
-              {day.units.length === 0 ? (
-                <div className="rounded-2xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted">No checkouts this day.</div>
+              {dayUnits.length === 0 ? (
+                <div className="rounded-2xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted">{market === 'all' ? 'No checkouts this day.' : `No ${market} checkouts this day.`}</div>
               ) : (
                 <div className="space-y-2">
-                  {day.units.map(u => {
+                  {dayUnits.map(u => {
                     const id = day.date + u.listingId
                     const isOpen = open === id
                     return (
@@ -71,7 +89,7 @@ export default function OpsPlanPage() {
                               {u.topIssue && <span className="text-rose-600 font-medium inline-flex items-center gap-1"><AlertTriangle size={10} />{u.topIssue}</span>}
                             </div>
                           </div>
-                          <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 px-1.5 py-1 rounded shrink-0">{u.taskCount} tasks</span>
+                          <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 px-1.5 py-1 rounded shrink-0">{u.tasks.length} tasks</span>
                           <ChevronDown size={16} className={`text-muted shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                         </button>
                         {isOpen && (
@@ -102,7 +120,8 @@ export default function OpsPlanPage() {
                 </div>
               )}
             </section>
-          ))}
+            )
+          })}
         </div>
       )}
     </Shell>
