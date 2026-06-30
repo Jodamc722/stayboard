@@ -4,9 +4,9 @@
 // built from Guesty checkouts; staging a cleaner + Push writes the assignment AND the door code/notes
 // into the Breezeway departure-clean's description.
 import { useEffect, useMemo, useState, useRef } from 'react'
-import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat} from 'lucide-react'
+import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp} from 'lucide-react'
 
-type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null }
+type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; assignedIds?: number[]; assignedNames?: string[] }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
 type Person = { id: number; name: string; region: string | null }
 type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; breezeway: boolean; error?: string }
@@ -40,6 +40,7 @@ export function ScheduleBoard() {
   const [staged, setStaged] = useState<Record<string, Person>>({})
   const [pushing, setPushing] = useState(false)
   const [pushMsg, setPushMsg] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<'default' | 'hub' | 'cleaner' | 'listing' | 'checkout' | 'nights'>('default')
 
   async function load(v = view, d = date) {
     setLoading(true); setError(null)
@@ -56,6 +57,19 @@ export function ScheduleBoard() {
   const people = data?.housekeepers || []
   const cleanByKey = useMemo(() => { const m: Record<string, Clean> = {}; (data?.days || []).forEach(d => MARKETS.forEach(mk => (d.markets[mk] || []).forEach(c => { m[keyOf(c)] = c }))); return m }, [data])
   const stagedItems = Object.entries(staged)
+  function assigneeLabel(c: Clean): string { return staged[keyOf(c)]?.name || (c.assignedNames && c.assignedNames[0]) || '' }
+  function sortList(list: Clean[]): Clean[] {
+    const a = [...list]
+    const byUnit = (x: Clean, y: Clean) => x.unit.localeCompare(y.unit)
+    switch (sortBy) {
+      case 'hub': return a.sort((x, y) => x.hub.localeCompare(y.hub) || byUnit(x, y))
+      case 'cleaner': return a.sort((x, y) => { const lx = assigneeLabel(x), ly = assigneeLabel(y); if (!lx && ly) return 1; if (lx && !ly) return -1; return lx.localeCompare(ly) || byUnit(x, y) })
+      case 'listing': return a.sort(byUnit)
+      case 'checkout': return a.sort((x, y) => String(x.checkOutTime || '11:00').localeCompare(String(y.checkOutTime || '11:00')) || byUnit(x, y))
+      case 'nights': return a.sort((x, y) => (x.nights ?? 0) - (y.nights ?? 0) || byUnit(x, y))
+      default: return a.sort((x, y) => (y.sameDayTurn ? 1 : 0) - (x.sameDayTurn ? 1 : 0) || x.hub.localeCompare(y.hub) || byUnit(x, y))
+    }
+  }
   function stage(c: Clean, p: Person | null) { setStaged(prev => { const n = { ...prev }; if (p) n[keyOf(c)] = p; else delete n[keyOf(c)]; return n }) }
 
   async function push() {
@@ -96,6 +110,19 @@ export function ScheduleBoard() {
           <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m}{data && m !== 'all' ? ` · ${data.totals.byMarket.find(x => x.market === m)?.count ?? 0}` : ''}</button>
         ))}
         {data && <span className="text-[12px] text-muted ml-1">{data.totals.cleans} cleans this {view}</span>}
+        {view === 'day' && (
+          <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
+            <ArrowDownUp size={13} /> Sort
+            <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} className="text-[12px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 outline-none">
+              <option value="default">Same-day first</option>
+              <option value="hub">Building</option>
+              <option value="cleaner">Cleaner</option>
+              <option value="listing">Listing</option>
+              <option value="checkout">Check-out time</option>
+              <option value="nights">Nights</option>
+            </select>
+          </label>
+        )}
       </div>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
@@ -106,7 +133,7 @@ export function ScheduleBoard() {
       ) : data && view === 'day' ? (
         <div className="space-y-5">
           {visibleMarkets.map(m => {
-            const list = data.days[0]?.markets[m] || []
+            const list = sortList(data.days[0]?.markets[m] || [])
             return (
               <section key={m}>
                 <h3 className={`text-[12px] font-bold uppercase tracking-wider mb-1.5 ${MKT_COLOR[m] || 'text-muted'}`}>{m} <span className="text-muted/70">({list.length})</span></h3>
@@ -129,7 +156,7 @@ export function ScheduleBoard() {
                       <tbody>
                         {list.map(c => (
                           <tr key={keyOf(c)} className={`border-t border-line ${c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
-                            <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={staged[keyOf(c)] || null} onChange={p => stage(c, p)} disabled={!data.breezeway} /></td>
+                            <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={staged[keyOf(c)] || null} assigned={c.assignedNames} onChange={p => stage(c, p)} disabled={!data.breezeway} /></td>
                             <td className="px-2 py-1.5 align-middle"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span></td>
                             <td className="px-2 py-1.5 align-middle font-medium text-ink">{c.unit}</td>
                             <td className="px-2 py-1.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
@@ -188,7 +215,7 @@ export function ScheduleBoard() {
   )
 }
 
-function CleanerPicker({ people, value, onChange, disabled }: { people: Person[]; value: Person | null; onChange: (p: Person | null) => void; disabled?: boolean }) {
+function CleanerPicker({ people, value, assigned, onChange, disabled }: { people: Person[]; value: Person | null; assigned?: string[]; onChange: (p: Person | null) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -197,13 +224,14 @@ function CleanerPicker({ people, value, onChange, disabled }: { people: Person[]
     document.addEventListener('mousedown', onDoc); return () => document.removeEventListener('mousedown', onDoc)
   }, [])
   const filtered = useMemo(() => { const s = q.trim().toLowerCase(); const base = s ? people.filter(p => p.name.toLowerCase().includes(s) || String(p.region || '').toLowerCase().includes(s)) : people; return base.slice(0, 50) }, [people, q])
-  if (disabled) return <div className="text-[10px] text-muted italic">Assign in Breezeway</div>
+  const assignedLabel = assigned && assigned.length ? assigned.join(", ") : ""
+  if (disabled) return <div className="text-[10px] text-muted italic">{assignedLabel || "Assign in Breezeway"}</div>
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(o => !o)} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : 'border-line bg-app text-muted hover:text-ink'}`}>
+      <button onClick={() => setOpen(o => !o)} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (assignedLabel ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
         <User size={11} className="shrink-0" />
-        <span className="truncate flex-1 text-left">{value ? value.name : 'Assign cleaner…'}</span>
-        {value && <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span>}
+        <span className="truncate flex-1 text-left">{value ? value.name : (assignedLabel ? assignedLabel : 'Assign cleaner…')}</span>
+        {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : (assignedLabel ? <span className="text-[9px] text-emerald-600 font-semibold shrink-0">assigned</span> : null)}
       </button>
       {open && (
         <div className="absolute z-30 mt-1 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1">
