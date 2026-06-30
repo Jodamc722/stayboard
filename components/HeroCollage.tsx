@@ -101,6 +101,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   const [uploads, setUploads] = useState<{ url: string; name: string }[]>([])
   const [pushing, setPushing] = useState<number | null>(null)
   const [pushMsg, setPushMsg] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
   const refs = useRef<Record<number, HTMLCanvasElement | null>>({})
   const fileInput = useRef<HTMLInputElement | null>(null)
 
@@ -219,11 +220,16 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
           {pushMsg && <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-700 flex items-center justify-between gap-2"><span>{pushMsg}</span><button onClick={() => setPushMsg(null)} className="text-muted hover:text-ink"><X size={13} /></button></div>}
 
           {/* Photo source: upload your own (best quality) or fall back to the unit's synced photos */}
-          <div className="rounded-xl border border-line bg-app/30 p-3">
+          <div
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
+            onDrop={e => { e.preventDefault(); setDragOver(false); if (e.dataTransfer?.files?.length) onFiles(e.dataTransfer.files) }}
+            className={`rounded-xl border p-3 transition-colors ${dragOver ? 'border-brand-400 border-dashed bg-brand-50' : 'border-line bg-app/30'}`}
+          >
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
                 <p className="text-[12px] font-semibold text-ink">Photos</p>
-                <p className="text-[11px] text-muted">{uploads.length ? `Using your ${uploads.length} uploaded photo${uploads.length > 1 ? 's' : ''} (best quality).` : 'No uploads — will use this unit’s synced photos. Upload originals for the sharpest hero.'}</p>
+                <p className="text-[11px] text-muted">{uploads.length ? `Using your ${uploads.length} uploaded photo${uploads.length > 1 ? 's' : ''} (best quality).` : (dragOver ? 'Drop your photos to upload…' : 'No uploads — drag & drop photos here, or upload originals for the sharpest hero.')}</p>
               </div>
               <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
               <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-50 flex-shrink-0">
