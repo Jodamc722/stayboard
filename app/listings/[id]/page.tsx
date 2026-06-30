@@ -12,6 +12,7 @@ import { ListingOptimizer } from '@/components/ListingOptimizer'
 import { PhotoOrganizer } from '@/components/PhotoOrganizer'
 import { HeroCollage } from '@/components/HeroCollage'
 import { ListingReviews } from '@/components/ListingReviews'
+import { UnitTasks } from '@/components/UnitTasks'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
 import {
@@ -170,6 +171,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
       <div className="mb-5"><ListingOptimizer listingId={listing.id} name={name} /></div>
       <div className="mb-5"><PhotoOrganizer listingId={listing.id} name={name} /></div>
+      <div className="mb-5"><UnitTasks listingId={listing.id} /></div>
       <div className="mb-5"><HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={(Array.isArray(listing.pictures) ? listing.pictures : (Array.isArray(raw.pictures) ? raw.pictures : []))} amenities={amenities} /></div>
 
       {/* Optimize score breakdown */}
