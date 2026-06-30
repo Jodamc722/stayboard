@@ -47,8 +47,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, ...(hero ? { heroId: hero } : {}), ...(guidanceText && guidanceText.trim() ? { guidance: guidanceText.trim() } : {}) }),
       })
-      const j = await r.json()
-      if (!r.ok) throw new Error(j?.error || 'Failed to analyze photos.')
+      const raw = await r.text()
+      let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+      if (!r.ok || !j) throw new Error((j && j.error) || (r.status === 504 ? 'The photo organizer timed out - this listing may have a lot of photos. Try again, or hide a few first.' : 'Failed to analyze photos. Please try again.'))
       const map: Record<string, Photo> = {}
       ;(j.photos || []).forEach((p: Photo) => { map[p._id] = p })
       setPhotos(map); setHeroId(j.heroId); setOrder(j.proposedOrder); setProposed(j.proposedOrder)
@@ -99,8 +100,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, order, remove: Array.from(toRemove), captions }),
       })
-      const j = await r.json()
-      if (!r.ok) throw new Error(j?.error || 'Failed to push order.')
+      const raw = await r.text()
+      let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+      if (!r.ok || !j) throw new Error((j && j.error) || 'Failed to push order. Please try again.')
       const base = `${j.count} photos (order + descriptions)${j.removed ? `, ${j.removed} removed` : ''}`
       setPushedMsg(j.verified
         ? `\u2713 Pushed to Guesty and verified live: ${base}. Now syncing to all channels (Airbnb, Vrbo, etc.).`
