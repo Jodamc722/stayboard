@@ -17,6 +17,9 @@ function fieldIdOf(cf: any): string | null {
 }
 function nameOf(cf: any): string { return String(cf?.fieldName || cf?.name || cf?.fieldId?.name || cf?.field?.name || '') }
 const isWelcome = (cf: any) => /welcome/i.test(nameOf(cf))
+// Guesty's reservation customFields carry no field name and the definition map isn't synced, so we
+// match the "Welcome Call" field by its known id (confirmed from live data).
+const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
 
 async function getToken(sb: any): Promise<string | null> {
   // Prefer the shared client which auto-refreshes via OAuth client_credentials; fall back to the cached row.
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
   const reservationId = body?.reservationId
   const noteOnly = body?.noteOnly === true
   const done = body?.done !== false // default true (ignored when noteOnly)
-  const value = typeof body?.value === 'string' ? body.value : (done ? 'Yes' : '')
+  const value = typeof body?.value === 'string' ? body.value : (done ? 'Completed' : '')
   const by = (typeof body?.by === 'string' && body.by.trim()) ? body.by.trim().slice(0, 80) : String(user.email || '').toLowerCase()
   const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
   if (!reservationId) return NextResponse.json({ error: 'reservationId required' }, { status: 400 })
@@ -209,9 +212,9 @@ export async function POST(req: NextRequest) {
   }
 
   // --- MARK / UNMARK the welcome call (resolve the Welcome Call field id from reservation / defs / live). ---
-  let fieldId: string | null = null
-  const existing = (current || []).find(isWelcome)
-  if (existing) fieldId = fieldIdOf(existing)
+  let fieldId: string | null = WELCOME_FIELD_ID
+  const existing = (current || []).find((c: any) => String(fieldIdOf(c) || '') === WELCOME_FIELD_ID || isWelcome(c))
+  if (existing) fieldId = fieldIdOf(existing) || WELCOME_FIELD_ID
   if (!fieldId) {
     const { data: defs } = await sb.from('guesty_custom_fields').select('id, name, slug').or('slug.ilike.%welcome%,name.ilike.%welcome%')
     if (defs && defs[0]) fieldId = (defs[0] as any).id
@@ -251,7 +254,7 @@ export async function POST(req: NextRequest) {
   // Mirror locally: welcome value + who/when/note, and the appended internal notes.
   try {
     let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
-    const idx = cf.findIndex(isWelcome)
+    const idx = cf.findIndex((c: any) => String(fieldIdOf(c) || '') === fieldId || isWelcome(c))
     const meta = done ? { _by: by, _at: at, _note: note } : { _by: null, _at: null, _note: '' }
     if (idx >= 0) cf[idx] = { ...cf[idx], value, ...meta }
     else cf.push({ fieldId, fieldName: 'Welcome Call', value, ...meta })
@@ -263,5 +266,5 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
   } catch { /* mirror best-effort */ }
 
-  return NextResponse.json({ ok: true, done, value, by, at, notes: newNotes })
+  return NextResponse.json({ ok: true, done, value, callValue: value, by, at, notes: newNotes })
 }
