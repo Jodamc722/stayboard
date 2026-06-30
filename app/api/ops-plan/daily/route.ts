@@ -133,7 +133,7 @@ export async function GET() {
     healthCache.set(lid, h); return h
   }
 
-  const cleanResv = (resv ?? []).filter((r: any) => r.listing_id && !/cancel|declin/i.test(String(r.status || '')))
+  const cleanResv = (resv ?? []).filter((r: any) => r.listing_id && !/cancel|declin|inquir/i.test(String(r.status || '')))
 
   // Already-pushed tasks (for status pills) keyed by `${listing_id}__${title}`.
   const listingIds = Array.from(new Set(cleanResv.map((r: any) => String(r.listing_id))))
@@ -181,7 +181,7 @@ export async function GET() {
         return { ...t, department, pushable: !!department, push, metric: sp.metric, checklist: sp.checklist, evidence: sp.evidence }
       })
       units.push({
-        listingId: lid, listing: nm, building: building !== 'Unassigned' ? building : null,
+        listingId: lid, listing: nm, internalName: l.nickname || l.unit || null, building: building !== 'Unassigned' ? building : null,
         market, tier: lux ? 'Lux' : 'Other', lux,
         score: h?.score ?? null, band: h?.band ?? 'neutral', topIssue: h?.review?.topIssue || null,
         guest: r.guest_name || null, nights: Number(r.nights) || null,
