@@ -1,8 +1,8 @@
 // Daily Ops Plan. For TODAY / TOMORROW / next day (by check-out = turnover), lists the units
 // turning over and generates internal operational-improvement TASKS for each (from guest
 // feedback, recurring issues, a turnover audit, and a preventative-maintenance check). Units
-// are ranked LUX FIRST, then weakest health. NOT pushed/assigned to Breezeway — these are
-// StayBoard operational tasks. Logged-in users only.
+// are ranked LUX FIRST, then weakest health. Field tasks carry a Breezeway department so they
+// can be pushed + tracked from the board; desk tasks (guest feedback / listing) are not pushable.
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -17,18 +17,26 @@ const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 function et(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(n: number) { return et(new Date(Date.now() + n * 86400000)) }
 
-// Map a health issue to an operational task category + how it reads on the board.
-function taskFor(key: string, title: string, action: string, severity: string): { category: string; title: string; detail: string; severity: string } {
+// Which Breezeway department owns a task category (null = desk task, not pushable to the field).
+const DEPT: Record<string, string | null> = {
+  Cleanliness: 'housekeeping', Maintenance: 'maintenance', Access: 'maintenance',
+  Inspection: 'inspection', PM: 'maintenance', 'Guest experience': 'inspection',
+  'Guest feedback': null, Listing: null, Ops: 'inspection',
+}
+
+// Map a health issue to an operational task category + how it reads on the board. `key` is kept
+// so the push flow can route/department it; department is derived from the category.
+function taskFor(key: string, title: string, action: string, severity: string): { key: string; category: string; title: string; detail: string; severity: string } {
   const k = String(key || '').toLowerCase()
-  if (k === 'clean') return { category: 'Cleanliness', title: 'Deep clean + QC inspection', detail: action, severity }
-  if (k === 'ac') return { category: 'Maintenance', title: 'HVAC / climate check', detail: action, severity }
-  if (k === 'maint') return { category: 'Maintenance', title: 'Maintenance fix', detail: action, severity }
-  if (k === 'checkin') return { category: 'Access', title: 'Verify check-in / door codes', detail: action, severity }
-  if (k === 'noise') return { category: 'Guest experience', title: 'Noise mitigation + expectations', detail: action, severity }
-  if (k === 'rating' || k === 'resp' || k === 'volume') return { category: 'Guest feedback', title, detail: action, severity }
-  if (k === 'setup') return { category: 'Listing', title: 'Optimize listing setup', detail: action, severity }
-  if (k === 'ops') return { category: 'Ops', title, detail: action, severity }
-  return { category: 'Guest feedback', title, detail: action, severity }
+  if (k === 'clean') return { key: k, category: 'Cleanliness', title: 'Deep clean + QC inspection', detail: action, severity }
+  if (k === 'ac') return { key: k, category: 'Maintenance', title: 'HVAC / climate check', detail: action, severity }
+  if (k === 'maint') return { key: k, category: 'Maintenance', title: 'Maintenance fix', detail: action, severity }
+  if (k === 'checkin') return { key: k, category: 'Access', title: 'Verify check-in / door codes', detail: action, severity }
+  if (k === 'noise') return { key: k, category: 'Guest experience', title: 'Noise mitigation + expectations', detail: action, severity }
+  if (k === 'rating' || k === 'resp' || k === 'volume') return { key: k, category: 'Guest feedback', title, detail: action, severity }
+  if (k === 'setup') return { key: k, category: 'Listing', title: 'Optimize listing setup', detail: action, severity }
+  if (k === 'ops') return { key: k, category: 'Ops', title, detail: action, severity }
+  return { key: k || 'feedback', category: 'Guest feedback', title, detail: action, severity }
 }
 const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
 
@@ -78,6 +86,19 @@ export async function GET() {
 
   const cleanResv = (resv ?? []).filter((r: any) => r.listing_id && !/cancel|declin/i.test(String(r.status || '')))
 
+  // Already-pushed tasks (for status pills) keyed by `${listing_id}__${title}`.
+  const listingIds = Array.from(new Set(cleanResv.map((r: any) => String(r.listing_id))))
+  const pushMap = new Map<string, any>()
+  if (listingIds.length) {
+    const { data: pushed } = await sb.from('breezeway_tasks')
+      .select('listing_id, issue_title, status, scheduled_date, report_url, action_taken_at, breezeway_task_id, department')
+      .in('listing_id', listingIds).order('created_at', { ascending: false }).limit(4000)
+    ;(pushed ?? []).forEach((p: any) => {
+      const key = `${p.listing_id}__${p.issue_title}`
+      if (!pushMap.has(key)) pushMap.set(key, { status: p.status, scheduledDate: p.scheduled_date, reportUrl: p.report_url, actionTakenAt: p.action_taken_at, taskId: p.breezeway_task_id, department: p.department })
+    })
+  }
+
   const result = days.map((date, i) => {
     const dayResv = cleanResv.filter((r: any) => String(r.check_out).slice(0, 10) === date)
     // Dedupe by listing (one card per unit even if multiple reservations).
@@ -94,14 +115,20 @@ export async function GET() {
       const market = marketOf(l.building || building, l.address_city, nm)
       const h = healthOf(lid)
 
-      const tasks: any[] = []
+      let tasks: any[] = []
       // 1) Operational-improvement tasks from guest feedback / health issues.
-      ;(h?.issues || []).forEach((is: any) => { const t = taskFor(is.key, is.title, is.action, is.severity); tasks.push({ ...t, source: 'health/feedback' }) })
+      ;(h?.issues || []).forEach((is: any) => { const t = taskFor(is.key, is.title, is.action, is.severity); tasks.push({ ...t }) })
       // 2) Standard turnover audit + preventative maintenance (the "last audit / last PM" cadence).
-      tasks.push({ category: 'Inspection', title: 'Turnover inspection & audit', detail: 'Walk the unit on checkout: cleanliness, damage, amenities, restock, photos vs. reality.', severity: 'medium', source: 'audit' })
-      tasks.push({ category: 'PM', title: 'Preventative maintenance check', detail: 'Quick PM pass: HVAC filter, smoke/CO detectors, leaks, lightbulbs, batteries, hardware.', severity: 'low', source: 'pm' })
+      tasks.push({ key: 'audit', category: 'Inspection', title: 'Turnover inspection & audit', detail: 'Walk the unit on checkout: cleanliness, damage, amenities, restock, photos vs. reality.', severity: 'medium' })
+      tasks.push({ key: 'pm', category: 'PM', title: 'Preventative maintenance check', detail: 'Quick PM pass: HVAC filter, smoke/CO detectors, leaks, lightbulbs, batteries, hardware.', severity: 'low' })
 
       tasks.sort((a, b) => (SEV_RANK[a.severity] ?? 2) - (SEV_RANK[b.severity] ?? 2))
+      // Attach department (pushable?) + any existing push status.
+      tasks = tasks.map(t => {
+        const department = DEPT[t.category] ?? null
+        const push = pushMap.get(`${lid}__${t.title}`) || null
+        return { ...t, department, pushable: !!department, push }
+      })
       units.push({
         listingId: lid, listing: nm, building: building !== 'Unassigned' ? building : null,
         market, tier: lux ? 'Lux' : 'Other', lux,
