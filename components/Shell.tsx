@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, featureEnabled } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
-  ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star,
+  ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange,
   Share2, Sparkles, TrendingUp, UserCog, PhoneCall
 } from 'lucide-react'
 
@@ -50,6 +50,7 @@ const SECTIONS: {
   {
     title: 'Ops',
     items: [
+      { to: '/schedule', label: 'Schedule',  Icon: CalendarRange },
       { to: '/plan',     label: 'Ops Plans', Icon: ListChecks },
       { to: '/requests', label: 'Requests',  Icon: ClipboardList },
     ],
