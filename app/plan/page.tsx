@@ -14,7 +14,7 @@ import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calenda
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
 type Evidence = { quote: string; channel: string; date: string; stars: number | null }
 type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push; metric?: string | null; checklist?: string[]; evidence?: Evidence[] }
-type Unit = { listingId: string; listing: string; building: string | null; market: string; tier: string; lux: boolean; score: number | null; band: string; topIssue: string | null; guest: string | null; nights: number | null; taskCount: number; tasks: Task[] }
+type Unit = { listingId: string; listing: string; internalName?: string | null; building: string | null; market: string; tier: string; lux: boolean; score: number | null; band: string; topIssue: string | null; guest: string | null; nights: number | null; taskCount: number; tasks: Task[] }
 type Day = { date: string; label: string; unitCount: number; taskCount: number; units: Unit[] }
 type Data = { ok: boolean; generatedAt: string; days: Day[]; error?: string }
 
@@ -83,7 +83,7 @@ export default function OpsPlanPage() {
                         <button onClick={() => setOpen(isOpen ? null : id)} className="w-full text-left px-4 py-3 hover:bg-app/50 flex items-center gap-3">
                           {u.score != null && <span className={`text-sm font-bold tabular-nums px-2 py-1 rounded-lg ${u.score >= 80 ? 'bg-emerald-50 text-emerald-700' : u.score >= 70 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{u.score}</span>}
                           <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-ink truncate flex items-center gap-1.5">{u.listing}{u.lux && <span className="text-[10px] text-amber-700 bg-amber-50 px-1 rounded inline-flex items-center gap-0.5"><Crown size={9} className="text-amber-500" />Lux</span>}</div>
+                            <div className="text-sm font-semibold text-ink truncate flex items-center gap-1.5">{u.internalName && <span className="text-[10px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded shrink-0">{u.internalName}</span>}{u.listing}{u.lux && <span className="text-[10px] text-amber-700 bg-amber-50 px-1 rounded inline-flex items-center gap-0.5"><Crown size={9} className="text-amber-500" />Lux</span>}</div>
                             <div className="text-[11px] text-muted flex flex-wrap gap-x-2.5 gap-y-0.5 mt-0.5">
                               <span className="inline-flex items-center gap-1"><MapPin size={10} />{u.market}</span>
                               {u.guest && <span>out: {u.guest}{u.nights ? ` · ${u.nights}n` : ''}</span>}
@@ -123,7 +123,7 @@ export default function OpsPlanPage() {
                                         </div>
                                       )}
                                     </div>
-                                    <OpsTaskPush listingId={u.listingId} task={t} />
+                                    <OpsTaskPush listingId={u.listingId} unitName={u.internalName || u.listing} task={t} />
                                   </div>
                                 </div>
                               ))}
