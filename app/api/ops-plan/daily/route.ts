@@ -40,6 +40,44 @@ function taskFor(key: string, title: string, action: string, severity: string): 
 }
 const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
 
+// Per-task checklists the team can tick through.
+const CHECKLIST: Record<string, string[]> = {
+  clean: ['Bathroom — hair, grout, mirror, toilet', 'Kitchen — grease, sink, inside appliances', 'Linens & towels — stains, freshness', 'Floors + under/behind furniture', 'Balcony / patio', 'Trash emptied + fresh liners'],
+  ac: ['Set to 70°F — confirm it cools within 15 min', 'Clean or replace the filter', 'Vents clear + thermostat batteries', 'Listen for noise / check for leaks', 'Condensate drain line clear'],
+  maint: ['Walk every room for damage/wear', 'Test lights, outlets, TV, wifi', 'Plumbing — leaks, drainage, hot water', 'Doors, locks, windows operate', 'Furniture stable + intact'],
+  checkin: ['Door code works + matches the listing', 'Smart-lock / lockbox battery', 'Access instructions accurate', 'Parking / elevator / fob', 'Entry path well-lit'],
+  noise: ['Quiet-hours signage present', 'Check soundproofing / white-noise', 'Reset expectations in the check-in message', 'Note nearby construction / events'],
+  rating: ['Read the recent reviews below', 'Reply to any unanswered reviews (no fault admitted)', 'Request reviews from recent happy guests', 'Fix the top recurring driver'],
+  resp: ['Clear the unanswered-review backlog', 'Reply within 24h going forward', 'No fault admitted, no unit number'],
+  volume: ['Request reviews from recent happy guests', 'Add a post-stay review nudge'],
+  setup: ['Title + first 5 photos accurate', 'Amenities list matches reality', 'House rules / check-in current', 'Pricing + min-nights sane'],
+  ops: ['Confirm the flagged item', 'Resolve + log the action'],
+  audit: ['Cleanliness pass vs. the photos', 'Log any damage / wear', 'All amenities present + working', 'Restock consumables', 'Photos still match reality'],
+  pm: ['HVAC filter', 'Smoke / CO detectors + batteries', 'Leaks under sinks + toilets', 'Lightbulbs', 'Locks + hardware', 'Caulk / grout'],
+}
+const KW: Record<string, RegExp> = {
+  clean: /dirt|clean|hair|stain|smell|odou?r|dust|mess|trash|grime|mold|sticky/i,
+  ac: /\bac\b|a\/c|air[- ]?con|too hot|too cold|temperature|hvac|cool|freezing|heat/i,
+  maint: /broke|broken|leak|not work|doesn'?t work|repair|damage|fix|malfunction|clog/i,
+  checkin: /check[- ]?in|access|code|lock|keys?|entry|door|get in/i,
+  noise: /nois|loud|sound|hear|thin wall|neighbou?r|party/i,
+}
+function normStars(r: number | null): number | null { if (r == null) return null; return r > 5 ? Math.round((r / 2) * 10) / 10 : r }
+// Build the specifics for a task: a metric, a checklist, and the real guest quotes behind it.
+function specificsFor(key: string, revs: HealthReview[]): { metric: string | null; checklist: string[]; evidence: { quote: string; channel: string; date: string; stars: number | null }[] } {
+  const k = String(key || '').toLowerCase()
+  const checklist = CHECKLIST[k] || []
+  const kw = KW[k]
+  const neg = revs.filter(r => { const st = normStars(r.rating); return st != null && st <= 3.5 })
+  const evidence = (kw ? neg.filter(r => kw.test(String(r.content || ''))) : neg)
+    .filter(r => r.content && String(r.content).trim().length > 0)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .slice(0, 3)
+    .map(r => ({ quote: String(r.content).replace(/\s+/g, ' ').trim().slice(0, 180), channel: String(r.channel || ''), date: String(r.created_at || '').slice(0, 10), stars: normStars(r.rating) }))
+  const metric = kw ? `${evidence.length} related guest mention${evidence.length === 1 ? '' : 's'}` : null
+  return { metric, checklist, evidence }
+}
+
 export async function GET() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -135,10 +173,12 @@ export async function GET() {
 
       tasks.sort((a, b) => (SEV_RANK[a.severity] ?? 2) - (SEV_RANK[b.severity] ?? 2))
       // Attach department (pushable?) + any existing push status.
+      const revs = byListing.get(lid) || []
       tasks = tasks.map(t => {
         const department = DEPT[t.category] ?? null
         const push = pushMap.get(`${lid}__${t.title}`) || null
-        return { ...t, department, pushable: !!department, push }
+        const sp = specificsFor(t.key, revs)
+        return { ...t, department, pushable: !!department, push, metric: sp.metric, checklist: sp.checklist, evidence: sp.evidence }
       })
       units.push({
         listingId: lid, listing: nm, building: building !== 'Unassigned' ? building : null,
