@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
-import { breezewayConfigured, listBreezewayPeople } from '@/lib/breezeway'
+import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
   }
   for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-  type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null }
+  type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; assignedIds: number[]; assignedNames: string[] }
   const cleans: Clean[] = []
   for (const r of (outs || [])) {
     if (DEAD.test(str((r as any).status))) continue
@@ -114,7 +114,28 @@ export async function GET(req: NextRequest) {
       doorCode: m?.doorCode || null,
       newDoorCode: m?.is17 ? null : newCode(id + date),
       cleaningTime: m?.cleaningTime || null,
+      assignedIds: [],
+      assignedNames: [],
     })
+  }
+
+  // DAY view: look up each clean's CURRENT Breezeway departure-task assignee so the board shows who is
+  // already assigned (not just who we stage). Bounded parallelism; skipped for week view (too many calls).
+  if (view === 'day' && breezewayConfigured() && cleans.length) {
+    const CONC = 8
+    for (let i = 0; i < cleans.length; i += CONC) {
+      await Promise.all(cleans.slice(i, i + CONC).map(async c => {
+        try {
+          const tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date)
+          const clean = pickDepartureClean(tasks, c.date)
+          const ppl = (clean as any)?.assignees as { id: number | null; name: string | null }[] | undefined
+          if (ppl && ppl.length) {
+            c.assignedIds = ppl.map(p => Number(p.id)).filter(n => Number.isFinite(n))
+            c.assignedNames = ppl.map(p => String(p.name || '')).filter(Boolean)
+          }
+        } catch { /* leave unassigned */ }
+      }))
+    }
   }
 
   const MARKETS: Market[] = ['Miami', 'Broward', 'North']
