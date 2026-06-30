@@ -15,6 +15,12 @@ const DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
 const PRIS = ['urgent', 'high', 'normal', 'low', 'watch']
 const PRI_FROM_SEV: Record<string, string> = { critical: 'urgent', high: 'high', medium: 'normal', low: 'low' }
 const PANEL_W = 380
+// Standard/default assignees the team prefers. region helps pick the right one per market.
+const STANDARD = [
+  { label: 'Yoslenis · Miami — Inspections Supervisor', match: 'yoslenis' },
+  { label: 'Roberto · Miami', match: 'roberto' },
+  { label: 'Guillermo · Broward', match: 'guillermo' },
+]
 
 export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task }) {
   const btnRef = useRef<HTMLButtonElement | null>(null)
@@ -23,6 +29,7 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
   const [msg, setMsg] = useState('')
   const [people, setPeople] = useState<Person[] | null>(null)
   const [picked, setPicked] = useState<number[]>([])
+  const [q, setQ] = useState('')
   const [pos, setPos] = useState<{ top: number; left: number; maxH: number }>({ top: 0, left: 0, maxH: 460 })
   // Editable task fields.
   const [title, setTitle] = useState(task.title)
@@ -60,7 +67,7 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
 
   async function openPanel() {
     placePanel()
-    setState('panel'); setMsg(''); setPicked([])
+    setState('panel'); setMsg(''); setPicked([]); setQ('')
     setTitle(task.title); setDesc(task.detail || ''); setDept(task.department || 'housekeeping'); setPri(PRI_FROM_SEV[task.severity] || 'normal')
     try {
       const [pv] = await Promise.all([
@@ -88,6 +95,20 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
   }
 
   function toggle(id: number) { setPicked(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]) }
+
+  // Quick-add a standard assignee by name. If they're not in the current department's list, fetch the
+  // full team, find them, and surface the chip so it shows selected.
+  async function addStandard(matchName: string) {
+    if (!matchName) return
+    const m = matchName.toLowerCase()
+    let found = (people || []).find(p => p.name.toLowerCase().includes(m))
+    if (!found) {
+      const all = await fetch('/api/breezeway/people').then(r => r.json()).catch(() => null)
+      found = (all?.people || []).find((p: Person) => p.name.toLowerCase().includes(m))
+      if (found) setPeople(pl => [found as Person, ...((pl || []).filter(x => x.id !== (found as Person).id))])
+    }
+    if (found) setPicked(pk => pk.includes(found!.id) ? pk : [...pk, found!.id])
+  }
 
   if (taken) return (
     <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold shrink-0 whitespace-nowrap"><CheckCircle2 size={12} /> Action taken{push?.reportUrl && <a href={push.reportUrl} target="_blank" rel="noreferrer" className="ml-1 text-brand-700 hover:underline inline-flex items-center gap-0.5"><FileText size={10} />report</a>}</span>
@@ -137,13 +158,18 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
             <input type="date" value={sched} onChange={e => setSched(e.target.value)} className={fieldC} />
 
             <label className="block text-[10px] uppercase tracking-wider text-muted font-semibold mb-1 mt-2">Assign to {picked.length ? `(${picked.length})` : ''}</label>
+            <select value="" onChange={e => { addStandard(e.target.value); e.currentTarget.value = '' }} className={`${fieldC} mb-1.5`}>
+              <option value="">+ Standard assignee…</option>
+              {STANDARD.map(o => <option key={o.match} value={o.match}>{o.label}</option>)}
+            </select>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search team…" className={`${fieldC} mb-1.5`} />
             {people === null ? (
               <div className="text-[11px] text-muted inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> loading team…</div>
             ) : people.length === 0 ? (
-              <div className="text-[11px] text-muted">No {dept} team members found — will use Breezeway defaults.</div>
+              <div className="text-[11px] text-muted">No {dept} team members found — search or pick a standard assignee above.</div>
             ) : (
               <div className="max-h-32 overflow-auto flex flex-wrap gap-1 pr-1">
-                {people.map(p => (
+                {people.filter(p => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()) || String(p.region || '').toLowerCase().includes(q.trim().toLowerCase())).map(p => (
                   <button key={p.id} onClick={() => toggle(p.id)} className={`text-[11px] px-2 py-0.5 rounded-full border inline-flex items-center gap-1 whitespace-nowrap ${picked.includes(p.id) ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-ink border-line hover:bg-app'}`}>
                     <User size={9} />{p.name}{p.region ? ` · ${p.region}` : ''}
                   </button>
