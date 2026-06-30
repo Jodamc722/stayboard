@@ -33,7 +33,7 @@ function composeDesc(task: Task): string {
   return out
 }
 
-export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task }) {
+export function OpsTaskPush({ listingId, unitName, task }: { listingId: string; unitName?: string; task: Task }) {
   const btnRef = useRef<HTMLButtonElement | null>(null)
   const [push, setPush] = useState<Push>(task.push || null)
   const [state, setState] = useState<'idle' | 'panel' | 'pushing' | 'error'>('idle')
@@ -98,7 +98,7 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
     setState('pushing'); setMsg('')
     try {
       const r = await fetch('/api/health/push-task', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, issueKey: task.key, issueTitle: title.trim(), action: desc.trim(), severity: task.severity, department: dept, priority: pri, scheduledDate: sched, assigneeIds: picked, confirm: true }) })
+        body: JSON.stringify({ listingId, unitName, issueKey: task.key, issueTitle: title.trim(), action: desc.trim(), severity: task.severity, department: dept, priority: pri, scheduledDate: sched, assigneeIds: picked, confirm: true }) })
       const d = await r.json()
       if (!r.ok) { setState('error'); setMsg(d.error || 'Failed'); return }
       setPush(d); setState('idle')
