@@ -9,7 +9,8 @@ import { Send, CheckCircle2, Clock, Loader2, FileText, User, X } from 'lucide-re
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
 type Person = { id: number; name: string; departments: string[]; region: string | null }
-type Task = { key: string; title: string; detail?: string; severity: string; department: string | null; pushable: boolean; push: Push }
+type Evidence = { quote: string; channel: string; date: string; stars: number | null }
+type Task = { key: string; title: string; detail?: string; severity: string; department: string | null; pushable: boolean; push: Push; metric?: string | null; checklist?: string[]; evidence?: Evidence[] }
 
 const DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
 const PRIS = ['urgent', 'high', 'normal', 'low', 'watch']
@@ -22,6 +23,16 @@ const STANDARD = [
   { label: 'Guillermo · Broward', match: 'guillermo' },
 ]
 
+// Compose a rich Breezeway task description from the task's specifics (checklist + guest quotes),
+// so the field team sees the same detail in the Breezeway app.
+function composeDesc(task: Task): string {
+  let out = task.detail || ''
+  if (task.metric) out += `\n[${task.metric}]`
+  if (task.checklist && task.checklist.length) out += '\nChecklist:\n' + task.checklist.map(c => '- ' + c).join('\n')
+  if (task.evidence && task.evidence.length) out += '\nWhat guests said:\n' + task.evidence.map(e => `- "${e.quote}" (${e.channel}${e.stars != null ? ` ${e.stars}*` : ''}${e.date ? ` ${e.date}` : ''})`).join('\n')
+  return out
+}
+
 export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task }) {
   const btnRef = useRef<HTMLButtonElement | null>(null)
   const [push, setPush] = useState<Push>(task.push || null)
@@ -33,7 +44,7 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
   const [pos, setPos] = useState<{ top: number; left: number; maxH: number }>({ top: 0, left: 0, maxH: 460 })
   // Editable task fields.
   const [title, setTitle] = useState(task.title)
-  const [desc, setDesc] = useState(task.detail || '')
+  const [desc, setDesc] = useState(composeDesc(task))
   const [dept, setDept] = useState(task.department || 'housekeeping')
   const [pri, setPri] = useState(PRI_FROM_SEV[task.severity] || 'normal')
   const [sched, setSched] = useState('')
@@ -68,7 +79,7 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
   async function openPanel() {
     placePanel()
     setState('panel'); setMsg(''); setPicked([]); setQ('')
-    setTitle(task.title); setDesc(task.detail || ''); setDept(task.department || 'housekeeping'); setPri(PRI_FROM_SEV[task.severity] || 'normal')
+    setTitle(task.title); setDesc(composeDesc(task)); setDept(task.department || 'housekeeping'); setPri(PRI_FROM_SEV[task.severity] || 'normal')
     try {
       const [pv] = await Promise.all([
         fetch('/api/health/push-task', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -137,7 +148,7 @@ export function OpsTaskPush({ listingId, task }: { listingId: string; task: Task
             <input value={title} onChange={e => setTitle(e.target.value)} className={fieldC} />
 
             <label className="block text-[10px] uppercase tracking-wider text-muted font-semibold mb-0.5 mt-2">Description</label>
-            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} className={`${fieldC} resize-none`} />
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={5} className={`${fieldC} resize-none`} />
 
             <div className="grid grid-cols-2 gap-2 mt-2">
               <div>
