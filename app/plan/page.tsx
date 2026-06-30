@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
-import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar } from 'lucide-react'
+import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw } from 'lucide-react'
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
 type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push }
@@ -26,7 +26,7 @@ const CAT: Record<string, string> = {
 const catC = (c: string) => CAT[c] || 'bg-app text-muted'
 
 export default function OpsPlanPage() {
-  const { data, loading } = useCachedFetch<Data>('/api/ops-plan/daily')
+  const { data, loading, error, refresh } = useCachedFetch<Data>('/api/ops-plan/daily')
   const [open, setOpen] = useState<string | null>(null)
 
   return (
@@ -40,7 +40,10 @@ export default function OpsPlanPage() {
       {loading ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Building the daily plan…</div>
       ) : !data?.days ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-10 text-center text-sm text-rose-700">{data?.error || 'Could not load the plan.'}</div>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-10 text-center">
+          <p className="text-sm text-rose-700">{data?.error || error || 'Could not load the plan. The data may still be syncing.'}</p>
+          <button onClick={() => refresh()} className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 bg-white hover:bg-rose-50"><RefreshCw size={12} /> Retry</button>
+        </div>
       ) : (
         <div className="space-y-6">
           {data.days.map(day => (
