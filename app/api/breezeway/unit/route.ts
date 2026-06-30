@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
   // List tasks for this unit. NOTE: our Breezeway instance rejects sort_by=created_at, so we
   // omit sort and order client-side.
-  const r = await bzApi(`/task/?reference_property_id=${encodeURIComponent(listingId)}&limit=100`)
+  const r = await bzApi(`/task/?reference_property_id=${encodeURIComponent(listingId)}&limit=300`)
   if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
 
   const tasks = asArray(r.data).map((t: any) => ({
@@ -56,9 +56,18 @@ export async function GET(req: NextRequest) {
     tasks.filter(t => t.done && !t.canceled && t.finished_at && pred(t))
       .sort((a, b) => String(b.finished_at).localeCompare(String(a.finished_at)))[0] || null
 
-  const lastInspected = latestFinished(t => t.department === 'inspection')
+  // AUDIT = an inspection completed by a supervisor (per Jon: Roberto, Guillermo, Yoslenis, Ernesto, Jon).
+  const SUPERVISORS = ['roberto', 'guillermo', 'yoslenis', 'ernesto', 'jon']
+  const bySupervisor = (t: any) => {
+    const who = [t.finished_by, ...(t.assignees || [])].filter(Boolean).join(' ').toLowerCase()
+    return SUPERVISORS.some(su => who.includes(su))
+  }
+  const lastInspected = latestFinished(t => t.department === 'inspection' && bySupervisor(t))
+    || latestFinished(t => t.department === 'inspection')
   const lastPM = latestFinished(t => t.department === 'maintenance' || t.department === 'safety')
-  const lastClean = latestFinished(t => t.department === 'housekeeping')
+  // CLEAN = the turnover "Departure Clean" (per Jon). Fall back to any completed housekeeping task.
+  const lastClean = latestFinished(t => /departure/i.test(t.name) && /clean/i.test(t.name))
+    || latestFinished(t => t.department === 'housekeeping')
 
   const open = tasks.filter(t => !t.done && !t.canceled)
     .sort((a, b) => String(a.scheduled_date || '9999-99-99').localeCompare(String(b.scheduled_date || '9999-99-99')))
