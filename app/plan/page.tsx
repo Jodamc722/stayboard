@@ -9,10 +9,11 @@ import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
-import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw, Headset } from 'lucide-react'
+import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
-type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push }
+type Evidence = { quote: string; channel: string; date: string; stars: number | null }
+type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push; metric?: string | null; checklist?: string[]; evidence?: Evidence[] }
 type Unit = { listingId: string; listing: string; building: string | null; market: string; tier: string; lux: boolean; score: number | null; band: string; topIssue: string | null; guest: string | null; nights: number | null; taskCount: number; tasks: Task[] }
 type Day = { date: string; label: string; unitCount: number; taskCount: number; units: Unit[] }
 type Data = { ok: boolean; generatedAt: string; days: Day[]; error?: string }
@@ -105,6 +106,22 @@ export default function OpsPlanPage() {
                                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[t.severity] || SEV.low}`}>{t.severity}</span>
                                       </div>
                                       {t.detail && <div className="text-[12px] text-muted mt-1">{t.detail}</div>}
+                                      {t.metric && <div className="text-[11px] font-semibold text-brand-700 bg-brand-50 inline-block px-1.5 py-0.5 rounded mt-1">{t.metric}</div>}
+                                      {!!(t.checklist && t.checklist.length) && (
+                                        <ul className="mt-1.5 space-y-0.5">
+                                          {t.checklist!.map((c, ci) => (
+                                            <li key={ci} className="text-[11px] text-ink/80 flex items-start gap-1.5"><Square size={11} className="mt-0.5 text-muted shrink-0" />{c}</li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                      {!!(t.evidence && t.evidence.length) && (
+                                        <div className="mt-1.5 space-y-1">
+                                          <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">What guests said</div>
+                                          {t.evidence!.map((e, ei) => (
+                                            <div key={ei} className="text-[11px] text-muted border-l-2 border-rose-200 pl-2">&ldquo;{e.quote}&rdquo; <span className="text-[10px] text-muted/70">— {e.channel}{e.stars != null ? ` · ${e.stars}★` : ''}{e.date ? ` · ${e.date}` : ''}</span></div>
+                                          ))}
+                                        </div>
+                                      )}
                                     </div>
                                     <OpsTaskPush listingId={u.listingId} task={t} />
                                   </div>
