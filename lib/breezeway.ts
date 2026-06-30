@@ -105,3 +105,23 @@ export function normalizeTaskStatus(t: any): 'created' | 'in_progress' | 'comple
   if (t?.started_at || stage === 'in_progress' || code.includes('progress')) return 'in_progress'
   return 'created'
 }
+
+// Active people (assignable team members). Names are first_name + last_name; type_departments
+// says which activities they do; groups[] are their regions. Used for task assignment.
+export async function listBreezewayPeople(): Promise<{ id: number; name: string; departments: string[]; region: string | null; role: string | null }[]> {
+  const r = await bzApi('/people?status=active&limit=300')
+  if (!r.ok) return []
+  const arr = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data?.data) ? r.data.data : []))
+  return arr.filter((p: any) => p && (p.active !== false)).map((p: any) => ({
+    id: Number(p.id),
+    name: [p.first_name, p.last_name].filter(Boolean).join(' ').trim() || `Person ${p.id}`,
+    departments: Array.isArray(p.type_departments) ? p.type_departments.map((d: any) => String(d).toLowerCase()) : [],
+    region: Array.isArray(p.groups) && p.groups[0]?.name ? String(p.groups[0].name) : null,
+    role: p.type_role || null,
+  })).filter((p: any) => Number.isFinite(p.id))
+}
+
+// Update a task (used to reassign people). Body e.g. { assignments: [personId, ...] }.
+export async function updateBreezewayTask(taskId: string | number, body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+}
