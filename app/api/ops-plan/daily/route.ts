@@ -58,13 +58,23 @@ export async function GET() {
     }
     return all
   }
-  const [revRows, { data: listings }, { data: work }, { data: resv }] = await Promise.all([
+  // Reservations are the spine of the board; on a cold lambda the first read can transiently come
+  // back empty, so retry a couple times before trusting an empty result.
+  const fetchResv = async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data, error } = await sb.from('guesty_reservations').select('listing_id, listing_name, guest_name, nights, money_total, check_out, status').in('check_out', days).limit(2000)
+      if (!error && data && data.length) return data
+      if (attempt < 2) await new Promise(r => setTimeout(r, 300))
+    }
+    return [] as any[]
+  }
+  const [revRows, { data: listings }, { data: work }, resv] = await Promise.all([
     fetchAllReviews(),
     sb.from('guesty_listings').select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw').limit(2000),
     sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
-    sb.from('guesty_reservations').select('listing_id, listing_name, guest_name, nights, money_total, check_out, status').in('check_out', days).limit(2000),
+    fetchResv(),
   ])
-  const resvError = (resv as any) === null
+  const resvError = !resv || resv.length === 0
 
   const openByBuilding: Record<string, number> = {}
   ;(work ?? []).forEach((w: any) => { const b = rollupBuilding(w.building); if (!b || b === 'Unassigned') return; const wt = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1; openByBuilding[b] = (openByBuilding[b] || 0) + wt })
