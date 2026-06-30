@@ -2,14 +2,17 @@
 // Ops Plan — the daily operations board. Shows TODAY / TOMORROW / next day by checkout
 // (turnover), with internal operational-improvement tasks generated per unit from guest
 // feedback, recurring issues, a turnover audit, and a preventative-maintenance check.
-// Units are ranked LUX FIRST, then weakest health. Not pushed to Breezeway.
+// Units are ranked LUX FIRST, then weakest health. Field tasks can be pushed to Breezeway
+// (assign + track) right from the row; desk tasks stay internal.
 import { useState } from 'react'
 import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
+import { OpsTaskPush } from '@/components/OpsTaskPush'
 import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar } from 'lucide-react'
 
-type Task = { category: string; title: string; detail: string; severity: string; source: string }
+type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
+type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push }
 type Unit = { listingId: string; listing: string; building: string | null; market: string; tier: string; lux: boolean; score: number | null; band: string; topIssue: string | null; guest: string | null; nights: number | null; taskCount: number; tasks: Task[] }
 type Day = { date: string; label: string; unitCount: number; taskCount: number; units: Unit[] }
 type Data = { ok: boolean; generatedAt: string; days: Day[]; error?: string }
@@ -31,7 +34,7 @@ export default function OpsPlanPage() {
       <header className="mb-5">
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Ops Plan</h1>
-        <p className="text-sm text-muted mt-1">Operational improvements for the next three days of checkouts &mdash; from guest feedback, audits, and preventative maintenance. Ranked luxe first.</p>
+        <p className="text-sm text-muted mt-1">Operational improvements for the next three days of checkouts &mdash; from guest feedback, audits, and preventative maintenance. Ranked luxe first. Push a field task to Breezeway to assign &amp; track it.</p>
       </header>
 
       {loading ? (
@@ -73,12 +76,17 @@ export default function OpsPlanPage() {
                             <div className="space-y-1.5 pt-3">
                               {u.tasks.map((t, k) => (
                                 <div key={k} className="bg-white border border-line rounded-lg px-3 py-2">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${catC(t.category)}`}>{t.category}</span>
-                                    <span className="text-[13px] font-semibold text-ink">{t.title}</span>
-                                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[t.severity] || SEV.low}`}>{t.severity}</span>
+                                  <div className="flex items-start gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${catC(t.category)}`}>{t.category}</span>
+                                        <span className="text-[13px] font-semibold text-ink">{t.title}</span>
+                                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[t.severity] || SEV.low}`}>{t.severity}</span>
+                                      </div>
+                                      {t.detail && <div className="text-[12px] text-muted mt-1">{t.detail}</div>}
+                                    </div>
+                                    <OpsTaskPush listingId={u.listingId} task={t} />
                                   </div>
-                                  {t.detail && <div className="text-[12px] text-muted mt-1">{t.detail}</div>}
                                 </div>
                               ))}
                             </div>
