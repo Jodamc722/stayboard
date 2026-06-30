@@ -70,6 +70,7 @@ export function mapBreezewayTask(t: any) {
     assignee_id: first.assignee_id ?? first.id ?? null,
     assignee_name: first.name ?? null,
     assignee_count: assignments.length,
+    assignees: assignments.map((a: any) => ({ id: a?.assignee_id ?? a?.id ?? null, name: a?.name ?? null })).filter((a: any) => a.id || a.name),
     finished_by_id: finishedBy?.id ?? null,
     finished_by_name: finishedBy?.name ?? null,
     started_at: t?.started_at ?? null,
@@ -123,7 +124,9 @@ export async function listBreezewayPeople(): Promise<{ id: number; name: string;
 
 // Update a task (used to reassign people). Body e.g. { assignments: [personId, ...] }.
 export async function updateBreezewayTask(taskId: string | number, body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
-  return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  // PATCH is the documented update method. `assignments` is a full array of person IDs and REPLACES
+  // the task's current assignees (override, not append) — so re-pushing a different cleaner swaps them.
+  return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }
 
 // Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway requires
