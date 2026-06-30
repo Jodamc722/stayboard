@@ -225,7 +225,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
           <Panel title="Recent reviews" sub={`${reviews.length} pulled · reply to any of them right here`}>
             <ListingReviews
-              reviews={reviews.slice(0, 20).map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply, excluded: !!r.excluded_from_score }))}
+              reviews={reviews.map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply, excluded: !!r.excluded_from_score }))}
                listingName={name}
             />
           </Panel>
