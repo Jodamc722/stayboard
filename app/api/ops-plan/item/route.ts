@@ -14,14 +14,23 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-  const { itemId, status } = await req.json().catch(() => ({} as any))
-  if (!itemId || !ALLOWED.includes(status)) {
-    return NextResponse.json({ error: 'itemId and a valid status are required' }, { status: 400 })
-  }
+  const { itemId, status, scheduledDate } = await req.json().catch(() => ({} as any))
+  if (!itemId) return NextResponse.json({ error: 'itemId is required' }, { status: 400 })
 
-  const patch: any = { status }
-  if (status === 'closed') { patch.closed_by = user.email || 'supervisor'; patch.closed_at = new Date().toISOString() }
-  else { patch.closed_by = null; patch.closed_at = null }
+  const patch: any = {}
+  // Reschedule (weekly Action Plan): move the item to a different day. Pass scheduledDate as
+  // YYYY-MM-DD, or null to clear it. Validated loosely.
+  if (scheduledDate !== undefined) {
+    if (scheduledDate === null || /^\d{4}-\d{2}-\d{2}$/.test(String(scheduledDate))) patch.scheduled_date = scheduledDate || null
+    else return NextResponse.json({ error: 'scheduledDate must be YYYY-MM-DD or null' }, { status: 400 })
+  }
+  if (status !== undefined) {
+    if (!ALLOWED.includes(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 })
+    patch.status = status
+    if (status === 'closed') { patch.closed_by = user.email || 'supervisor'; patch.closed_at = new Date().toISOString() }
+    else { patch.closed_by = null; patch.closed_at = null }
+  }
+  if (Object.keys(patch).length === 0) return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
 
   try {
     const sb = supabaseAdmin()
