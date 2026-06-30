@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
   const action = String(body?.action || '').trim()
   const severity = String(body?.severity || 'medium').toLowerCase()
   const owner = String(body?.owner || '').trim()
+  const assigneeIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
   if (!listingId || !issueTitle) return NextResponse.json({ error: 'listingId and issueTitle required' }, { status: 400 })
 
   const department = departmentFor(issueKey, owner)
@@ -86,7 +87,8 @@ export async function POST(req: NextRequest) {
     type_priority: priority,
     scheduled_date: scheduled,
     requested_by: 'review',
-    assign_default_workers: true,
+    assignments: assigneeIds.length ? assigneeIds : undefined,
+    assign_default_workers: assigneeIds.length ? false : true,
   })
   if (!r.ok) return NextResponse.json({ error: `Breezeway create ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
 
