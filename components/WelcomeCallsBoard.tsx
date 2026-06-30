@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, Car, KeyRound, Utensils, Coffee, ShoppingCart, Umbrella, Lightbulb, ChevronDown, Info, CreditCard, CalendarDays, Tag, ClipboardCheck, Globe, DollarSign } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
 
-type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; sensitive: boolean; due: boolean; dueToday: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; status: { paidFull: boolean; balance: number; currency: string; parking: number | null; addOns: { t: string; amt: number }[]; nights: number; checkOut: string } }
+type Row = { id: string; guest: string; listing: string; building: string; check_in: string; done: boolean; callValue?: string; sensitive: boolean; due: boolean; dueToday: boolean; prio: number; phone: string; value: number; calledBy: string; calledAt: string; source: string; notes: string; status: { paidFull: boolean; balance: number; currency: string; parking: number | null; addOns: { t: string; amt: number }[]; nights: number; checkOut: string } }
 
 export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
@@ -30,7 +30,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
     try {
       const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, done, note, by }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update Guesty.')
-      setRows(prev => prev.map(x => x.id === id ? { ...x, done, calledBy: done ? (j.by || x.calledBy) : '', calledAt: done ? (j.at || '') : '', notes: (done && j.notes) ? j.notes : x.notes } : x))
+      setRows(prev => prev.map(x => x.id === id ? { ...x, done, calledBy: done ? (j.by || x.calledBy) : '', calledAt: done ? (j.at || '') : '', callValue: done ? (j.callValue || x.callValue || '') : '', notes: (done && j.notes) ? j.notes : x.notes } : x))
       if (done) setDraft(d => ({ ...d, [id]: '' }))
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(null) }
   }
@@ -104,7 +104,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                   {r.sensitive && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><ShieldAlert size={10} /> Sensitive</span>}
                 </div>
                 <div className="text-[12px] text-muted mt-0.5">{r.listing} · checks in {new Date(r.check_in + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
-                {r.done && r.calledBy && <div className="text-[11px] text-emerald-700 mt-0.5">Called by {who(r.calledBy)}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}</div>}
+                {r.done && (r.calledBy || r.callValue) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `Called by ${who(r.calledBy)}` : 'Called'}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.callValue && !r.calledBy ? ` · ${r.callValue.slice(0, 40)}` : ''}</div>}
                 {r.phone ? (
                   <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
                     <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} title="Calls through the Talkroute desktop app (set Talkroute as your computer's default phone app)" className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>
