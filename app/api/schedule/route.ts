@@ -18,6 +18,8 @@ const CLEANING_TIME_FIELD = '69977f98e346440013af2462'
 
 const DEAD = /cancel|declin|inquir|expire|denied/i
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
+const VENDOR_OF = (s: string) => /botanica/i.test(s) ? 'Botanica' : null  // Botanica is cleaned by hotel staff (vendor), not our team
+const NO_CODE = (s: string) => IS_17WEST(s) || /elser/i.test(s)  // 17West + Elser door codes are managed elsewhere — don't generate a new code
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function weekStartSunday(iso: string) { const d = new Date(iso + 'T12:00:00'); const dow = d.getDay(); d.setDate(d.getDate() - dow); return d.toISOString().slice(0, 10) }
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,raw'),
   ])
 
-  type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean }
+  type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; noCode: boolean; vendor: string | null }
   const meta: Record<string, Meta> = {}
   for (const l of (listings || [])) {
     const id = String((l as any).id)
@@ -76,6 +78,8 @@ export async function GET(req: NextRequest) {
       checkIn: raw?.defaultCheckInTime || null,
       checkOut: raw?.defaultCheckOutTime || null,
       is17: IS_17WEST(building) || IS_17WEST(name),
+      noCode: NO_CODE(building) || NO_CODE(name),
+      vendor: VENDOR_OF(building) || VENDOR_OF(name),
     }
   }
 
@@ -87,13 +91,17 @@ export async function GET(req: NextRequest) {
   }
   for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-  type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; assignedIds: number[]; assignedNames: string[] }
+  type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] }
   const cleans: Clean[] = []
+  const seenClean = new Set<string>()
   for (const r of (outs || [])) {
     if (DEAD.test(str((r as any).status))) continue
     const id = String((r as any).listing_id)
     const date = str((r as any).check_out).slice(0, 10)
     if (!date) continue
+    const dedupKey = `${id}__${date}`
+    if (seenClean.has(dedupKey)) continue
+    seenClean.add(dedupKey)
     const m = meta[id]
     const arrivals = arrivalsByListing[id] || []
     const sameDayTurn = arrivals.includes(date)
@@ -112,8 +120,9 @@ export async function GET(req: NextRequest) {
       sameDayTurn,
       nextArrival,
       doorCode: m?.doorCode || null,
-      newDoorCode: m?.is17 ? null : newCode(id + date),
+      newDoorCode: m?.noCode ? null : newCode(id + date),
       cleaningTime: m?.cleaningTime || null,
+      vendor: m?.vendor || null,
       assignedIds: [],
       assignedNames: [],
     })
