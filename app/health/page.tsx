@@ -10,7 +10,7 @@ import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Buil
 type Channel = { label: string; score: number; band: string; avgStars: number | null; reviewCount: number; responseRate: number | null; badge: string | null }
 type Issue = { severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string }
 type Row = {
-  id: string; name: string; building: string | null; unit: string | null
+  id: string; name: string; internalName?: string | null; building: string | null; unit: string | null
   score: number; band: string; unrated: boolean; optimizeScore: number
   avgStars: number | null; reviewCount: number; responseRate: number | null
   recurring: string[]; topIssue: string | null
@@ -46,7 +46,7 @@ export default function HealthPage() {
   const rows = useMemo(() => {
     let r = data?.listings ? [...data.listings] : []
     if (band !== 'all') r = r.filter(x => x.band === band)
-    if (q.trim()) { const s = q.toLowerCase(); r = r.filter(x => x.name.toLowerCase().includes(s) || (x.building || '').toLowerCase().includes(s) || (x.topIssue || '').toLowerCase().includes(s)) }
+    if (q.trim()) { const s = q.toLowerCase(); r = r.filter(x => x.name.toLowerCase().includes(s) || (x.internalName || '').toLowerCase().includes(s) || (x.building || '').toLowerCase().includes(s) || (x.topIssue || '').toLowerCase().includes(s)) }
     return r
   }, [data, q, band])
 
@@ -128,7 +128,8 @@ export default function HealthPage() {
                     <button onClick={() => setOpen(isOpen ? null : r.id)} className="w-full text-left px-4 py-3 hover:bg-app/60 flex items-center gap-3">
                       <Pill score={r.unrated ? null : r.score} band={r.band} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-ink truncate">{r.name}</div>
+                        <div className="text-sm font-semibold text-ink truncate">{r.internalName || r.name}</div>
+                        {r.internalName && r.internalName !== r.name && <div className="text-[11px] text-muted/80 truncate">{r.name}</div>}
                         <div className="text-[11px] text-muted flex flex-wrap gap-x-2.5 gap-y-0.5 mt-0.5">
                           {r.building && <span className="inline-flex items-center gap-1"><Building2 size={10} /> {r.building}</span>}
                           {r.avgStars != null && <span className="inline-flex items-center gap-0.5"><Star size={10} className="text-amber-500 fill-amber-500" />{r.avgStars} · {r.reviewCount}</span>}
