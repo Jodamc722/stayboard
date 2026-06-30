@@ -125,3 +125,21 @@ export async function listBreezewayPeople(): Promise<{ id: number; name: string;
 export async function updateBreezewayTask(taskId: string | number, body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }
+
+// Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway
+// requires a property scope, so the schedule resolves cleans per-property on demand. Used to
+// find the auto-created departure clean for a given unit + checkout date (to assign a cleaner).
+export async function listPropertyHousekeeping(refId: string, from: string, to: string) {
+  const r = await bzApi(`/task/?reference_property_id=${encodeURIComponent(refId)}&type_department=housekeeping&scheduled_date=${from},${to}&limit=100`)
+  if (!r.ok) return [] as ReturnType<typeof mapBreezewayTask>[]
+  const arr = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data?.data) ? r.data.data : []))
+  return arr.map(mapBreezewayTask)
+}
+
+// Pick the DEPARTURE clean from a housekeeping task list (falls back to any clean on the date).
+export function pickDepartureClean(tasks: ReturnType<typeof mapBreezewayTask>[], date: string) {
+  const onDate = tasks.filter(t => String(t.scheduled_date || '').slice(0, 10) === date)
+  return onDate.find(t => /departure/i.test(String(t.name || '')) && /clean/i.test(String(t.name || '')))
+    || onDate.find(t => /clean|turnover|turn/i.test(String(t.name || '')))
+    || onDate[0] || null
+}
