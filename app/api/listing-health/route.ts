@@ -78,6 +78,7 @@ export async function GET() {
       return {
         id: l.id,
         name: nm,
+        internalName: l.nickname || l.unit || null,
         building: building !== 'Unassigned' ? building : null,
         unit: l.unit || null,
         city: l.address_city || null,
