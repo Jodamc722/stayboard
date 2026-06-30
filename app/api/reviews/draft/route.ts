@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 30
+export const maxDuration = 60
 
 const SYSTEM = `You write short public replies to guest reviews on behalf of "Stay Hospitality", a short-term-rental property manager.
 
@@ -51,18 +51,32 @@ export async function POST(req: NextRequest) {
     `Write the single best reply.`
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-opus-4-8',
-        max_tokens: 500,
-        system: SYSTEM,
-        messages: [{ role: 'user', content: userMsg }],
-      }),
+    const reqBody = JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 500,
+      system: SYSTEM,
+      messages: [{ role: 'user', content: userMsg }],
     })
-    const d: any = await r.json()
-    if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
+    // Anthropic 429 (rate limit) and 529 (overloaded) are transient - retry with backoff
+    // instead of surfacing the raw error to the host.
+    const RETRYABLE = new Set([429, 500, 502, 503, 529])
+    let d: any = null
+    let lastErr = ''
+    let overloaded = false
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) await new Promise(res => setTimeout(res, 700 * Math.pow(2, attempt - 1)))
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: reqBody,
+      })
+      if (r.ok) { d = await r.json(); break }
+      const ed: any = await r.json().catch(() => ({}))
+      lastErr = `Anthropic ${r.status}: ${(ed?.error?.message || JSON.stringify(ed)).slice(0, 200)}`
+      overloaded = r.status === 429 || r.status === 503 || r.status === 529
+      if (!RETRYABLE.has(r.status)) return NextResponse.json({ error: lastErr }, { status: 502 })
+    }
+    if (!d) return NextResponse.json({ error: overloaded ? 'Anthropic is briefly overloaded - please click Rewrite again in a few seconds.' : (lastErr || 'AI request failed.') }, { status: 503 })
     const out = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
     if (!out) return NextResponse.json({ error: 'Empty draft from AI.' }, { status: 502 })
     return NextResponse.json({ draft: out })
