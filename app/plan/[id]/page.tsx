@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { PlanItemStatus } from '@/components/OpsPlanUI'
 import { PlanItemPush } from '@/components/PlanItemPush'
+import { PlanItemReschedule } from '@/components/PlanItemReschedule'
 import { MapPin, CalendarDays, Crown } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -129,6 +130,7 @@ function WeeklyView({ list, pushedMap }: { list: any[]; pushedMap: Record<string
                       {i.detail && <p className="text-xs text-muted mt-1">{i.detail}</p>}
                       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                         <PlanItemPush listingId={i.listing_id} issueKey={i.issue_key} issueTitle={i.title} detail={i.detail} priority={i.priority} pushed={pushedMap[`${i.listing_id}__${i.title}`] || null} />
+                        <PlanItemReschedule itemId={i.id} initial={i.scheduled_date || null} />
                         <PlanItemStatus itemId={i.id} initial={i.status} />
                       </div>
                       {i.closed_by && <div className="text-[10px] text-emerald-700 mt-1">Closed by {String(i.closed_by).split('@')[0]}</div>}
