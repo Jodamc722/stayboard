@@ -126,9 +126,9 @@ export async function updateBreezewayTask(taskId: string | number, body: Record<
   return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }
 
-// Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway
-// requires a property scope, so the schedule resolves cleans per-property on demand. Used to
-// find the auto-created departure clean for a given unit + checkout date (to assign a cleaner).
+// Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway requires
+// a property scope, so the schedule resolves cleans per-property on demand to find the auto-created
+// departure clean for a unit + checkout date (to assign a cleaner + write notes/door code).
 export async function listPropertyHousekeeping(refId: string, from: string, to: string) {
   const r = await bzApi(`/task/?reference_property_id=${encodeURIComponent(refId)}&type_department=housekeeping&scheduled_date=${from},${to}&limit=100`)
   if (!r.ok) return [] as ReturnType<typeof mapBreezewayTask>[]
