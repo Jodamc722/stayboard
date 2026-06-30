@@ -30,7 +30,10 @@ export async function POST(req: NextRequest) {
       const tasks = await listPropertyHousekeeping(listingId, date, date)
       const clean = pickDepartureClean(tasks, date)
       if (!clean || !clean.id) { results.push({ listingId, date, ok: false, error: 'No departure clean found in Breezeway for that date yet.' }); continue }
+      // assignments REPLACES the task's assignees (override, not append). name is sent because the
+      // Breezeway update treats it as required; re-pushing a different cleaner swaps the assignment.
       const payload: Record<string, any> = { assignments: assigneeIds }
+      if (clean.name) payload.name = clean.name
       if (description) payload.description = description
       const r = await updateBreezewayTask(clean.id, payload)
       if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: `Breezeway ${r.status}: ${r.text.slice(0, 140)}` }); continue }
