@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 const MAX_PHOTOS = 40 // keep total vision input tokens under the org's 10k/min tier
 
@@ -162,10 +162,13 @@ Return ONLY valid JSON, no prose, in exactly this shape:
 
   let modelJson: any = null
   let modelErr: string | null = null
+  const ac = new AbortController()
+  const acTimer = setTimeout(() => ac.abort(), 110_000)
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      signal: ac.signal,
       body: JSON.stringify({
         model: 'claude-sonnet-4-6', max_tokens: 8000,
         system: SYS,
@@ -179,7 +182,7 @@ Return ONLY valid JSON, no prose, in exactly this shape:
       modelJson = safeParseModelJson(text)
       if (!modelJson) modelErr = 'AI returned unparseable output.'
     }
-  } catch (e) { modelErr = String(e).slice(0, 180) }
+  } catch (e: any) { modelErr = e?.name === 'AbortError' ? `Timed out ordering ${toOrder.length} photos. Try again, or hide a few photos first — very photo-heavy listings can exceed the limit.` : String(e).slice(0, 180) } finally { clearTimeout(acTimer) }
 
   if (!modelJson || !Array.isArray(modelJson.order)) {
     return NextResponse.json({ error: modelErr || 'AI did not return a valid order.' }, { status: 502 })
