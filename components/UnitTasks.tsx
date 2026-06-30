@@ -3,7 +3,7 @@
 // PM / clean, then OPEN tasks SEPARATED BY TEAM (department) with the assignee on each, plus a
 // recent completed history.
 import { useEffect, useState } from 'react'
-import { Wrench, ClipboardCheck, Sparkles, CheckCircle2, MessageSquareWarning, Loader2, FileText, Calendar, User, ShieldAlert } from 'lucide-react'
+import { Wrench, ClipboardCheck, Sparkles, CheckCircle2, MessageSquareWarning, Loader2, FileText, Calendar, User, ShieldAlert, ChevronDown } from 'lucide-react'
 
 type Task = { id: string; name: string; department: string; statusName: string; done: boolean; priority: string | null; scheduled_date: string | null; finished_at: string | null; finished_by: string | null; assignees: string[]; report_url: string | null; guestDriven: boolean }
 type Data = { ok: boolean; total: number; summary: { lastInspected: string | null; lastPM: string | null; lastClean: string | null; openCount: number; guestDrivenOpen: number }; open: Task[]; completed: Task[]; error?: string }
@@ -20,6 +20,7 @@ const teamOf = (d: string) => TEAMS.find(t => t.key === d) || { key: d || 'other
 export function UnitTasks({ listingId }: { listingId: string; name?: string }) {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false)
   const [err, setErr] = useState('')
   useEffect(() => {
     let on = true
@@ -48,11 +49,14 @@ export function UnitTasks({ listingId }: { listingId: string; name?: string }) {
 
   return (
     <section className="rounded-2xl border border-line bg-white overflow-hidden">
-      <div className="px-4 py-3 border-b border-line flex items-center justify-between">
+      <button onClick={() => setOpen(o => !o)} className={`w-full px-4 py-3 flex items-center justify-between gap-2 hover:bg-app/40 ${open ? 'border-b border-line' : ''}`}>
         <h2 className="font-semibold text-ink text-sm inline-flex items-center gap-1.5"><Wrench size={15} className="text-brand-600" /> Field tasks (Breezeway)</h2>
-        {data && <span className="text-[11px] text-muted">{data.total} on record · {data.summary.openCount} open</span>}
-      </div>
-      {loading ? (
+        <span className="inline-flex items-center gap-2">
+          {data && <span className="text-[11px] text-muted">{data.summary.openCount} open · {data.total} on record</span>}
+          <ChevronDown size={16} className={`text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+      {open && (loading ? (
         <div className="px-4 py-8 text-center text-sm text-muted inline-flex items-center gap-2 w-full justify-center"><Loader2 size={14} className="animate-spin" /> Loading field tasks…</div>
       ) : err ? (
         <div className="px-4 py-6 text-center text-[12px] text-muted">{err}</div>
@@ -112,7 +116,7 @@ export function UnitTasks({ listingId }: { listingId: string; name?: string }) {
             )}
           </div>
         </div>
-      )}
+      ))}
     </section>
   )
 }
