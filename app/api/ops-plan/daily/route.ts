@@ -64,6 +64,7 @@ export async function GET() {
     sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
     sb.from('guesty_reservations').select('listing_id, listing_name, guest_name, nights, money_total, check_out, status').in('check_out', days).limit(2000),
   ])
+  const resvError = (resv as any) === null
 
   const openByBuilding: Record<string, number> = {}
   ;(work ?? []).forEach((w: any) => { const b = rollupBuilding(w.building); if (!b || b === 'Unassigned') return; const wt = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1; openByBuilding[b] = (openByBuilding[b] || 0) + wt })
@@ -142,6 +143,14 @@ export async function GET() {
     const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : 'Next day'
     return { date, label, unitCount: units.length, taskCount: units.reduce((s, u) => s + u.taskCount, 0), units }
   })
+
+  // Robustness: a 235-unit portfolio never has zero checkouts across three straight days, so an
+  // all-zero result means the reservations read came back empty (transient DB hiccup / mid-sync).
+  // Return a soft error instead of ok:true so the client cache won't store a misleading empty board.
+  const totalUnits = result.reduce((s, d) => s + d.unitCount, 0)
+  if (resvError || totalUnits === 0) {
+    return NextResponse.json({ ok: false, error: 'Could not load checkouts right now (data may be syncing). Hit refresh to retry.' })
+  }
 
   return NextResponse.json({ ok: true, generatedAt: new Date().toISOString(), days: result })
 }
