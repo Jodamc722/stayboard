@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
   const VALID_DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
   const department = VALID_DEPTS.includes(explicitDept) ? explicitDept : departmentFor(issueKey, owner)
   if (!department) return NextResponse.json({ error: 'This is a desk task (CCS/Listings), not a Breezeway field task.' }, { status: 400 })
-  const priority = PRIORITY[severity] || 'normal'
+  const explicitPriority = String(body?.priority || '').toLowerCase().trim()
+  const VALID_PRI = ['urgent', 'high', 'normal', 'low', 'watch']
+  const priority = VALID_PRI.includes(explicitPriority) ? explicitPriority : (PRIORITY[severity] || 'normal')
 
   const db = supabaseAdmin()
 
@@ -74,7 +76,8 @@ export async function POST(req: NextRequest) {
     .eq('listing_id', listingId)
     .gte('check_out', todayET()).limit(500)
   const cleanResv = (resv || []).filter((r: any) => !/cancel|declin/i.test(String(r.status || ''))).map((r: any) => ({ check_in: String(r.check_in).slice(0, 10), check_out: String(r.check_out).slice(0, 10) }))
-  const scheduled = nextVacantDay(cleanResv)
+  const reqDate = String(body?.scheduledDate || '').trim()
+  const scheduled = /^\d{4}-\d{2}-\d{2}$/.test(reqDate) ? reqDate : nextVacantDay(cleanResv)
 
   // CONFIRMATION GATE: first call is a preview (creates nothing).
   if (body?.confirm !== true) {
