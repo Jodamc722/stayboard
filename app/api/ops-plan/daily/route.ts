@@ -1,0 +1,120 @@
+// Daily Ops Plan. For TODAY / TOMORROW / next day (by check-out = turnover), lists the units
+// turning over and generates internal operational-improvement TASKS for each (from guest
+// feedback, recurring issues, a turnover audit, and a preventative-maintenance check). Units
+// are ranked LUX FIRST, then weakest health. NOT pushed/assigned to Breezeway — these are
+// StayBoard operational tasks. Logged-in users only.
+import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { computeListingHealth, type HealthReview } from '@/lib/health-score'
+import { rollupBuilding } from '@/lib/optimize-score'
+import { marketOf, isLux } from '@/lib/segments'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
+function et(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
+function addDays(n: number) { return et(new Date(Date.now() + n * 86400000)) }
+
+// Map a health issue to an operational task category + how it reads on the board.
+function taskFor(key: string, title: string, action: string, severity: string): { category: string; title: string; detail: string; severity: string } {
+  const k = String(key || '').toLowerCase()
+  if (k === 'clean') return { category: 'Cleanliness', title: 'Deep clean + QC inspection', detail: action, severity }
+  if (k === 'ac') return { category: 'Maintenance', title: 'HVAC / climate check', detail: action, severity }
+  if (k === 'maint') return { category: 'Maintenance', title: 'Maintenance fix', detail: action, severity }
+  if (k === 'checkin') return { category: 'Access', title: 'Verify check-in / door codes', detail: action, severity }
+  if (k === 'noise') return { category: 'Guest experience', title: 'Noise mitigation + expectations', detail: action, severity }
+  if (k === 'rating' || k === 'resp' || k === 'volume') return { category: 'Guest feedback', title, detail: action, severity }
+  if (k === 'setup') return { category: 'Listing', title: 'Optimize listing setup', detail: action, severity }
+  if (k === 'ops') return { category: 'Ops', title, detail: action, severity }
+  return { category: 'Guest feedback', title, detail: action, severity }
+}
+const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+
+export async function GET() {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  const sb = supabaseAdmin()
+  const days = [addDays(0), addDays(1), addDays(2)]
+
+  // Reviews + listings + open work (for health) and the 3 days of checkouts.
+  const fetchAllReviews = async () => {
+    let all: any[] = []
+    for (let from = 0; from < 12000; from += 1000) {
+      const { data } = await sb.from('guesty_reviews').select('listing_id, rating, content, has_reply, created_at, channel').eq('excluded_from_score', false).range(from, from + 999)
+      if (!data || data.length === 0) break
+      all = all.concat(data); if (data.length < 1000) break
+    }
+    return all
+  }
+  const [revRows, { data: listings }, { data: work }, { data: resv }] = await Promise.all([
+    fetchAllReviews(),
+    sb.from('guesty_listings').select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw').limit(2000),
+    sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
+    sb.from('guesty_reservations').select('listing_id, listing_name, guest_name, nights, money_total, check_out, status').in('check_out', days).limit(2000),
+  ])
+
+  const openByBuilding: Record<string, number> = {}
+  ;(work ?? []).forEach((w: any) => { const b = rollupBuilding(w.building); if (!b || b === 'Unassigned') return; const wt = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1; openByBuilding[b] = (openByBuilding[b] || 0) + wt })
+
+  const byListing = new Map<string, HealthReview[]>()
+  ;(revRows ?? []).forEach((r: any) => { if (!r.listing_id) return; const a = byListing.get(r.listing_id) || []; a.push({ rating: r.rating != null && r.rating !== '' ? Number(r.rating) : null, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }); byListing.set(r.listing_id, a) })
+
+  const lmeta = new Map<string, any>()
+  for (const l of (listings ?? [])) lmeta.set(String((l as any).id), l)
+
+  // Cache computed health per listing.
+  const healthCache = new Map<string, any>()
+  const healthOf = (lid: string) => {
+    if (healthCache.has(lid)) return healthCache.get(lid)
+    const l = lmeta.get(lid); if (!l) return null
+    const building = rollupBuilding(l.building)
+    const h = computeListingHealth(l, byListing.get(lid) || [], { openWork: openByBuilding[building] || 0 })
+    healthCache.set(lid, h); return h
+  }
+
+  const cleanResv = (resv ?? []).filter((r: any) => r.listing_id && !/cancel|declin/i.test(String(r.status || '')))
+
+  const result = days.map((date, i) => {
+    const dayResv = cleanResv.filter((r: any) => String(r.check_out).slice(0, 10) === date)
+    // Dedupe by listing (one card per unit even if multiple reservations).
+    const seen = new Set<string>()
+    const units: any[] = []
+    for (const r of dayResv) {
+      const lid = String(r.listing_id); if (seen.has(lid)) continue; seen.add(lid)
+      const l = lmeta.get(lid); if (!l) continue
+      const status = String(l.status || '').toLowerCase()
+      const building = rollupBuilding(l.building)
+      if (DEAD.includes(status) || building.toLowerCase() === 'waves') continue
+      const nm = l.title || l.nickname || lid
+      const lux = isLux(l.building || building, nm)
+      const market = marketOf(l.building || building, l.address_city, nm)
+      const h = healthOf(lid)
+
+      const tasks: any[] = []
+      // 1) Operational-improvement tasks from guest feedback / health issues.
+      ;(h?.issues || []).forEach((is: any) => { const t = taskFor(is.key, is.title, is.action, is.severity); tasks.push({ ...t, source: 'health/feedback' }) })
+      // 2) Standard turnover audit + preventative maintenance (the "last audit / last PM" cadence).
+      tasks.push({ category: 'Inspection', title: 'Turnover inspection & audit', detail: 'Walk the unit on checkout: cleanliness, damage, amenities, restock, photos vs. reality.', severity: 'medium', source: 'audit' })
+      tasks.push({ category: 'PM', title: 'Preventative maintenance check', detail: 'Quick PM pass: HVAC filter, smoke/CO detectors, leaks, lightbulbs, batteries, hardware.', severity: 'low', source: 'pm' })
+
+      tasks.sort((a, b) => (SEV_RANK[a.severity] ?? 2) - (SEV_RANK[b.severity] ?? 2))
+      units.push({
+        listingId: lid, listing: nm, building: building !== 'Unassigned' ? building : null,
+        market, tier: lux ? 'Lux' : 'Other', lux,
+        score: h?.score ?? null, band: h?.band ?? 'neutral', topIssue: h?.review?.topIssue || null,
+        guest: r.guest_name || null, nights: Number(r.nights) || null,
+        taskCount: tasks.length, tasks,
+      })
+    }
+    // Rank units: LUX first, then weakest health (lowest score) first.
+    units.sort((a, b) => (a.lux === b.lux ? 0 : a.lux ? -1 : 1) || ((a.score ?? 101) - (b.score ?? 101)))
+    const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : 'Next day'
+    return { date, label, unitCount: units.length, taskCount: units.reduce((s, u) => s + u.taskCount, 0), units }
+  })
+
+  return NextResponse.json({ ok: true, generatedAt: new Date().toISOString(), days: result })
+}
