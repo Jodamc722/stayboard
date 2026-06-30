@@ -49,7 +49,9 @@ export async function POST(req: NextRequest) {
   const assigneeIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
   if (!listingId || !issueTitle) return NextResponse.json({ error: 'listingId and issueTitle required' }, { status: 400 })
 
-  const department = departmentFor(issueKey, owner)
+  const explicitDept = String(body?.department || '').toLowerCase().trim()
+  const VALID_DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
+  const department = VALID_DEPTS.includes(explicitDept) ? explicitDept : departmentFor(issueKey, owner)
   if (!department) return NextResponse.json({ error: 'This is a desk task (CCS/Listings), not a Breezeway field task.' }, { status: 400 })
   const priority = PRIORITY[severity] || 'normal'
 
