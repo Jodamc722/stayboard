@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
   const issueKey = String(body?.issueKey || '').trim()
   const issueTitle = String(body?.issueTitle || '').trim()
   const action = String(body?.action || '').trim()
+  const unitName = String(body?.unitName || '').trim().slice(0, 60)
   const severity = String(body?.severity || 'medium').toLowerCase()
   const owner = String(body?.owner || '').trim()
   const assigneeIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
 
   const r = await createBreezewayTask({
     home_id,
-    name: issueTitle.slice(0, 120),
+    name: (unitName ? unitName + ' — ' : '') + issueTitle.slice(0, unitName ? 120 - unitName.length - 3 : 120),
     description: (action ? action + ' ' : '') + '[Flagged by StayBoard Action Plan]',
     type_department: department,
     type_priority: priority,
