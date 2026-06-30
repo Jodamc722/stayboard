@@ -65,6 +65,15 @@ export default async function WelcomeCallsPage() {
     return ff ? ff.value : undefined
   }
   const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
+  // Guesty's reservation customFields arrive as { fieldId, value } with NO field name, and the
+  // field-definition name map isn't synced — so we match the "Welcome Call" field by its known id.
+  // (Confirmed from live data: the team writes "Completed - <initials>" or a note in this field.)
+  const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
+  const cfId = (c: any) => String((c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : '') || '')
+  const welcomeOf = (cf: any) => Array.isArray(cf) ? cf.find((c: any) => cfId(c) === WELCOME_FIELD_ID || /welcome/i.test(String(c?.fieldName || c?.name || c?.fieldId?.name || ''))) : undefined
+  // For a free-text Welcome Call field, "done" = the value reads as a completion (Completed / Done /
+  // Called / Yes), or we marked it via the app (_by stamped). Plain notes don't count as done.
+  const callDone = (v: any) => typeof v === 'string' && v.trim().length > 0  // any writing in the Welcome Call field = done
 
   // Calls are due in the 48h-to-arrival window. Priority buildings get called first.
   const dueDate = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
@@ -107,9 +116,10 @@ export default async function WelcomeCallsPage() {
             checkOut: String(r.check_out || '').slice(0, 10),
           }
         })(),
-        done: truthy(fieldVal(r.custom_fields, 'welcome')),
-        calledBy: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._by || '',
-        calledAt: (Array.isArray(r.custom_fields) ? (r.custom_fields.find((c: any) => /welcome/i.test(String(c?.fieldName || c?.name || ''))) || {}) : {})._at || '',
+        done: (() => { const w = welcomeOf(r.custom_fields); return !!w && (callDone(w.value) || !!w._by) })(),
+        callValue: (() => { const w = welcomeOf(r.custom_fields); return (w && typeof w.value === 'string') ? w.value : '' })(),
+        calledBy: (() => { const w: any = welcomeOf(r.custom_fields) || {}; if (w._by) return w._by; const v = typeof w.value === 'string' ? w.value : ''; const m = v.match(/[-:]\s*([A-Za-z][A-Za-z.\s]{0,18})\s*$/); return m ? m[1].trim() : '' })(),
+        calledAt: ((welcomeOf(r.custom_fields) || {}) as any)._at || '',
         sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
         due: check_in <= dueDate,                                  // within 48h of arrival
         dueToday: check_in <= today,                               // arriving today (call must happen today)
