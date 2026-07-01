@@ -402,6 +402,13 @@ export async function syncMessages(conversationId: string): Promise<number> {
     const { error } = await sb.from('guesty_messages').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert messages (${conversationId}): ${error.message}`)
   }
+  // Backfill the conversation preview from the newest actual message body (Guesty's inbox list omits it).
+  const dated = rows.filter((r: any) => r.sent_at && r.body)
+  if (dated.length) {
+    const latest = dated.reduce((a: any, b: any) => (String(a.sent_at) >= String(b.sent_at) ? a : b))
+    const preview = String(latest.body).replace(/\s+/g, ' ').trim().slice(0, 200)
+    if (preview) await sb.from('guesty_conversations').update({ last_message_preview: preview }).eq('id', conversationId)
+  }
   return rows.length
 }
 
