@@ -4,7 +4,7 @@
 // nights, same-day-turn, current DOOR CODE + a suggested NEW 4-digit code (blank for 17West, whose
 // codes are managed elsewhere), and cleaning time. Read-only; assignment via /api/schedule/assign.
 import { NextRequest, NextResponse } from 'next/server'
-import { unstable_cache } from 'next/cache'
+import { unstable_cache, revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
@@ -134,6 +134,7 @@ assignedNames: [],
 })
 }
 
+let enrichedOk = 0
 // DAY view: look up each clean's CURRENT Breezeway departure-task assignee so the board shows who is
 // already assigned (not just who we stage). Bounded parallelism; skipped for week view (too many calls).
 if (view === 'day' && breezewayConfigured() && cleans.length) {
@@ -145,6 +146,7 @@ const tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date)
 const clean = pickDepartureClean(tasks, c.date)
               c.syncStatus = clean ? 'synced' : 'guesty-only'
 c.breezewayTaskId = clean && clean.id ? String(clean.id) : null
+enrichedOk++
 const ppl = (clean as any)?.assignees as { id: number | null; name: string | null }[] | undefined
 if (ppl && ppl.length) {
 c.assignedIds = ppl.map(p => Number(p.id)).filter(n => Number.isFinite(n))
@@ -154,6 +156,10 @@ c.assignedNames = ppl.map(p => String(p.name || '')).filter(Boolean)
 }))
 }
 }
+
+// If EVERY Breezeway lookup failed (token rate-limited on a cold lambda), this snapshot has no
+// assignees/sync badges - self-bust the cache tag so the very next load recomputes enriched.
+if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0) { try { revalidateTag('schedule') } catch {} }
 
 // Block-aware: reflect cleans a user moved to the next day (schedule_blocks: listing_id, orig_date, blocked_until).
     try {
