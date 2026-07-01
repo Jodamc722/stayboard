@@ -52,7 +52,7 @@ const sp = new URL(req.url).searchParams
 const view = sp.get('view') === 'week' ? 'week' : 'day'
 const today = ymd(new Date())
 const anchor = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('date') || '') ? sp.get('date')! : today
-const start = view === 'day' ? anchor : weekStartSunday(anchor)
+const start = anchor // week = rolling next-7-days from the anchor (today on load)
 const end = view === 'day' ? anchor : addDays(start, 6)
 
 const compute = unstable_cache(async (view: string, start: string, end: string, today: string) => {
