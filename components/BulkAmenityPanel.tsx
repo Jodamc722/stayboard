@@ -27,7 +27,7 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
   const [err, setErr] = useState<string | null>(null)
   const [mode, setMode] = useState<'add' | 'remove'>('add')
   const [rem, setRem] = useState<Set<string>>(new Set())
-  const appliedList = useMemo(() => { const m = new Map<string, number>(); for (const u of units) { if (!sel.has(u.id)) continue; for (const a of (((u as any).amenities as string[]) || [])) { const s = String(a).trim(); if (s) m.set(s, (m.get(s) || 0) + 1) } } return Array.from(m.entries()).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])) }, [units, sel])
+  const appliedList = useMemo(() => { const m = new Map<string, number>(); for (const u of units) { if (!sel.has(u.id)) continue; const seen = new Set<string>(); for (const a of (((u as any).amenities as string[]) || [])) { const s = String(a).trim(); if (!s) continue; const k = s.toLowerCase(); if (seen.has(k)) continue; seen.add(k); m.set(s, (m.get(s) || 0) + 1) } } return Array.from(m.entries()).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])) }, [units, sel])
   const toggleR = (a: string) => setRem(p => { const n = new Set(p); n.has(a) ? n.delete(a) : n.add(a); return n })
 
   const toggleA = (a: string) => setAmen(s => { const n = new Set(s); n.has(a) ? n.delete(a) : n.add(a); return n })
