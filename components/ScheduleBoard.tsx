@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download } from 'lucide-react'
 
-type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] }
+type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
 type Person = { id: number; name: string; region: string | null }
 type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; breezeway: boolean; syncedAt?: string; error?: string }
@@ -51,6 +51,7 @@ export function ScheduleBoard() {
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [pushing, setPushing] = useState(false)
   const [pushMsg, setPushMsg] = useState<string | null>(null)
+  const [blocking, setBlocking] = useState<Record<string, boolean>>({})
 
   async function load(v = view, d = date) {
     setLoading(true); setError(null)
@@ -130,6 +131,19 @@ export function ScheduleBoard() {
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
+
+  async function blockClean(c: Clean) {
+    const k = keyOf(c)
+    const action = c.blocked ? 'unblock' : 'block'
+    if (action === 'block' && !window.confirm('Move ' + c.unit + "'s clean to the next day? Housekeeping will see it moved in Breezeway.")) return
+    setBlocking(prev => ({ ...prev, [k]: true }))
+    try {
+      const r = await fetch('/api/schedule/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: c.listingId, date: c.blocked ? c.blockedFrom : c.date, action }) })
+      const j = await r.json().catch(() => null)
+      if (!r.ok || !j) throw new Error((j && j.error) || 'Could not move the clean.')
+      await load(view, date)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking(prev => ({ ...prev, [k]: false })) }
+  }
   function exportCsv() {
     const head = ['Building', 'Vendor', 'Unit', 'Bedrooms', 'Market', 'Date', 'Guest out', 'Check-out', 'Nights', 'Same-day turn', 'Door code', 'New code', 'Cleaner']
     const body = rows.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', c.newDoorCode || '', e.label || ''] })
@@ -194,6 +208,9 @@ export function ScheduleBoard() {
               <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.length})
             </label>
           )}
+          {rows.filter(r => r.syncStatus === 'guesty-only').length > 0 && (
+            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {rows.filter(r => r.syncStatus === 'guesty-only').length} clean{rows.filter(r => r.syncStatus === 'guesty-only').length === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
+          )}
           {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">No checkouts for this day.</div> : (
             <div className="overflow-x-auto rounded-xl border border-line bg-white">
               <table className="w-full text-[12px] border-collapse">
@@ -217,16 +234,16 @@ export function ScheduleBoard() {
                     const newBuilding = sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))
                     return (
                       <tr key={keyOf(c)} className={`border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${selected[keyOf(c)] ? 'bg-brand-50/40' : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
-                        <td className="px-2 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" /></td>
+                        <td className="px-2 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />{c.syncStatus === 'guesty-only' && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}</td>
                         <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} /></td>
                         <td className="px-2 py-1.5 align-middle whitespace-nowrap"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span>{c.vendor && <span className="ml-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">vendor</span>}</td>
                         <td className="px-2 py-1.5 align-middle font-medium text-ink">{c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
                         <td className="px-2 py-1.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
-                        <td className="px-2 py-1.5 align-middle text-ink/90">{c.guestOut || <span className="text-muted italic">—</span>}</td>
+                        <td className="px-2 py-1.5 align-middle text-ink/90">{c.blocked ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">Moved from {c.blockedFrom}</span> : c.guestOut || <span className="text-muted italic">—</span>}</td>
                         <td className="px-2 py-1.5 align-middle whitespace-nowrap">{c.checkOutTime || '11:00'}</td>
                         <td className="px-2 py-1.5 align-middle text-center text-muted">{c.nights ?? '—'}</td>
                         <td className="px-2 py-1.5 align-middle font-mono font-semibold text-ink">{c.doorCode || <span className="text-muted/60 font-sans">—</span>}</td>
-                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}</td>
+                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}{data.breezeway && <button onClick={() => blockClean(c)} disabled={!!blocking[keyOf(c)]} className="ml-2 align-middle text-[10px] font-sans font-semibold text-muted hover:text-amber-700 disabled:opacity-40" title={c.blocked ? 'Move back to the original day' : 'Not ready today, move this clean to tomorrow'}>{c.blocked ? 'Unblock' : 'Block'}</button>}</td>
                       </tr>
                     )
                   })}
@@ -287,12 +304,14 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   const filtered = useMemo(() => { const s = q.trim().toLowerCase(); const base = s ? people.filter(p => p.name.toLowerCase().includes(s) || String(p.region || '').toLowerCase().includes(s)) : people; return base.slice(0, 50) }, [people, q])
   if (disabled) return <div className="text-[10px] text-muted italic">{existing || 'Assign in Breezeway'}</div>
   const label = value ? value.name : (existing || '')
+  const _lp = label ? label.split(', ') : []
+  const shortLabel = _lp.length > 1 ? _lp[0] + ' +' + (_lp.length - 1) : label
   const shownAsExisting = !value && !!existing
   return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(o => !o)} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
+    <div className="relative max-w-[240px]" ref={ref}>
+      <button title={label || ''} onClick={() => setOpen(o => !o)} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
         <User size={11} className="shrink-0" />
-        <span className="truncate flex-1 text-left">{label || (placeholder || 'Assign cleaner…')}</span>
+        <span className="truncate flex-1 text-left min-w-0">{shortLabel || (placeholder || 'Assign cleaner…')}</span>
         {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : (shownAsExisting ? <span className="text-[9px] text-emerald-600 font-semibold shrink-0">assigned</span> : null)}
       </button>
       {open && (
