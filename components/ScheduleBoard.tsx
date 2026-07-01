@@ -38,7 +38,7 @@ function descFor(c: Clean): string {
 }
 
 export function ScheduleBoard() {
-  const [view, setView] = useState<'week' | 'day'>('day')
+  const [view, setView] = useState<'week' | 'day'>('week')
   const [date, setDate] = useState<string>('')
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
@@ -65,7 +65,7 @@ export function ScheduleBoard() {
       setOverrides({}); setCleared({}); setSelected({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
-  useEffect(() => { load('day', '') }, [])
+  useEffect(() => { load('week', '') }, [])
 
   async function sync() {
     setSyncing(true); setError(null)
@@ -199,7 +199,7 @@ export function ScheduleBoard() {
           <button onClick={() => load(view, data?.today || '')} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app">Today</button>
           <button onClick={() => data && load(view, data.next)} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronRight size={15} /></button>
         </div>
-        <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5"><CalendarRange size={15} className="text-brand-600" /> {rangeLabel}</span>
+        <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {rangeLabel || 'Loading…'}</span>
         <div className="ml-auto inline-flex items-center gap-1.5">
           {data?.syncedAt && <span className="text-[11px] text-muted">Synced {agoLabel(data.syncedAt)}</span>}
           {data && view === 'day' && <button onClick={exportCsv} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Export to CSV"><Download size={13} /> Export</button>}
