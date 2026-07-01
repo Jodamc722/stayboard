@@ -2,8 +2,7 @@
 // clean Breezeway auto-creates). Day view (rich table) + weekly view (Sun-Saturday), grouped by
 // market (Miami / Broward / North). Adds per clean: hub/building, bedrooms, check-in/out times,
 // nights, same-day-turn, current DOOR CODE + a suggested NEW 4-digit code (blank for 17West, whose
-// codes are managed elsewhere), and cleaning time. Includes SYNC STATUS to flag Guesty↔Breezeway
-// mismatches (only confirmed bookings, no inquiries). Read-only; assignment via /api/schedule/assign.
+// codes are managed elsewhere), and cleaning time. Read-only; assignment via /api/schedule/assign.
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
@@ -58,11 +57,10 @@ const end = view === 'day' ? anchor : addDays(start, 6)
 
 const compute = unstable_cache(async (view: string, start: string, end: string, today: string) => {
 const db = supabaseAdmin()
-const [{ data: outs }, { data: ins }, { data: listings }, { data: bwTasks }] = await Promise.all([
-db.from('guesty_reservations').select('listing_id,listing_name,guest_name,check_out,check_in,status,nights,source,guest_notes').gte('check_out', start).lte('check_out', end).limit(4000),
+const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
+db.from('guesty_reservations').select('listing_id,listing_name,guest_name,check_out,check_in,status,nights,source').gte('check_out', start).lte('check_out', end).limit(4000),
 db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
 db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,raw'),
-breezewayConfigured() ? db.from('breezeway_tasks').select('id,reference_property_id,scheduled_date,department,name').gte('scheduled_date', start).lte('scheduled_date', end).eq('department', 'housekeeping').limit(4000) : Promise.resolve({ data: null }),
 ])
 
 type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; noCode: boolean; vendor: string | null }
@@ -95,18 +93,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-// Build a Set of Breezeway departure tasks by listing_id + scheduled_date for sync comparison
-const bwSet = new Set<string>()
-if (bwTasks && bwTasks.length) {
-for (const t of bwTasks) {
-const propId = str((t as any).reference_property_id)
-const sched = str((t as any).scheduled_date).slice(0, 10)
-if (propId && sched) bwSet.add(`${propId}__${sched}`)
-}
-}
-
-type SyncStatus = 'synced' | 'guesty-only' | 'mismatch'
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; guestNotes: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; syncStatus: SyncStatus; assignedIds: number[]; assignedNames: string[] }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -121,8 +108,6 @@ const m = meta[id]
 const arrivals = arrivalsByListing[id] || []
 const sameDayTurn = arrivals.includes(date)
 const nextArrival = arrivals.find(a => a >= date) || null
-// Check sync status: does this Guesty checkout have a corresponding Breezeway task?
-const syncStatus: SyncStatus = bwSet.has(`${id}__${date}`) ? 'synced' : 'guesty-only'
 cleans.push({
 listingId: id,
 unit: m?.name || (r as any).listing_name || 'Unit',
@@ -130,7 +115,6 @@ market: m?.market || 'Miami',
 hub: m?.hub || 'Other',
 date,
 guestOut: (r as any).guest_name || null,
-guestNotes: (r as any).guest_notes || null,
 nights: (r as any).nights ?? null,
 bedrooms: m?.bedrooms ?? null,
 checkInTime: m?.checkIn || null,
@@ -141,7 +125,6 @@ doorCode: m?.doorCode || null,
 newDoorCode: m?.noCode ? null : newCode(id + date),
 cleaningTime: m?.cleaningTime || null,
 vendor: m?.vendor || null,
-syncStatus,
 assignedIds: [],
 assignedNames: [],
 })
@@ -174,7 +157,7 @@ const dayCleans = cleans.filter(c => c.date === date).sort((a, b) => (b.sameDayT
 const markets: Record<string, Clean[]> = {}
 for (const m of MARKETS) markets[m] = dayCleans.filter(c => c.market === m)
 const d = new Date(date + 'T12:00:00')
-return { date, dow: DAYLABEL[d.getDay()], count: dayCleans.length, syncIssues: dayCleans.filter(c => c.syncStatus !== 'synced').length, markets }
+return { date, dow: DAYLABEL[d.getDay()], count: dayCleans.length, markets }
 })
 
 let housekeepers: { id: number; name: string; region: string | null }[] = []
