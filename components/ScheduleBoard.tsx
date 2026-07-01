@@ -7,10 +7,10 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download } from 'lucide-react'
 
-type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
+type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; manual?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
 type Person = { id: number; name: string; region: string | null }
-type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; breezeway: boolean; syncedAt?: string; error?: string }
+type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; units?: { id: string; name: string }[]; breezeway: boolean; syncedAt?: string; error?: string }
 
 const MARKETS = ['Miami', 'Broward', 'North'] as const
 const HUB_COLOR = (hub: string) => {
@@ -53,6 +53,9 @@ export function ScheduleBoard() {
   const [pushMsg, setPushMsg] = useState<string | null>(null)
   const [blocking, setBlocking] = useState<Record<string, boolean>>({})
   const [blockStaged, setBlockStaged] = useState<Record<string, boolean>>({})
+const [taskAct, setTaskAct] = useState<Record<string, boolean>>({})
+const [adding, setAdding] = useState(false)
+const [addUnit, setAddUnit] = useState('')
 
   async function load(v = view, d = date) {
     setLoading(true); setError(null)
@@ -159,7 +162,49 @@ export function ScheduleBoard() {
       await load(view, date)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking(prev => ({ ...prev, [k]: false })) }
   }
-  async function pushBlocks() {
+  // EXPLICIT push of a Guesty clean that Breezeway is missing - never automatic (Jon's rule).
+async function pushMissingClean(c: Clean) {
+if (!window.confirm('Create the departure clean for ' + c.unit + ' (' + c.date + ') in Breezeway?')) return
+const k = keyOf(c)
+setTaskAct(prev => ({ ...prev, [k]: true }))
+try {
+const r = await fetch('/api/breezeway/create-clean', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ listingId: c.listingId, date: c.date, guest: c.guestOut || undefined, description: descFor(c) }] }) })
+const j = await r.json().catch(() => null)
+const res = j && j.results && j.results[0]
+if (!r.ok || !j || !res || !res.ok) throw new Error((res && res.error) || (j && j.error) || 'Could not create the clean.')
+await load(view, date)
+} catch (e: any) { setError(e.message || String(e)) } finally { setTaskAct(prev => { const n = { ...prev }; delete n[k]; return n }) }
+}
+// Delete a clean that already exists in Breezeway (couldn't be done from the webapp before).
+async function deleteClean(c: Clean) {
+if (!c.breezewayTaskId) return
+if (!window.confirm('Delete ' + c.unit + "'s clean from Breezeway? Housekeeping will no longer see it.")) return
+const k = keyOf(c)
+setTaskAct(prev => ({ ...prev, [k]: true }))
+try {
+const r = await fetch('/api/breezeway/create-clean', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskIds: [c.breezewayTaskId] }) })
+const j = await r.json().catch(() => null)
+if (!r.ok || !j || !j.deleted) throw new Error((j && j.results && j.results[0] && j.results[0].error) || (j && j.error) || 'Could not delete the clean.')
+await load(view, date)
+} catch (e: any) { setError(e.message || String(e)) } finally { setTaskAct(prev => { const n = { ...prev }; delete n[k]; return n }) }
+}
+// Manually ADD a clean/task for any unit on the shown day (explicit, shows on the calendar).
+async function addClean() {
+const u = (data?.units || []).find(x => x.name === addUnit.trim())
+if (!u) { setError('Pick a unit from the list.'); return }
+const d = data?.weekStart || date
+if (!window.confirm('Add a clean for ' + u.name + ' on ' + d + ' in Breezeway?')) return
+setAdding(false)
+try {
+const r = await fetch('/api/breezeway/create-clean', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ listingId: u.id, date: d }] }) })
+const j = await r.json().catch(() => null)
+const res = j && j.results && j.results[0]
+if (!r.ok || !res || !res.ok) throw new Error((res && res.error) || (j && j.error) || 'Could not add the clean.')
+setAddUnit('')
+await load(view, date)
+} catch (e: any) { setError(e.message || String(e)) }
+}
+async function pushBlocks() {
     const keys = Object.keys(blockStaged).filter(k => blockStaged[k])
     if (!keys.length) return
     const staged = rows.filter(c => blockStaged[keyOf(c)])
@@ -202,7 +247,8 @@ export function ScheduleBoard() {
         <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {rangeLabel || 'Loading…'}</span>
         <div className="ml-auto inline-flex items-center gap-1.5">
           {data?.syncedAt && <span className="text-[11px] text-muted">Synced {agoLabel(data.syncedAt)}</span>}
-          {data && view === 'day' && <button onClick={exportCsv} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Export to CSV"><Download size={13} /> Export</button>}
+          {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2 py-1.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
+{data && view === 'day' && <button onClick={exportCsv} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Export to CSV"><Download size={13} /> Export</button>}
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
       </div>
@@ -269,11 +315,11 @@ export function ScheduleBoard() {
                         <td className="px-2 py-1.5 align-middle whitespace-nowrap"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span>{c.vendor && <span className="ml-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">vendor</span>}</td>
                         <td className="px-2 py-1.5 align-middle font-medium text-ink">{c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
                         <td className="px-2 py-1.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
-                        <td className="px-2 py-1.5 align-middle text-ink/90">{c.blocked ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">Moved from {c.blockedFrom}</span> : c.guestOut || <span className="text-muted italic">—</span>}</td>
+                        <td className="px-2 py-1.5 align-middle text-ink/90">{c.blocked ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">Moved from {c.blockedFrom}</span> : c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.guestOut || <span className="text-muted italic">—</span>}</td>
                         <td className="px-2 py-1.5 align-middle whitespace-nowrap">{c.checkOutTime || '11:00'}</td>
                         <td className="px-2 py-1.5 align-middle text-center text-muted">{c.nights ?? '—'}</td>
                         <td className="px-2 py-1.5 align-middle font-mono font-semibold text-ink">{c.doorCode || <span className="text-muted/60 font-sans">—</span>}</td>
-                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}{data.breezeway && <button onClick={() => c.blocked ? unblockClean(c) : toggleBlockStage(c)} disabled={!!blocking[keyOf(c)]} className={'ml-2 align-middle text-[10px] font-sans font-semibold disabled:opacity-40 ' + (c.blocked ? 'text-amber-700 hover:text-amber-800' : blockStaged[keyOf(c)] ? 'text-red-600 font-bold' : 'text-muted hover:text-amber-700')} title={c.blocked ? 'Move back to the original day' : (blockStaged[keyOf(c)] ? 'Staged - click to unstage' : 'Not ready today - stage to move to tomorrow')}>{c.blocked ? 'Unblock' : (blockStaged[keyOf(c)] ? 'Staged' : 'Block')}</button>}</td>
+                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}{data.breezeway && <button onClick={() => c.blocked ? unblockClean(c) : toggleBlockStage(c)} disabled={!!blocking[keyOf(c)]} className={'ml-2 align-middle text-[10px] font-sans font-semibold disabled:opacity-40 ' + (c.blocked ? 'text-amber-700 hover:text-amber-800' : blockStaged[keyOf(c)] ? 'text-red-600 font-bold' : 'text-muted hover:text-amber-700')} title={c.blocked ? 'Move back to the original day' : (blockStaged[keyOf(c)] ? 'Staged - click to unstage' : 'Not ready today - stage to move to tomorrow')}>{c.blocked ? 'Unblock' : (blockStaged[keyOf(c)] ? 'Staged' : 'Block')}</button>}{data.breezeway && c.syncStatus === 'guesty-only' && <button onClick={() => pushMissingClean(c)} disabled={!!taskAct[keyOf(c)]} className="ml-2 align-middle text-[10px] font-sans font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-40" title="Not in Breezeway - create it there (only on your click, never automatic)">Push</button>}{data.breezeway && c.syncStatus === 'synced' && c.breezewayTaskId && <button onClick={() => deleteClean(c)} disabled={!!taskAct[keyOf(c)]} className="ml-2 align-middle text-[10px] font-sans font-semibold text-muted hover:text-rose-700 disabled:opacity-40" title="Delete this clean from Breezeway">Delete</button>}</td>
                       </tr>
                     )
                   })}
