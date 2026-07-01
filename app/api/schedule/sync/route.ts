@@ -5,11 +5,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
+import { syncReservations } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 async function doSync() {
-  revalidateTag('schedule')
+  // Pull the Guesty reservations DELTA first so altered/canceled stays don't linger as phantom
+// cleans (a reservation changed in Guesty otherwise sat stale until the 2h Guesty cron).
+try { await syncReservations() } catch { /* Guesty hiccup - still refresh from cached data */ }
+revalidateTag('schedule')
   return NextResponse.json({ ok: true, syncedAt: new Date().toISOString() })
 }
 
