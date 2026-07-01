@@ -52,6 +52,7 @@ export function ScheduleBoard() {
   const [pushing, setPushing] = useState(false)
   const [pushMsg, setPushMsg] = useState<string | null>(null)
   const [blocking, setBlocking] = useState<Record<string, boolean>>({})
+  const [blockStaged, setBlockStaged] = useState<Record<string, boolean>>({})
 
   async function load(v = view, d = date) {
     setLoading(true); setError(null)
@@ -144,6 +145,35 @@ export function ScheduleBoard() {
       await load(view, date)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking(prev => ({ ...prev, [k]: false })) }
   }
+  function toggleBlockStage(c: Clean) {
+    const k = keyOf(c)
+    setBlockStaged(prev => { const n = { ...prev }; if (n[k]) delete n[k]; else n[k] = true; return n })
+  }
+  async function unblockClean(c: Clean) {
+    const k = keyOf(c)
+    setBlocking(prev => ({ ...prev, [k]: true }))
+    try {
+      const r = await fetch('/api/schedule/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: c.listingId, date: c.blockedFrom, action: 'unblock' }) })
+      const j = await r.json().catch(() => null)
+      if (!r.ok || !j) throw new Error((j && j.error) || 'Could not move the clean.')
+      await load(view, date)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking(prev => ({ ...prev, [k]: false })) }
+  }
+  async function pushBlocks() {
+    const keys = Object.keys(blockStaged).filter(k => blockStaged[k])
+    if (!keys.length) return
+    const staged = rows.filter(c => blockStaged[keyOf(c)])
+    const nb: Record<string, boolean> = {}; keys.forEach(k => nb[k] = true); setBlocking(nb)
+    try {
+      for (const c of staged) {
+        const r = await fetch('/api/schedule/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: c.listingId, date: c.date, action: 'block' }) })
+        const j = await r.json().catch(() => null)
+        if (!r.ok || !j) throw new Error((j && j.error) || 'Could not move a clean.')
+      }
+      setBlockStaged({})
+      await load(view, date)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking({}) }
+  }
   function exportCsv() {
     const head = ['Building', 'Vendor', 'Unit', 'Bedrooms', 'Market', 'Date', 'Guest out', 'Check-out', 'Nights', 'Same-day turn', 'Door code', 'New code', 'Cleaner']
     const body = rows.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', c.newDoorCode || '', e.label || ''] })
@@ -233,7 +263,7 @@ export function ScheduleBoard() {
                     const e = effective(c)
                     const newBuilding = sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))
                     return (
-                      <tr key={keyOf(c)} className={`border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${selected[keyOf(c)] ? 'bg-brand-50/40' : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
+                      <tr key={keyOf(c)} className={`border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
                         <td className="px-2 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />{c.syncStatus === 'guesty-only' && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}</td>
                         <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} /></td>
                         <td className="px-2 py-1.5 align-middle whitespace-nowrap"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span>{c.vendor && <span className="ml-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">vendor</span>}</td>
@@ -243,7 +273,7 @@ export function ScheduleBoard() {
                         <td className="px-2 py-1.5 align-middle whitespace-nowrap">{c.checkOutTime || '11:00'}</td>
                         <td className="px-2 py-1.5 align-middle text-center text-muted">{c.nights ?? '—'}</td>
                         <td className="px-2 py-1.5 align-middle font-mono font-semibold text-ink">{c.doorCode || <span className="text-muted/60 font-sans">—</span>}</td>
-                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}{data.breezeway && <button onClick={() => blockClean(c)} disabled={!!blocking[keyOf(c)]} className="ml-2 align-middle text-[10px] font-sans font-semibold text-muted hover:text-amber-700 disabled:opacity-40" title={c.blocked ? 'Move back to the original day' : 'Not ready today, move this clean to tomorrow'}>{c.blocked ? 'Unblock' : 'Block'}</button>}</td>
+                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}{data.breezeway && <button onClick={() => c.blocked ? unblockClean(c) : toggleBlockStage(c)} disabled={!!blocking[keyOf(c)]} className={'ml-2 align-middle text-[10px] font-sans font-semibold disabled:opacity-40 ' + (c.blocked ? 'text-amber-700 hover:text-amber-800' : blockStaged[keyOf(c)] ? 'text-red-600 font-bold' : 'text-muted hover:text-amber-700')} title={c.blocked ? 'Move back to the original day' : (blockStaged[keyOf(c)] ? 'Staged - click to unstage' : 'Not ready today - stage to move to tomorrow')}>{c.blocked ? 'Unblock' : (blockStaged[keyOf(c)] ? 'Staged' : 'Block')}</button>}</td>
                       </tr>
                     )
                   })}
@@ -278,6 +308,15 @@ export function ScheduleBoard() {
         </div>
       ) : null}
 
+      {view === 'day' && Object.keys(blockStaged).filter(k => blockStaged[k]).length > 0 && (
+        <div className="sticky bottom-16 z-20 flex justify-center">
+          <div className="inline-flex items-center gap-3 rounded-full border border-red-200 bg-white shadow-lg px-4 py-2">
+            <span className="text-[13px] font-semibold text-red-700">{Object.keys(blockStaged).filter(k => blockStaged[k]).length} staged to move</span>
+            <button onClick={() => setBlockStaged({})} className="text-[12px] text-muted hover:text-ink">Clear</button>
+            <button onClick={pushBlocks} disabled={Object.keys(blocking).some(k => blocking[k])} className="inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-red-700 disabled:opacity-50">Move to next day</button>
+          </div>
+        </div>
+      )}
       {selectedKeys.length > 0 && view === 'day' && (
         <div className="sticky bottom-3 z-20 flex justify-center">
           <div className="inline-flex items-center gap-3 rounded-full border border-brand-200 bg-white shadow-lg px-4 py-2 flex-wrap justify-center">
