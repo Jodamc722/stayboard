@@ -7,6 +7,8 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const limit = Number(searchParams.get('limit') || 100)
   const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { data, error } = await supabase
     .from('guesty_reservations')
     .select('*')
