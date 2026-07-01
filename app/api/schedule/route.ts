@@ -18,7 +18,7 @@ const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
 const CLEANING_TIME_FIELD = '69977f98e346440013af2462'
 
 const DEAD = /cancel|declin|inquir|expire|denied/i
-const LIVE = /confirm|checked|closed/i // ONLY confirmed stays make cleans - inquiries/holds (e.g. 'reserved') must NOT create or imply a clean
+const LIVE = /confirm|checked/i // ONLY confirmed/checked stays make cleans. NOT inquiry/reserved (holds) and NOT 'closed' (Guesty closed = released/replaced - verified with the Cindy/Rustic-18 phantom)
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
 const VENDOR_OF = (s: string) => /botanica/i.test(s) ? 'Botanica' : null // Botanica is cleaned by hotel staff (vendor), not our team
 const NO_CODE = (s: string) => IS_17WEST(s) || /elser/i.test(s) // 17West + Elser door codes are managed elsewhere — don't generate a new code
