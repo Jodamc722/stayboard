@@ -61,6 +61,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const r = await bzApi('/task/' + encodeURIComponent(id), { method: 'DELETE' })
       results.push({ taskId: id, ok: r.ok, status: r.status, error: r.ok ? undefined : r.text.slice(0, 160) })
+      if (r.ok) { try { await supabaseAdmin().from('schedule_manual_cleans').delete().eq('breezeway_task_id', id) } catch { /* table optional */ } }
     } catch (e: any) {
       results.push({ taskId: id, ok: false, error: String(e?.message || e).slice(0, 160) })
     }
@@ -99,6 +100,7 @@ export async function POST(req: NextRequest) {
       if (assigneeIds.length) payload.assignments = assigneeIds
       const r = await createBreezewayTask(payload)
       if (!r.ok || !r.data?.id) { results.push({ listingId, date, ok: false, error: 'Breezeway ' + r.status + ': ' + r.text.slice(0, 160) }); continue }
+      try { await supabaseAdmin().from('schedule_manual_cleans').upsert({ listing_id: listingId, date, breezeway_task_id: String(r.data.id), created_by: user.email || null }, { onConflict: 'listing_id,date' }) } catch { /* table optional */ }
       results.push({ listingId, date, ok: true, taskId: String(r.data.id), reportUrl: r.data?.report_url || null, created: true })
     } catch (e: any) {
       results.push({ listingId, date, ok: false, error: String(e?.message || e).slice(0, 160) })
