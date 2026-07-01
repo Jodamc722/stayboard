@@ -47,6 +47,28 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ ok: true, listingId, date, housekeepingTasksOnDate: tasks.map((t: any) => ({ id: t.id, name: t.name, status: t.status, scheduled_date: t.scheduled_date })), reservationsCheckingOut: res, reservationLookup: r.ok ? 'ok' : 'Breezeway ' + r.status })
 }
 
+// Undo: delete tasks this route created. Body { taskIds: [id, ...] }.
+export async function DELETE(req: NextRequest) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
+  const body = await req.json().catch(() => ({} as any))
+  const ids = (Array.isArray(body?.taskIds) ? body.taskIds : []).map((x: any) => String(x)).filter(Boolean).slice(0, 40)
+  if (!ids.length) return NextResponse.json({ error: 'No taskIds.' }, { status: 400 })
+  const results: any[] = []
+  for (const id of ids) {
+    try {
+      const r = await bzApi('/task/' + encodeURIComponent(id), { method: 'DELETE' })
+      results.push({ taskId: id, ok: r.ok, status: r.status, error: r.ok ? undefined : r.text.slice(0, 160) })
+    } catch (e: any) {
+      results.push({ taskId: id, ok: false, error: String(e?.message || e).slice(0, 160) })
+    }
+  }
+  try { revalidateTag('schedule') } catch {}
+  return NextResponse.json({ ok: true, deleted: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, results })
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
