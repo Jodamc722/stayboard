@@ -1,17 +1,16 @@
 'use client'
-// Turnover schedule board — a staging PLAYGROUND. DAY view groups cleans BY BUILDING, with row checkboxes
-// for bulk assignment, a per-clean cleaner picker pre-filled with whoever is already on the Breezeway task,
-// a sort, and CSV export. Botanica is cleaned by hotel staff (vendor) so it is shown in its own section.
-// NOTHING is written to Breezeway until you click Push — Push sends the SELECTED cleans with their effective
-// assignment AND a description (door code, new code, SAME-DAY TURN warning, guest out) onto the auto-created
-// departure clean. WEEK view = Sun-Sat grid.
+// Turnover schedule board — a staging PLAYGROUND. DAY view = ONE continuous table organized by building
+// (Building column), so the whole day is visible at once and a cleaner can be followed across buildings
+// (sort by Cleaner). Row checkboxes + bulk assign; each picker is pre-filled with whoever is already on the
+// Breezeway task. Botanica is hotel-staff (vendor) so its rows are tagged. NOTHING writes to Breezeway until
+// you click Push. The schedule is cached and only re-pulls on the morning/noon cron or when you hit Sync.
 import { useEffect, useMemo, useState, useRef } from 'react'
-import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download, Building2 } from 'lucide-react'
+import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download } from 'lucide-react'
 
 type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
 type Person = { id: number; name: string; region: string | null }
-type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; breezeway: boolean; error?: string }
+type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; breezeway: boolean; syncedAt?: string; error?: string }
 
 const MARKETS = ['Miami', 'Broward', 'North'] as const
 const HUB_COLOR = (hub: string) => {
@@ -21,6 +20,13 @@ const HUB_COLOR = (hub: string) => {
 }
 const keyOf = (c: { listingId: string; date: string }) => `${c.listingId}__${c.date}`
 function fmtDate(iso: string) { const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
+function agoLabel(iso?: string) {
+  if (!iso) return ''
+  const ms = Date.now() - new Date(iso).getTime(); if (ms < 0) return 'just now'
+  const m = Math.floor(ms / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
 function descFor(c: Clean): string {
   const parts = [`${c.unit}`]
   if (c.vendor) parts.push(`VENDOR CLEAN — ${c.vendor} hotel staff`)
@@ -36,9 +42,10 @@ export function ScheduleBoard() {
   const [date, setDate] = useState<string>('')
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [market, setMarket] = useState<'all' | typeof MARKETS[number]>('all')
-  const [sortBy, setSortBy] = useState<'unit' | 'checkout' | 'nights' | 'cleaner'>('unit')
+  const [sortBy, setSortBy] = useState<'building' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
   const [cleared, setCleared] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
@@ -57,6 +64,16 @@ export function ScheduleBoard() {
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
   useEffect(() => { load('day', '') }, [])
+
+  async function sync() {
+    setSyncing(true); setError(null)
+    try {
+      const r = await fetch('/api/schedule/sync', { method: 'POST' })
+      const raw = await r.text(); let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+      if (!r.ok || !j) throw new Error((j && j.error) || 'Sync failed.')
+      await load(view, date)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setSyncing(false) }
+  }
 
   const people = data?.housekeepers || []
   const cleanByKey = useMemo(() => { const m: Record<string, Clean> = {}; (data?.days || []).forEach(d => MARKETS.forEach(mk => (d.markets[mk] || []).forEach(c => { m[keyOf(c)] = c }))); return m }, [data])
@@ -83,24 +100,20 @@ export function ScheduleBoard() {
   }
 
   const selectedKeys = Object.keys(selected).filter(k => selected[k])
-
-  function sortList(list: Clean[]): Clean[] {
-    const a = [...list]
-    const byUnit = (x: Clean, y: Clean) => x.unit.localeCompare(y.unit)
-    switch (sortBy) {
-      case 'checkout': return a.sort((x, y) => String(x.checkOutTime || '11:00').localeCompare(String(y.checkOutTime || '11:00')) || byUnit(x, y))
-      case 'nights': return a.sort((x, y) => (x.nights ?? 0) - (y.nights ?? 0) || byUnit(x, y))
-      case 'cleaner': return a.sort((x, y) => { const lx = effective(x).label, ly = effective(y).label; if (!lx && ly) return 1; if (lx && !ly) return -1; return lx.localeCompare(ly) || byUnit(x, y) })
-      default: return a.sort((x, y) => (y.sameDayTurn ? 1 : 0) - (x.sameDayTurn ? 1 : 0) || byUnit(x, y))
-    }
-  }
-
   const visibleMarkets = market === 'all' ? [...MARKETS] : [market]
   const dayCleans = useMemo(() => { const all: Clean[] = []; visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => all.push(c))); return all }, [data, market])
-  const buildings = useMemo(() => {
-    const groups: Record<string, Clean[]> = {}
-    for (const c of dayCleans) { const key = c.vendor ? `~${c.vendor} (vendor)` : c.hub; (groups[key] ||= []).push(c) }
-    return Object.keys(groups).sort((a, b) => a.localeCompare(b)).map(name => ({ name: name.replace(/^~/, ''), vendor: name.startsWith('~'), cleans: sortList(groups[name]) }))
+
+  const rows = useMemo(() => {
+    const a = [...dayCleans]
+    const byUnit = (x: Clean, y: Clean) => x.unit.localeCompare(y.unit)
+    const byBuilding = (x: Clean, y: Clean) => (x.vendor ? 1 : 0) - (y.vendor ? 1 : 0) || x.hub.localeCompare(y.hub) || byUnit(x, y)
+    switch (sortBy) {
+      case 'unit': return a.sort(byUnit)
+      case 'checkout': return a.sort((x, y) => String(x.checkOutTime || '11:00').localeCompare(String(y.checkOutTime || '11:00')) || byBuilding(x, y))
+      case 'nights': return a.sort((x, y) => (x.nights ?? 0) - (y.nights ?? 0) || byBuilding(x, y))
+      case 'cleaner': return a.sort((x, y) => { const lx = effective(x).label, ly = effective(y).label; if (!lx && ly) return 1; if (lx && !ly) return -1; return lx.localeCompare(ly) || byBuilding(x, y) })
+      default: return a.sort(byBuilding)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayCleans, sortBy, overrides, cleared])
 
@@ -119,19 +132,15 @@ export function ScheduleBoard() {
 
   function exportCsv() {
     const head = ['Building', 'Vendor', 'Unit', 'Bedrooms', 'Market', 'Date', 'Guest out', 'Check-out', 'Nights', 'Same-day turn', 'Door code', 'New code', 'Cleaner']
-    const rows = buildings.flatMap(b => b.cleans.map(c => {
-      const e = effective(c)
-      return [b.name, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', c.newDoorCode || '', e.label || '']
-    }))
+    const body = rows.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', c.newDoorCode || '', e.label || ''] })
     const esc = (v: any) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
-    const csv = [head, ...rows].map(r => r.map(esc).join(',')).join('\n')
+    const csv = [head, ...body].map(r => r.map(esc).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `turnover-schedule-${data?.weekStart || 'day'}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
   const rangeLabel = data ? (view === 'day' ? new Date(data.weekStart + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}`) : ''
-  const allSelectable = dayCleans
-  const allSelected = allSelectable.length > 0 && allSelectable.every(c => selected[keyOf(c)])
+  const allSelected = rows.length > 0 && rows.every(c => selected[keyOf(c)])
 
   return (
     <div className="space-y-4">
@@ -148,8 +157,9 @@ export function ScheduleBoard() {
         </div>
         <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5"><CalendarRange size={15} className="text-brand-600" /> {rangeLabel}</span>
         <div className="ml-auto inline-flex items-center gap-1.5">
+          {data?.syncedAt && <span className="text-[11px] text-muted">Synced {agoLabel(data.syncedAt)}</span>}
           {data && view === 'day' && <button onClick={exportCsv} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Export to CSV"><Download size={13} /> Export</button>}
-          <button onClick={() => load(view, date)} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink" title="Refresh"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
+          <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
       </div>
 
@@ -162,10 +172,11 @@ export function ScheduleBoard() {
           <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
             <ArrowDownUp size={13} /> Sort
             <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} className="text-[12px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 outline-none">
+              <option value="building">Building</option>
+              <option value="cleaner">Cleaner</option>
               <option value="unit">Listing</option>
               <option value="checkout">Check-out time</option>
               <option value="nights">Nights</option>
-              <option value="cleaner">Cleaner</option>
             </select>
           </label>
         )}
@@ -177,59 +188,52 @@ export function ScheduleBoard() {
       {loading && !data ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
       ) : data && view === 'day' ? (
-        <div className="space-y-5 pb-16">
-          {dayCleans.length > 0 && (
+        <div className="space-y-2 pb-16">
+          {rows.length > 0 && (
             <label className="inline-flex items-center gap-2 text-[12px] text-muted cursor-pointer">
-              <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(allSelectable, e.target.checked)} className="accent-brand-600" /> Select all ({dayCleans.length})
+              <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.length})
             </label>
           )}
-          {buildings.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">No checkouts for this day.</div> : buildings.map(b => {
-            const allInBuilding = b.cleans.every(c => selected[keyOf(c)])
-            return (
-              <section key={b.name}>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <h3 className="text-[12px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5"><Building2 size={13} className="text-muted" /> {b.name} <span className="text-muted/70">({b.cleans.length})</span></h3>
-                  {b.vendor && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Vendor clean · hotel staff</span>}
-                  <button onClick={() => setSelectMany(b.cleans, !allInBuilding)} className="text-[11px] text-brand-600 hover:text-brand-700 font-semibold">{allInBuilding ? 'Deselect' : 'Select all'}</button>
-                </div>
-                <div className="overflow-x-auto rounded-xl border border-line bg-white">
-                  <table className="w-full text-[12px] border-collapse">
-                    <thead>
-                      <tr className="bg-app/60 text-muted text-[10px] uppercase tracking-wider text-left">
-                        <th className="px-2 py-2 w-8"></th>
-                        <th className="px-2.5 py-2 font-semibold min-w-[160px]">HK Team</th>
-                        <th className="px-2 py-2 font-semibold">Listing</th>
-                        <th className="px-2 py-2 font-semibold text-center">BR</th>
-                        <th className="px-2 py-2 font-semibold">Reservation</th>
-                        <th className="px-2 py-2 font-semibold whitespace-nowrap">Check-out</th>
-                        <th className="px-2 py-2 font-semibold text-center">Nights</th>
-                        <th className="px-2 py-2 font-semibold">Door code</th>
-                        <th className="px-2 py-2 font-semibold">New code</th>
+          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">No checkouts for this day.</div> : (
+            <div className="overflow-x-auto rounded-xl border border-line bg-white">
+              <table className="w-full text-[12px] border-collapse">
+                <thead>
+                  <tr className="bg-app/60 text-muted text-[10px] uppercase tracking-wider text-left">
+                    <th className="px-2 py-2 w-8"></th>
+                    <th className="px-2.5 py-2 font-semibold min-w-[150px]">HK Team</th>
+                    <th className="px-2 py-2 font-semibold">Building</th>
+                    <th className="px-2 py-2 font-semibold">Listing</th>
+                    <th className="px-2 py-2 font-semibold text-center">BR</th>
+                    <th className="px-2 py-2 font-semibold">Reservation</th>
+                    <th className="px-2 py-2 font-semibold whitespace-nowrap">Check-out</th>
+                    <th className="px-2 py-2 font-semibold text-center">Nights</th>
+                    <th className="px-2 py-2 font-semibold">Door code</th>
+                    <th className="px-2 py-2 font-semibold">New code</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((c, i) => {
+                    const e = effective(c)
+                    const newBuilding = sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))
+                    return (
+                      <tr key={keyOf(c)} className={`border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${selected[keyOf(c)] ? 'bg-brand-50/40' : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
+                        <td className="px-2 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" /></td>
+                        <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} /></td>
+                        <td className="px-2 py-1.5 align-middle whitespace-nowrap"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span>{c.vendor && <span className="ml-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">vendor</span>}</td>
+                        <td className="px-2 py-1.5 align-middle font-medium text-ink">{c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
+                        <td className="px-2 py-1.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
+                        <td className="px-2 py-1.5 align-middle text-ink/90">{c.guestOut || <span className="text-muted italic">—</span>}</td>
+                        <td className="px-2 py-1.5 align-middle whitespace-nowrap">{c.checkOutTime || '11:00'}</td>
+                        <td className="px-2 py-1.5 align-middle text-center text-muted">{c.nights ?? '—'}</td>
+                        <td className="px-2 py-1.5 align-middle font-mono font-semibold text-ink">{c.doorCode || <span className="text-muted/60 font-sans">—</span>}</td>
+                        <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {b.cleans.map(c => {
-                        const e = effective(c)
-                        return (
-                          <tr key={keyOf(c)} className={`border-t border-line ${selected[keyOf(c)] ? 'bg-brand-50/40' : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
-                            <td className="px-2 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" /></td>
-                            <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} /></td>
-                            <td className="px-2 py-1.5 align-middle font-medium text-ink">{c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
-                            <td className="px-2 py-1.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
-                            <td className="px-2 py-1.5 align-middle text-ink/90">{c.guestOut || <span className="text-muted italic">—</span>}</td>
-                            <td className="px-2 py-1.5 align-middle whitespace-nowrap">{c.checkOutTime || '11:00'}</td>
-                            <td className="px-2 py-1.5 align-middle text-center text-muted">{c.nights ?? '—'}</td>
-                            <td className="px-2 py-1.5 align-middle font-mono font-semibold text-ink">{c.doorCode || <span className="text-muted/60 font-sans">—</span>}</td>
-                            <td className="px-2 py-1.5 align-middle font-mono">{c.newDoorCode ? <span className="text-emerald-700 font-semibold">{c.newDoorCode}</span> : <span className="text-muted/50 font-sans">—</span>}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            )
-          })}
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       ) : data ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2">
