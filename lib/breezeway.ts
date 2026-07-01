@@ -4,6 +4,8 @@
 // Request an account API key from Breezeway (Settings / API access form). The token
 // endpoint is rate-limited to ~1 request/min, so the access token is cached in the
 // warm lambda. Docs: https://developer.breezeway.io/
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
 const AUTH = process.env.BREEZEWAY_AUTH_URL || 'https://api.breezeway.io/public/auth/v1'
 const BASE = process.env.BREEZEWAY_BASE_URL || 'https://api.breezeway.io/public/inventory/v1'
 
@@ -15,6 +17,15 @@ export function breezewayConfigured(): boolean {
 
 export async function getBreezewayToken(force = false): Promise<string> {
   if (!force && cached && cached.exp > Date.now() + 60_000) return cached.token
+// SHARED cross-lambda token cache (Supabase breezeway_token_cache). The token endpoint allows
+// ~1 mint/min, so cold lambdas kept 429ing and the schedule lost assignees/sync badges.
+if (!force) {
+try {
+const { data } = await supabaseAdmin().from('breezeway_token_cache').select('token,exp').eq('id', 1).limit(1)
+const v: any = (data && data[0]) || null
+if (v && v.token && Number(v.exp) > Date.now() + 60_000) { cached = { token: String(v.token), exp: Number(v.exp) }; return cached.token }
+} catch { /* cache table optional */ }
+}
   const id = process.env.BREEZEWAY_CLIENT_ID
   const secret = process.env.BREEZEWAY_CLIENT_SECRET
   if (!id || !secret) throw new Error('Breezeway not configured — add BREEZEWAY_CLIENT_ID and BREEZEWAY_CLIENT_SECRET in Vercel env.')
@@ -31,6 +42,7 @@ export async function getBreezewayToken(force = false): Promise<string> {
   const token = j.access_token || j.token || j.accessToken
   if (!token) throw new Error('No access_token in Breezeway auth response.')
   cached = { token, exp: Date.now() + 23 * 3600 * 1000 } // tokens live ~24h
+try { await supabaseAdmin().from('breezeway_token_cache').upsert({ id: 1, token, exp: cached.exp, updated_at: new Date().toISOString() }, { onConflict: 'id' }) } catch { /* cache table optional */ }
   return token
 }
 
