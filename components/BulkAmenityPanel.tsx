@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Search, X } from 'lucide-react'
 
-type Unit = { id: string; name: string; amenityCount: number }
+type Unit = { id: string; name: string; amenityCount: number ; amenities?: string[] }
 type Res = { id: string; name: string; ok: boolean; added: number; total: number; error?: string }
 
 export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: string[] }) {
@@ -25,6 +25,10 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
   }, [])
   const allAddable = useMemo(() => Array.from(new Set([...addable, ...extra])).sort((a, b) => a.localeCompare(b)), [addable, extra])
   const [err, setErr] = useState<string | null>(null)
+  const [mode, setMode] = useState<'add' | 'remove'>('add')
+  const [rem, setRem] = useState<Set<string>>(new Set())
+  const appliedList = useMemo(() => { const m = new Map<string, number>(); for (const u of units) { if (!sel.has(u.id)) continue; for (const a of (((u as any).amenities as string[]) || [])) { const s = String(a).trim(); if (s) m.set(s, (m.get(s) || 0) + 1) } } return Array.from(m.entries()).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])) }, [units, sel])
+  const toggleR = (a: string) => setRem(p => { const n = new Set(p); n.has(a) ? n.delete(a) : n.add(a); return n })
 
   const toggleA = (a: string) => setAmen(s => { const n = new Set(s); n.has(a) ? n.delete(a) : n.add(a); return n })
   const toggleU = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -36,7 +40,7 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
     try {
       const res = await fetch('/api/bulk-amenities', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingIds: Array.from(sel), add: Array.from(amen) }),
+        body: JSON.stringify({ listingIds: Array.from(sel), add: mode === 'add' ? Array.from(amen) : [], remove: mode === 'remove' ? Array.from(rem) : [] }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
@@ -49,7 +53,7 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
   if (!openPanel) {
     return (
       <button onClick={() => setOpenPanel(true)} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg border border-brand-200 text-brand-700 bg-brand-50 px-3 py-2 hover:bg-brand-100">
-        <Sparkles size={14} /> Bulk add amenities
+        <Sparkles size={14} /> Bulk amenities
       </button>
     )
   }
@@ -57,10 +61,16 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
   return (
     <section className="rounded-2xl border border-brand-200 bg-white p-4 mb-5">
       <div className="flex items-center justify-between gap-2 mb-3">
-        <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Sparkles size={14} className="text-brand-600" /> Bulk add amenities</h2>
+        <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Sparkles size={14} className="text-brand-600" /> Bulk amenities</h2>
         <button onClick={() => setOpenPanel(false)} className="text-muted hover:text-ink"><X size={16} /></button>
       </div>
 
+      {!results && (
+        <div className="flex gap-1 mb-3 text-[12px]">
+          <button onClick={() => setMode('add')} className={mode === 'add' ? 'px-2.5 py-1 rounded-lg border font-semibold bg-brand-600 text-white border-brand-600' : 'px-2.5 py-1 rounded-lg border font-semibold bg-white text-brand-700 border-brand-200'}>Add</button>
+          <button onClick={() => setMode('remove')} className={mode === 'remove' ? 'px-2.5 py-1 rounded-lg border font-semibold bg-rose-600 text-white border-rose-600' : 'px-2.5 py-1 rounded-lg border font-semibold bg-white text-rose-700 border-rose-200'}>Remove</button>
+        </div>
+      )}
       {results ? (
         <div>
           <div className="text-[13px] font-semibold text-ink mb-2">Done — {results.filter(r => r.ok).length}/{results.length} units updated.</div>
@@ -77,6 +87,7 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
         </div>
       ) : (
         <>
+          {mode === 'add' ? (<>
           {/* amenity picker */}
           <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">1. Amenities to add {amen.size > 0 && <span className="text-brand-700">· {amen.size} selected</span>}</div>
           <div className="relative mb-2">
@@ -95,6 +106,20 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
             })}
           </div>
 
+          </>) : (
+            <div className="mb-4">
+              <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Amenities on the selected units — tap to remove</div>
+              {appliedList.length === 0 ? <div className="text-[12px] text-muted">No amenities found on the selected units.</div> : (
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                  {appliedList.map(([a, cnt]) => { const on = rem.has(a); return (
+                    <button key={a} onClick={() => toggleR(a)} className={on ? 'text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border bg-rose-600 text-white border-rose-600' : 'text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border bg-white text-rose-700 border-rose-200 hover:bg-rose-50'}>
+                      {on ? <X size={11} /> : null} {a} <span className={on ? 'text-[10px] text-white/80' : 'text-[10px] text-muted'}>· {cnt}/{sel.size}</span>
+                    </button>
+                  )})}
+                </div>
+              )}
+            </div>
+          )}
           {/* unit selector */}
           <div className="flex items-center justify-between mb-1.5">
             <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">2. Apply to units <span className="text-brand-700">· {sel.size}/{units.length}</span></div>
@@ -120,12 +145,12 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
 
           <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-line">
             {!confirming ? (
-              <button onClick={() => setConfirming(true)} disabled={!canApply} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">
+              <button onClick={() => setConfirming(true)} disabled={mode === 'add' ? !canApply : (rem.size === 0 || sel.size === 0)} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">
                 Review & apply to Guesty
               </button>
             ) : (
               <>
-                <span className="text-[12px] text-ink">Add <b>{amen.size}</b> amenit{amen.size === 1 ? 'y' : 'ies'} to <b>{sel.size}</b> unit{sel.size === 1 ? '' : 's'} on Guesty?</span>
+                <span className="text-[12px] text-ink">{mode === 'add' ? <>Add <b>{amen.size}</b> amenit{amen.size === 1 ? 'y' : 'ies'} to <b>{sel.size}</b> unit{sel.size === 1 ? '' : 's'} on Guesty?</> : <>Remove <b>{rem.size}</b> amenit{rem.size === 1 ? 'y' : 'ies'} from <b>{sel.size}</b> unit{sel.size === 1 ? '' : 's'} on Guesty?</>}</span>
                 <button onClick={apply} disabled={busy} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">{busy ? 'Applying…' : 'Yes, apply'}</button>
                 <button onClick={() => setConfirming(false)} disabled={busy} className="text-[12px] text-muted hover:text-ink">Cancel</button>
               </>
