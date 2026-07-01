@@ -93,7 +93,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -139,6 +139,7 @@ await Promise.all(cleans.slice(i, i + CONC).map(async c => {
 try {
 const tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date)
 const clean = pickDepartureClean(tasks, c.date)
+              c.syncStatus = clean ? 'synced' : 'guesty-only'
 const ppl = (clean as any)?.assignees as { id: number | null; name: string | null }[] | undefined
 if (ppl && ppl.length) {
 c.assignedIds = ppl.map(p => Number(p.id)).filter(n => Number.isFinite(n))
@@ -149,7 +150,43 @@ c.assignedNames = ppl.map(p => String(p.name || '')).filter(Boolean)
 }
 }
 
-const MARKETS: Market[] = ['Miami', 'Broward', 'North']
+// Block-aware: reflect cleans a user moved to the next day (schedule_blocks: listing_id, orig_date, blocked_until).
+    try {
+      const { data: blocks } = await db.from('schedule_blocks').select('listing_id,orig_date,blocked_until').lte('orig_date', end).gte('blocked_until', start)
+      const blk = (blocks || []) as any[]
+      if (blk.length) {
+        for (let i = cleans.length - 1; i >= 0; i--) {
+          const c = cleans[i]
+          const b = blk.find(x => String(x.listing_id) === c.listingId && String(x.orig_date) === c.date)
+          if (b) {
+            const bu = String(b.blocked_until)
+            if (bu >= start && bu <= end) { c.blockedFrom = c.date; c.date = bu; c.blocked = true; c.sameDayTurn = false }
+            else { cleans.splice(i, 1) }
+          }
+        }
+        const incoming = blk.filter(b => { const bu = String(b.blocked_until); return bu >= start && bu <= end && !cleans.some(c => c.blocked && c.listingId === String(b.listing_id) && c.date === bu) })
+        if (incoming.length) {
+          const ids = Array.from(new Set(incoming.map(b => String(b.listing_id))))
+          let minD = incoming[0].orig_date, maxD = incoming[0].orig_date
+          for (const b of incoming) { if (b.orig_date < minD) minD = b.orig_date; if (b.orig_date > maxD) maxD = b.orig_date }
+          const { data: srcRes } = await db.from('guesty_reservations').select('listing_id,listing_name,guest_name,check_out,nights,status').in('listing_id', ids).gte('check_out', minD).lt('check_out', addDays(String(maxD), 1))
+          for (const b of incoming) {
+            const oid = String(b.orig_date)
+            const r: any = (srcRes || []).find((x: any) => String(x.listing_id) === String(b.listing_id) && String(x.check_out).slice(0, 10) === oid)
+            const id = String(b.listing_id); const m = meta[id]
+            cleans.push({
+              listingId: id, unit: m?.name || r?.listing_name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other',
+              date: String(b.blocked_until), guestOut: r?.guest_name || null, nights: r?.nights ?? null, bedrooms: m?.bedrooms ?? null,
+              checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null,
+              doorCode: m?.doorCode || null, newDoorCode: m?.noCode ? null : newCode(id + oid), cleaningTime: m?.cleaningTime || null,
+              vendor: m?.vendor || null, assignedIds: [], assignedNames: [], blocked: true, blockedFrom: oid,
+            })
+          }
+        }
+      }
+    } catch { /* schedule_blocks not present yet — ignore */ }
+
+    const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
 for (let d = start; d <= end; d = addDays(d, 1)) dayList.push(d)
 const days = dayList.map(date => {
