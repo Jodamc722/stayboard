@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
     checkout: x?.checkout_date ?? null,
     guest: Array.isArray(x?.guests) && x.guests[0] ? [x.guests[0].first_name, x.guests[0].last_name].filter(Boolean).join(' ') : null,
   }))
-  return NextResponse.json({ ok: true, listingId, date, housekeepingTasksOnDate: tasks.map(t => ({ id: t.id, name: t.name, status: t.status, scheduled_date: t.scheduled_date })), reservationsCheckingOut: res, reservationLookup: r.ok ? 'ok' : 'Breezeway ' + r.status })
+  return NextResponse.json({ ok: true, listingId, date, housekeepingTasksOnDate: tasks.map((t: any) => ({ id: t.id, name: t.name, status: t.status, scheduled_date: t.scheduled_date })), reservationsCheckingOut: res, reservationLookup: r.ok ? 'ok' : 'Breezeway ' + r.status })
 }
 
 export async function POST(req: NextRequest) {
