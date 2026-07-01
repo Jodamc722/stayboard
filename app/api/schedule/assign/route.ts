@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: `Breezeway ${r.status}: ${r.text.slice(0, 140)}` }); continue }
       let descriptionSaved: boolean | null = null
       if (description) { try { const chk = await retrieveBreezewayTask(clean.id); const live = String(chk?.data?.description || ''); descriptionSaved = live.includes(description.slice(0, 24)) } catch { descriptionSaved = null } }
-      results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved })
+      results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved } as any)
     } catch (e: any) {
       results.push({ listingId, date, ok: false, error: String(e?.message || e).slice(0, 140) })
     }
