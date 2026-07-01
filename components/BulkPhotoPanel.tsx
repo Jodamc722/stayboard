@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { Images, RefreshCw, Check, X, Lock, UploadCloud, AlertTriangle, Wand2 } from 'lucide-react'
 
 type Unit = { id: string; name: string }
-type Photo = { _id: string; url: string; category?: string }
+type Photo = { _id: string; url: string; category?: string; caption?: string }
 type Plan = { name: string; photos: Photo[]; order: string[]; changed: boolean; pushed?: boolean; error?: string }
 
 const ROOM_RANK: Record<string, number> = {
@@ -53,7 +53,7 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
         const r = await fetch('/api/optimize-photos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: u.id }) })
         const j = await r.json().catch(() => null)
         if (!r.ok || !j) throw new Error((j && j.error) || ('HTTP ' + r.status))
-        const photos: Photo[] = Array.isArray(j.photos) ? j.photos.map((p: any) => ({ _id: String(p._id), url: String(p.url || ''), category: p.category })) : []
+        const photos: Photo[] = Array.isArray(j.photos) ? j.photos.map((p: any) => ({ _id: String(p._id), url: String(p.url || ''), category: p.category, caption: p.caption })) : []
         if (photos.length < 2) {
           next[u.id] = { name: u.name, photos, order: photos.map(p => p._id), changed: false, error: 'fewer than 2 photos' }
         } else {
@@ -74,8 +74,10 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
     const plan = plans[id]
     if (!plan || plan.order.length === 0) return
     setPushing(p => new Set(p).add(id))
+    const captions: Record<string, string> = {}
+    for (const ph of plan.photos) { if (ph.caption) captions[ph._id] = ph.caption }
     try {
-      const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: id, order: plan.order }) })
+      const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: id, order: plan.order, captions }) })
       const j = await r.json().catch(() => null)
       if (!r.ok || !j) throw new Error((j && j.error) || ('HTTP ' + r.status))
       setPlans(prev => ({ ...prev, [id]: { ...prev[id], pushed: true, error: undefined } }))
@@ -110,7 +112,7 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={14} className="text-brand-600" /> Organize photos by room</h2>
         <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={16} /></button>
       </div>
-      <p className="text-[12px] text-muted mb-3">Groups each unit's photos by room type. The first 5 photos always stay exactly as they are. Nothing changes on Guesty until you push.</p>
+      <p className="text-[12px] text-muted mb-3">Groups each unit's photos by room type and adds a short room description (caption) to each. The first 5 photos always keep their current order. Nothing changes on Guesty until you push.</p>
 
       <div className="flex items-center justify-between mb-1.5">
         <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">Units <span className="text-brand-700">· {sel.size}/{units.length}</span></div>
@@ -157,7 +159,7 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
                     <div key={ph._id} className="relative shrink-0">
                       <img src={ph.url} alt="" className="w-16 h-16 object-cover rounded-md border border-line" />
                       {idx < 5 && <span className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded px-1 text-[8px] inline-flex items-center gap-0.5"><Lock size={7} /> {idx + 1}</span>}
-                      {idx >= 5 && ph.category && <span className="absolute bottom-0.5 left-0.5 right-0.5 bg-black/55 text-white rounded px-1 text-[8px] truncate text-center">{ph.category}</span>}
+                      {idx >= 5 && (ph.caption || ph.category) && <span className="absolute bottom-0.5 left-0.5 right-0.5 bg-black/55 text-white rounded px-1 text-[8px] truncate text-center">{ph.caption || ph.category}</span>}
                     </div>
                   ))}
                 </div>
