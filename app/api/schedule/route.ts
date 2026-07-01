@@ -4,6 +4,7 @@
 // nights, same-day-turn, current DOOR CODE + a suggested NEW 4-digit code (blank for 17West, whose
 // codes are managed elsewhere), and cleaning time. Read-only; assignment via /api/schedule/assign.
 import { NextRequest, NextResponse } from 'next/server'
+import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
@@ -54,6 +55,7 @@ export async function GET(req: NextRequest) {
   const start = view === 'day' ? anchor : weekStartSunday(anchor)
   const end = view === 'day' ? anchor : addDays(start, 6)
 
+  const compute = unstable_cache(async (view: string, start: string, end: string, today: string) => {
   const db = supabaseAdmin()
   const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
     db.from('guesty_reservations').select('listing_id,listing_name,guest_name,check_out,check_in,status,nights,source').gte('check_out', start).lte('check_out', end).limit(4000),
@@ -166,11 +168,16 @@ export async function GET(req: NextRequest) {
     } catch { /* empty */ }
   }
 
-  return NextResponse.json({
-    ok: true, view, today, weekStart: start, weekEnd: end,
-    prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
-    next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
-    totals: { cleans: cleans.length, byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m).length })) },
-    days, housekeepers, breezeway: breezewayConfigured(),
-  })
+    return {
+      ok: true, view, today, weekStart: start, weekEnd: end,
+      prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
+      next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
+      totals: { cleans: cleans.length, byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m).length })) },
+      days, housekeepers, breezeway: breezewayConfigured(),
+      syncedAt: new Date().toISOString(),
+    }
+  }, ['schedule-v1'], { tags: ['schedule'], revalidate: 86400 })
+
+  const payload = await compute(view, start, end, today)
+  return NextResponse.json(payload)
 }
