@@ -4,7 +4,7 @@
 // description so the cleaner sees them. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask } from '@/lib/breezeway'
+import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -33,11 +33,13 @@ export async function POST(req: NextRequest) {
       // assignments REPLACES the task's assignees (override, not append). name is sent because the
       // Breezeway update treats it as required; re-pushing a different cleaner swaps the assignment.
       const payload: Record<string, any> = { assignments: assigneeIds }
-      if (clean.name) payload.name = clean.name
+      payload.name = clean.name || 'Clean'
       if (description) payload.description = description
       const r = await updateBreezewayTask(clean.id, payload)
       if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: `Breezeway ${r.status}: ${r.text.slice(0, 140)}` }); continue }
-      results.push({ listingId, date, ok: true, taskId: clean.id })
+      let descriptionSaved: boolean | null = null
+      if (description) { try { const chk = await retrieveBreezewayTask(clean.id); const live = String(chk?.data?.description || ''); descriptionSaved = live.includes(description.slice(0, 24)) } catch { descriptionSaved = null } }
+      results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved })
     } catch (e: any) {
       results.push({ listingId, date, ok: false, error: String(e?.message || e).slice(0, 140) })
     }
