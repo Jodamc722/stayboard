@@ -159,7 +159,7 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
                     <div key={ph._id} className="relative shrink-0">
                       <img src={ph.url} alt="" className="w-16 h-16 object-cover rounded-md border border-line" />
                       {idx < 5 && <span className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded px-1 text-[8px] inline-flex items-center gap-0.5"><Lock size={7} /> {idx + 1}</span>}
-                      {idx >= 5 && (ph.caption || ph.category) && <span className="absolute bottom-0.5 left-0.5 right-0.5 bg-black/55 text-white rounded px-1 text-[8px] truncate text-center">{ph.caption || ph.category}</span>}
+                      {(ph.caption || ph.category) && <span className="absolute bottom-0.5 left-0.5 right-0.5 bg-black/55 text-white rounded px-1 text-[8px] truncate text-center">{ph.caption || ph.category}</span>}
                     </div>
                   ))}
                 </div>
