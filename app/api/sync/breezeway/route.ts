@@ -93,7 +93,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, synced: rows.length, withGuestyId: mapped })
     }
 
-    // 5) RECONCILE: every Breezeway property vs our Guesty listings + upcoming reservations.
+    // 4c) SYNC TASKS: mirror per-property Breezeway tasks into breezeway_tasks_sync.
+// No global task list exists, so we loop properties with a time budget and return a cursor
+// (&offset=) to continue - call repeatedly until nextOffset is null. Webhooks keep it live after.
+if (params.get('sync') === 'tasks') {
+const db = supabaseAdmin()
+const offset = Math.max(0, Number(params.get('offset') || 0))
+const { data: props } = await db.from('breezeway_properties').select('home_id,reference_property_id,name,status').not('reference_property_id', 'is', null).order('home_id')
+const active = (props || []).filter((p: any) => String(p.status || '').toLowerCase() === 'active')
+const started = Date.now()
+let i = offset, upserted = 0, failed = 0
+for (; i < active.length; i++) {
+if (Date.now() - started > 30000) break
+const p: any = active[i]
+const r = await bzApi('/task/?home_id=' + encodeURIComponent(String(p.home_id)) + '&limit=100')
+if (!r.ok) { failed++; continue }
+const arr = asArray(r.data)
+if (!arr.length) continue
+const now = new Date().toISOString()
+const rows = arr.map(mapBreezewayTask).filter((t: any) => t.id).map((t: any) => ({ ...t, home_id: p.home_id, reference_property_id: p.reference_property_id, synced_at: now }))
+const { error } = await db.from('breezeway_tasks_sync').upsert(rows, { onConflict: 'id' })
+if (error) return NextResponse.json({ error: 'breezeway_tasks_sync upsert: ' + error.message }, { status: 200 })
+upserted += rows.length
+}
+return NextResponse.json({ ok: true, processed: i - offset, totalProperties: active.length, nextOffset: i < active.length ? i : null, upserted, failed })
+}
+
+// 5) RECONCILE: every Breezeway property vs our Guesty listings + upcoming reservations.
     //    Flags Breezeway properties that are NOT an active Guesty listing and have no
     //    upcoming reservations — i.e. stale entries that can be removed from Breezeway.
     if (probe === 'reconcile') {
