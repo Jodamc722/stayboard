@@ -18,6 +18,7 @@ const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
 const CLEANING_TIME_FIELD = '69977f98e346440013af2462'
 
 const DEAD = /cancel|declin|inquir|expire|denied/i
+const LIVE = /confirm|checked|closed/i // ONLY confirmed stays make cleans - inquiries/holds (e.g. 'reserved') must NOT create or imply a clean
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
 const VENDOR_OF = (s: string) => /botanica/i.test(s) ? 'Botanica' : null // Botanica is cleaned by hotel staff (vendor), not our team
 const NO_CODE = (s: string) => IS_17WEST(s) || /elser/i.test(s) // 17West + Elser door codes are managed elsewhere — don't generate a new code
@@ -65,6 +66,7 @@ db.from('guesty_listings').select('id,nickname,title,building,address_city,statu
 
 type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; noCode: boolean; vendor: string | null }
 const meta: Record<string, Meta> = {}
+const units: { id: string; name: string }[] = []
 for (const l of (listings || [])) {
 const id = String((l as any).id)
 const raw = (l as any).raw || {}
@@ -83,21 +85,23 @@ is17: IS_17WEST(building) || IS_17WEST(name),
 noCode: NO_CODE(building) || NO_CODE(name),
 vendor: VENDOR_OF(building) || VENDOR_OF(name),
 }
+if (!/inactive|disabled|archived|deleted/i.test(str((l as any).status))) units.push({ id, name })
 }
+units.sort((a, b) => a.name.localeCompare(b.name))
 
 const arrivalsByListing: Record<string, string[]> = {}
 for (const r of (ins || [])) {
-if (DEAD.test(str((r as any).status))) continue
+if (!LIVE.test(str((r as any).status))) continue
 const id = String((r as any).listing_id); const ci = str((r as any).check_in).slice(0, 10)
 if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; manual?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
-if (DEAD.test(str((r as any).status))) continue
+if (!LIVE.test(str((r as any).status))) continue
 const id = String((r as any).listing_id)
 const date = str((r as any).check_out).slice(0, 10)
 if (!date) continue
@@ -140,6 +144,7 @@ try {
 const tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date)
 const clean = pickDepartureClean(tasks, c.date)
               c.syncStatus = clean ? 'synced' : 'guesty-only'
+c.breezewayTaskId = clean && clean.id ? String(clean.id) : null
 const ppl = (clean as any)?.assignees as { id: number | null; name: string | null }[] | undefined
 if (ppl && ppl.length) {
 c.assignedIds = ppl.map(p => Number(p.id)).filter(n => Number.isFinite(n))
@@ -186,7 +191,19 @@ c.assignedNames = ppl.map(p => String(p.name || '')).filter(Boolean)
       }
     } catch { /* schedule_blocks not present yet — ignore */ }
 
-    const MARKETS: Market[] = ['Miami', 'Broward', 'North']
+    // MANUAL CLEANS: tasks added from the board (create-clean logs them). Breezeway is a co-source
+// of truth, so board-added tasks show on the calendar even without a Guesty checkout.
+try {
+const { data: manual } = await db.from('schedule_manual_cleans').select('listing_id,date,breezeway_task_id').gte('date', start).lte('date', end)
+for (const mr of (manual || []) as any[]) {
+const id = String(mr.listing_id); const d = String(mr.date).slice(0, 10)
+if (cleans.some(c => c.listingId === id && c.date === d)) continue
+const m = meta[id]
+cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other', date: d, guestOut: null, nights: null, bedrooms: m?.bedrooms ?? null, checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m?.doorCode || null, newDoorCode: null, cleaningTime: m?.cleaningTime || null, vendor: m?.vendor || null, assignedIds: [], assignedNames: [], syncStatus: 'synced', breezewayTaskId: mr.breezeway_task_id ? String(mr.breezeway_task_id) : null, manual: true })
+}
+} catch { /* schedule_manual_cleans not created yet - run the SQL */ }
+
+const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
 for (let d = start; d <= end; d = addDays(d, 1)) dayList.push(d)
 const days = dayList.map(date => {
@@ -210,10 +227,10 @@ ok: true, view, today, weekStart: start, weekEnd: end,
 prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
 next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
 totals: { cleans: cleans.length, byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m).length })) },
-days, housekeepers, breezeway: breezewayConfigured(),
+days, housekeepers, units, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
-}, ['schedule-v1'], { tags: ['schedule'], revalidate: 86400 })
+}, ['schedule-v2'], { tags: ['schedule'], revalidate: 86400 })
 
 const payload = await compute(view, start, end, today)
 return NextResponse.json(payload)
