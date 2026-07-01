@@ -8,6 +8,7 @@ import { computeScore, rollupBuilding, slugToBuilding, band, bandUi } from '@/li
 import { Shell } from '@/components/Shell'
 import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
 import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
+import { BulkPhotoPanel } from '@/components/BulkPhotoPanel'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare } from 'lucide-react'
 
@@ -65,7 +66,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
     units.flatMap((u: any) => Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : []))
   ))
 
-  const bulkUnits = units.map((u: any) => ({ id: u.id, name: u.title || u.nickname || u.unit || 'Unit', amenityCount: (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])).length }))
+  const bulkUnits = units.map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; return { id: u.id, name: u.title || u.nickname || u.unit || 'Unit', amenityCount: amenities.length, amenities } })
   const bulkAddable = Array.from(new Set(siblingAmenities)).sort((a, b) => a.localeCompare(b))
 
   const scored = units.map((l: any) => {
@@ -102,7 +103,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
         )}
       </header>
 
-      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /></div>
+      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /><BulkPhotoPanel units={bulkUnits} /></div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {scored.map(({ l, dead, score, suggestions, mustFix }) => {
