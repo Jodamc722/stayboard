@@ -43,6 +43,7 @@ const SECTIONS: {
     title: 'Performance',
     items: [
       { to: '/health',   label: 'Health Score', Icon: Activity },
+      { to: '/cleaners', label: 'Cleaners', Icon: Users },
       { to: '/channels', label: 'Channels',     Icon: Share2 },
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
     ],
