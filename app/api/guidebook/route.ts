@@ -148,12 +148,24 @@ export async function POST(req: NextRequest) {
     if (fallbackCover) { const alt = usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]; return alt ? alt.url : (usable[0]?.url || null) }
     return null
   }
-  const photoAssign = {
+  const photoAssign: Record<string, string | null> = {
     cover: (usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]?.url) || pick(['living', 'bedroom', 'view', 'exterior'], true),
     about: pick(['living', 'dining', 'kitchen']),
     arrival: pick(['exterior', 'view', 'pool']),
     special: pick(['pool', 'beach', 'amenity', 'view']),
     closing: pick(['bedroom', 'view', 'beach']),
+  }
+  // GUARANTEE imagery: if vision matching left a page empty (or the vision call failed), give
+  // every slot the next-best unused photo. A premium book never runs photo-less when photos exist.
+  {
+    const used = new Set(Object.values(photoAssign).filter(Boolean) as string[])
+    const ranked = usable.slice().sort((a, b) => b.quality - a.quality).map(p => p.url)
+    for (const slot of ['cover', 'about', 'arrival', 'special', 'closing']) {
+      if (!photoAssign[slot]) {
+        const nxt = ranked.find(u => !used.has(u)) || ranked[0] || null
+        if (nxt) { photoAssign[slot] = nxt; used.add(nxt) }
+      }
+    }
   }
 
   // ---- Context docs (PDFs the operator uploaded). ----
@@ -180,7 +192,8 @@ PRINCIPLES:
 3. NEVER INVENT. No made-up hours, codes, addresses, amenities, or place names. Only what's provided.
 4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; beforeYouGo <= 5 short items; review.body 40-60 words.
 5. Audience: ${audience}. ${highlights ? 'MUST gracefully feature: ' + highlights : ''}
-Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, localPlaces, restaurants, addons). No markdown.`
+6. localPlaces and restaurants are MANDATORY (never omit): 4-6 REAL spots each with a 6-12 word "note". Prefer the provided LOCAL KNOWLEDGE; if absent, use well-known, long-established places near the given city (no inventions, no chains unless iconic).
+Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, addons). No markdown.`
     const USER_TEXT = `THE HOME:
 name: ${name} | building: ${building} | ${city}
 ${l.bedrooms} BR / ${l.bathrooms} BA / sleeps ${l.max_occupancy}
@@ -201,22 +214,43 @@ ${JSON.stringify(fallback)}`
     if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
   }
 
-  // LOCAL IMAGERY: a tasteful, license-safe photo per local spot (Pexels; commercial use OK).
-  // Best-effort - pages render text-only if the key is missing or a search comes up empty.
+  // LOCAL PAGES ARE MANDATORY: refill from the building guide if the AI came back empty.
+  sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'localPlaces' && k !== 'restaurants')
+  if (!(sections.restaurants?.items || []).length && bg) {
+    sections.restaurants = { items: bg.recs.food.slice(0, 4).map((n: string) => ({ name: n, note: '' })) }
+  }
+
+  // LOCAL IMAGERY - every spot gets a photo. Pexels first (if key set), then Openverse
+  // (keyless, commercial-license filter), then a varied section-appropriate stock query.
   const pex = process.env.PEXELS_API_KEY
-  if (pex) {
-    for (const k of ['localPlaces', 'restaurants']) {
-      const items = Array.isArray(sections[k]?.items) ? sections[k].items : []
-      await Promise.all(items.slice(0, 6).map(async (it: any) => {
-        try {
-          const q = encodeURIComponent(String(it?.name || '').slice(0, 60) + (k === 'restaurants' ? ' restaurant food' : ' florida'))
-          const r = await fetch('https://api.pexels.com/v1/search?query=' + q + '&per_page=1&orientation=landscape', { headers: { Authorization: pex } })
-          const d: any = await r.json().catch(() => ({}))
-          const src = d?.photos?.[0]?.src?.large
-          if (src) it.photo = src
-        } catch { /* skip */ }
-      }))
+  const GEN: Record<string, string[]> = {
+    restaurants: ['fine dining restaurant interior', 'chef plating gourmet dish', 'al fresco dining table', 'cocktail bar ambiance', 'seafood dinner platter', 'restaurant candlelight table'],
+    localPlaces: ['florida beach palm trees', 'coastal boardwalk sunset', 'marina boats florida', 'tropical ocean pier', 'florida lighthouse coast', 'palm lined street florida'],
+  }
+  async function imageFor(q: string): Promise<string | null> {
+    if (pex) {
+      try {
+        const r = await fetch('https://api.pexels.com/v1/search?query=' + encodeURIComponent(q) + '&per_page=1&orientation=landscape', { headers: { Authorization: pex } })
+        const d: any = await r.json().catch(() => ({}))
+        const src = d?.photos?.[0]?.src?.large
+        if (src) return src
+      } catch { /* fall through */ }
     }
+    try {
+      const r = await fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&license_type=commercial&per_page=1&mature=false', { headers: { 'User-Agent': 'StayBoardGuidebook/1.0' } })
+      const d: any = await r.json().catch(() => ({}))
+      const u = d?.results?.[0]?.url
+      if (u) return u
+    } catch { /* fall through */ }
+    return null
+  }
+  for (const k of ['localPlaces', 'restaurants']) {
+    const items = Array.isArray(sections[k]?.items) ? sections[k].items : []
+    await Promise.all(items.slice(0, 6).map(async (it: any, i: number) => {
+      const nm = String(it?.name || '').slice(0, 60)
+      if (!nm) return
+      it.photo = (await imageFor(nm + (city ? ' ' + city : ' florida'))) || (await imageFor(GEN[k][i % GEN[k].length])) || undefined
+    }))
   }
 
   sections._photos = pool
