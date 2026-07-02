@@ -1,14 +1,17 @@
-// Guest Guidebook engine. POST generates a guidebook for a listing: pulls the listing's Guesty
-// data (description, photos, Wi-Fi, details) + the user's interview answers, asks the AI to
-// compose every section in the Stay editorial voice (Salato-template structure), and saves to
-// `guidebooks`. GET lists/fetches, PUT edits sections/title/theme, DELETE removes.
-// Logged-in users only. AI failure falls back to a deterministic template so the builder always works.
+// Guest Guidebook engine v2 — "30 years of experience" pipeline.
+// POST: (1) gathers listing facts, guest-review praise, per-building local recs (welcome-call guide),
+// uploaded photos + PDF context docs; (2) VISION pass categorizes every photo (room type, brightness,
+// cover-worthiness) so pages get the RIGHT image with readable text; (3) an expert hospitality
+// copywriter prompt REWRITES the operator's raw answers into polished editorial prose, keeps the book
+// LEAN (only sections that earn their place; appliance how-tos only for non-traditional gear), and
+// assigns photos per page. GET/PUT/DELETE unchanged. AI failure falls back to a clean template.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { buildingGuideFor } from '@/lib/welcome-call-guide'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
@@ -60,6 +63,21 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ ok: true })
 }
 
+const MODEL = 'claude-sonnet-4-6'
+
+async function anthropic(key: string, payload: any): Promise<string | null> {
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const d: any = await r.json().catch(() => ({}))
+    if (!r.ok) return null
+    return Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : null
+  } catch { return null }
+}
+
 export async function POST(req: NextRequest) {
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -67,46 +85,116 @@ export async function POST(req: NextRequest) {
   const listingId = str(body?.listingId)
   const answers = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
   const theme = str(body?.theme) || 'editorial'
+  const tone = str(body?.tone) || 'warm'
+  const audience = str(body?.audience) || 'all guests'
+  const highlights = str(body?.highlights).slice(0, 1500)
+  const uploadedPhotos: string[] = Array.isArray(body?.uploadedPhotos) ? body.uploadedPhotos.filter((u: any) => typeof u === 'string').slice(0, 16) : []
+  const docUrls: string[] = Array.isArray(body?.docUrls) ? body.docUrls.filter((u: any) => typeof u === 'string').slice(0, 3) : []
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
 
   const db = supabaseAdmin()
-  const { data: rows } = await db.from('guesty_listings')
-    .select("id, title, nickname, building, unit, bedrooms, bathrooms, max_occupancy, address_full, address_city, pictures, amenities, pub:raw->publicDescription, wifiName:raw->>wifiName, wifiPassword:raw->>wifiPassword, ci:raw->>defaultCheckInTime, co:raw->>defaultCheckOutTime")
-    .eq('id', listingId).limit(1)
+  const [{ data: rows }, { data: revRows }] = await Promise.all([
+    db.from('guesty_listings')
+      .select("id, title, nickname, building, unit, bedrooms, bathrooms, max_occupancy, address_full, address_city, pictures, amenities, pub:raw->publicDescription, wifiName:raw->>wifiName, wifiPassword:raw->>wifiPassword, ci:raw->>defaultCheckInTime, co:raw->>defaultCheckOutTime")
+      .eq('id', listingId).limit(1),
+    db.from('guesty_reviews').select('rating, content, created_at').eq('listing_id', listingId).not('content', 'is', null).order('created_at', { ascending: false }).limit(60),
+  ])
   const l: any = (rows || [])[0]
   if (!l) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
 
   const name = l.title || l.nickname || 'Your Residence'
-  const building = str(l.building) || str(answers.building) || ''
+  const building = str(l.building)
   const city = str(l.address_city) || ''
   const pub = l.pub || {}
-  const summary = [str(pub.summary), str(pub.space)].filter(Boolean).join('\n').slice(0, 3000)
+  const summary = [str(pub.summary), str(pub.space), str(pub.neighborhood)].filter(Boolean).join('\n').slice(0, 3500)
+  const praise = (revRows || []).filter((r: any) => Number(r.rating) >= 4 && str(r.content).length > 40).slice(0, 6).map((r: any) => str(r.content).replace(/\s+/g, ' ').slice(0, 240))
+  const bg = buildingGuideFor(name) || buildingGuideFor(building)
 
-  // Deterministic fallback sections (used if AI is unavailable) - Salato structure.
-  const fallback = buildFallback({ name, building, city, l, answers })
+  // Photo pool: operator uploads FIRST (they chose them for quality), then Guesty pictures.
+  const guestyPics: string[] = (Array.isArray(l.pictures) ? l.pictures : []).filter((u: any) => typeof u === 'string')
+  const pool: string[] = [...uploadedPhotos, ...guestyPics].slice(0, 12)
 
-  let sections: any = fallback
   const key = process.env.ANTHROPIC_API_KEY
-  if (key) {
-    try {
-      const SYSTEM = `You write luxury short-term-rental guest guidebooks for Stay Hospitality (Miami/Broward, FL). Voice: warm, refined, editorial - like a boutique hotel. Never invent facts (no made-up door codes, hours, addresses, or amenities). Use ONLY the provided data. Return STRICT minified JSON matching exactly the schema of the EXAMPLE object you are given (same keys, same shapes). Improve wording, fill gaps tastefully, keep items concise.`
-      const USER = `LISTING DATA:\nname: ${name}\nbuilding: ${building}\ncity: ${city}\nbedrooms: ${l.bedrooms} baths: ${l.bathrooms} sleeps: ${l.max_occupancy}\naddress: ${str(l.address_full)}\ncheck-in: ${str(l.ci)} check-out: ${str(l.co)}\nwifi network: ${str(l.wifiName)} wifi password: ${str(l.wifiPassword)}\namenities: ${(Array.isArray(l.amenities) ? l.amenities : []).slice(0, 40).join(', ')}\nDESCRIPTION:\n${summary}\n\nOPERATOR ANSWERS (authoritative - use verbatim facts):\n${JSON.stringify(answers).slice(0, 4000)}\n\nEXAMPLE OBJECT (match this schema exactly, rewrite content for THIS listing):\n${JSON.stringify(fallback)}`
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+
+  // ---- PASS 1: VISION — know what every photo shows before laying out pages. ----
+  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean }[] =
+    pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false }))
+  if (key && pool.length) {
+    const content: any[] = pool.map((u, i) => ({ type: 'image', source: { type: 'url', url: u } }))
+    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false}. coverWorthy = striking, well-lit, works full-bleed behind white text. A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
+    const text = await anthropic(key, { model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content }] })
+    const parsed = parseJson(text || '')
+    if (Array.isArray(parsed)) {
+      parsed.forEach((p: any) => {
+        const i = Number(p?.i)
+        if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true }
       })
-      const d: any = await r.json().catch(() => ({}))
-      if (r.ok) {
-        const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : ''
-        const parsed = parseJson(text)
-        if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
-      }
-    } catch { /* fall back */ }
+    }
+  }
+  const usable = photoMeta.filter(p => p.category !== 'logo')
+  const pick = (cats: string[], fallbackCover = false): string | null => {
+    const c = usable.filter(p => cats.includes(p.category)).sort((a, b) => b.quality - a.quality)[0]
+    if (c) return c.url
+    if (fallbackCover) { const alt = usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]; return alt ? alt.url : (usable[0]?.url || null) }
+    return null
+  }
+  const photoAssign = {
+    cover: (usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]?.url) || pick(['living', 'bedroom', 'view', 'exterior'], true),
+    about: pick(['living', 'dining', 'kitchen']),
+    arrival: pick(['exterior', 'view', 'pool']),
+    special: pick(['pool', 'beach', 'amenity', 'view']),
+    closing: pick(['bedroom', 'view', 'beach']),
   }
 
-  const photos = (Array.isArray(l.pictures) ? l.pictures : []).slice(0, 12)
-  sections._photos = photos
+  // ---- Context docs (PDFs the operator uploaded). ----
+  const docBlocks: any[] = []
+  for (const u of docUrls) {
+    try {
+      const r = await fetch(u)
+      if (!r.ok) continue
+      const buf = Buffer.from(await r.arrayBuffer())
+      if (buf.length > 8 * 1024 * 1024) continue
+      docBlocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } })
+    } catch { /* skip doc */ }
+  }
+
+  const fallback = buildFallback({ name, building, city, l, answers })
+
+  // ---- PASS 2: COMPOSE — the 30-years-of-experience writer. ----
+  let sections: any = fallback
+  if (key) {
+    const SYSTEM = `You are the most experienced luxury-hospitality guidebook designer and copywriter in the world - 30 years of boutique-hotel welcome books. You write for Stay Hospitality (Miami/Broward, FL).
+PRINCIPLES:
+1. REWRITE, never copy. The operator's answers are raw notes - transform them into polished, ${tone}, editorial prose. Keep every FACT exactly (codes, floors, times, names); elevate every WORD.
+2. LEAN. A great guidebook is short. Omit any section that adds no real value for this specific home by listing its key in "omit". The "houseGuide" section exists ONLY for non-traditional equipment (induction cooktops, Wolf/Sub-Zero appliances, smart-home systems, unusual controls) - and then frame it as a premium feature, not a manual. Standard appliances: omit.
+3. NEVER INVENT. No made-up hours, codes, addresses, amenities, or place names. Only what's provided.
+4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; beforeYouGo <= 5 short items; review.body 40-60 words.
+5. Audience: ${audience}. ${highlights ? 'MUST gracefully feature: ' + highlights : ''}
+Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, localPlaces, restaurants, addons). No markdown.`
+    const USER_TEXT = `THE HOME:
+name: ${name} | building: ${building} | ${city}
+${l.bedrooms} BR / ${l.bathrooms} BA / sleeps ${l.max_occupancy}
+address: ${str(l.address_full)}
+check-in ${str(l.ci) || '4:00 PM'} / check-out ${str(l.co) || '11:00 AM'}
+amenities: ${(Array.isArray(l.amenities) ? l.amenities : []).slice(0, 40).join(', ')}
+LISTING DESCRIPTION (context, do not copy):
+${summary}
+${praise.length ? 'WHAT GUESTS LOVED (weave the themes in naturally, never quote):\n' + praise.map(p => '- ' + p).join('\n') : ''}
+${bg ? `LOCAL KNOWLEDGE for ${bg.name} (${bg.area}) - use for localPlaces/restaurants (real names only): eat: ${bg.recs.food.join(', ')} | coffee: ${bg.recs.coffee} | grocery: ${bg.recs.grocery} | beach: ${bg.recs.beach} | insider tip: ${bg.recs.tip} | parking notes: ${bg.parking} | access notes: ${bg.access}` : ''}
+OPERATOR'S RAW NOTES (facts are authoritative; the wording is yours to elevate):
+${JSON.stringify(answers).slice(0, 4000)}
+EXAMPLE OBJECT (schema contract):
+${JSON.stringify(fallback)}`
+    const content: any[] = [...docBlocks, { type: 'text', text: USER_TEXT }]
+    const text = await anthropic(key, { model: MODEL, max_tokens: 4500, system: SYSTEM, messages: [{ role: 'user', content }] })
+    const parsed = parseJson(text || '')
+    if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
+  }
+
+  sections._photos = pool
+  sections._photoMeta = photoMeta
+  sections._photoAssign = photoAssign
+  if (!Array.isArray(sections.omit)) sections.omit = []
 
   const { data: ins, error } = await db.from('guidebooks').insert({
     listing_id: listingId,
@@ -114,7 +202,7 @@ export async function POST(req: NextRequest) {
     title: `${name} — Guest Guidebook`,
     theme,
     status: 'draft',
-    answers,
+    answers: { ...answers, _tone: tone, _audience: audience, _highlights: highlights },
     sections,
     created_by: user.email || null,
   }).select('id').limit(1)
@@ -125,50 +213,50 @@ export async function POST(req: NextRequest) {
 function buildFallback(ctx: { name: string; building: string; city: string; l: any; answers: any }) {
   const { name, building, city, l, answers } = ctx
   const a = (k: string, dflt = '') => str(answers?.[k]) || dflt
-  const place = [building || name, city].filter(Boolean).join(' | ')
+  const place = [building || name, city].filter(Boolean).join('  ·  ')
   return {
-    cover: { line1: "we're so glad", line2: "you're here to stay", subtitle: place.toUpperCase() },
-    about: { heading: 'about the space', body: `Welcome to ${building || name}. Designed for comfort and refined coastal living, your residence offers everything you need for a seamless, memorable stay${city ? ' in ' + city : ''}.` },
-    retreat: { heading: 'Welcome to Your Private Retreat', lines: [
-      `THANK YOU FOR CHOOSING OUR RESIDENCE AT ${(building || name).toUpperCase()}. WE'RE HONORED TO HOST YOU.`,
-      'THIS IS MORE THAN A STAY — IT\'S A PRIVATE ESCAPE DESIGNED FOR COMFORT, DISCRETION, AND REFINED LIVING.',
-      'SHOULD YOU NEED ANYTHING DURING YOUR TIME HERE, OUR TEAM IS AVAILABLE TO ASSIST WITH LOCAL RECOMMENDATIONS OR SPECIAL ARRANGEMENTS.',
-      'ENJOY THE PRIVACY. RELAX — YOU\'RE EXACTLY WHERE YOU SHOULD BE.',
+    omit: [],
+    cover: { line1: 'welcome', line2: 'to your stay', subtitle: place.toUpperCase() },
+    about: { heading: 'about the space', body: `Welcome to ${building || name}. Your residence has been prepared for a seamless, restful stay${city ? ' in ' + city : ''} — settle in, slow down, and make yourself at home.` },
+    retreat: { heading: 'your private retreat', lines: [
+      `THANK YOU FOR CHOOSING ${(building || name).toUpperCase()}. WE'RE HONORED TO HOST YOU.`,
+      'MORE THAN A STAY — A PRIVATE ESCAPE DESIGNED FOR COMFORT AND EASE.',
+      'OUR TEAM IS A MESSAGE AWAY FOR ANYTHING YOU NEED.',
     ] },
-    special: { heading: 'What Makes This Stay Special', groups: [
+    special: { heading: 'what makes this stay special', groups: [
       { title: 'The Residence', items: [`${l.bedrooms ?? '-'} bedroom${l.bedrooms === 1 ? '' : 's'} · ${l.bathrooms ?? '-'} bath${l.bathrooms === 1 ? '' : 's'}`, `Sleeps ${l.max_occupancy ?? '-'}`] },
-      { title: 'Amenities', items: (Array.isArray(l.amenities) ? l.amenities : []).slice(0, 6) },
+      { title: 'Amenities', items: (Array.isArray(l.amenities) ? l.amenities : []).slice(0, 4) },
     ] },
-    host: { heading: 'meet your host', body: 'With years of experience managing beautiful vacation rentals, we specialize in creating unforgettable stays for our guests. Our team is passionate about attention to detail and providing seamless, luxurious experiences. Whether you\'re here to relax, explore, or celebrate, you can count on us to ensure your trip is smooth and memorable.' },
-    guidelines: { heading: 'House Guidelines', intro: `To preserve the comfort, privacy, and elevated experience of ${building || name}, we kindly ask that you observe the following:`, items: [
-      { title: 'No Parties or Events', body: 'Gatherings or events are not permitted without prior written approval.' },
-      { title: 'Quiet Hours', body: a('quietHours', 'Please respect building quiet hours and maintain a peaceful environment for all residents and guests.') },
-      { title: 'Occupancy Limits', body: 'Only registered guests may stay overnight. Maximum occupancy must be observed at all times.' },
-      { title: 'No Smoking', body: 'This is a strictly non-smoking residence, including balconies and common areas.' },
-      { title: 'Pet Policy', body: a('petPolicy', 'Pets are not permitted unless explicitly approved in advance as part of your reservation.') },
+    host: { heading: 'meet your host', body: 'We manage beautiful stays across South Florida with one obsession: the details. Whether you\'re here to relax, explore, or celebrate, our team is close by to make every day effortless.' },
+    guidelines: { heading: 'house guidelines', intro: `A few notes that keep ${building || name} exceptional for every guest:`, items: [
+      { title: 'No Parties or Events', body: 'Gatherings require prior written approval.' },
+      { title: 'Quiet Hours', body: a('quietHours', 'Please keep the peace for neighbors and fellow guests.') },
+      { title: 'Registered Guests Only', body: 'Maximum occupancy must be observed at all times.' },
+      { title: 'No Smoking', body: 'Strictly non-smoking, including balconies.' },
+      { title: 'Pets', body: a('petPolicy', 'Not permitted unless approved in advance.') },
     ], address: str(l.address_full) },
-    arrival: { heading: 'Arrival & Check-In', checkIn: str(l.ci) || '4:00 PM', checkOut: str(l.co) || '11:00 AM', entry: a('entry', 'We\'ve made arrival simple and seamless. Details are provided in your confirmation message.'), parking: a('parking', 'Parking details will be provided in your confirmation message. Please park only in designated areas.') },
+    arrival: { heading: 'arrival & check-in', checkIn: str(l.ci) || '4:00 PM', checkOut: str(l.co) || '11:00 AM', entry: a('entry', 'Arrival details are provided in your confirmation message.'), parking: a('parking', 'Parking details are provided in your confirmation message.') },
     contact: { customerService: '954-526-8998', gmName: 'Jon McGill', gmPhone: '954-391-2116', concierge: a('concierge', ''), email: 'support@stay-hospitality.com' },
     houseGuide: { items: [
-      { title: 'Smart Home Device', body: a('smartHome', '') },
       { title: 'Thermostat', body: a('thermostat', '') },
-      { title: 'Stove Top', body: a('stove', '') },
+      { title: 'Smart Home', body: a('smartHome', '') },
+      { title: 'Kitchen', body: a('stove', '') },
       { title: 'Trash & Disposal', body: a('trash', '') },
     ].filter(x => x.body) },
     wifi: { network: str(l.wifiName), password: str(l.wifiPassword) },
-    gettingThere: { heading: 'getting to the apartment', body: a('entry', 'Upon arrival, please follow the check-in instructions in your confirmation message. If you need assistance at any point, our team is happy to help.') },
+    gettingThere: { heading: 'getting to the residence', body: a('entry', 'Follow the check-in instructions in your confirmation message — and if you need a hand, the team is one message away.') },
     localPlaces: { items: splitList(a('localPlaces', '')) },
     restaurants: { items: splitList(a('restaurants', '')) },
-    addons: { intro: 'Enhance your stay with optional experiences arranged upon request. Advance notice recommended to ensure availability.', items: splitList(a('addons', 'Private Chef Experience, Mid-Stay Refresh Cleaning, Pre-Arrival Provisioning, Airport Transport, Luxury Car Services, Wellness Package, Boat / Jet Ski Rentals, Dog Walker, Babysitting Services')) },
+    addons: { intro: 'Optional experiences, arranged on request. Advance notice recommended.', items: splitList(a('addons', '')) },
     beforeYouGo: { items: [
-      'Kindly ensure all personal belongings are taken with you before departure. Double-check all rooms, drawers, and closets.',
-      'Please close all windows and return the thermostat to the setting it was on when you checked in.',
-      a('checkoutKey', 'Please follow the key/access return instructions in your confirmation message.'),
-      'Load used dishes into the dishwasher and start the cycle if needed.',
-      'Turn off lights and appliances, and make sure all doors are locked before leaving.',
+      'Gather your belongings — a quick sweep of rooms, drawers, and closets.',
+      'Return the thermostat to its arrival setting and close the windows.',
+      a('checkoutKey', 'Follow the key/access return note in your confirmation message.'),
+      'Start the dishwasher if you\'ve used dishes.',
+      'Lights off, doors locked — and travel safe.',
     ] },
-    review: { body: 'If your stay met your expectations, we would truly appreciate you taking a moment to leave a review. Your feedback not only supports our team, but also helps future guests choose their stay with confidence. Thank you again for choosing our residence — it was a pleasure hosting you.' },
-    thankyou: { line: 'WE HOPE TO SEE YOU AGAIN SOON!' },
+    review: { body: 'If we earned it, a review means the world — it supports our team and helps future guests book with confidence. Thank you for staying with us.' },
+    thankyou: { line: 'WE HOPE TO SEE YOU AGAIN SOON' },
   }
 }
 
@@ -181,6 +269,6 @@ function parseJson(raw: string): any | null {
   const tryParse = (s: string) => { try { return JSON.parse(s) } catch { return null } }
   let o = tryParse(raw)
   if (!o) o = tryParse(raw.replace(/```(?:json)?/gi, '').trim())
-  if (!o) { const a = raw.indexOf('{'), b = raw.lastIndexOf('}'); if (a !== -1 && b > a) o = tryParse(raw.slice(a, b + 1)) }
+  if (!o) { const a = raw.search(/[[{]/); const b = Math.max(raw.lastIndexOf('}'), raw.lastIndexOf(']')); if (a !== -1 && b > a) o = tryParse(raw.slice(a, b + 1)) }
   return o && typeof o === 'object' ? o : null
 }
