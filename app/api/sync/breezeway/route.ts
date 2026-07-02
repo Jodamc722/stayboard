@@ -111,7 +111,7 @@ if (!r.ok) { failed++; continue }
 const arr = asArray(r.data)
 if (!arr.length) continue
 const now = new Date().toISOString()
-const rows = arr.map(mapBreezewayTask).filter((t: any) => t.id).map((t: any) => ({ ...t, home_id: p.home_id, reference_property_id: p.reference_property_id, synced_at: now }))
+const rows = arr.map(mapBreezewayTask).filter((t: any) => t.id).map((t: any) => { const rp = parseFloat(String(t.rate_paid == null ? '' : t.rate_paid).replace(/[^0-9.-]/g, '')); return { ...t, rate_paid: Number.isFinite(rp) ? rp : null, home_id: p.home_id, reference_property_id: p.reference_property_id, synced_at: now } })
 const { error } = await db.from('breezeway_tasks_sync').upsert(rows, { onConflict: 'id' })
 if (error) return NextResponse.json({ error: 'breezeway_tasks_sync upsert: ' + error.message }, { status: 200 })
 upserted += rows.length
