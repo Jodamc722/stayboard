@@ -30,6 +30,15 @@ function ago(s: string | null) {
   return `${Math.round(h / 24)}d ago`
 }
 
+// Map the guest's issue to a SPECIFIC QC task (what to check, which team, priority).
+function classifyQc(r: Row) {
+const text = ((r.topIssue || '') + ' ' + (r.excerpt || '') + ' ' + (r.reason || '')).toLowerCase()
+if (/bed ?bug|bug bite|bites|welt|pest|roach|cockroach|rodent|mice|mouse/.test(text)) return { issueType: 'pest', department: 'inspection', priority: 'urgent', title: 'PEST ALERT - full inspection required', check: 'Full pest inspection: mattress seams, headboard, furniture, floors. Photos REQUIRED. Do not release the unit for the next guest until cleared.' }
+if (/\bac\b|a\/c|air condition|heat|hot water|no water|leak|flood|electric|not working|broken|wifi|internet|sewer|lock|door code/.test(text)) return { issueType: 'maintenance', department: 'maintenance', priority: 'high', title: 'Guest-reported maintenance issue', check: 'Test and fix the reported item. Photo before/after + note exactly what was done.' }
+if (/dirty|unclean|not clean|stain|hair|trash|linen|towel|smell/.test(text)) return { issueType: 'cleanliness', department: 'housekeeping', priority: 'high', title: 'Cleanliness complaint - inspection + re-clean', check: 'Full cleanliness inspection; re-clean anything below standard. Photos required.' }
+return { issueType: 'upset-guest', department: 'inspection', priority: 'high', title: 'Upset guest - unit inspection', check: 'Guest is showing dissatisfaction. Walk the unit: maintenance + cleanliness + amenities. Photos + notes.' }
+}
+
 export function SentimentBoard() {
   const [rows, setRows] = useState<Row[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
@@ -39,6 +48,8 @@ export function SentimentBoard() {
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState<string | null>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
+const [qc, setQc] = useState<Record<string, { taskId: string; reportUrl: string | null }>>({})
+const [qcBusy, setQcBusy] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
@@ -47,6 +58,15 @@ export function SentimentBoard() {
       const d = await r.json()
       if (d.error) throw new Error(d.error)
       setRows(d.rows || []); setSummary(d.summary || null)
+try {
+const ids = (d.rows || []).map((x: any) => x.id).filter(Boolean).join(',')
+if (ids) {
+const q = await fetch('/api/sentiment/create-qc?conversationIds=' + ids).then(x => x.json()).catch(() => null)
+const m: Record<string, { taskId: string; reportUrl: string | null }> = {}
+for (const t of ((q && q.tasks) || [])) if (t.conversation_id && t.breezeway_task_id) m[t.conversation_id] = { taskId: String(t.breezeway_task_id), reportUrl: t.report_url || null }
+setQc(m)
+}
+} catch { /* qc state optional */ }
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setLoading(false) }
   }, [])
@@ -58,7 +78,21 @@ export function SentimentBoard() {
     finally { load() }
   }
 
-  async function scan() {
+  // EXPLICIT approval only - the click IS the approval; nothing is created automatically.
+async function createQc(r: Row) {
+const c = classifyQc(r)
+const desc = 'GUEST ISSUE: ' + (r.topIssue || 'Guest dissatisfaction') + (r.excerpt ? ' - "' + r.excerpt.slice(0, 180) + '"' : '') + '\nCHECK FOR: ' + c.check + '\nGUEST CONTEXT: ' + r.guest + ' via ' + (CH[r.channel] || r.channel) + (r.listingName ? ' - ' + r.listingName : '') + '\nREQUIRED: photos + notes before closing. Created from StayBoard guest sentiment.'
+if (!window.confirm('Create a ' + c.department.toUpperCase() + ' task in Breezeway' + (r.listingName ? ' for ' + r.listingName : '') + '?\n\n' + c.title)) return
+setQcBusy(p => ({ ...p, [r.id]: true }))
+try {
+const res = await fetch('/api/sentiment/create-qc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: r.id, issueType: c.issueType, department: c.department, priority: c.priority, title: c.title, description: desc }) })
+const j = await res.json().catch(() => null)
+if (!res.ok || !j || !j.ok) throw new Error((j && j.error) || 'Could not create the QC task.')
+setQc(p => ({ ...p, [r.id]: { taskId: String(j.taskId), reportUrl: j.reportUrl || null } }))
+} catch (e: any) { setErr(e?.message || String(e)) } finally { setQcBusy(p => { const n = { ...p }; delete n[r.id]; return n }) }
+}
+
+async function scan() {
     setScanning(true); setScanMsg('Scanning guest threads…')
     try {
       let total = 0
@@ -143,6 +177,7 @@ export function SentimentBoard() {
                     <div className="flex items-center gap-3 mt-2">
                       <Link href={`/messages/${r.id}`} className="text-[12px] font-semibold text-brand-700 hover:underline">Open thread →</Link>
                       <button onClick={() => close(r.id)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-700 hover:underline"><Check size={13} /> Close out</button>
+{qc[r.id] ? (qc[r.id].reportUrl ? <a href={qc[r.id].reportUrl as string} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-semibold text-violet-700 hover:underline">QC task created &rarr;</a> : <span className="text-[12px] font-semibold text-violet-700">QC task created</span>) : <button onClick={() => createQc(r)} disabled={!!qcBusy[r.id]} className="inline-flex items-center gap-1 text-[12px] font-semibold text-violet-700 hover:underline disabled:opacity-50" title="Create a targeted inspection/maintenance task in Breezeway with this guest's issue - only on your click">{qcBusy[r.id] ? 'Creating...' : 'Create QC task'}</button>}
                       {r.reason && <button onClick={() => setOpen(o => ({ ...o, [r.id]: !o[r.id] }))} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink ml-auto">{isOpen ? <>Less <ChevronUp size={13} /></> : <>Why <ChevronDown size={13} /></>}</button>}
                     </div>
                   </div>
