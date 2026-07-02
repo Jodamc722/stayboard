@@ -3,6 +3,7 @@
 // (0.70*mean + 0.30*worst-quartile). Excludes orphaned (unmapped) reviews from scoring.
 // Reads persisted tables (fast, Guesty-independent). Logged-in users only.
 import { NextResponse } from 'next/server'
+import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, rollupBuildingHealth, type HealthReview } from '@/lib/health-score'
@@ -15,12 +16,9 @@ export const maxDuration = 45
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const SKIP_BUILDINGS = ['waves']
 
-export async function GET() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  try {
+// Cached 5 min (tag 'listing-health') - this compute walks every listing + full review set and was
+// the slowest endpoint in the app (~3s per request); /health data tolerates 5-min staleness.
+const computeHealth = unstable_cache(async () => {
     const sb = supabaseAdmin()
 
     const fetchAllReviews = async () => {
@@ -163,7 +161,15 @@ export async function GET() {
     }
 
     const dataPending = ['Conversion / CTR', 'Price vs. comps', 'Calendar openness', 'Live badge status', 'Acceptance & host-cancellation rate']
-    return NextResponse.json({ summary, listings: scored, buildings, actions, segments, cities: cityCount, dataPending })
+    return { summary, listings: scored, buildings, actions, segments, cities: cityCount, dataPending }
+}, ['listing-health-v1'], { tags: ['listing-health'], revalidate: 300 })
+
+export async function GET() {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  try {
+    return NextResponse.json(await computeHealth())
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 200 })
   }
