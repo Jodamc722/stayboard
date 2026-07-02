@@ -5,6 +5,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { unstable_cache } from 'next/cache'
 import { Shell } from '@/components/Shell'
 import { RangeFilter } from '@/components/RangeFilter'
 import { DollarSign, TrendingUp, BedDouble, Percent, Sparkles, Building2, CalendarRange, Ban, Wallet } from 'lucide-react'
@@ -48,6 +49,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
   const toExcl = new Date(Date.parse(to + 'T00:00:00Z') + 86_400_000).toISOString().slice(0, 10)
   const daysInRange = daysBetween(from, to) + 1
 
+  // Cached 5 min per date range - this page pulled thousands of reservations on EVERY request (~2.5s).
+  const getRevenueData = unstable_cache(async (_fromKey: string, _toKey: string) => {
   const sb = supabaseAdmin()
 
   // Active units (the "dead set" rule), and inactive count for context.
@@ -74,6 +77,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     return all
   }
   const resv = await fetchAll()
+  return { resv, listings, activeUnits, inactiveUnits }
+  }, ['revenue-v1'], { tags: ['revenue'], revalidate: 300 })
+  const { resv, listings, activeUnits, inactiveUnits } = await getRevenueData(from, to)
 
   // ---- Occupancy: overlap nights across the whole set ----
   let occupiedNights = 0
