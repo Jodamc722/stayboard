@@ -64,6 +64,10 @@ db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_i
 db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,raw'),
 ])
 
+// HARD GUARD: if the listings query hiccups, ABORT instead of caching a garbage snapshot
+// (rows would render with hub 'Other', no bedrooms/door codes - worse than an error).
+if (!listings || !listings.length) throw new Error('Listing data unavailable - hit Sync to retry.')
+
 type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; noCode: boolean; vendor: string | null }
 const meta: Record<string, Meta> = {}
 const units: { id: string; name: string }[] = []
