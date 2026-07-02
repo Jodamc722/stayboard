@@ -14,6 +14,7 @@ import { HeroCollage } from '@/components/HeroCollage'
 import { ListingReviews } from '@/components/ListingReviews'
 import { UnitTasks } from '@/components/UnitTasks'
 import { AmenityEditor } from '@/components/AmenityEditor'
+import { GuidebookLauncher } from '@/components/GuidebookLauncher'
 import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X, Sparkles,
@@ -169,6 +170,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </div>
       )}
 
+      <div className="mb-5"><GuidebookLauncher listingId={listing.id} name={name} /></div>
       <div className="mb-5"><ListingOptimizer listingId={listing.id} name={name} /></div>
       <div className="mb-5"><PhotoOrganizer listingId={listing.id} name={name} /></div>
       <div className="mb-5"><UnitTasks listingId={listing.id} /></div>
