@@ -10,10 +10,14 @@ export const dynamic = 'force-dynamic'
 const getData = unstable_cache(async () => {
   const db = supabaseAdmin()
   const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)
-  const [{ data: tasks }, { data: props }] = await Promise.all([
-    db.from('breezeway_tasks_sync').select('type_department,name,assignees,total_minutes,finished_at,scheduled_date,reference_property_id').gte('scheduled_date', since).limit(20000),
-    db.from('breezeway_properties').select('reference_property_id,name'),
-  ])
+  // PostgREST caps a single read at 1000 rows - page through the mirror so nothing is undercounted.
+  let tasks: any[] = []
+  for (let i = 0; i < 20; i++) {
+    const { data: page } = await db.from('breezeway_tasks_sync').select('type_department,name,assignees,total_minutes,finished_at,scheduled_date,reference_property_id').gte('scheduled_date', since).order('scheduled_date').range(i * 1000, i * 1000 + 999)
+    tasks = tasks.concat(page || [])
+    if (!page || page.length < 1000) break
+  }
+  const { data: props } = await db.from('breezeway_properties').select('reference_property_id,name')
   const nameOf: Record<string, string> = {}
   for (const p of (props || [])) if ((p as any).reference_property_id) nameOf[String((p as any).reference_property_id)] = String((p as any).name || '')
   const hubOf = (ref: string) => (nameOf[ref] || 'Other').split(' ')[0] || 'Other'
