@@ -32,12 +32,13 @@ export async function GET(req: NextRequest) {
   }
   const list = rows ?? []
 
-  const lids = Array.from(new Set(list.map((r: any) => r.listing_id).filter(Boolean)))
   const cids = list.map((r: any) => r.conversation_id)
-  const [{ data: listings }, { data: convos }] = await Promise.all([
-    lids.length ? sb.from('guesty_listings').select('id, nickname, title, building').in('id', lids as string[]) : Promise.resolve({ data: [] as any[] }),
-    cids.length ? sb.from('guesty_conversations').select('id, last_message_preview, unread_count').in('id', cids as string[]) : Promise.resolve({ data: [] as any[] }),
-  ])
+  // Conversations carry the listing link (sentiment rows often lack it) - resolve unit names through them.
+  const { data: convos } = cids.length ? await sb.from('guesty_conversations').select('id, last_message_preview, unread_count, listing_id').in('id', cids as string[]) : { data: [] as any[] }
+  const convLid: Record<string, string> = {}
+  ;(convos ?? []).forEach((c: any) => { if (c.listing_id) convLid[c.id] = String(c.listing_id) })
+  const lids = Array.from(new Set(list.map((r: any) => r.listing_id || convLid[r.conversation_id]).filter(Boolean)))
+  const { data: listings } = lids.length ? await sb.from('guesty_listings').select('id, nickname, title, building').in('id', lids as string[]) : { data: [] as any[] }
   const nameOf: Record<string, { name: string; building: string }> = {}
   ;(listings ?? []).forEach((l: any) => { nameOf[l.id] = { name: l.nickname || l.title || l.id, building: rollupBuilding(l.building) } })
   const conv: Record<string, { preview: string; unread: number }> = {}
@@ -47,8 +48,8 @@ export async function GET(req: NextRequest) {
     id: r.conversation_id,
     guest: r.guest_name || 'Guest',
     channel: r.channel || '',
-    listingName: r.listing_id ? (nameOf[r.listing_id]?.name || r.listing_id) : null,
-    building: r.listing_id ? (nameOf[r.listing_id]?.building || null) : null,
+    listingName: (() => { const lid = r.listing_id || convLid[r.conversation_id]; return lid ? (nameOf[lid]?.name || null) : null })(),
+    building: (() => { const lid = r.listing_id || convLid[r.conversation_id]; return lid ? (nameOf[lid]?.building || null) : null })(),
     score: r.score,
     band: r.band,
     dissatisfied: !!r.dissatisfied,
