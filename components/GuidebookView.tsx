@@ -279,6 +279,7 @@ export function GuidebookView({ initial }: { initial: any }) {
             )}
           </div>
         </Page>
+        )}
 
         {/* WI-FI + HOUSE NOTES — one considered dark spread */}
         <Page id="wifi">
