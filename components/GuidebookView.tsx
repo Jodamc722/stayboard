@@ -1,22 +1,25 @@
 'use client'
-// Guidebook viewer/editor. Renders the generated guidebook as A4-style pages in the Salato
-// editorial spirit (light) or Dark Luxe theme, with inline EDIT mode, theme switch, Print/PDF
-// (browser print - each page breaks correctly), and Delete. QR points to stay-hospitality.com.
+// Guidebook v2 — editorial-grade rendering. Playfair Display typography, full-bleed cover with
+// gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
+// set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
+// print-exact A4 output (@page, exact colors, no app chrome).
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Pencil, Printer, Save, Trash2, Loader2 } from 'lucide-react'
 
 const QR = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent('https://stay-hospitality.com')
+const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
+const SANS = "'Inter', -apple-system, sans-serif"
 
-function StayLogo({ className = '' }: { className?: string }) {
+function StayLogo({ light = false, small = false }: { light?: boolean; small?: boolean }) {
   return (
-    <div className={'text-center ' + className} style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>
-      <div className="text-3xl tracking-[0.35em]">STAY</div>
-      <div className="mt-1 flex items-center justify-center gap-3">
-        <span className="h-px w-10 bg-current opacity-70" />
-        <span className="text-[9px] tracking-[0.45em]">HOSPITALITY</span>
-        <span className="h-px w-10 bg-current opacity-70" />
+    <div className={'text-center ' + (light ? 'text-white' : '')} style={{ fontFamily: SERIF }}>
+      <div className={(small ? 'text-xl' : 'text-3xl') + ' tracking-[0.4em] font-medium'} style={{ paddingLeft: '0.4em' }}>STAY</div>
+      <div className="mt-1 flex items-center justify-center gap-2.5">
+        <span className="h-px w-8 bg-current opacity-60" />
+        <span className="text-[8px] tracking-[0.5em] font-light" style={{ fontFamily: SANS, paddingLeft: '0.5em' }}>HOSPITALITY</span>
+        <span className="h-px w-8 bg-current opacity-60" />
       </div>
     </div>
   )
@@ -28,6 +31,8 @@ export function GuidebookView({ initial }: { initial: any }) {
   const [edit, setEdit] = useState(false)
   const [busy, setBusy] = useState(false)
   const s = gb.sections || {}
+  const omit: string[] = Array.isArray(s.omit) ? s.omit : []
+  const pa = s._photoAssign || {}
   const photos: string[] = Array.isArray(s._photos) ? s._photos : []
   const dark = gb.theme === 'dark'
 
@@ -57,41 +62,78 @@ export function GuidebookView({ initial }: { initial: any }) {
 
   const T = ({ path, value, className, rows = 2 }: { path: string[]; value: string; className?: string; rows?: number }) =>
     edit
-      ? <textarea rows={rows} value={value || ''} onChange={e => set(path, e.target.value)} className={'w-full bg-transparent border border-dashed border-current/40 rounded p-1 ' + (className || '')} />
+      ? <textarea rows={rows} value={value || ''} onChange={e => set(path, e.target.value)} className={'w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px] ' + (className || '')} />
       : <span className={className}>{value}</span>
 
-  const pageBase = dark
-    ? 'bg-neutral-950 text-neutral-100'
-    : 'bg-[#faf8f4] text-neutral-900'
-  const accent = dark ? 'text-amber-200/90' : 'text-neutral-500'
-  const serif = { fontFamily: 'Georgia, "Times New Roman", serif' }
-  const footer = (
-    <div className={'mt-auto pt-6 flex items-center justify-between text-[10px] tracking-widest ' + accent}>
-      <span>{s.contact?.customerService || '954-526-8998'}</span>
-      <span>{s.contact?.email || 'support@stay-hospitality.com'}</span>
+  const paper = dark ? '#141311' : '#fbf9f5'
+  const ink = dark ? '#efeae2' : '#1f1d1a'
+  const accentColor = dark ? '#c9a96a' : '#8a7350'
+  const has = (key: string, contentOk: boolean) => !omit.includes(key) && contentOk
+
+  let pageNo = 0
+  const Page = ({ children, bleed, id }: { children: any; bleed?: string | null; id?: string }) => {
+    pageNo += 1
+    const n = pageNo
+    return (
+      <div key={id || n} className="gb-page relative mx-auto mb-8 w-full max-w-[760px] overflow-hidden shadow-[0_2px_24px_rgba(0,0,0,0.10)] print:mb-0 print:shadow-none"
+        style={{ aspectRatio: '210/297', background: paper, color: ink, fontFamily: SANS }}>
+        {bleed && (
+          <>
+            <img src={bleed} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(10,10,12,0.62) 0%, rgba(10,10,12,0.28) 38%, rgba(10,10,12,0.05) 60%, rgba(10,10,12,0.55) 100%)' }} />
+          </>
+        )}
+        <div className={'relative flex h-full flex-col ' + (bleed ? 'text-white' : '')} style={{ padding: '52px 58px 40px' }}>
+          {children}
+          <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
+            <span>{s.contact?.customerService || '954-526-8998'}</span>
+            <span className="tabular-nums">{String(n).padStart(2, '0')}</span>
+            <span>STAY-HOSPITALITY.COM</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Half-photo header with scrim — text below is always on paper, label over photo is scrimmed white.
+  const PhotoBand = ({ src, label }: { src: string | null; label?: string }) => src ? (
+    <div className="relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden">
+      <img src={src} alt="" className="h-full w-full object-cover" />
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.45), rgba(10,10,12,0.05) 55%)' }} />
+      <span className="absolute left-[58px] top-1/2 h-px w-16 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />
+      {label && <p className="absolute bottom-4 left-[58px] text-[9px] tracking-[0.45em] text-white/90" style={{ fontFamily: SANS }}>{label}</p>}
     </div>
+  ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{label}</p> : null)
+
+  const H = ({ children, size = 'text-[40px]' }: { children: any; size?: string }) => (
+    <h2 className={size + ' lowercase leading-[1.05] font-medium'} style={{ fontFamily: SERIF }}>{children}</h2>
+  )
+  const Kicker = ({ children }: { children: any }) => (
+    <p className="mb-2 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{children}</p>
   )
 
-  const Page = ({ children, cover }: { children: any; cover?: string }) => (
-    <div className={'gb-page relative mx-auto mb-6 flex w-full max-w-[820px] flex-col overflow-hidden rounded-lg shadow-md print:mb-0 print:rounded-none print:shadow-none ' + pageBase}
-      style={{ aspectRatio: '210/297', padding: '48px 52px' }}>
-      {cover && <img src={cover} alt="" className="absolute inset-0 h-1/2 w-full object-cover" />}
-      <div className={'relative flex h-full flex-col ' + (cover ? 'pt-[46%]' : '')}>{children}</div>
-    </div>
-  )
-
-  const H = ({ children }: { children: any }) => (
-    <h2 className="text-4xl lowercase leading-tight" style={serif}>{children}</h2>
-  )
+  const localSecs = [
+    has('localPlaces', (s.localPlaces?.items || []).length > 0) && { title: 'local places', tag: 'TO VISIT', key: 'localPlaces' },
+    has('restaurants', (s.restaurants?.items || []).length > 0) && { title: 'where to eat', tag: 'OUR PICKS', key: 'restaurants' },
+  ].filter(Boolean) as any[]
 
   return (
-    <div className={dark ? 'min-h-screen bg-neutral-900' : 'min-h-screen bg-neutral-100'}>
-      <style>{`@media print { .gb-chrome{display:none!important} .gb-page{page-break-after:always; width:100%!important; max-width:none!important} body{background:white} }`}</style>
+    <div style={{ background: dark ? '#1c1a17' : '#eceae6', minHeight: '100vh' }}>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" />
+      <style>{`
+        .gb-page { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        @media print {
+          @page { size: A4; margin: 0; }
+          body { background: white !important; }
+          .gb-chrome { display: none !important; }
+          .gb-page { width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; page-break-after: always; break-inside: avoid; }
+        }
+      `}</style>
 
       {/* Toolbar */}
-      <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-white/90 px-4 py-3 backdrop-blur">
+      <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
         <Link href="/guidebooks" className="inline-flex items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>
-        <div className="text-sm font-semibold text-neutral-800 truncate max-w-[40%]">{gb.title}</div>
+        <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>
         <div className="flex items-center gap-2">
           <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
             <option value="editorial">Coastal editorial</option>
@@ -105,208 +147,190 @@ export function GuidebookView({ initial }: { initial: any }) {
         </div>
       </div>
 
-      <div className="px-4 py-8">
-        {/* 1 — Cover */}
-        <Page cover={photos[0]}>
+      <div className="px-4 py-10">
+        {/* COVER — full-bleed, scrimmed, white type */}
+        <Page bleed={pa.cover || photos[0] || null} id="cover">
           <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <p className={'text-[10px] tracking-[0.5em] ' + accent}>WELCOME</p>
-            <div className="mt-4 text-5xl leading-tight" style={serif}>
+            <p className="text-[9px] tracking-[0.55em] text-white/80">WELCOME</p>
+            <div className="mt-5 text-[54px] leading-[1.08] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 24px rgba(0,0,0,0.35)' }}>
               <T path={['cover', 'line1']} value={s.cover?.line1} /><br />
               <T path={['cover', 'line2']} value={s.cover?.line2} />
             </div>
-            <p className={'mt-5 text-[11px] tracking-[0.35em] ' + accent}><T path={['cover', 'subtitle']} value={s.cover?.subtitle} /></p>
+            <div className="mx-auto mt-7 h-px w-14 bg-white/60" />
+            <p className="mt-5 text-[10px] tracking-[0.4em] text-white/85"><T path={['cover', 'subtitle']} value={s.cover?.subtitle} /></p>
           </div>
-          <StayLogo className="opacity-80" />
+          <div className="pb-2"><StayLogo light /></div>
         </Page>
 
-        {/* 2 — About */}
-        <Page cover={photos[1]}>
+        {/* ABOUT */}
+        <Page id="about">
+          <PhotoBand src={pa.about || null} />
+          <Kicker>THE RESIDENCE</Kicker>
           <H><T path={['about', 'heading']} value={s.about?.heading} /></H>
-          <p className="mt-5 max-w-xl text-sm leading-7"><T path={['about', 'body']} value={s.about?.body} rows={6} /></p>
-          {footer}
-        </Page>
-
-        {/* 3 — Private retreat */}
-        <Page>
-          <div className="flex flex-1 flex-col justify-center">
-            <H><T path={['retreat', 'heading']} value={s.retreat?.heading} /></H>
-            <div className="mt-8 space-y-5 text-[11px] tracking-[0.18em] leading-6">
-              {(s.retreat?.lines || []).map((ln: string, i: number) => (
-                <p key={i}><T path={['retreat', 'lines', String(i)] as any} value={ln} rows={2} /></p>
+          <p className="mt-6 max-w-[52ch] text-[13.5px] font-light leading-[1.9]"><T path={['about', 'body']} value={s.about?.body} rows={5} /></p>
+          {has('retreat', (s.retreat?.lines || []).length > 0) && (
+            <div className="mt-10 space-y-3.5 border-l pl-6 text-[10px] tracking-[0.22em] leading-[1.8]" style={{ borderColor: accentColor + '55' }}>
+              {(s.retreat.lines).slice(0, 3).map((ln: string, i: number) => (
+                <p key={i} style={{ color: accentColor }}><T path={['retreat', 'lines', String(i)] as any} value={ln} rows={2} /></p>
               ))}
             </div>
-          </div>
-          {footer}
+          )}
         </Page>
 
-        {/* 4 — What makes this stay special + QR */}
-        <Page>
-          <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
-          <div className="mt-6 grid flex-1 grid-cols-2 gap-x-8 gap-y-6">
-            {(s.special?.groups || []).map((g: any, i: number) => (
-              <div key={i}>
-                <p className="text-sm font-bold"><T path={['special', 'groups', String(i), 'title'] as any} value={g.title} /></p>
-                <ul className="mt-2 space-y-1.5 text-[13px] leading-5">
-                  {(g.items || []).map((it: string, j: number) => <li key={j}>• <T path={['special', 'groups', String(i), 'items', String(j)] as any} value={it} rows={1} /></li>)}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 flex items-center gap-4">
-            <img src={QR} alt="QR — stay-hospitality.com" className="h-24 w-24 rounded bg-white p-1" />
-            <p className="text-sm" style={serif}>Scan to explore more stays<br />and <b>book direct</b> at stay-hospitality.com</p>
-          </div>
-          {footer}
-        </Page>
-
-        {/* 5 — Meet your host */}
-        <Page>
-          <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <H><T path={['host', 'heading']} value={s.host?.heading} /></H>
-            <StayLogo className="my-8" />
-            <p className="max-w-md text-sm leading-7"><T path={['host', 'body']} value={s.host?.body} rows={6} /></p>
-          </div>
-          {footer}
-        </Page>
-
-        {/* 6 — House guidelines */}
-        <Page>
-          <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
-          <p className={'mt-3 text-[11px] tracking-[0.14em] leading-5 ' + accent}><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
-          <div className="mt-5 flex-1 space-y-4">
-            {(s.guidelines?.items || []).map((it: any, i: number) => (
-              <div key={i}>
-                <p className="text-[11px] font-bold tracking-[0.22em] uppercase"><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
-                <p className="mt-1 text-[12px] leading-5 opacity-80"><T path={['guidelines', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
-              </div>
-            ))}
-          </div>
-          <p className={'text-[10px] tracking-[0.2em] ' + accent}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={1} /></p>
-          {footer}
-        </Page>
-
-        {/* 7 — Arrival & check-in */}
-        <Page cover={photos[2]}>
-          <H><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
-          <div className="mt-4 flex gap-10 text-sm">
-            <p><span className={'text-[10px] tracking-[0.3em] block ' + accent}>CHECK-IN</span><b><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></b></p>
-            <p><span className={'text-[10px] tracking-[0.3em] block ' + accent}>CHECK-OUT</span><b><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></b></p>
-          </div>
-          <div className="mt-5 space-y-4 text-[13px] leading-6">
-            <div><p className="font-bold underline underline-offset-4">Entry</p><p className="mt-1"><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p></div>
-            <div><p className="font-bold underline underline-offset-4">Parking</p><p className="mt-1"><T path={['arrival', 'parking']} value={s.arrival?.parking} rows={3} /></p></div>
-          </div>
-          {footer}
-        </Page>
-
-        {/* 8 — Contact */}
-        <Page>
-          <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <H>Contact info</H>
-            <div className="mt-10 grid grid-cols-2 gap-10 text-sm">
-              <div><p className={'text-[10px] tracking-[0.3em] ' + accent}>CUSTOMER SERVICE</p><p className="mt-1 font-semibold"><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></p></div>
-              <div><p className={'text-[10px] tracking-[0.3em] ' + accent}>GENERAL MANAGER</p><p className="mt-1 font-semibold"><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /></p><p><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></p></div>
-            </div>
-          </div>
-          {footer}
-        </Page>
-
-        {/* 9 — House guide */}
-        {(s.houseGuide?.items || []).length > 0 && (
-          <Page>
-            <p className={'text-[10px] tracking-[0.4em] ' + accent}>// HOUSE</p>
-            <H>guide</H>
-            <div className="mt-6 flex-1 space-y-6">
-              {(s.houseGuide.items).map((it: any, i: number) => (
-                <div key={i} className="flex gap-5">
-                  <span className="text-lg opacity-50" style={serif}>{String(i + 1).padStart(2, '0')}</span>
-                  <div>
-                    <p className="text-[11px] font-bold tracking-[0.25em] uppercase"><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
-                    <p className="mt-1 text-[12px] leading-5 opacity-80"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
-                  </div>
+        {/* SPECIAL + QR */}
+        {has('special', (s.special?.groups || []).length > 0) && (
+          <Page id="special">
+            <PhotoBand src={pa.special || null} label="THE EXPERIENCE" />
+            <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
+            <div className="mt-7 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
+              {(s.special.groups).map((g: any, i: number) => (
+                <div key={i}>
+                  <p className="text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><T path={['special', 'groups', String(i), 'title'] as any} value={g.title} /></p>
+                  <ul className="mt-2.5 space-y-1.5 text-[12.5px] font-light leading-[1.6]">
+                    {(g.items || []).map((it: string, j: number) => (
+                      <li key={j} className="flex gap-2"><span style={{ color: accentColor }}>—</span><T path={['special', 'groups', String(i), 'items', String(j)] as any} value={it} rows={1} /></li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
-            {footer}
+            <div className="mt-5 flex items-center gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
+              <img src={QR} alt="stay-hospitality.com" className="h-20 w-20 bg-white p-1" />
+              <p className="text-[13px] leading-[1.7]" style={{ fontFamily: SERIF }}>Scan to explore our collection<br />and <em>book direct</em> at stay-hospitality.com</p>
+            </div>
           </Page>
         )}
 
-        {/* 10 — Wi-Fi (always dark) */}
-        <Page>
-          <div className={'absolute inset-0 ' + (dark ? 'bg-black' : 'bg-neutral-900')} />
-          <div className="relative flex h-full flex-col text-neutral-100">
-            <p className="text-[10px] tracking-[0.4em] text-amber-200/80">// NETWORK</p>
-            <div className="flex flex-1 flex-col items-center justify-center text-center">
-              <h2 className="text-5xl" style={serif}>wi-fi<br />password</h2>
-              <div className="mt-10 space-y-6 text-sm">
-                <div><p className="text-[10px] tracking-[0.35em] text-amber-200/80">NETWORK NAME</p><p className="mt-1 text-xl font-semibold"><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
-                <div><p className="text-[10px] tracking-[0.35em] text-amber-200/80">NETWORK PASSWORD</p><p className="mt-1 text-xl font-semibold"><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
-              </div>
+        {/* ARRIVAL */}
+        <Page id="arrival">
+          <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" />
+          <H><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
+          <div className="mt-6 flex gap-14">
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-IN</p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
+            <div className="w-px" style={{ background: accentColor + '44' }} />
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-OUT</p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
+          </div>
+          <div className="mt-8 grid gap-7 text-[12.5px] font-light leading-[1.85]">
+            <div>
+              <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Entry</p>
+              <p className="max-w-[58ch]"><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p>
             </div>
-            <div className="flex items-center justify-between text-[10px] tracking-widest text-neutral-400">
+            <div>
+              <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Parking</p>
+              <p className="max-w-[58ch]"><T path={['arrival', 'parking']} value={s.arrival?.parking} rows={3} /></p>
+            </div>
+            {has('gettingThere', !!str2(s.gettingThere?.body)) && (
+              <div>
+                <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Finding the residence</p>
+                <p className="max-w-[58ch]"><T path={['gettingThere', 'body']} value={s.gettingThere?.body} rows={3} /></p>
+              </div>
+            )}
+          </div>
+        </Page>
+
+        {/* WI-FI + HOUSE NOTES — one considered dark spread */}
+        <Page id="wifi">
+          <div className="absolute inset-0" style={{ background: '#131210' }} />
+          <div className="relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
+            <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>CONNECTED</p>
+            <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF }}>wi-fi &amp; the essentials</h2>
+            <div className="mt-9 grid grid-cols-2 gap-8 border-y py-7" style={{ borderColor: '#c9a96a44' }}>
+              <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>NETWORK</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
+              <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>PASSWORD</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
+            </div>
+            {has('houseGuide', (s.houseGuide?.items || []).length > 0) && (
+              <div className="mt-8 flex-1 space-y-5">
+                <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>WORTH KNOWING</p>
+                {(s.houseGuide.items).slice(0, 4).map((it: any, i: number) => (
+                  <div key={i} className="flex gap-5">
+                    <span className="text-[15px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                    <div>
+                      <p className="text-[10px] font-semibold tracking-[0.28em] uppercase text-[#efeae2]"><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
+                      <p className="mt-1 max-w-[56ch] text-[12px] font-light leading-[1.75] text-[#efeae2]/75"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-auto flex items-end justify-between pt-5 text-[8.5px] tracking-[0.28em] text-[#efeae2]/50">
               <span>{s.contact?.customerService}</span><span>{s.contact?.email}</span>
             </div>
           </div>
         </Page>
 
-        {/* 11 — Local places / restaurants */}
-        {[(s.localPlaces?.items || []).length && { title: 'local places', tag: '// TO VISIT', key: 'localPlaces' },
-          (s.restaurants?.items || []).length && { title: 'restaurants', tag: '// TOP PICKS', key: 'restaurants' }]
-          .filter(Boolean).map((sec: any) => (
-          <Page key={sec.key}>
-            <p className={'text-[10px] tracking-[0.4em] ' + accent}>{sec.tag}</p>
+        {/* GUIDELINES + CONTACT — combined, lean */}
+        <Page id="guidelines">
+          <Kicker>HOUSE NOTES</Kicker>
+          <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
+          <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
+          <div className="mt-7 flex-1 space-y-4">
+            {(s.guidelines?.items || []).slice(0, 5).map((it: any, i: number) => (
+              <div key={i} className="flex gap-4 border-b pb-3.5" style={{ borderColor: accentColor + '22' }}>
+                <p className="w-44 shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
+                <p className="text-[12px] font-light leading-[1.7]"><T path={['guidelines', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 grid grid-cols-3 gap-6">
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>GENERAL MANAGER</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1.5 text-[11px] font-light leading-snug"><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></p></div>
+          </div>
+        </Page>
+
+        {/* LOCAL — places / eats */}
+        {localSecs.map((sec: any) => (
+          <Page key={sec.key} id={sec.key}>
+            <Kicker>{sec.tag}</Kicker>
             <H>{sec.title}</H>
-            <div className="mt-8 grid flex-1 grid-cols-2 content-start gap-6">
-              {(s[sec.key].items || []).map((p: any, i: number) => (
-                <div key={i} className="border-l border-current/30 pl-4">
-                  <p className="text-sm font-semibold tracking-wide uppercase"><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+            <div className="mt-9 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
+              {(s[sec.key].items || []).slice(0, 8).map((p: any, i: number) => (
+                <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
+                  <p className="text-[13px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+                  {p.note && <p className="mt-1 text-[11px] font-light leading-[1.6] opacity-75"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p>}
                 </div>
               ))}
             </div>
-            {footer}
           </Page>
         ))}
 
-        {/* Add-ons */}
-        {(s.addons?.items || []).length > 0 && (
-          <Page>
-            <H>Exclusive Add-On Services</H>
-            <p className={'mt-3 text-[11px] tracking-[0.14em] leading-5 ' + accent}><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
-            <div className="mt-6 grid flex-1 grid-cols-2 content-start gap-x-8 gap-y-4">
-              {(s.addons.items).map((p: any, i: number) => (
-                <div key={i} className="flex items-baseline gap-3">
-                  <span className="text-sm opacity-50" style={serif}>{String(i + 1).padStart(2, '0')}</span>
-                  <p className="text-[13px] font-semibold uppercase tracking-wide"><T path={['addons', 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+        {/* ADD-ONS (only if provided) */}
+        {has('addons', (s.addons?.items || []).length > 0) && (
+          <Page id="addons">
+            <Kicker>AT YOUR SERVICE</Kicker>
+            <H>exclusive add-ons</H>
+            <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
+            <div className="mt-8 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-5">
+              {(s.addons.items).slice(0, 10).map((p: any, i: number) => (
+                <div key={i} className="flex items-baseline gap-4">
+                  <span className="text-[13px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                  <p className="text-[12px] font-medium tracking-[0.14em] uppercase"><T path={['addons', 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                 </div>
               ))}
             </div>
-            {footer}
           </Page>
         )}
 
-        {/* Before you go + review + thank you */}
-        <Page cover={photos[3]}>
-          <H>before you go</H>
-          <ul className="mt-6 flex-1 space-y-4 text-[13px] leading-6">
-            {(s.beforeYouGo?.items || []).map((it: string, i: number) => (
-              <li key={i} className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-current" /> <T path={['beforeYouGo', 'items', String(i)] as any} value={it} rows={2} /></li>
-            ))}
-          </ul>
-          {footer}
-        </Page>
-
-        <Page>
-          <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <p className={'text-[10px] tracking-[0.4em] ' + accent}>// BEFORE YOU GO</p>
-            <p className="mt-6 max-w-md text-sm leading-7" style={serif}><T path={['review', 'body']} value={s.review?.body} rows={5} /></p>
-            <h2 className="mt-12 text-5xl" style={serif}>thank you</h2>
-            <p className={'mt-2 text-[10px] tracking-[0.4em] ' + accent}>// FOR STAYING</p>
-            <p className="mt-6 text-xs tracking-[0.25em]"><T path={['thankyou', 'line']} value={s.thankyou?.line} rows={1} /></p>
-            <StayLogo className="mt-10 opacity-80" />
+        {/* CLOSING — before you go + thank you, one elegant page */}
+        <Page bleed={pa.closing || null} id="closing">
+          <div className={'max-w-[54ch] ' + (pa.closing ? '' : '')}>
+            <p className={'text-[9px] tracking-[0.5em] ' + (pa.closing ? 'text-white/85' : '')} style={pa.closing ? {} : { color: accentColor }}>BEFORE YOU GO</p>
+            <ul className="mt-5 space-y-2.5 text-[12px] font-light leading-[1.7]">
+              {(s.beforeYouGo?.items || []).slice(0, 5).map((it: string, i: number) => (
+                <li key={i} className="flex gap-3"><span className={'mt-[9px] h-1 w-1 shrink-0 rounded-full ' + (pa.closing ? 'bg-white/80' : '')} style={pa.closing ? {} : { background: accentColor }} /><T path={['beforeYouGo', 'items', String(i)] as any} value={it} rows={2} /></li>
+              ))}
+            </ul>
           </div>
-          {footer}
+          <div className="flex flex-1 flex-col items-center justify-end pb-6 text-center">
+            <p className="max-w-[46ch] text-[13px] font-light italic leading-[1.85]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
+            <h2 className="mt-7 text-[44px] lowercase font-medium" style={{ fontFamily: SERIF }}>thank you</h2>
+            <p className={'mt-2 text-[9px] tracking-[0.5em] ' + (pa.closing ? 'text-white/85' : '')} style={pa.closing ? {} : { color: accentColor }}><T path={['thankyou', 'line']} value={s.thankyou?.line} rows={1} /></p>
+            <div className="mt-7"><StayLogo light={!!pa.closing} small /></div>
+          </div>
         </Page>
       </div>
     </div>
   )
 }
+
+function str2(v: any): string { return typeof v === 'string' ? v : '' }
