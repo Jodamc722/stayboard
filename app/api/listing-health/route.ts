@@ -37,8 +37,10 @@ const computeHealth = unstable_cache(async () => {
 
     const [revRows, { data: listings }, { data: work }] = await Promise.all([
       fetchAllReviews(),
+      // PERF: select ONLY the raw sub-fields computeOptimizeScore reads (publicDescription, terms,
+      // integrations, instant-book, times, _photoScore, cancellation) — not the full raw blob.
       sb.from('guesty_listings')
-        .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw')
+        .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
         .limit(2000),
       sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
     ])
@@ -68,7 +70,9 @@ const computeHealth = unstable_cache(async () => {
     const scored = active.map((l: any) => {
       const building = rollupBuilding(l.building)
       const reviews = byListing.get(l.id) || []
-      const h = computeListingHealth(l, reviews, { openWork: openByBuilding[building] || 0 })
+      // Rebuild the slim raw object from the sub-field selects (same shape computeOptimizeScore expects).
+      const slim = { ...l, raw: { publicDescription: l.rawPub, publicDescriptions: l.rawPubs, terms: l.rawTerms, prices: l.rawPrices, integrations: l.rawInts, instantBookable: l.rawIb, instantBook: l.rawIb2, defaultCheckInTime: l.rawCi, checkInTime: l.rawCi2, defaultCheckOutTime: l.rawCo, checkOutTime: l.rawCo2, _photoScore: l.rawPs, cancellationPolicy: l.rawCp, airbnb: l.rawAirbnb, bookingcom: l.rawBcom, title: l.rawTitle, defaultListingMinNights: l.rawMinN, amenities: l.rawAmen } }
+      const h = computeListingHealth(slim, reviews, { openWork: openByBuilding[building] || 0 })
       const nm = l.title || l.nickname || l.id
       const lux = isLux(l.building || building, nm)
       const market = marketOf(l.building || building, l.address_city, nm)
