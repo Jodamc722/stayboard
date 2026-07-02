@@ -257,6 +257,7 @@ async function pushBlocks() {
           <button onClick={() => data && load(view, data.prev)} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronLeft size={15} /></button>
           <button onClick={() => load(view, data?.today || '')} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app">Today</button>
           <button onClick={() => data && load(view, data.next)} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronRight size={15} /></button>
+<input type="date" value={data?.weekStart || date || ''} onChange={e => e.target.value && load(view, e.target.value)} className="text-[12px] font-semibold border border-line rounded-lg px-2 py-1.5 bg-white text-ink outline-none cursor-pointer" title="Jump to any date" />
         </div>
         <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {rangeLabel || 'Loading…'}</span>
         <div className="ml-auto inline-flex items-center gap-1.5">
@@ -267,7 +268,16 @@ async function pushBlocks() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap">
+      {view === 'day' && data && (
+<div className="flex items-center gap-1 flex-wrap">
+<span className="text-[10px] uppercase tracking-wide text-muted font-semibold mr-1">Jump:</span>
+{Array.from({ length: 7 }).map((_, i) => { const dd = new Date((data.today || '') + 'T12:00:00'); dd.setDate(dd.getDate() + i); const iso = dd.toISOString().slice(0, 10); const active = (data.weekStart || '') === iso; return (
+<button key={iso} onClick={() => load('day', iso)} className={'text-[11px] font-semibold px-2.5 py-1 rounded-lg border ' + (active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink hover:border-brand-200')}>{i === 0 ? 'Today' : dd.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })}</button>
+) })}
+</div>
+)}
+
+<div className="flex items-center gap-2 flex-wrap">
         {(['all', ...MARKETS] as const).map(m => (
           <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m}{data && m !== 'all' ? ` · ${data.totals.byMarket.find(x => x.market === m)?.count ?? 0}` : ''}</button>
         ))}
