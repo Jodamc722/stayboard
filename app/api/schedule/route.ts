@@ -142,7 +142,9 @@ const CONC = 8
 for (let i = 0; i < cleans.length; i += CONC) {
 await Promise.all(cleans.slice(i, i + CONC).map(async c => {
 try {
-const tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date)
+// One retry per row - a transient API/token blip must never blank an assignee on the board.
+let tasks: Awaited<ReturnType<typeof listPropertyHousekeeping>> = []
+try { tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date) } catch { await new Promise(res => setTimeout(res, 600)); tasks = await listPropertyHousekeeping(c.listingId, c.date, c.date) }
 const clean = pickDepartureClean(tasks, c.date)
               c.syncStatus = clean ? 'synced' : 'guesty-only'
 c.breezewayTaskId = clean && clean.id ? String(clean.id) : null
