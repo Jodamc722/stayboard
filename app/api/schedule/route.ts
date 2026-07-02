@@ -97,7 +97,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -149,6 +149,7 @@ const clean = pickDepartureClean(tasks, c.date)
               c.syncStatus = clean ? 'synced' : 'guesty-only'
 c.breezewayTaskId = clean && clean.id ? String(clean.id) : null
 c.breezewayReportUrl = clean && (clean as any).report_url ? String((clean as any).report_url) : null
+if (clean) c.taskStatus = (clean as any).finished_at ? 'completed' : (clean as any).started_at ? 'in_progress' : 'created'
 enrichedOk++
 const ppl = (clean as any)?.assignees as { id: number | null; name: string | null }[] | undefined
 if (ppl && ppl.length) {
@@ -206,7 +207,7 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
 // (a) a 'guesty-only' row whose task lives on ANOTHER day -> mark synced + taskDate + assignee;
 // (b) a task scheduled on a day with no matching checkout -> add it as a row on its real day.
 try {
-const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,finished_at,report_url').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
+const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,report_url').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
 const mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
 for (const c of cleans) {
 if (c.syncStatus !== 'guesty-only') continue
@@ -216,6 +217,7 @@ c.syncStatus = 'synced'
 c.breezewayTaskId = String(mv.id)
 c.taskDate = String(mv.scheduled_date).slice(0, 10)
 c.breezewayReportUrl = mv.report_url ? String(mv.report_url) : null
+c.taskStatus = mv.finished_at ? 'completed' : mv.started_at ? 'in_progress' : 'created'
 const ppl = Array.isArray(mv.assignees) ? mv.assignees : []
 if (ppl.length && !c.assignedIds.length) { c.assignedIds = ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)); c.assignedNames = ppl.map((p: any) => String(p.name || '')).filter(Boolean) }
 }
@@ -228,7 +230,7 @@ if (!id || cleans.some(c => c.listingId === id && (c.date === d || c.taskDate ==
 const m2 = meta[id]
 if (!m2) continue
 const ppl = Array.isArray(t.assignees) ? t.assignees : []
-cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: null, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, newDoorCode: null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, bzOnly: true })
+cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: null, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, newDoorCode: null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', bzOnly: true })
 }
 } catch { /* mirror table optional */ }
 
