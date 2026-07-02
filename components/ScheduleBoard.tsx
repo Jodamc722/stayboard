@@ -56,6 +56,9 @@ export function ScheduleBoard() {
 const [taskAct, setTaskAct] = useState<Record<string, boolean>>({})
 const [adding, setAdding] = useState(false)
 const [addUnit, setAddUnit] = useState('')
+const [sug, setSug] = useState<any[] | null>(null)
+const [sugBusy, setSugBusy] = useState<Record<string, boolean>>({})
+const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
 
   async function load(v = view, d = date) {
     setLoading(true); setError(null)
@@ -218,6 +221,29 @@ if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'Could not save the 
 setPushMsg('Note added to ' + c.unit + "'s Breezeway task.")
 } catch (e: any) { setError(e.message || String(e)) } finally { setTaskAct(prev => { const n = { ...prev }; delete n[k]; return n }) }
 }
+// SUGGESTED AUDITS from guest reviews, fit to the shown day (checkout or vacant). Suggest-only.
+async function loadSuggestions() {
+const d = data?.weekStart || date
+setSug([])
+try {
+const r = await fetch('/api/schedule/audit-suggestions?date=' + d)
+const j = await r.json().catch(() => null)
+if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'Could not load suggestions.')
+setSug(j.suggestions || [])
+} catch (e: any) { setError(e.message || String(e)); setSug(null) }
+}
+async function addAudit(s: any) {
+const d = data?.weekStart || date
+if (!window.confirm('Create a review-audit inspection for ' + s.unit + ' on ' + d + ' in Breezeway?')) return
+setSugBusy(p => ({ ...p, [s.listingId]: true }))
+try {
+const desc = 'REVIEW AUDIT: ' + (s.guest || 'a guest') + ' left a ' + (s.rating ?? '?') + '-star review on ' + s.reviewedAt + (s.excerpt ? ' - "' + s.excerpt + '"' : '') + '\nCHECK FOR: walk the unit against the review - cleanliness, maintenance, amenities. Photos + notes required.\nFIT: ' + (s.fit === 'checkout' ? 'guest checks out this day' : 'unit is vacant this day')
+const r = await fetch('/api/sentiment/create-qc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: s.listingId, date: d, issueType: 'review-audit', department: 'inspection', priority: 'normal', title: 'Review audit - ' + s.unit, description: desc }) })
+const j = await r.json().catch(() => null)
+if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'Could not create the audit.')
+setSugAdded(p => ({ ...p, [s.listingId]: j.reportUrl || null }))
+} catch (e: any) { setError(e.message || String(e)) } finally { setSugBusy(p => { const n = { ...p }; delete n[s.listingId]; return n }) }
+}
 async function pushBlocks() {
     const keys = Object.keys(blockStaged).filter(k => blockStaged[k])
     if (!keys.length) return
@@ -263,6 +289,7 @@ async function pushBlocks() {
         <div className="ml-auto inline-flex items-center gap-1.5">
           {data?.syncedAt && <span className="text-[11px] text-muted">Synced {agoLabel(data.syncedAt)}</span>}
           {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2 py-1.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
+{data && view === 'day' && data.breezeway && <button onClick={loadSuggestions} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" title="Suggest audits from recent low guest reviews that fit this day (checkout or vacant)">Audit ideas</button>}
 {data && view === 'day' && <button onClick={exportCsv} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Export to CSV"><Download size={13} /> Export</button>}
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
@@ -274,6 +301,26 @@ async function pushBlocks() {
 {Array.from({ length: 7 }).map((_, i) => { const dd = new Date((data.today || '') + 'T12:00:00'); dd.setDate(dd.getDate() + i); const iso = dd.toISOString().slice(0, 10); const active = (data.weekStart || '') === iso; return (
 <button key={iso} onClick={() => load('day', iso)} className={'text-[11px] font-semibold px-2.5 py-1 rounded-lg border ' + (active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink hover:border-brand-200')}>{i === 0 ? 'Today' : dd.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })}</button>
 ) })}
+</div>
+)}
+
+{view === 'day' && sug !== null && (
+<div className="rounded-xl border border-violet-200 bg-violet-50/50 px-3.5 py-2.5">
+<div className="flex items-center justify-between gap-2 mb-1.5"><span className="text-[12px] font-bold text-violet-800">Suggested audits from guest reviews - fit for this day</span><button onClick={() => setSug(null)} className="text-[11px] text-muted hover:text-ink">Close</button></div>
+{sug.length === 0 ? <div className="text-[12px] text-muted">No low-review units with a checkout or vacancy this day. (Also skips units that already have an open audit.)</div> : (
+<div className="space-y-1">
+{sug.map((s: any) => (
+<div key={s.listingId} className="flex items-center gap-2 text-[12px] bg-white rounded-lg border border-line px-2.5 py-1.5">
+<span className="font-semibold text-ink shrink-0">{s.unit}</span>
+<span className="text-rose-700 font-semibold shrink-0">{s.rating}&#9733;</span>
+<span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 shrink-0">{s.fit === 'checkout' ? 'Checkout day' : 'Vacant'}</span>
+<span className="text-muted truncate flex-1 italic">{s.excerpt}</span>
+{sugAdded[s.listingId] !== undefined ? (sugAdded[s.listingId] ? <a href={sugAdded[s.listingId] as string} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-violet-700 hover:underline shrink-0">Added &rarr;</a> : <span className="text-[12px] font-semibold text-violet-700 shrink-0">Added</span>) : (
+<button onClick={() => addAudit(s)} disabled={!!sugBusy[s.listingId]} className="text-[12px] font-semibold text-violet-700 hover:underline disabled:opacity-50 shrink-0">Add audit</button>)}
+</div>
+))}
+</div>
+)}
 </div>
 )}
 
