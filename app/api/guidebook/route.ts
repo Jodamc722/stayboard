@@ -15,6 +15,16 @@ export const maxDuration = 120
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
+// Guest-friendly local time: "16:00" -> "4 PM", "10:00" -> "10 AM". Never military time.
+function fmtTime(v: any): string {
+  const m = str(v).trim().match(/^(\d{1,2})(?::(\d{2}))?$/)
+  if (!m) return str(v)
+  let h = Number(m[1]); const min = m[2] && m[2] !== '00' ? ':' + m[2] : ''
+  const ap = h >= 12 ? 'PM' : 'AM'
+  h = h % 12; if (h === 0) h = 12
+  return h + min + ' ' + ap
+}
+
 async function requireUser() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -175,7 +185,7 @@ Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE obj
 name: ${name} | building: ${building} | ${city}
 ${l.bedrooms} BR / ${l.bathrooms} BA / sleeps ${l.max_occupancy}
 address: ${str(l.address_full)}
-check-in ${str(l.ci) || '4:00 PM'} / check-out ${str(l.co) || '11:00 AM'}
+check-in ${fmtTime(l.ci) || '4 PM'} / check-out ${fmtTime(l.co) || '10 AM'} (always show times in this friendly local format, never 24-hour)
 amenities: ${(Array.isArray(l.amenities) ? l.amenities : []).slice(0, 40).join(', ')}
 LISTING DESCRIPTION (context, do not copy):
 ${summary}
@@ -189,6 +199,24 @@ ${JSON.stringify(fallback)}`
     const text = await anthropic(key, { model: MODEL, max_tokens: 4500, system: SYSTEM, messages: [{ role: 'user', content }] })
     const parsed = parseJson(text || '')
     if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
+  }
+
+  // LOCAL IMAGERY: a tasteful, license-safe photo per local spot (Pexels; commercial use OK).
+  // Best-effort - pages render text-only if the key is missing or a search comes up empty.
+  const pex = process.env.PEXELS_API_KEY
+  if (pex) {
+    for (const k of ['localPlaces', 'restaurants']) {
+      const items = Array.isArray(sections[k]?.items) ? sections[k].items : []
+      await Promise.all(items.slice(0, 6).map(async (it: any) => {
+        try {
+          const q = encodeURIComponent(String(it?.name || '').slice(0, 60) + (k === 'restaurants' ? ' restaurant food' : ' florida'))
+          const r = await fetch('https://api.pexels.com/v1/search?query=' + q + '&per_page=1&orientation=landscape', { headers: { Authorization: pex } })
+          const d: any = await r.json().catch(() => ({}))
+          const src = d?.photos?.[0]?.src?.large
+          if (src) it.photo = src
+        } catch { /* skip */ }
+      }))
+    }
   }
 
   sections._photos = pool
@@ -235,7 +263,7 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
       { title: 'No Smoking', body: 'Strictly non-smoking, including balconies.' },
       { title: 'Pets', body: a('petPolicy', 'Not permitted unless approved in advance.') },
     ], address: str(l.address_full) },
-    arrival: { heading: 'arrival & check-in', checkIn: str(l.ci) || '4:00 PM', checkOut: str(l.co) || '11:00 AM', entry: a('entry', 'Arrival details are provided in your confirmation message.'), parking: a('parking', 'Parking details are provided in your confirmation message.') },
+    arrival: { heading: 'arrival & check-in', checkIn: fmtTime(l.ci) || '4 PM', checkOut: fmtTime(l.co) || '10 AM', entry: a('entry', 'Arrival details are provided in your confirmation message.'), parking: a('parking', 'Parking details are provided in your confirmation message.') },
     contact: { customerService: '954-526-8998', gmName: 'Jon McGill', gmPhone: '954-391-2116', concierge: a('concierge', ''), email: 'support@stay-hospitality.com' },
     houseGuide: { items: [
       { title: 'Thermostat', body: a('thermostat', '') },
@@ -261,7 +289,7 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
 }
 
 function splitList(s: string): { name: string; note?: string }[] {
-  return str(s).split(/[,\n]/).map(x => x.trim()).filter(Boolean).slice(0, 12).map(name => ({ name }))
+  return str(s).split(/[,\n]/).map(x => x.trim()).filter(Boolean).slice(0, 12).map(name => ({ name, note: '' }))
 }
 
 function parseJson(raw: string): any | null {
