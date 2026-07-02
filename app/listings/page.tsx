@@ -23,7 +23,7 @@ function rollupBuilding(raw?: string | null): string {
   return b
 }
 
-export default async function ListingsPage() {
+export default async function ListingsPage({ searchParams }: { searchParams?: { all?: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -77,12 +77,18 @@ export default async function ListingsPage() {
         <Kpi label="Buildings" value={totalBuildings} Icon={Building2} />
       </div>
 
+      {/* Rendering all 284 rich cards shipped ~4.4MB of HTML and choked the browser - default to
+          the first 60 with an explicit Show-all (?all=1). */}
+      {!searchParams?.all && sorted.length > 60 && (
+        <div className="flex items-center justify-between rounded-xl border border-line bg-white px-3.5 py-2.5 text-[13px]"><span className="text-muted">Showing the first 60 of {sorted.length} units for speed.</span><Link href="/listings?all=1" prefetch={false} className="font-semibold text-brand-700 hover:underline">Show all {sorted.length} &rarr;</Link></div>
+      )}
+
       {/* Grid */}
       {sorted.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No listings synced yet.</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {sorted.map((l: any) => (
+          {(searchParams?.all ? sorted : sorted.slice(0, 60)).map((l: any) => (
             <Link key={l.id} href={`/listings/${l.id}`} prefetch={false} className="block focus:outline-none focus:ring-2 focus:ring-brand-200 rounded-2xl">
               <PropertyCard l={l} />
             </Link>
