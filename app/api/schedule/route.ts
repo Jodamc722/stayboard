@@ -61,7 +61,9 @@ const db = supabaseAdmin()
 const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
 db.from('guesty_reservations').select('listing_id,listing_name,guest_name,check_out,check_in,status,nights,source').gte('check_out', start).lte('check_out', end).limit(4000),
 db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
-db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,raw'),
+// PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
+// check-in/out times) instead of the full multi-MB raw blob for every listing.
+db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,cfRaw:raw->customFields,ciRaw:raw->>defaultCheckInTime,coRaw:raw->>defaultCheckOutTime'),
 ])
 
 // HARD GUARD: if the listings query hiccups, ABORT instead of caching a garbage snapshot
@@ -73,7 +75,7 @@ const meta: Record<string, Meta> = {}
 const units: { id: string; name: string }[] = []
 for (const l of (listings || [])) {
 const id = String((l as any).id)
-const raw = (l as any).raw || {}
+const raw = { customFields: (l as any).cfRaw, defaultCheckInTime: (l as any).ciRaw, defaultCheckOutTime: (l as any).coRaw }
 const building = str((l as any).building)
 const name = (l as any).nickname || (l as any).title || 'Unit'
 meta[id] = {
@@ -138,13 +140,35 @@ assignedNames: [],
 })
 }
 
+// PERF: fetch the webhook-live Breezeway mirror ONCE up front. Same-day matches enrich the board
+// with zero live API calls; the live API is only consulted for day-view rows the mirror misses.
+let mirror: any[] = []
+try {
+const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,report_url').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
+mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
+} catch { /* mirror table optional */ }
+
 let enrichedOk = 0
-// DAY view: look up each clean's CURRENT Breezeway departure-task assignee so the board shows who is
-// already assigned (not just who we stage). Bounded parallelism; skipped for week view (too many calls).
+// MIRROR-FIRST (both views): same-day task match from breezeway_tasks_sync — instant, no API.
+if (mirror.length && cleans.length) {
+for (const c of cleans) {
+const mt = mirror.find((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) === c.date)
+if (!mt) continue
+c.syncStatus = 'synced'
+c.breezewayTaskId = String(mt.id)
+c.breezewayReportUrl = mt.report_url ? String(mt.report_url) : null
+c.taskStatus = mt.finished_at ? 'completed' : mt.started_at ? 'in_progress' : 'created'
+const ppl = Array.isArray(mt.assignees) ? mt.assignees : []
+if (ppl.length) { c.assignedIds = ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)); c.assignedNames = ppl.map((p: any) => String(p.name || '')).filter(Boolean) }
+enrichedOk++
+}
+}
+// DAY view: live-API lookup ONLY for cleans the mirror didn't cover (usually a handful, not all 30+).
 if (view === 'day' && breezewayConfigured() && cleans.length) {
+const pending = cleans.filter(c => c.syncStatus === undefined)
 const CONC = 8
-for (let i = 0; i < cleans.length; i += CONC) {
-await Promise.all(cleans.slice(i, i + CONC).map(async c => {
+for (let i = 0; i < pending.length; i += CONC) {
+await Promise.all(pending.slice(i, i + CONC).map(async c => {
 try {
 // One retry per row - a transient API/token blip must never blank an assignee on the board.
 let tasks: Awaited<ReturnType<typeof listPropertyHousekeeping>> = []
@@ -211,8 +235,6 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
 // (a) a 'guesty-only' row whose task lives on ANOTHER day -> mark synced + taskDate + assignee;
 // (b) a task scheduled on a day with no matching checkout -> add it as a row on its real day.
 try {
-const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,report_url').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
-const mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
 for (const c of cleans) {
 if (c.syncStatus !== 'guesty-only') continue
 const mv = mirror.find((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date && !t.finished_at)
