@@ -234,7 +234,7 @@ export function GuidebookView({ initial }: { initial: any }) {
         )}
 
         {/* ARRIVAL — adaptive: sparse copy + photo becomes a full-height split page */}
-        {((s.arrival?.entry || '').length + (s.arrival?.parking || '').length) < 340 && pa.arrival ? (
+        {((s.arrival?.entry || '').length + (s.arrival?.parking || '').length) < 340 && !has('gettingAround', !!str2(s.gettingAround?.body)) && pa.arrival ? (
           <Page id="arrival">
             <div className="absolute inset-y-0 left-0 w-[42%] overflow-hidden">
               <img src={pa.arrival} alt="" className="h-full w-full object-cover" />
@@ -284,6 +284,12 @@ export function GuidebookView({ initial }: { initial: any }) {
                 <p className="max-w-[58ch]"><T path={['gettingThere', 'body']} value={s.gettingThere?.body} rows={3} /></p>
               </div>
             )}
+            {has('gettingAround', !!str2(s.gettingAround?.body)) && (
+              <div>
+                <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Getting around</p>
+                <p className="max-w-[58ch]"><T path={['gettingAround', 'body']} value={s.gettingAround?.body} rows={3} /></p>
+              </div>
+            )}
           </div>
         </Page>
         )}
@@ -304,10 +310,11 @@ export function GuidebookView({ initial }: { initial: any }) {
                 {(s.houseGuide.items).slice(0, 4).map((it: any, i: number) => (
                   <div key={i} className="flex gap-5">
                     <span className="text-[15px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
-                    <div>
+                    <div className="flex-1">
                       <p className="text-[10px] font-semibold tracking-[0.28em] uppercase text-[#efeae2]"><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                       <p className="mt-1 max-w-[56ch] text-[12px] font-light leading-[1.75] text-[#efeae2]/75"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
                     </div>
+                    {it.photo && <img src={it.photo} alt="" className="h-16 w-20 shrink-0 rounded-sm object-cover ring-1 ring-white/20" />}
                   </div>
                 ))}
               </div>
