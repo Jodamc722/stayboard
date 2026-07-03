@@ -59,12 +59,12 @@ export async function POST(req: NextRequest) {
   let meta = photoUrls.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (photoUrls.length) {
     const content: any[] = photoUrls.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
-    content.push({ type: 'text', text: `For EACH of the ${photoUrls.length} images above, in order, return a JSON array: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. category "appliance" = a close-up of a specific appliance or control - for those ONLY, set "label" to a 2-4 word name (e.g. "induction cooktop"). hasText = any visible printed text/document/menu/sheet. quality judges EDITORIAL usability: sharp, well-lit, well-framed = 4-5; casual phone snapshots, harsh flash, crooked framing, plain control panels or labels = 3 or lower. STRICT minified JSON array only.` })
+    content.push({ type: 'text', text: `For EACH of the ${photoUrls.length} images above, in order, return a JSON array: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. category "appliance" = a close-up of a specific appliance or control - for those ONLY, set "label" to the appliance with BRAND and MODEL when visible - READ any text printed on the appliance or its badge (e.g. "Keurig K-Elite coffee maker"). hasText = any visible printed text/document/menu/sheet. quality judges EDITORIAL usability: sharp, well-lit, well-framed = 4-5; casual phone snapshots, harsh flash, crooked framing, plain control panels or labels = 3 or lower. STRICT minified JSON array only.` })
     const text = await anthropic(key, { model: VISION_MODEL, max_tokens: 1800, messages: [{ role: 'user', content }] })
     const parsed = parseJson(text || '')
     if (Array.isArray(parsed)) parsed.forEach((p: any) => {
       const i = Number(p?.i)
-      if (Number.isFinite(i) && meta[i]) meta[i] = { url: photoUrls[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true, hasText: p.hasText === true, label: str(p.label).slice(0, 40) }
+      if (Number.isFinite(i) && meta[i]) meta[i] = { url: photoUrls[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true, hasText: p.hasText === true, label: str(p.label).slice(0, 60) }
     })
   }
 
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
   const labels = meta.filter(p => p.category === 'appliance' && p.label).map(p => p.label)
 
   const SYSTEM = `You are the editor of a luxury guest guidebook for Stay Hospitality. You receive the guidebook's current content as JSON plus NEW MATERIALS (appliance photos identified by name, and attached documents such as manuals or building packets). Fold the materials in:
-1. houseGuide is the HOW-TO GUIDE - add or update one item per appliance/system from the materials (title NAMES the equipment; body 25-45 words of clear guest steps, framed as a premium feature). Up to 6 items. Remove "houseGuide" from "omit" if you add items.
+1. houseGuide is the HOW-TO GUIDE for appliances AND building access - add or update one item per appliance or system from the materials. You KNOW these appliance models: write SPECIFIC step-by-step operation for the exact model named (which button/dial, which mode, in what order), 40-70 words per item, plain language; an attached manual is the source of truth. Include a "Your Key Fob" item when the materials or existing content mention a fob/keycard (entry, elevator, amenities) - facts only, never invented. Up to 6 items. Remove "houseGuide" from "omit" if you add items.
 2. Update any other section the materials clearly inform (arrival, guidelines, gettingAround, special). Change nothing else.
 3. Never invent facts not present in the content or the materials.
 4. Return the COMPLETE revised JSON - same top-level keys and shapes. STRICT minified JSON only, no markdown.`
