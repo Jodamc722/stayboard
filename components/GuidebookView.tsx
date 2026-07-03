@@ -207,7 +207,7 @@ export function GuidebookView({ initial }: { initial: any }) {
           <Page id="special">
             <PhotoBand src={pa.special || null} label="THE EXPERIENCE" />
             <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
-            <div className="mt-7 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
+            <div className={'mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7 ' + ((s.special.groups || []).length <= 2 ? 'content-center' : 'content-start')}>
               {(s.special.groups).map((g: any, i: number) => (
                 <div key={i}>
                   <p className="text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><T path={['special', 'groups', String(i), 'title'] as any} value={g.title} /></p>
@@ -316,7 +316,7 @@ export function GuidebookView({ initial }: { initial: any }) {
           <Kicker>HOUSE NOTES</Kicker>
           <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
           <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
-          <div className="mt-7 flex-1 space-y-4">
+          <div className={'mt-7 flex-1 flex flex-col ' + ((s.guidelines?.items || []).length <= 3 ? 'justify-center gap-6' : 'gap-4')}>
             {(s.guidelines?.items || []).slice(0, 5).map((it: any, i: number) => (
               <div key={i} className="flex gap-4 border-b pb-3.5" style={{ borderColor: accentColor + '22' }}>
                 <p className="w-44 shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
@@ -341,7 +341,7 @@ export function GuidebookView({ initial }: { initial: any }) {
               <Kicker>{sec.tag}</Kicker>
               <H>{sec.title}</H>
               {anyPhoto ? (
-                <div className={'mt-8 grid flex-1 content-start gap-6 ' + (few ? 'grid-cols-1' : 'grid-cols-2')}>
+                <div className={'mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1 content-center' : 'grid-cols-2 content-start')}>
                   {items.map((p: any, i: number) => (
                     <div key={i}>
                       {p.photo ? (
