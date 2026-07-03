@@ -9,7 +9,7 @@ import { BookOpen, Loader2, X, ImagePlus, FileUp, Trash2 } from 'lucide-react'
 const QUESTIONS: { key: string; label: string; hint: string; required?: boolean }[] = [
   { key: 'entry', label: 'Arrival & entry', hint: 'How does the guest get in? Front desk / fob / lockbox / smart lock — step by step.', required: true },
   { key: 'parking', label: 'Parking', hint: 'Valet, assigned spot, garage level, permits…', required: true },
-  { key: 'appliances', label: 'Non-traditional appliances worth highlighting', hint: 'Induction cooktop, Wolf range, Sub-Zero, smart blinds, sauna… Leave blank if everything is standard (the book stays lean).' },
+  { key: 'appliances', label: 'Non-traditional appliances worth highlighting', hint: 'Induction cooktop, Wolf range, Sub-Zero, smart blinds, sauna… TIP: also upload a photo of each one above so the How-To Guide shows it. Leave blank if everything is standard.' },
   { key: 'thermostat', label: 'Thermostat / AC notes', hint: 'Only if there is something a guest would not guess. Optional.' },
   { key: 'trash', label: 'Trash & disposal', hint: 'Chute floor, pickup days, disposal quirks. Optional.' },
   { key: 'quietHours', label: 'Building rules worth stating', hint: 'Quiet hours, elevator reservations… Optional.' },
@@ -101,7 +101,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
                     <p className="text-xs font-semibold text-ink flex items-center gap-1.5"><ImagePlus size={14} /> Photos & context docs</p>
-                    <p className="text-[11px] text-muted mt-0.5">Upload high-quality photos (used ahead of Guesty's) and PDFs — building packets, appliance sheets, old guidebooks. The AI reads them for context.</p>
+                    <p className="text-[11px] text-muted mt-0.5">Upload unit/building photos AND a photo of each special appliance (Wolf range, thermostat, smart lock…) — the AI writes a how-to item for every appliance it sees and pins the photo next to it. PDFs (manuals, building packets) are read too.</p>
                   </div>
                   <button onClick={() => fileRef.current?.click()} disabled={uploading}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold hover:border-ink/40">
