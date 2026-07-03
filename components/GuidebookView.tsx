@@ -446,7 +446,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <H>how-to guide</H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80">Everything here is a feature — a minute of reading makes the whole stay effortless.</p>
             <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-evenly' : 'grid-cols-1 content-evenly')}>
-              {(s.houseGuide.items).slice(0, 6).map((it: any, i: number) => (
+              {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
                 <div key={i} className="flex gap-5 border-b pb-6" style={{ borderColor: accentColor + '22' }}>
                   <span className="text-[30px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
                   <div className="flex-1">
