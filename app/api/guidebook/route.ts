@@ -204,7 +204,7 @@ PRINCIPLES:
 3. NEVER INVENT. No made-up hours, codes, addresses, amenities, or place names. Only what's provided.
 4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; gettingAround.body 40-60 words (ONLY from operator notes - omit if none); beforeYouGo <= 5 short items; review.body 40-60 words, warm and PERSONAL - written as the host speaking to this guest, never corporate; thankyou.line = a warm personal send-off of 6-12 words. houseGuide item titles must NAME the equipment (e.g. "Induction Cooktop", not "Kitchen").
 5. Audience: ${audience}. ${highlights ? 'MUST gracefully feature: ' + highlights : ''}
-6. localPlaces and restaurants are MANDATORY (never omit): 4-6 REAL spots each with a 6-12 word "note". Prefer the provided LOCAL KNOWLEDGE; if absent, use well-known, long-established places near the given city (no inventions, no chains unless iconic).
+6. localPlaces and restaurants are MANDATORY (never omit): 4-6 REAL spots each with a 6-12 word "note", plus "address" (street address) and "phone" - the book is PRINTED, guests cannot click. Only include an address or phone you are confident is correct for that well-known place; leave the field "" rather than guess. Prefer the provided LOCAL KNOWLEDGE; if absent, use well-known, long-established places near the given city (no inventions, no chains unless iconic).
 Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, gettingAround, addons). No markdown.`
     const USER_TEXT = `THE HOME:
 name: ${name} | building: ${building} | ${city}
@@ -353,7 +353,7 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
 }
 
 function splitList(s: string): { name: string; note?: string }[] {
-  return str(s).split(/[,\n]/).map(x => x.trim()).filter(Boolean).slice(0, 12).map(name => ({ name, note: '' }))
+  return str(s).split(/[,\n]/).map(x => x.trim()).filter(Boolean).slice(0, 12).map(name => ({ name, note: '', address: '', phone: '' }))
 }
 
 function parseJson(raw: string): any | null {
