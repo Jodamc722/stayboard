@@ -493,7 +493,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           </div>
           <div className="mt-6 grid grid-cols-3 gap-6">
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE · 24/7</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p><p className="mt-1 text-[9.5px] font-light opacity-70">Emergencies: dial 911 first, then call us.</p></div>
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>GENERAL MANAGER</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><T path={['contact', 'gmLabel']} value={s.contact?.gmLabel || 'GENERAL MANAGER'} rows={1} /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
           </div>
         </Page>
@@ -584,7 +584,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <p className="text-[13px] tracking-[0.5em]" style={{ color: accentColor }}>★ ★ ★ ★ ★</p>
               <h3 className="mt-3 text-[26px] lowercase font-medium" style={{ fontFamily: SERIF }}>loved your stay?</h3>
               <p className="mt-3 max-w-[40ch] text-[12px] font-light italic leading-[1.8]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
-              <p className="mt-4 text-[11.5px]" style={{ fontFamily: SERIF }}>— {s.contact?.gmName || 'Jon McGill'}, General Manager</p>
+              <p className="mt-4 text-[11.5px]" style={{ fontFamily: SERIF }}>— <T path={['contact', 'signoff']} value={s.contact?.signoff || 'Jon McGill, General Manager'} rows={1} /></p>
             </div>
           </div>
           <div className="mt-5 flex flex-col items-center border-t pt-5 text-center" style={{ borderColor: accentColor + '33' }}>
