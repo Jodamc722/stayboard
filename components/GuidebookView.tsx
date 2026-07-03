@@ -408,13 +408,13 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <p className="max-w-[58ch]"><T path={['arrival', 'parking']} value={s.arrival?.parking} rows={3} /></p>
             </div>
             {has('gettingThere', !!str2(s.gettingThere?.body)) && (
-              <div>
+              <div className={has('gettingAround', !!str2(s.gettingAround?.body)) ? '' : 'col-span-2'}>
                 <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Finding the residence</p>
                 <p className="max-w-[58ch]"><T path={['gettingThere', 'body']} value={s.gettingThere?.body} rows={3} /></p>
               </div>
             )}
             {has('gettingAround', !!str2(s.gettingAround?.body)) && (
-              <div>
+              <div className={has('gettingThere', !!str2(s.gettingThere?.body)) ? '' : 'col-span-2'}>
                 <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Getting around</p>
                 <p className="max-w-[58ch]"><T path={['gettingAround', 'body']} value={s.gettingAround?.body} rows={3} /></p>
               </div>
@@ -466,7 +466,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <Kicker>HOUSE NOTES</Kicker>
           <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
           <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
-          <div className={'mt-7 flex-1 flex flex-col ' + ((s.guidelines?.items || []).length <= 3 ? 'justify-center gap-6' : 'gap-4')}>
+          <div className={'mt-7 flex-1 flex flex-col ' + ((s.guidelines?.items || []).length <= 3 ? 'justify-center gap-6' : 'justify-evenly gap-4')}>
             {(s.guidelines?.items || []).slice(0, 5).map((it: any, i: number) => (
               <div key={i} className="flex gap-4 border-b pb-3.5" style={{ borderColor: accentColor + '22' }}>
                 <p className="w-44 shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
@@ -534,11 +534,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <Kicker>AT YOUR SERVICE</Kicker>
             <H>exclusive add-ons</H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
-            <div className="mt-8 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-5">
+            <div className={'mt-8 grid flex-1 content-evenly ' + ((s.addons.items || []).length <= 4 ? 'grid-cols-1 gap-y-6' : 'grid-cols-2 gap-x-10 gap-y-5')}>
               {(s.addons.items).slice(0, 10).map((p: any, i: number) => (
-                <div key={i} className="flex items-baseline gap-4">
-                  <span className="text-[13px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
-                  <p className="text-[12px] font-medium tracking-[0.14em] uppercase"><T path={['addons', 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+                <div key={i} className="flex items-baseline gap-5 border-b pb-4" style={{ borderColor: accentColor + '22' }}>
+                  <span className={((s.addons.items || []).length <= 4 ? 'text-[24px]' : 'text-[13px]') + ' leading-none opacity-30'} style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                  <p className={((s.addons.items || []).length <= 4 ? 'text-[16px] lowercase font-medium' : 'text-[12px] font-medium tracking-[0.14em] uppercase')} style={(s.addons.items || []).length <= 4 ? { fontFamily: SERIF } : undefined}><T path={['addons', 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                 </div>
               ))}
             </div>
