@@ -447,7 +447,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>NETWORK</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>PASSWORD</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
             </div>
-            <div className="mt-7 grid flex-1 content-start grid-cols-2 gap-x-8 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75">
+            <div className="mt-7 grid flex-1 content-evenly grid-cols-2 gap-x-8 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75">
               <p>The password is case-sensitive — enter it exactly as printed. Once a device connects, it will remember the network for the rest of your stay.</p>
               <p>Trouble connecting? Our team is one call away, day or night — <Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel>. And if you sign into personal accounts on any TV, remember to log out before checkout.</p>
             </div>
