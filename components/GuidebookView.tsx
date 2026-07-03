@@ -200,6 +200,13 @@ export function GuidebookView({ initial }: { initial: any }) {
               )}
             </>
           )}
+          {/* ESSENTIALS AT A GLANCE — the four things every guest hunts for, on page two. */}
+          <div className="mt-auto grid grid-cols-4 gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>WI-FI</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.wifi?.network}<br /><span className="font-light opacity-80">{s.wifi?.password}</span></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>CHECK-IN / OUT</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.arrival?.checkIn}<br /><span className="font-light opacity-80">{s.arrival?.checkOut}</span></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1 text-[10.5px] font-light leading-snug">{s.guidelines?.address}</p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>NEED US?</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.contact?.customerService}<br /><span className="font-light opacity-80">24/7</span></p></div>
+          </div>
         </Page>
 
         {/* SPECIAL + QR */}
@@ -325,7 +332,7 @@ export function GuidebookView({ initial }: { initial: any }) {
             ))}
           </div>
           <div className="mt-6 grid grid-cols-3 gap-6">
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE · 24/7</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></p><p className="mt-1 text-[9.5px] font-light opacity-70">Emergencies: dial 911 first, then call us.</p></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>GENERAL MANAGER</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></p></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1.5 text-[11px] font-light leading-snug"><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></p></div>
           </div>
@@ -403,6 +410,7 @@ export function GuidebookView({ initial }: { initial: any }) {
           </div>
           <div className="flex flex-1 flex-col items-center justify-end pb-6 text-center">
             <p className="max-w-[46ch] text-[13px] font-light italic leading-[1.85]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
+            <p className={'mt-4 text-[12px] ' + (pa.closing ? 'text-white/90' : '')} style={{ fontFamily: SERIF }}>— {s.contact?.gmName || 'Jon McGill'}, General Manager</p>
             <h2 className="mt-7 text-[44px] lowercase font-medium" style={{ fontFamily: SERIF }}>thank you</h2>
             <p className={'mt-2 text-[9px] tracking-[0.5em] ' + (pa.closing ? 'text-white/85' : '')} style={pa.closing ? {} : { color: accentColor }}><T path={['thankyou', 'line']} value={s.thankyou?.line} rows={1} /></p>
             <div className="mt-7"><StayLogo light={!!pa.closing} small /></div>
