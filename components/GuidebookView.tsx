@@ -447,11 +447,12 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80">Everything here is a feature — a minute of reading makes the whole stay effortless.</p>
             <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-evenly' : 'grid-cols-1 content-evenly')}>
               {(s.houseGuide.items).slice(0, 6).map((it: any, i: number) => (
-                <div key={i} className="flex gap-4 border-b pb-5" style={{ borderColor: accentColor + '22' }}>
-                  <span className="text-[15px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                <div key={i} className="flex gap-5 border-b pb-6" style={{ borderColor: accentColor + '22' }}>
+                  <span className="text-[30px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
                   <div className="flex-1">
-                    <p className="text-[10px] font-semibold tracking-[0.28em] uppercase" style={{ color: accentColor }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
-                    <p className="mt-1.5 text-[11.5px] font-light leading-[1.7]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
+                    <p className="text-[16px] lowercase font-medium leading-tight" style={{ fontFamily: SERIF }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
+                    <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
+                    <p className="mt-2 text-[11.5px] font-light leading-[1.75]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
                   </div>
                   {it.photo && <img src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} />}
                 </div>
