@@ -120,9 +120,11 @@ export async function POST(req: NextRequest) {
   const praise = (revRows || []).filter((r: any) => Number(r.rating) >= 4 && str(r.content).length > 40).slice(0, 6).map((r: any) => str(r.content).replace(/\s+/g, ' ').slice(0, 240))
   const bg = buildingGuideFor(name) || buildingGuideFor(building)
 
-  // Photo pool: operator uploads FIRST (they chose them for quality), then Guesty pictures.
+  // Photo pool: operator uploads first (context + appliance shots), but NEVER at the expense of
+  // real unit photography — Guesty pictures always get room in the pool (uploads are often
+  // informational and text-bearing, which vision excludes from page slots).
   const guestyPics: string[] = (Array.isArray(l.pictures) ? l.pictures : []).filter((u: any) => typeof u === 'string')
-  const pool: string[] = [...uploadedPhotos, ...guestyPics].slice(0, 12)
+  const pool: string[] = [...uploadedPhotos.slice(0, 10), ...guestyPics].slice(0, 20)
 
   const key = process.env.ANTHROPIC_API_KEY
 
@@ -131,9 +133,9 @@ export async function POST(req: NextRequest) {
     pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (key && pool.length) {
     const content: any[] = pool.map((u, i) => ({ type: 'image', source: { type: 'url', url: u } }))
-    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image itself contains ANY visible caption, label, watermark, map text, or lettering (we will overlay type, so text-bearing images are unusable). category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to a 2-4 word name of what is shown (e.g. "induction cooktop"). A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
+    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image contains ANY visible printed text: captions, labels, watermarks, map text, signage, menus, instruction sheets, documents, or screenshots (we overlay type, so text-bearing images are unusable as page art). A photo that is PRIMARILY a document, flyer, service menu, or info sheet is category "other" with hasText true, even if artfully shot. category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to a 2-4 word name of what is shown (e.g. "induction cooktop"). A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
     for (let attempt = 0; attempt < 2; attempt++) {
-      const text = await anthropic(key, { model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content }] })
+      const text = await anthropic(key, { model: MODEL, max_tokens: 2500, messages: [{ role: 'user', content }] })
       const parsed = parseJson(text || '')
       if (Array.isArray(parsed) && parsed.length) {
         parsed.forEach((p: any) => {
@@ -147,24 +149,29 @@ export async function POST(req: NextRequest) {
   // Text-bearing images (captions, map labels, watermarks) are NEVER used behind our type.
   // Appliance close-ups are reserved for the House Guide, never full-bleed pages.
   const usable = photoMeta.filter(p => p.category !== 'logo' && p.category !== 'appliance' && !p.hasText)
+  // Every page gets a DIFFERENT photo whenever the pool allows: picks consume a shared used-set,
+  // and real scene photography always outranks 'other' (informational uploads) for page slots.
+  const SCENE = ['bedroom', 'living', 'kitchen', 'dining', 'bathroom', 'pool', 'beach', 'view', 'exterior', 'amenity']
+  const used = new Set<string>()
+  const take = (p?: { url: string }) => { if (p) { used.add(p.url); return p.url } return null }
   const pick = (cats: string[], fallbackCover = false): string | null => {
-    const c = usable.filter(p => cats.includes(p.category)).sort((a, b) => b.quality - a.quality)[0]
-    if (c) return c.url
-    if (fallbackCover) { const alt = usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]; return alt ? alt.url : (usable[0]?.url || null) }
+    const avail = usable.filter(p => !used.has(p.url))
+    const c = avail.filter(p => cats.includes(p.category)).sort((a, b) => b.quality - a.quality)[0]
+    if (c) return take(c)
+    if (fallbackCover) return take(avail.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0] || avail[0])
     return null
   }
   const photoAssign: Record<string, string | null> = {
-    cover: (usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]?.url) || pick(['living', 'bedroom', 'view', 'exterior'], true),
+    cover: take(usable.filter(p => p.coverWorthy).sort((a, b) => b.quality - a.quality)[0]) || pick(['living', 'bedroom', 'view', 'exterior'], true),
     about: pick(['living', 'dining', 'kitchen']),
     arrival: pick(['exterior', 'view', 'pool']),
     special: pick(['pool', 'beach', 'amenity', 'view']),
     closing: pick(['bedroom', 'view', 'beach']),
   }
-  // GUARANTEE imagery: if vision matching left a page empty (or the vision call failed), give
-  // every slot the next-best unused photo. A premium book never runs photo-less when photos exist.
+  // GUARANTEE imagery: empty slots get the best unused SCENE photo first, then anything unused;
+  // a photo repeats only when the pool is truly exhausted.
   {
-    const used = new Set(Object.values(photoAssign).filter(Boolean) as string[])
-    const ranked = usable.slice().sort((a, b) => b.quality - a.quality).map(p => p.url)
+    const ranked = usable.slice().sort((a, b) => ((SCENE.includes(b.category) ? 1 : 0) - (SCENE.includes(a.category) ? 1 : 0)) || b.quality - a.quality).map(p => p.url)
     for (const slot of ['cover', 'about', 'arrival', 'special', 'closing']) {
       if (!photoAssign[slot]) {
         const nxt = ranked.find(u => !used.has(u)) || ranked[0] || null
@@ -230,7 +237,7 @@ ${JSON.stringify(fallback)}`
 
   // APPLIANCE HOW-TOS get a photo of the ACTUAL appliance when one was uploaded (vision-labeled).
   {
-    const appl = photoMeta.filter(p => p.category === 'appliance')
+    const appl = photoMeta.filter(p => p.category === 'appliance' && !p.hasText)
     const claimed = new Set<string>()
     for (const it of (sections.houseGuide?.items || [])) {
       const hay = (str(it?.title) + ' ' + str(it?.body)).toLowerCase()
