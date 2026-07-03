@@ -423,15 +423,32 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         </Page>
         )}
 
-        {/* WI-FI + HOUSE NOTES — one considered dark spread */}
+        {/* WI-FI — dark spread with a half-page photo and useful connection notes */}
         <Page id="wifi">
           <div className="absolute inset-0" style={{ background: '#131210' }} />
+          {(() => {
+            const used = new Set(Object.values(pa).filter(Boolean))
+            const scene = (s._photoMeta || []).find((x: any) => ['living', 'bedroom', 'view', 'beach', 'pool', 'kitchen', 'dining', 'exterior', 'amenity'].includes(x.category) && !x.hasText && !used.has(x.url))
+            const wifiPhoto = scene?.url || pa.about || null
+            return wifiPhoto ? (
+              <div className="absolute inset-x-0 top-0 h-[44%] overflow-hidden">
+                <img src={wifiPhoto} alt="" className="h-full w-full object-cover" />
+                <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(19,18,16,0.10), rgba(19,18,16,0.45) 65%, #131210 100%)' }} />
+              </div>
+            ) : null
+          })()}
           <div className="relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
-            <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// CONNECTED'}</p>
-            <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF }}>wi-fi &amp; the essentials</h2>
-            <div className="mt-9 grid grid-cols-2 gap-8 border-y py-7" style={{ borderColor: '#c9a96a44' }}>
+            <div className="mt-[36%]">
+              <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// CONNECTED'}</p>
+              <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF }}>wi-fi &amp; the essentials</h2>
+            </div>
+            <div className="mt-7 grid grid-cols-2 gap-8 border-y py-6" style={{ borderColor: '#c9a96a44' }}>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>NETWORK</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>PASSWORD</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
+            </div>
+            <div className="mt-6 grid grid-cols-2 gap-x-8 text-[11px] font-light leading-[1.8] text-[#efeae2]/75">
+              <p>The password is case-sensitive — enter it exactly as printed. Once a device connects, it will remember the network for the rest of your stay.</p>
+              <p>Trouble connecting? Our team is one call away, day or night — <Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel>. And if you sign into personal accounts on any TV, remember to log out before checkout.</p>
             </div>
             <div className="mt-auto flex items-end justify-between pt-5 text-[8.5px] tracking-[0.28em] text-[#efeae2]/50">
               <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span><span><Mail v={s.contact?.email}>{s.contact?.email}</Mail></span>
