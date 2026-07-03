@@ -102,6 +102,14 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
     const m = String(v || '').trim()
     return !edit && m.includes('@') ? <a href={'mailto:' + m} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
   }
+  // Local places & restaurants click through to Google Maps (venue + city) on the digital view.
+  const placeCity = String(s.guidelines?.address || '').split(',')[1]?.trim() || ''
+  const PlaceLink = ({ name, children }: { name?: string; children: any }) => {
+    const nm = String(name || '').trim()
+    return !edit && nm
+      ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(nm + (placeCity ? ', ' + placeCity : ''))} target="_blank" rel="noreferrer" className="block transition-opacity hover:opacity-85" style={{ color: 'inherit' }}>{children}</a>
+      : <>{children}</>
+  }
 
   let pageNo = 0
   const Page = ({ children, bleed, id, ghost }: { children: any; bleed?: string | null; id?: string; ghost?: string }) => {
@@ -414,6 +422,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 <div className={'mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1 content-center' : 'grid-cols-2 content-start')}>
                   {items.map((p: any, i: number) => (
                     <div key={i} className={!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : ''}>
+                      <PlaceLink name={p.name}>
                       {p.photo ? (
                         <div className={'relative overflow-hidden ' + (few ? 'h-[190px]' : 'h-[145px]')}>
                           <img src={p.photo} alt="" className="h-full w-full object-cover" />
@@ -427,6 +436,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                         </div>
                       )}
                       {p.note ? <p className="mt-2 text-[11px] font-light leading-[1.65] opacity-80"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p> : null}
+                      </PlaceLink>
                     </div>
                   ))}
                 </div>
@@ -434,8 +444,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 <div className="mt-9 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
                   {items.map((p: any, i: number) => (
                     <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
+                      <PlaceLink name={p.name}>
                       <p className="text-[13px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                       {p.note && <p className="mt-1 text-[11px] font-light leading-[1.6] opacity-75"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p>}
+                      </PlaceLink>
                     </div>
                   ))}
                 </div>
