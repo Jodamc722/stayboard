@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
     const SYSTEM = `You are the most experienced luxury-hospitality guidebook designer and copywriter in the world - 30 years of boutique-hotel welcome books. You write for Stay Hospitality (Miami/Broward, FL).
 PRINCIPLES:
 1. REWRITE, never copy. The operator's answers are raw notes - transform them into polished, ${tone}, editorial prose. Keep every FACT exactly (codes, floors, times, names); elevate every WORD.
-2. LEAN. A great guidebook is short. Omit any section that adds no real value for this specific home by listing its key in "omit". The "houseGuide" section exists ONLY for non-traditional equipment (induction cooktops, Wolf/Sub-Zero appliances, smart-home systems, unusual controls) - and then frame it as a premium feature, not a manual. Standard appliances: omit.
+2. LEAN. A great guidebook is short. Omit any section that adds no real value for this specific home by listing its key in "omit". The "houseGuide" section is the HOW-TO GUIDE: build it from the operator's notes, the APPLIANCES PHOTOGRAPHED list (write one item for EACH), and any attached manuals/documents. Up to 6 items, one per appliance or system; the title NAMES the equipment ("Wolf Range", "Daikin Thermostat"); the body is 25-45 words of clear, guest-friendly steps framed as a premium feature, never a manual. Include it whenever appliance or system info exists; omit only when there is truly nothing non-standard.
 3. NEVER INVENT. No made-up hours, codes, addresses, amenities, or place names. Only what's provided.
 4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; gettingAround.body 40-60 words (ONLY from operator notes - omit if none); beforeYouGo <= 5 short items; review.body 40-60 words. houseGuide item titles must NAME the equipment (e.g. "Induction Cooktop", not "Kitchen").
 5. Audience: ${audience}. ${highlights ? 'MUST gracefully feature: ' + highlights : ''}
@@ -212,6 +212,7 @@ ${l.bedrooms} BR / ${l.bathrooms} BA / sleeps ${l.max_occupancy}
 address: ${str(l.address_full)}
 check-in ${fmtTime(l.ci) || '4 PM'} / check-out ${fmtTime(l.co) || '10 AM'} (always show times in this friendly local format, never 24-hour)
 amenities: ${(Array.isArray(l.amenities) ? l.amenities : []).slice(0, 40).join(', ')}
+${photoMeta.some(p => p.category === 'appliance' && p.label) ? 'APPLIANCES PHOTOGRAPHED BY THE OPERATOR (write a houseGuide how-to item for EACH): ' + photoMeta.filter(p => p.category === 'appliance' && p.label).map(p => p.label).join(', ') : ''}
 LISTING DESCRIPTION (context, do not copy):
 ${summary}
 ${praise.length ? 'WHAT GUESTS LOVED (weave the themes in naturally, never quote):\n' + praise.map(p => '- ' + p).join('\n') : ''}
