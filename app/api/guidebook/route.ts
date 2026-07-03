@@ -327,7 +327,7 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
       { title: 'Pets', body: a('petPolicy', 'Not permitted unless approved in advance.') },
     ], address: str(l.address_full) },
     arrival: { heading: 'arrival & check-in', checkIn: fmtTime(l.ci) || '4 PM', checkOut: fmtTime(l.co) || '10 AM', entry: a('entry', 'Arrival details are provided in your confirmation message.'), parking: a('parking', 'Parking details are provided in your confirmation message.') },
-    contact: { customerService: '954-526-8998', gmName: 'Jon McGill', gmPhone: '954-391-2116', concierge: a('concierge', ''), email: 'support@stay-hospitality.com' },
+    contact: { customerService: '954-526-8998', gmLabel: 'GENERAL MANAGER', gmName: 'Jon McGill', gmPhone: '954-391-2116', signoff: 'Jon McGill, General Manager', concierge: a('concierge', ''), email: 'support@stay-hospitality.com' },
     houseGuide: { items: [
       { title: 'Thermostat', body: a('thermostat', '') },
       { title: 'Smart Home', body: a('smartHome', '') },
