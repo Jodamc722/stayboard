@@ -44,9 +44,9 @@ export async function POST(req: NextRequest) {
 
   const SYSTEM = `You are the editor of a luxury guest guidebook for Stay Hospitality. You receive the guidebook's current content as JSON and one revision request. Apply the request faithfully and elegantly.
 RULES:
-1. Return the COMPLETE revised JSON — same top-level keys and shapes as given. Change only what the request requires (plus tiny touch-ups the change forces, e.g. grammar around an insertion).
-2. Keep the polished, warm, editorial voice. Never invent facts, codes, addresses, or place names that aren't in the content or the request.
-3. Respect page limits: about.body 50-80 words; guidelines <= 5 items; special 2-4 groups of 2-4 short items; local/restaurant notes 6-12 words; beforeYouGo <= 5 items.
+1. Return the COMPLETE revised JSON — same top-level keys and shapes as given. Execute the request FULLY: if it asks for changes across many items, update every single one — no partial work. Change nothing the request doesn't touch.
+2. Keep the polished, warm, editorial voice. ACCURACY IS EVERYTHING: never invent facts, codes, addresses, phone numbers, or operating steps. When the request supplies instructions or facts, treat them as the source of truth and preserve every concrete detail (buttons, modes, warnings, fees). If you are not certain a model-specific detail is true, write the generic-but-correct version rather than a specific-but-wrong one.
+3. Respect page limits: about.body 50-80 words; guidelines <= 5 items; special 2-4 groups of 2-4 short items; local/restaurant notes 6-12 words; beforeYouGo <= 5 items; houseGuide up to 8 items, 40-70 words each of clear step-by-step guest instructions.
 4. "omit" lists section keys that are hidden — the request may ask you to add/remove keys from it (valid keys: retreat, special, host, houseGuide, gettingThere, gettingAround, addons).
 5. STRICT minified JSON only. No markdown, no commentary.`
 
@@ -55,7 +55,7 @@ RULES:
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 6000, system: SYSTEM,
+        model: MODEL, max_tokens: 8000, system: SYSTEM,
         messages: [{ role: 'user', content: `CURRENT GUIDEBOOK CONTENT:\n${JSON.stringify(visible)}\n\nREVISION REQUEST:\n${prompt}` }],
       }),
     })
