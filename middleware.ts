@@ -46,7 +46,7 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const path = request.nextUrl.pathname
-  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path === '/no-access' || path.startsWith('/api')
+  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path === '/no-access' || path.startsWith('/api') || path.startsWith('/g/')
   if (user && !isOpenPath) {
     const email = String(user.email || '').toLowerCase()
     if (email && email !== SUPERADMIN) {
