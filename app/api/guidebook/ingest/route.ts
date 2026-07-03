@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
   let meta = photoUrls.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (photoUrls.length) {
     const content: any[] = photoUrls.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
-    content.push({ type: 'text', text: `For EACH of the ${photoUrls.length} images above, in order, return a JSON array: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. category "appliance" = a close-up of a specific appliance or control - for those ONLY, set "label" to a 2-4 word name (e.g. "induction cooktop"). hasText = any visible printed text/document/menu/sheet. STRICT minified JSON array only.` })
+    content.push({ type: 'text', text: `For EACH of the ${photoUrls.length} images above, in order, return a JSON array: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. category "appliance" = a close-up of a specific appliance or control - for those ONLY, set "label" to a 2-4 word name (e.g. "induction cooktop"). hasText = any visible printed text/document/menu/sheet. quality judges EDITORIAL usability: sharp, well-lit, well-framed = 4-5; casual phone snapshots, harsh flash, crooked framing, plain control panels or labels = 3 or lower. STRICT minified JSON array only.` })
     const text = await anthropic(key, { model: VISION_MODEL, max_tokens: 1800, messages: [{ role: 'user', content }] })
     const parsed = parseJson(text || '')
     if (Array.isArray(parsed)) parsed.forEach((p: any) => {
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
   next._photos = [...(Array.isArray(sections._photos) ? sections._photos : []), ...photoUrls]
   next._photoMeta = [...(Array.isArray(sections._photoMeta) ? sections._photoMeta : []), ...meta]
   {
-    const appl = meta.filter(p => p.category === 'appliance' && !p.hasText)
+    const appl = meta.filter(p => p.category === 'appliance' && !p.hasText && Number(p.quality) >= 4)
     const claimed = new Set<string>()
     for (const it of (next.houseGuide?.items || [])) {
       if (it.photo) continue
