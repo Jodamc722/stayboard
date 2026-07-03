@@ -14,6 +14,7 @@ const QUESTIONS: { key: string; label: string; hint: string; required?: boolean 
   { key: 'trash', label: 'Trash & disposal', hint: 'Chute floor, pickup days, disposal quirks. Optional.' },
   { key: 'quietHours', label: 'Building rules worth stating', hint: 'Quiet hours, elevator reservations… Optional.' },
   { key: 'localPlaces', label: 'Local picks (optional)', hint: 'We auto-fill from our building guide — add or override here, comma-separated.' },
+  { key: 'gettingAround', label: 'Getting around (optional)', hint: 'Rideshare pickup spot, transit, walkability, bike/scooter rentals, beach shuttle… Leave blank to skip this section.' },
   { key: 'addons', label: 'Add-on services offered', hint: 'Comma-separated; leave blank to omit the page.' },
   { key: 'checkoutKey', label: 'Checkout — key/access return', hint: 'e.g. "Return the access card to the front desk."' },
 ]
