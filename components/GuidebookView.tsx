@@ -6,30 +6,30 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Pencil, Printer, Save, Trash2, Loader2 } from 'lucide-react'
+import { ArrowLeft, Pencil, Printer, Save, Share2, Trash2, Loader2 } from 'lucide-react'
 
 const QR = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent('https://stay-hospitality.com')
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, sans-serif"
 
+// The real Stay Hospitality logo (from brand assets, white-keyed to transparent, hosted in our
+// public storage bucket). `light` inverts black -> white for dark pages and photo covers.
+const LOGO_URL = 'https://ugbtsppfsgkkrdyyuxxg.supabase.co/storage/v1/object/public/guidebook-assets/1783090958148-l1zr8u.png'
+
 function StayLogo({ light = false, small = false }: { light?: boolean; small?: boolean }) {
   return (
-    <div className={'text-center ' + (light ? 'text-white' : '')} style={{ fontFamily: SERIF }}>
-      <div className={(small ? 'text-xl' : 'text-3xl') + ' tracking-[0.4em] font-medium'} style={{ paddingLeft: '0.4em' }}>STAY</div>
-      <div className="mt-1 flex items-center justify-center gap-2.5">
-        <span className="h-px w-8 bg-current opacity-60" />
-        <span className="text-[8px] tracking-[0.5em] font-light" style={{ fontFamily: SANS, paddingLeft: '0.5em' }}>HOSPITALITY</span>
-        <span className="h-px w-8 bg-current opacity-60" />
-      </div>
-    </div>
+    <img src={LOGO_URL} alt="Stay Hospitality"
+      className={(small ? 'h-9' : 'h-14') + ' w-auto mx-auto'}
+      style={light ? { filter: 'invert(1)' } : undefined} />
   )
 }
 
-export function GuidebookView({ initial }: { initial: any }) {
+export function GuidebookView({ initial, guest = false }: { initial: any; guest?: boolean }) {
   const router = useRouter()
   const [gb, setGb] = useState<any>(initial)
   const [edit, setEdit] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
   const s = gb.sections || {}
   const omit: string[] = Array.isArray(s.omit) ? s.omit : []
   const pa = s._photoAssign || {}
@@ -138,19 +138,22 @@ export function GuidebookView({ initial }: { initial: any }) {
 
       {/* Toolbar */}
       <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
-        <Link href="/guidebooks" className="inline-flex items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>
+        {guest
+          ? <span className="text-xs font-semibold tracking-[0.3em] text-neutral-700">STAY HOSPITALITY</span>
+          : <Link href="/guidebooks" className="inline-flex items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>}
         <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>
         <div className="flex items-center gap-2">
-          <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
+          {!guest && <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
             <option value="editorial">Coastal editorial</option>
             <option value="dark">Dark luxe</option>
-          </select>
-          {edit
+          </select>}
+          {!guest && (edit
             ? <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white">{busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save</button>
-            : <button onClick={() => setEdit(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold"><Pencil size={13} /> Edit</button>}
-          <button onClick={() => { const next = JSON.parse(JSON.stringify(gb)); next.sections._showTags = showTags ? false : true; setGb(next); fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: next.id, sections: next.sections }) }) }} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (showTags ? 'border-neutral-300' : 'border-neutral-800 bg-neutral-800 text-white')} title="Show/hide the // labels and accent lines on photos">Photo tags {showTags ? 'on' : 'off'}</button>
+            : <button onClick={() => setEdit(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold"><Pencil size={13} /> Edit</button>)}
+          {!guest && <button onClick={() => { const next = JSON.parse(JSON.stringify(gb)); next.sections._showTags = showTags ? false : true; setGb(next); fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: next.id, sections: next.sections }) }) }} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (showTags ? 'border-neutral-300' : 'border-neutral-800 bg-neutral-800 text-white')} title="Show/hide the // labels and accent lines on photos">Photo tags {showTags ? 'on' : 'off'}</button>}
+          {!guest && <button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/g/' + gb.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="Copy the public guest link — no login needed to view">{copied ? <Save size={13} /> : <Share2 size={13} />} {copied ? 'Copied!' : 'Share'}</button>}
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold"><Printer size={13} /> Print / PDF</button>
-          <button onClick={del} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>
+          {!guest && <button onClick={del} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
         </div>
       </div>
 
