@@ -19,12 +19,22 @@ const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 // recompute at most every 2 minutes so the portfolio page loads instantly instead of recomputing each hit.
 const getPortfolioData = unstable_cache(async () => {
   const sb = supabaseAdmin()
+  // SLIM raw: full `raw` for 285 listings is tens of MB — cold hits (every deploy resets the
+  // cache) took 10s+ and the page looked dead. Pull only the sub-fields computeScore reads.
   const [{ data: listings }, { data: work }] = await Promise.all([
     sb.from('guesty_listings')
-      .select('id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, raw')
+      .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
       .limit(1000),
     sb.from('field_requests').select('building').in('status', ['open', 'in_progress']).limit(1000),
   ])
+  // Rebuild the slim raw object computeScore expects.
+  const slimRaw = (l: any) => ({
+    publicDescription: l.pub, publicDescriptions: l.pub2, terms: l.terms, integrations: l.integrations,
+    _photoScore: l.photoScore, defaultListingMinNights: l.minN, instantBookable: l.ib, instantBook: l.ib2,
+    defaultCheckInTime: l.ci, checkInTime: l.ci2, defaultCheckOutTime: l.co, checkOutTime: l.co2,
+    cancellationPolicy: l.cancel, prices: l.prices,
+    airbnb: { cancellationPolicy: l.airbnbCancel }, bookingcom: { cancellationPolicy: l.bookingCancel },
+  })
 
   const workByBuilding: Record<string, number> = {}
   ;(work ?? []).forEach((w: any) => {
@@ -45,7 +55,7 @@ const getPortfolioData = unstable_cache(async () => {
     if (!dead) {
       b.active += 1
       const isBeach = /beach/i.test(String(l.address_city || ''))
-      b.scores.push(computeScore(l, { isBeach }).overall)
+      b.scores.push(computeScore({ ...l, raw: slimRaw(l) }, { isBeach }).overall)
     }
     if (!b.city && l.address_city) b.city = l.address_city
   })
