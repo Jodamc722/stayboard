@@ -3,10 +3,10 @@
 // gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact A4 output (@page, exact colors, no app chrome).
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
+import { ArrowLeft, Paperclip, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
 
 const QR = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent('https://stay-hospitality.com')
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
@@ -34,6 +34,29 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   const [askText, setAskText] = useState('')
   const [askBusy, setAskBusy] = useState(false)
   const [askErr, setAskErr] = useState('')
+  const [matBusy, setMatBusy] = useState(false)
+  const matRef = useRef<HTMLInputElement>(null)
+
+  // Upload building info, appliance photos, manuals etc. AFTER generation — the AI reads them
+  // and folds them into the book (How-To Guide items get the photo pinned).
+  async function addMaterials(files: FileList | null) {
+    if (!files || !files.length) return
+    setMatBusy(true); setAskErr('')
+    try {
+      const photos: string[] = []; const docs: string[] = []
+      for (const f of Array.from(files).slice(0, 10)) {
+        const fd = new FormData(); fd.append('file', f)
+        const r = await fetch('/api/guidebook/upload', { method: 'POST', body: fd })
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok || !d?.url) throw new Error(d?.error || 'Upload failed')
+        if (d.kind === 'doc') docs.push(d.url); else photos.push(d.url)
+      }
+      const r2 = await fetch('/api/guidebook/ingest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, photoUrls: photos, docUrls: docs }) })
+      const d2 = await r2.json().catch(() => ({}))
+      if (!r2.ok || !d2?.sections) throw new Error(d2?.error || 'Could not read the materials')
+      setGb((g: any) => ({ ...g, sections: d2.sections }))
+    } catch (e: any) { setAskErr(e?.message || String(e)); setAskOpen(true) } finally { setMatBusy(false); if (matRef.current) matRef.current.value = '' }
+  }
 
   async function askAI() {
     const prompt = askText.trim()
@@ -111,13 +134,38 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       : <>{children}</>
   }
 
+  // Pages the operator can remove from the book (Edit mode → "Hide page"; restore from the bar).
+  const PAGE_LABELS: Record<string, string> = { special: 'What makes it special', houseGuide: 'How-to guide', addons: 'Add-ons', localPlaces: 'Local places', restaurants: 'Where to eat', gettingThere: 'Finding the residence', gettingAround: 'Getting around', retreat: 'Retreat lines', host: 'Meet your host' }
+  function hidePage(key: string) {
+    setGb((g: any) => {
+      const next = JSON.parse(JSON.stringify(g))
+      const o: string[] = Array.isArray(next.sections.omit) ? next.sections.omit : []
+      if (!o.includes(key)) o.push(key)
+      next.sections.omit = o
+      return next
+    })
+  }
+  function restorePage(key: string) {
+    setGb((g: any) => {
+      const next = JSON.parse(JSON.stringify(g))
+      next.sections.omit = (Array.isArray(next.sections.omit) ? next.sections.omit : []).filter((k: string) => k !== key)
+      return next
+    })
+  }
+
   let pageNo = 0
-  const Page = ({ children, bleed, id, ghost }: { children: any; bleed?: string | null; id?: string; ghost?: string }) => {
+  const Page = ({ children, bleed, id, ghost, hideKey }: { children: any; bleed?: string | null; id?: string; ghost?: string; hideKey?: string }) => {
     pageNo += 1
     const n = pageNo
     return (
       <div key={id || n} className="gb-page relative mx-auto mb-8 w-full max-w-[760px] overflow-hidden shadow-[0_2px_24px_rgba(0,0,0,0.10)] print:mb-0 print:shadow-none"
         style={{ aspectRatio: '210/297', background: paper, color: ink, fontFamily: SANS }}>
+        {edit && hideKey && (
+          <button onClick={() => hidePage(hideKey)} title="Remove this page from the book (restore from the bar above)"
+            className="absolute right-3 top-3 z-10 rounded-lg border border-red-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-red-600 shadow-sm hover:bg-red-50">
+            <X size={10} className="mr-1 inline" />Hide page
+          </button>
+        )}
         {bleed && (
           <>
             <img src={bleed} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -189,6 +237,8 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <option value="editorial">Coastal editorial</option>
             <option value="dark">Dark luxe</option>
           </select>}
+          {!guest && <button onClick={() => matRef.current?.click()} disabled={matBusy} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-60" title="Upload building info, appliance photos, or manuals — the AI folds them into the book">{matBusy ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />} {matBusy ? 'Reading…' : 'Add materials'}</button>}
+          {!guest && <input ref={matRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" onChange={e => addMaterials(e.target.files)} />}
           {!guest && <button onClick={() => setAskOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (askOpen ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300')} title="Tell the AI what to change — it rewrites the book for you"><Sparkles size={13} /> Ask AI</button>}
           {!guest && (edit
             ? <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white">{busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save</button>
@@ -215,6 +265,21 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <button onClick={() => { setAskOpen(false); setAskErr('') }} className="rounded-lg border border-neutral-300 p-2 text-neutral-500"><X size={14} /></button>
           </div>
           {askErr && <p className="mx-auto mt-1.5 max-w-[760px] text-xs text-red-600">{askErr}</p>}
+        </div>
+      )}
+
+      {/* HIDDEN PAGES — restore while editing */}
+      {!guest && edit && omit.length > 0 && (
+        <div className="gb-chrome sticky top-[57px] z-10 border-b border-black/10 bg-amber-50/95 px-4 py-2 backdrop-blur">
+          <div className="mx-auto flex max-w-[760px] flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-amber-900">Hidden pages:</span>
+            {omit.map(k => (
+              <button key={k} onClick={() => restorePage(k)} className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-white px-2.5 py-0.5 font-medium text-amber-900 hover:bg-amber-100" title="Click to restore">
+                {PAGE_LABELS[k] || k} <X size={11} />
+              </button>
+            ))}
+            <span className="text-amber-700/70">— click to restore, then Save</span>
+          </div>
         </div>
       )}
 
@@ -275,7 +340,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* SPECIAL + QR */}
         {has('special', (s.special?.groups || []).length > 0) && (
-          <Page id="special">
+          <Page id="special" hideKey="special">
             <PhotoBand src={pa.special || null} label="THE EXPERIENCE" />
             <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
             <div className={'mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7 ' + ((s.special.groups || []).length <= 2 ? 'content-center' : 'content-start')}>
@@ -368,26 +433,32 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>NETWORK</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>PASSWORD</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
             </div>
-            {has('houseGuide', (s.houseGuide?.items || []).length > 0) && (
-              <div className="mt-8 flex-1 space-y-5">
-                <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// WORTH KNOWING'}</p>
-                {(s.houseGuide.items).slice(0, 4).map((it: any, i: number) => (
-                  <div key={i} className="flex gap-5">
-                    <span className="text-[15px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
-                    <div className="flex-1">
-                      <p className="text-[10px] font-semibold tracking-[0.28em] uppercase text-[#efeae2]"><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
-                      <p className="mt-1 max-w-[56ch] text-[12px] font-light leading-[1.75] text-[#efeae2]/75"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
-                    </div>
-                    {it.photo && <img src={it.photo} alt="" className="h-24 w-32 shrink-0 rounded-sm object-cover ring-1 ring-white/20" />}
-                  </div>
-                ))}
-              </div>
-            )}
             <div className="mt-auto flex items-end justify-between pt-5 text-[8.5px] tracking-[0.28em] text-[#efeae2]/50">
               <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span><span><Mail v={s.contact?.email}>{s.contact?.email}</Mail></span>
             </div>
           </div>
         </Page>
+
+        {/* HOW-TO GUIDE — one item per appliance/system, read from uploads + notes */}
+        {has('houseGuide', (s.houseGuide?.items || []).length > 0) && (
+          <Page id="howto" ghost="how" hideKey="houseGuide">
+            <Kicker>HOUSE GUIDE</Kicker>
+            <H>how-to guide</H>
+            <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80">Everything here is a feature — a minute of reading makes the whole stay effortless.</p>
+            <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-start' : 'grid-cols-1 content-center')}>
+              {(s.houseGuide.items).slice(0, 6).map((it: any, i: number) => (
+                <div key={i} className="flex gap-4 border-b pb-5" style={{ borderColor: accentColor + '22' }}>
+                  <span className="text-[15px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                  <div className="flex-1">
+                    <p className="text-[10px] font-semibold tracking-[0.28em] uppercase" style={{ color: accentColor }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
+                    <p className="mt-1.5 text-[11.5px] font-light leading-[1.7]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
+                  </div>
+                  {it.photo && <img src={it.photo} alt="" className="h-24 w-28 shrink-0 rounded-sm object-cover ring-1 ring-black/10" />}
+                </div>
+              ))}
+            </div>
+          </Page>
+        )}
 
         {/* GUIDELINES + CONTACT — combined, lean */}
         <Page id="guidelines" ghost="notes">
@@ -415,7 +486,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           const anyPhoto = items.some((p: any) => p.photo)
           const few = items.length <= 3
           return (
-            <Page key={sec.key} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'}>
+            <Page key={sec.key} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
               <Kicker>{sec.tag}</Kicker>
               <H>{sec.title}</H>
               {anyPhoto ? (
@@ -458,7 +529,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* ADD-ONS (only if provided) */}
         {has('addons', (s.addons?.items || []).length > 0) && (
-          <Page id="addons" ghost="more">
+          <Page id="addons" ghost="more" hideKey="addons">
             <Kicker>AT YOUR SERVICE</Kicker>
             <H>exclusive add-ons</H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
@@ -473,22 +544,30 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           </Page>
         )}
 
-        {/* CLOSING — before you go + thank you, one elegant page */}
-        <Page bleed={pa.closing || null} id="closing">
-          <div className={'max-w-[54ch] ' + (pa.closing ? '' : '')}>
-            <p className={'text-[9px] tracking-[0.5em] ' + (pa.closing ? 'text-white/85' : '')} style={pa.closing ? {} : { color: accentColor }}>{'// BEFORE YOU GO'}</p>
-            <ul className="mt-5 space-y-2.5 text-[12px] font-light leading-[1.7]">
-              {(s.beforeYouGo?.items || []).slice(0, 5).map((it: string, i: number) => (
-                <li key={i} className="flex gap-3"><span className={'mt-[9px] h-1 w-1 shrink-0 rounded-full ' + (pa.closing ? 'bg-white/80' : '')} style={pa.closing ? {} : { background: accentColor }} /><T path={['beforeYouGo', 'items', String(i)] as any} value={it} rows={2} /></li>
-              ))}
-            </ul>
+        {/* CLOSING — checklist + starred review ask + thank you, on paper for readability */}
+        <Page id="closing" ghost="bye">
+          <PhotoBand src={pa.closing || null} label="UNTIL NEXT TIME" />
+          <div className="grid flex-1 grid-cols-[1fr_1px_1.1fr] gap-x-8">
+            <div>
+              <p className="text-[9px] tracking-[0.5em]" style={{ color: accentColor }}>{'// BEFORE YOU GO'}</p>
+              <ul className="mt-5 space-y-2.5 text-[11.5px] font-light leading-[1.65]">
+                {(s.beforeYouGo?.items || []).slice(0, 5).map((it: string, i: number) => (
+                  <li key={i} className="flex gap-3"><span className="mt-[8px] h-1 w-1 shrink-0 rounded-full" style={{ background: accentColor }} /><T path={['beforeYouGo', 'items', String(i)] as any} value={it} rows={2} /></li>
+                ))}
+              </ul>
+            </div>
+            <div style={{ background: accentColor + '33' }} />
+            <div className="flex flex-col items-center justify-center px-2 text-center">
+              <p className="text-[13px] tracking-[0.5em]" style={{ color: accentColor }}>★ ★ ★ ★ ★</p>
+              <h3 className="mt-3 text-[26px] lowercase font-medium" style={{ fontFamily: SERIF }}>loved your stay?</h3>
+              <p className="mt-3 max-w-[40ch] text-[12px] font-light italic leading-[1.8]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
+              <p className="mt-4 text-[11.5px]" style={{ fontFamily: SERIF }}>— {s.contact?.gmName || 'Jon McGill'}, General Manager</p>
+            </div>
           </div>
-          <div className="flex flex-1 flex-col items-center justify-end pb-6 text-center">
-            <p className="max-w-[46ch] text-[13px] font-light italic leading-[1.85]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
-            <p className={'mt-4 text-[12px] ' + (pa.closing ? 'text-white/90' : '')} style={{ fontFamily: SERIF }}>— {s.contact?.gmName || 'Jon McGill'}, General Manager</p>
-            <h2 className="mt-7 text-[44px] lowercase font-medium" style={{ fontFamily: SERIF }}>thank you</h2>
-            <p className={'mt-2 text-[9px] tracking-[0.5em] ' + (pa.closing ? 'text-white/85' : '')} style={pa.closing ? {} : { color: accentColor }}><T path={['thankyou', 'line']} value={s.thankyou?.line} rows={1} /></p>
-            <div className="mt-7"><StayLogo light={!!pa.closing} small /></div>
+          <div className="mt-5 flex flex-col items-center border-t pt-5 text-center" style={{ borderColor: accentColor + '33' }}>
+            <h2 className="text-[34px] lowercase font-medium" style={{ fontFamily: SERIF }}>thank you</h2>
+            <p className="mt-1.5 text-[9px] tracking-[0.5em]" style={{ color: accentColor }}><T path={['thankyou', 'line']} value={s.thankyou?.line} rows={1} /></p>
+            <div className="mt-4"><StayLogo small /></div>
           </div>
         </Page>
       </div>
