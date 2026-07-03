@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   // ---- Vision: identify what each new photo shows (appliance labels drive How-To items). ----
   let meta = photoUrls.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (photoUrls.length) {
-    const content: any[] = photoUrls.map(u => ({ type: 'image', source: { type: 'url', url: u } }))
+    const content: any[] = photoUrls.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
     content.push({ type: 'text', text: `For EACH of the ${photoUrls.length} images above, in order, return a JSON array: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. category "appliance" = a close-up of a specific appliance or control - for those ONLY, set "label" to a 2-4 word name (e.g. "induction cooktop"). hasText = any visible printed text/document/menu/sheet. STRICT minified JSON array only.` })
     const text = await anthropic(key, { model: VISION_MODEL, max_tokens: 1800, messages: [{ role: 'user', content }] })
     const parsed = parseJson(text || '')
@@ -106,8 +106,8 @@ export async function POST(req: NextRequest) {
     const claimed = new Set<string>()
     for (const it of (next.houseGuide?.items || [])) {
       if (it.photo) continue
-      const hay = (str(it?.title) + ' ' + str(it?.body)).toLowerCase()
-      const hit = appl.find(p => !claimed.has(p.url) && str(p.label).toLowerCase().split(/\s+/).some(w => w.length > 3 && hay.includes(w)))
+      const tw = str(it?.title).toLowerCase()
+      const hit = appl.find(p => !claimed.has(p.url) && str(p.label).toLowerCase().split(/\s+/).filter(w => w.length > 2 && tw.includes(w)).length >= 2)
       if (hit) { it.photo = hit.url; claimed.add(hit.url) }
     }
   }
