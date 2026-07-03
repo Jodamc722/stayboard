@@ -88,6 +88,21 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   const accentColor = dark ? '#c9a96a' : '#8a7350'
   const has = (key: string, contentOk: boolean) => !omit.includes(key) && contentOk
 
+  // Clickable contact details for the digital/shared view: phones dial, addresses open Maps,
+  // email opens mail. Inert while editing; prints as plain text.
+  const Tel = ({ v, children }: { v?: string; children: any }) => {
+    const num = String(v || '').replace(/[^\d+]/g, '')
+    return !edit && num.length >= 7 ? <a href={'tel:' + num} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
+  }
+  const MapLink = ({ v, children }: { v?: string; children: any }) => {
+    const q = String(v || '').trim()
+    return !edit && q ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(q)} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
+  }
+  const Mail = ({ v, children }: { v?: string; children: any }) => {
+    const m = String(v || '').trim()
+    return !edit && m.includes('@') ? <a href={'mailto:' + m} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
+  }
+
   let pageNo = 0
   const Page = ({ children, bleed, id, ghost }: { children: any; bleed?: string | null; id?: string; ghost?: string }) => {
     pageNo += 1
@@ -108,9 +123,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         <div className={'relative flex h-full flex-col ' + (bleed ? 'text-white' : '')} style={{ padding: '52px 58px 40px' }}>
           {children}
           <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
-            <span>{s.contact?.customerService || '954-526-8998'}</span>
+            <span><Tel v={s.contact?.customerService || '954-526-8998'}>{s.contact?.customerService || '954-526-8998'}</Tel></span>
             <span className="tabular-nums">{String(n).padStart(2, '0')}</span>
-            <span>STAY-HOSPITALITY.COM</span>
+            <span><a href="https://stay-hospitality.com" target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>STAY-HOSPITALITY.COM</a></span>
           </div>
         </div>
       </div>
@@ -245,8 +260,8 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <div className="mt-auto grid grid-cols-4 gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
             <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>WI-FI</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.wifi?.network}<br /><span className="font-light opacity-80">{s.wifi?.password}</span></p></div>
             <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>CHECK-IN / OUT</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.arrival?.checkIn}<br /><span className="font-light opacity-80">{s.arrival?.checkOut}</span></p></div>
-            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1 text-[10.5px] font-light leading-snug">{s.guidelines?.address}</p></div>
-            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>NEED US?</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.contact?.customerService}<br /><span className="font-light opacity-80">24/7</span></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1 text-[10.5px] font-light leading-snug"><MapLink v={s.guidelines?.address}>{s.guidelines?.address}</MapLink></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>NEED US?</p><p className="mt-1 text-[11.5px] font-medium leading-snug"><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel><br /><span className="font-light opacity-80">24/7</span></p></div>
           </div>
         </Page>
 
@@ -361,7 +376,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               </div>
             )}
             <div className="mt-auto flex items-end justify-between pt-5 text-[8.5px] tracking-[0.28em] text-[#efeae2]/50">
-              <span>{s.contact?.customerService}</span><span>{s.contact?.email}</span>
+              <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span><span><Mail v={s.contact?.email}>{s.contact?.email}</Mail></span>
             </div>
           </div>
         </Page>
@@ -380,9 +395,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             ))}
           </div>
           <div className="mt-6 grid grid-cols-3 gap-6">
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE · 24/7</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></p><p className="mt-1 text-[9.5px] font-light opacity-70">Emergencies: dial 911 first, then call us.</p></div>
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>GENERAL MANAGER</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></p></div>
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1.5 text-[11px] font-light leading-snug"><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE · 24/7</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p><p className="mt-1 text-[9.5px] font-light opacity-70">Emergencies: dial 911 first, then call us.</p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>GENERAL MANAGER</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
           </div>
         </Page>
 
