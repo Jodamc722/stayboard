@@ -127,21 +127,25 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
 
   // ---- PASS 1: VISION — know what every photo shows before laying out pages. ----
-  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean }[] =
-    pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false }))
+  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean; hasText: boolean }[] =
+    pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false }))
   if (key && pool.length) {
     const content: any[] = pool.map((u, i) => ({ type: 'image', source: { type: 'url', url: u } }))
-    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false}. coverWorthy = striking, well-lit, works full-bleed behind white text. A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
-    const text = await anthropic(key, { model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content }] })
-    const parsed = parseJson(text || '')
-    if (Array.isArray(parsed)) {
-      parsed.forEach((p: any) => {
-        const i = Number(p?.i)
-        if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true }
-      })
+    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image itself contains ANY visible caption, label, watermark, map text, or lettering (we will overlay type, so text-bearing images are unusable). A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const text = await anthropic(key, { model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content }] })
+      const parsed = parseJson(text || '')
+      if (Array.isArray(parsed) && parsed.length) {
+        parsed.forEach((p: any) => {
+          const i = Number(p?.i)
+          if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true, hasText: p.hasText === true }
+        })
+        break
+      }
     }
   }
-  const usable = photoMeta.filter(p => p.category !== 'logo')
+  // Text-bearing images (captions, map labels, watermarks) are NEVER used behind our type.
+  const usable = photoMeta.filter(p => p.category !== 'logo' && !p.hasText)
   const pick = (cats: string[], fallbackCover = false): string | null => {
     const c = usable.filter(p => cats.includes(p.category)).sort((a, b) => b.quality - a.quality)[0]
     if (c) return c.url
@@ -239,7 +243,9 @@ ${JSON.stringify(fallback)}`
     try {
       const r = await fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&license_type=commercial&per_page=1&mature=false', { headers: { 'User-Agent': 'StayBoardGuidebook/1.0' } })
       const d: any = await r.json().catch(() => ({}))
-      const u = d?.results?.[0]?.url
+      const res = d?.results?.[0]
+      // Prefer the Openverse-proxied thumbnail (reliably hotlinkable) over origin URLs.
+      const u = res?.thumbnail || res?.url
       if (u) return u
     } catch { /* fall through */ }
     return null
