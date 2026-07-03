@@ -127,25 +127,26 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
 
   // ---- PASS 1: VISION — know what every photo shows before laying out pages. ----
-  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean; hasText: boolean }[] =
-    pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false }))
+  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean; hasText: boolean; label?: string }[] =
+    pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (key && pool.length) {
     const content: any[] = pool.map((u, i) => ({ type: 'image', source: { type: 'url', url: u } }))
-    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image itself contains ANY visible caption, label, watermark, map text, or lettering (we will overlay type, so text-bearing images are unusable). A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
+    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image itself contains ANY visible caption, label, watermark, map text, or lettering (we will overlay type, so text-bearing images are unusable). category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to a 2-4 word name of what is shown (e.g. "induction cooktop"). A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
     for (let attempt = 0; attempt < 2; attempt++) {
       const text = await anthropic(key, { model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content }] })
       const parsed = parseJson(text || '')
       if (Array.isArray(parsed) && parsed.length) {
         parsed.forEach((p: any) => {
           const i = Number(p?.i)
-          if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true, hasText: p.hasText === true }
+          if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true, hasText: p.hasText === true, label: str(p.label).slice(0, 40) }
         })
         break
       }
     }
   }
   // Text-bearing images (captions, map labels, watermarks) are NEVER used behind our type.
-  const usable = photoMeta.filter(p => p.category !== 'logo' && !p.hasText)
+  // Appliance close-ups are reserved for the House Guide, never full-bleed pages.
+  const usable = photoMeta.filter(p => p.category !== 'logo' && p.category !== 'appliance' && !p.hasText)
   const pick = (cats: string[], fallbackCover = false): string | null => {
     const c = usable.filter(p => cats.includes(p.category)).sort((a, b) => b.quality - a.quality)[0]
     if (c) return c.url
@@ -194,10 +195,10 @@ PRINCIPLES:
 1. REWRITE, never copy. The operator's answers are raw notes - transform them into polished, ${tone}, editorial prose. Keep every FACT exactly (codes, floors, times, names); elevate every WORD.
 2. LEAN. A great guidebook is short. Omit any section that adds no real value for this specific home by listing its key in "omit". The "houseGuide" section exists ONLY for non-traditional equipment (induction cooktops, Wolf/Sub-Zero appliances, smart-home systems, unusual controls) - and then frame it as a premium feature, not a manual. Standard appliances: omit.
 3. NEVER INVENT. No made-up hours, codes, addresses, amenities, or place names. Only what's provided.
-4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; beforeYouGo <= 5 short items; review.body 40-60 words.
+4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; gettingAround.body 40-60 words (ONLY from operator notes - omit if none); beforeYouGo <= 5 short items; review.body 40-60 words. houseGuide item titles must NAME the equipment (e.g. "Induction Cooktop", not "Kitchen").
 5. Audience: ${audience}. ${highlights ? 'MUST gracefully feature: ' + highlights : ''}
 6. localPlaces and restaurants are MANDATORY (never omit): 4-6 REAL spots each with a 6-12 word "note". Prefer the provided LOCAL KNOWLEDGE; if absent, use well-known, long-established places near the given city (no inventions, no chains unless iconic).
-Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, addons). No markdown.`
+Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, gettingAround, addons). No markdown.`
     const USER_TEXT = `THE HOME:
 name: ${name} | building: ${building} | ${city}
 ${l.bedrooms} BR / ${l.bathrooms} BA / sleeps ${l.max_occupancy}
@@ -222,6 +223,20 @@ ${JSON.stringify(fallback)}`
   sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'localPlaces' && k !== 'restaurants')
   if (!(sections.restaurants?.items || []).length && bg) {
     sections.restaurants = { items: bg.recs.food.slice(0, 4).map((n: string) => ({ name: n, note: '' })) }
+  }
+
+  // Getting Around renders ONLY when the operator supplied notes (audit: never invent transport info).
+  if (!str(answers?.gettingAround).trim() && !sections.omit.includes('gettingAround')) sections.omit.push('gettingAround')
+
+  // APPLIANCE HOW-TOS get a photo of the ACTUAL appliance when one was uploaded (vision-labeled).
+  {
+    const appl = photoMeta.filter(p => p.category === 'appliance')
+    const claimed = new Set<string>()
+    for (const it of (sections.houseGuide?.items || [])) {
+      const hay = (str(it?.title) + ' ' + str(it?.body)).toLowerCase()
+      const hit = appl.find(p => !claimed.has(p.url) && str(p.label).toLowerCase().split(/\s+/).some(w => w.length > 3 && hay.includes(w)))
+      if (hit) { it.photo = hit.url; claimed.add(hit.url) }
+    }
   }
 
   // LOCAL IMAGERY - every spot gets a photo. Pexels first (if key set), then Openverse
@@ -313,6 +328,7 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
     ].filter(x => x.body) },
     wifi: { network: str(l.wifiName), password: str(l.wifiPassword) },
     gettingThere: { heading: 'getting to the residence', body: a('entry', 'Follow the check-in instructions in your confirmation message — and if you need a hand, the team is one message away.') },
+    gettingAround: { heading: 'getting around', body: a('gettingAround', '') },
     localPlaces: { items: splitList(a('localPlaces', '')) },
     restaurants: { items: splitList(a('restaurants', '')) },
     addons: { intro: 'Optional experiences, arranged on request. Advance notice recommended.', items: splitList(a('addons', '')) },
