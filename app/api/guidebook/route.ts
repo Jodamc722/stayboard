@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
   let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean; hasText: boolean; label?: string }[] =
     pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (key && pool.length) {
-    const content: any[] = pool.map((u, i) => ({ type: 'image', source: { type: 'url', url: u } }))
+    const content: any[] = pool.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
     content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image contains ANY visible printed text: captions, labels, watermarks, map text, signage, menus, instruction sheets, documents, or screenshots (we overlay type, so text-bearing images are unusable as page art). A photo that is PRIMARILY a document, flyer, service menu, or info sheet is category "other" with hasText true, even if artfully shot. category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to a 2-4 word name of what is shown (e.g. "induction cooktop"). A logo/graphic is category "logo" and never coverWorthy. STRICT minified JSON array only.` })
     for (let attempt = 0; attempt < 2; attempt++) {
       const text = await anthropic(key, { model: MODEL, max_tokens: 2500, messages: [{ role: 'user', content }] })
@@ -238,11 +238,11 @@ ${JSON.stringify(fallback)}`
 
   // APPLIANCE HOW-TOS get a photo of the ACTUAL appliance when one was uploaded (vision-labeled).
   {
-    const appl = photoMeta.filter(p => p.category === 'appliance' && !p.hasText)
+    const appl = photoMeta.filter(p => p.category === 'appliance' && !p.hasText && String(p.url).includes('guidebook-assets'))
     const claimed = new Set<string>()
     for (const it of (sections.houseGuide?.items || [])) {
-      const hay = (str(it?.title) + ' ' + str(it?.body)).toLowerCase()
-      const hit = appl.find(p => !claimed.has(p.url) && str(p.label).toLowerCase().split(/\s+/).some(w => w.length > 3 && hay.includes(w)))
+      const tw = str(it?.title).toLowerCase()
+      const hit = appl.find(p => !claimed.has(p.url) && str(p.label).toLowerCase().split(/\s+/).filter(w => w.length > 2 && tw.includes(w)).length >= 2)
       if (hit) { it.photo = hit.url; claimed.add(hit.url) }
     }
   }
