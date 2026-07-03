@@ -225,10 +225,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       `}</style>
 
       {/* Toolbar */}
-      <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
+      <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
         {guest
           ? <span className="text-xs font-semibold tracking-[0.3em] text-neutral-700">STAY HOSPITALITY</span>
-          : <Link href="/guidebooks" className="inline-flex items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>}
+          : <Link href="/guidebooks" className="inline-flex shrink-0 items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>}
         {edit
           ? <input value={gb.title || ''} onChange={e => setGb({ ...gb, title: e.target.value })} className="max-w-[40%] flex-1 rounded-lg border border-dashed border-neutral-400 px-2 py-1 text-sm font-semibold text-neutral-800" />
           : <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>}
@@ -445,7 +445,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <Kicker>HOUSE GUIDE</Kicker>
             <H>how-to guide</H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80">Everything here is a feature — a minute of reading makes the whole stay effortless.</p>
-            <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-start' : 'grid-cols-1 content-center')}>
+            <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-start' : 'grid-cols-1 content-evenly')}>
               {(s.houseGuide.items).slice(0, 6).map((it: any, i: number) => (
                 <div key={i} className="flex gap-4 border-b pb-5" style={{ borderColor: accentColor + '22' }}>
                   <span className="text-[15px] opacity-40" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
@@ -453,7 +453,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                     <p className="text-[10px] font-semibold tracking-[0.28em] uppercase" style={{ color: accentColor }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                     <p className="mt-1.5 text-[11.5px] font-light leading-[1.7]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
                   </div>
-                  {it.photo && <img src={it.photo} alt="" className="h-24 w-28 shrink-0 rounded-sm object-cover ring-1 ring-black/10" />}
+                  {it.photo && <img src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} />}
                 </div>
               ))}
             </div>
