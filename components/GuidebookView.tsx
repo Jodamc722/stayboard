@@ -508,6 +508,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                         </div>
                       )}
                       {p.note ? <p className="mt-2 text-[11px] font-light leading-[1.65] opacity-80"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p> : null}
+                      {(edit || p.address || p.phone) ? <p className="mt-1 text-[10px] font-light tracking-wide opacity-60"><T path={[sec.key, 'items', String(i), 'address'] as any} value={p.address} rows={1} />{p.address && p.phone ? ' · ' : ''}<Tel v={p.phone}><T path={[sec.key, 'items', String(i), 'phone'] as any} value={p.phone} rows={1} /></Tel></p> : null}
                       </PlaceLink>
                     </div>
                   ))}
@@ -519,11 +520,15 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                       <PlaceLink name={p.name}>
                       <p className="text-[13px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                       {p.note && <p className="mt-1 text-[11px] font-light leading-[1.6] opacity-75"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p>}
+                      {(edit || p.address || p.phone) ? <p className="mt-1 text-[10px] font-light tracking-wide opacity-60"><T path={[sec.key, 'items', String(i), 'address'] as any} value={p.address} rows={1} />{p.address && p.phone ? ' · ' : ''}<Tel v={p.phone}><T path={[sec.key, 'items', String(i), 'phone'] as any} value={p.phone} rows={1} /></Tel></p> : null}
                       </PlaceLink>
                     </div>
                   ))}
                 </div>
               )}
+              <div className="mt-5 border-t pt-4 text-center" style={{ borderColor: accentColor + '33' }}>
+                <p className="text-[12px] leading-[1.7]" style={{ fontFamily: SERIF }}>Want a table or a local tip? Call our front desk at <Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel> — we're happy to arrange reservations.</p>
+              </div>
             </Page>
           )
         })}
