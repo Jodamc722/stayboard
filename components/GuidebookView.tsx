@@ -6,7 +6,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Pencil, Printer, Save, Share2, Trash2, Loader2 } from 'lucide-react'
+import { ArrowLeft, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
 
 const QR = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent('https://stay-hospitality.com')
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
@@ -30,6 +30,23 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   const [edit, setEdit] = useState(false)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [askOpen, setAskOpen] = useState(false)
+  const [askText, setAskText] = useState('')
+  const [askBusy, setAskBusy] = useState(false)
+  const [askErr, setAskErr] = useState('')
+
+  async function askAI() {
+    const prompt = askText.trim()
+    if (!prompt) return
+    setAskBusy(true); setAskErr('')
+    try {
+      const r = await fetch('/api/guidebook/revise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, prompt }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || !d?.sections) throw new Error(d?.error || 'Revision failed')
+      setGb((g: any) => ({ ...g, sections: d.sections }))
+      setAskText(''); setAskOpen(false)
+    } catch (e: any) { setAskErr(e?.message || String(e)) } finally { setAskBusy(false) }
+  }
   const s = gb.sections || {}
   const omit: string[] = Array.isArray(s.omit) ? s.omit : []
   const pa = s._photoAssign || {}
@@ -141,12 +158,15 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {guest
           ? <span className="text-xs font-semibold tracking-[0.3em] text-neutral-700">STAY HOSPITALITY</span>
           : <Link href="/guidebooks" className="inline-flex items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>}
-        <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>
+        {edit
+          ? <input value={gb.title || ''} onChange={e => setGb({ ...gb, title: e.target.value })} className="max-w-[40%] flex-1 rounded-lg border border-dashed border-neutral-400 px-2 py-1 text-sm font-semibold text-neutral-800" />
+          : <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>}
         <div className="flex items-center gap-2">
           {!guest && <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
             <option value="editorial">Coastal editorial</option>
             <option value="dark">Dark luxe</option>
           </select>}
+          {!guest && <button onClick={() => setAskOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (askOpen ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300')} title="Tell the AI what to change — it rewrites the book for you"><Sparkles size={13} /> Ask AI</button>}
           {!guest && (edit
             ? <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white">{busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save</button>
             : <button onClick={() => setEdit(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold"><Pencil size={13} /> Edit</button>)}
@@ -156,6 +176,24 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           {!guest && <button onClick={del} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
         </div>
       </div>
+
+      {/* ASK AI — tell it what to change; the book rewrites itself */}
+      {!guest && askOpen && (
+        <div className="gb-chrome sticky top-[57px] z-10 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
+          <div className="mx-auto flex max-w-[760px] items-start gap-2">
+            <textarea rows={2} autoFocus value={askText} onChange={e => setAskText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAI() } }}
+              placeholder='Tell the AI what to change — e.g. "make the about section shorter", "add the rooftop pool to what makes this special", "change quiet hours to 10 PM", "hide the add-ons page"'
+              className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black/20" />
+            <button onClick={askAI} disabled={askBusy || !askText.trim()}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-black px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+              {askBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} {askBusy ? 'Revising…' : 'Apply'}
+            </button>
+            <button onClick={() => { setAskOpen(false); setAskErr('') }} className="rounded-lg border border-neutral-300 p-2 text-neutral-500"><X size={14} /></button>
+          </div>
+          {askErr && <p className="mx-auto mt-1.5 max-w-[760px] text-xs text-red-600">{askErr}</p>}
+        </div>
+      )}
 
       <div className="px-4 py-10">
         {/* COVER — full-bleed, scrimmed, white type */}
@@ -190,18 +228,18 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               )}
             </div>
           ) : (
-            <>
+            <div className="flex flex-1 flex-col justify-center pb-4">
               <Kicker>THE RESIDENCE</Kicker>
               <H><T path={['about', 'heading']} value={s.about?.heading} /></H>
-              <p className="mt-6 max-w-[52ch] text-[13.5px] font-light leading-[1.9]"><T path={['about', 'body']} value={s.about?.body} rows={5} /></p>
+              <p className="mt-6 max-w-[62ch] text-[13.5px] font-light leading-[1.95]"><T path={['about', 'body']} value={s.about?.body} rows={5} /></p>
               {has('retreat', (s.retreat?.lines || []).length > 0) && (
-                <div className="mt-10 space-y-3.5 border-l pl-6 text-[10px] tracking-[0.22em] leading-[1.8]" style={{ borderColor: accentColor + '55' }}>
+                <div className="mt-9 space-y-3.5 border-l pl-6 text-[10px] tracking-[0.22em] leading-[1.8]" style={{ borderColor: accentColor + '55' }}>
                   {(s.retreat.lines).slice(0, 3).map((ln: string, i: number) => (
                     <p key={i} style={{ color: accentColor }}><T path={['retreat', 'lines', String(i)] as any} value={ln} rows={2} /></p>
                   ))}
                 </div>
               )}
-            </>
+            </div>
           )}
           {/* ESSENTIALS AT A GLANCE — the four things every guest hunts for, on page two. */}
           <div className="mt-auto grid grid-cols-4 gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
@@ -272,7 +310,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <div className="w-px" style={{ background: accentColor + '44' }} />
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-OUT</p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
           </div>
-          <div className="mt-8 grid gap-7 text-[12.5px] font-light leading-[1.85]">
+          <div className="mt-8 grid flex-1 grid-cols-2 content-center gap-x-12 gap-y-8 text-[12.5px] font-light leading-[1.85]">
             <div>
               <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Entry</p>
               <p className="max-w-[58ch]"><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p>
@@ -317,7 +355,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                       <p className="text-[10px] font-semibold tracking-[0.28em] uppercase text-[#efeae2]"><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                       <p className="mt-1 max-w-[56ch] text-[12px] font-light leading-[1.75] text-[#efeae2]/75"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
                     </div>
-                    {it.photo && <img src={it.photo} alt="" className="h-16 w-20 shrink-0 rounded-sm object-cover ring-1 ring-white/20" />}
+                    {it.photo && <img src={it.photo} alt="" className="h-24 w-32 shrink-0 rounded-sm object-cover ring-1 ring-white/20" />}
                   </div>
                 ))}
               </div>
@@ -360,7 +398,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               {anyPhoto ? (
                 <div className={'mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1 content-center' : 'grid-cols-2 content-start')}>
                   {items.map((p: any, i: number) => (
-                    <div key={i}>
+                    <div key={i} className={!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : ''}>
                       {p.photo ? (
                         <div className={'relative overflow-hidden ' + (few ? 'h-[190px]' : 'h-[145px]')}>
                           <img src={p.photo} alt="" className="h-full w-full object-cover" />
