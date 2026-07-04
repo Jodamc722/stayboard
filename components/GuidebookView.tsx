@@ -233,7 +233,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           .gb-chrome { display: none !important; }
           .gb-page { width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; page-break-after: always; break-inside: avoid; }
         }
+        @media (max-width: 820px) {
+          .gb-page { width: 760px !important; max-width: 760px !important; zoom: var(--gbScale, 0.5); }
+        }
       `}</style>
+      <script dangerouslySetInnerHTML={{ __html: "(function(){function f(){var w=window.innerWidth;var s=w<=820?Math.max(0.2,Math.min(1,(w-16)/760)):1;document.documentElement.style.setProperty('--gbScale',String(s));}f();window.addEventListener('resize',f);})();" }} />
 
       {/* Toolbar */}
       <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
