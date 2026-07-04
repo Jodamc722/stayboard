@@ -1,5 +1,6 @@
 'use client'
-// Guidebook v2 — editorial-grade rendering. Playfair Display typography, full-bleed cover with
+// Guidebook v3.4 — everything customizable: every fixed label/caption is editable via sections._labels.
+// Editorial-grade rendering. Playfair Display typography, full-bleed cover with
 // gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact A4 output (@page, exact colors, no app chrome).
@@ -106,6 +107,16 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       ? <textarea rows={rows} value={value || ''} onChange={e => set(path, e.target.value)} className={'w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px] ' + (className || '')} />
       : <span className={className}>{value}</span>
 
+  // v3.4: EVERY fixed label/caption in the book is editable. Overrides live in sections._labels
+  // (underscore key — preserved by revise/ingest); falls back to the original wording.
+  const lbl = (k: string, def: string) => { const o = (s._labels || {})[k]; return typeof o === 'string' ? o : def }
+  const L = ({ k, def, rows = 1 }: { k: string; def: string; rows?: number }) =>
+    edit
+      ? <textarea rows={rows} value={lbl(k, def)} onChange={e => set(['_labels', k], e.target.value)} className="w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px]" />
+      : <>{lbl(k, def)}</>
+  // Keeps tap-to-call on the digital view when an editable text contains the service number.
+  const withTel = (txt: string) => { const num = String(s.contact?.customerService || ''); if (edit || !num || !txt.includes(num)) return <>{txt}</>; const i = txt.indexOf(num); return <>{txt.slice(0, i)}<Tel v={num}>{num}</Tel>{txt.slice(i + num.length)}</> }
+
   const paper = dark ? '#141311' : '#fbf9f5'
   const ink = dark ? '#efeae2' : '#1f1d1a'
   const accentColor = dark ? '#c9a96a' : '#8a7350'
@@ -181,7 +192,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
             <span><Tel v={s.contact?.customerService || '954-526-8998'}>{s.contact?.customerService || '954-526-8998'}</Tel></span>
             <span className="tabular-nums">{String(n).padStart(2, '0')}</span>
-            <span><a href="https://stay-hospitality.com" target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>STAY-HOSPITALITY.COM</a></span>
+            <span>{edit ? <L k="footer.site" def="STAY-HOSPITALITY.COM" /> : <a href={'https://' + lbl('footer.site', 'STAY-HOSPITALITY.COM').toLowerCase().replace(/[^a-z0-9.-]/g, '')} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>{lbl('footer.site', 'STAY-HOSPITALITY.COM')}</a>}</span>
           </div>
         </div>
       </div>
@@ -189,15 +200,15 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   }
 
   // Half-photo header with scrim — text below is always on paper, label over photo is scrimmed white.
-  const PhotoBand = ({ src, label }: { src: string | null; label?: string }) => src ? (
+  const PhotoBand = ({ src, label, k }: { src: string | null; label?: string; k?: string }) => src ? (
     <div className="relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 88%, 0 100%)' }}>
       <img src={src} alt="" className="h-full w-full object-cover" />
       <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.45), rgba(10,10,12,0.05) 55%)' }} />
       {showTags && <span className="absolute left-[58px] top-[44%] h-px w-16 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />}
       {showTags && <span className="absolute left-[78px] top-[47%] h-px w-10 bg-white/40" style={{ transform: 'rotate(-24deg)' }} />}
-      {showTags && label && <p className="absolute bottom-7 left-[58px] text-[9px] tracking-[0.45em] text-white/90" style={{ fontFamily: SANS }}>{'// ' + label}</p>}
+      {showTags && label && <p className="absolute bottom-7 left-[58px] right-10 text-[9px] tracking-[0.45em] text-white/90" style={{ fontFamily: SANS }}>{'// '}{k ? <L k={k} def={label} /> : label}</p>}
     </div>
-  ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// ' + label}</p> : null)
+  ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{k ? <L k={k} def={label} /> : label}</p> : null)
 
   const H = ({ children, size = 'text-[40px]' }: { children: any; size?: string }) => (
     <h2 className={size + ' lowercase leading-[1.05] font-medium'} style={{ fontFamily: SERIF }}>{children}</h2>
@@ -287,7 +298,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* COVER — full-bleed, scrimmed, white type */}
         <Page bleed={pa.cover || photos[0] || null} id="cover">
           <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <p className="text-[9px] tracking-[0.55em] text-white/80">WELCOME</p>
+            <p className="text-[9px] tracking-[0.55em] text-white/80"><L k="cover.kicker" def="WELCOME" /></p>
             <div className="mt-5 text-[54px] leading-[1.08] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 24px rgba(0,0,0,0.35)' }}>
               <T path={['cover', 'line1']} value={s.cover?.line1} /><br />
               <T path={['cover', 'line2']} value={s.cover?.line2} />
@@ -303,7 +314,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <PhotoBand src={pa.about || null} />
           {(s.about?.body || '').length < 240 ? (
             <div className="flex flex-1 flex-col items-center justify-center pb-10 text-center">
-              <Kicker>THE RESIDENCE</Kicker>
+              <Kicker><L k="about.kicker" def="THE RESIDENCE" /></Kicker>
               <H><T path={['about', 'heading']} value={s.about?.heading} /></H>
               <div className="mx-auto mt-7 h-px w-12" style={{ background: accentColor + '77' }} />
               <p className="mt-8 max-w-[38ch] text-[17px] font-light italic leading-[2.05]" style={{ fontFamily: SERIF }}><T path={['about', 'body']} value={s.about?.body} rows={5} /></p>
@@ -317,7 +328,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             </div>
           ) : (
             <div className="flex flex-1 flex-col justify-center pb-4">
-              <Kicker>THE RESIDENCE</Kicker>
+              <Kicker><L k="about.kicker" def="THE RESIDENCE" /></Kicker>
               <H><T path={['about', 'heading']} value={s.about?.heading} /></H>
               <p className="mt-6 max-w-[62ch] text-[13.5px] font-light leading-[1.95]"><T path={['about', 'body']} value={s.about?.body} rows={5} /></p>
               {has('retreat', (s.retreat?.lines || []).length > 0) && (
@@ -331,17 +342,17 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           )}
           {/* ESSENTIALS AT A GLANCE — the four things every guest hunts for, on page two. */}
           <div className="mt-auto grid grid-cols-4 gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
-            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>WI-FI</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.wifi?.network}<br /><span className="font-light opacity-80">{s.wifi?.password}</span></p></div>
-            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>CHECK-IN / OUT</p><p className="mt-1 text-[11.5px] font-medium leading-snug">{s.arrival?.checkIn}<br /><span className="font-light opacity-80">{s.arrival?.checkOut}</span></p></div>
-            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1 text-[10.5px] font-light leading-snug"><MapLink v={s.guidelines?.address}>{s.guidelines?.address}</MapLink></p></div>
-            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}>NEED US?</p><p className="mt-1 text-[11.5px] font-medium leading-snug"><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel><br /><span className="font-light opacity-80">24/7</span></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.wifi" def="WI-FI" /></p><p className="mt-1 text-[11.5px] font-medium leading-snug"><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /><br /><span className="font-light opacity-80"><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></span></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.inout" def="CHECK-IN / OUT" /></p><p className="mt-1 text-[11.5px] font-medium leading-snug"><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /><br /><span className="font-light opacity-80"><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></span></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.address" def="ADDRESS" /></p><p className="mt-1 text-[10.5px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
+            <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.needus" def="NEED US?" /></p><p className="mt-1 text-[11.5px] font-medium leading-snug"><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel><br /><span className="font-light opacity-80"><L k="ess.hours" def="24/7" /></span></p></div>
           </div>
         </Page>
 
         {/* SPECIAL + QR */}
         {has('special', (s.special?.groups || []).length > 0) && (
           <Page id="special" hideKey="special">
-            <PhotoBand src={pa.special || null} label="THE EXPERIENCE" />
+            <PhotoBand src={pa.special || null} label="THE EXPERIENCE" k="band.special" />
             <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
             <div className={'mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7 ' + ((s.special.groups || []).length <= 2 ? 'content-center' : 'content-start')}>
               {(s.special.groups).map((g: any, i: number) => (
@@ -357,7 +368,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             </div>
             <div className="mt-5 flex items-center gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
               <img src={QR} alt="stay-hospitality.com" className="h-20 w-20 bg-white p-1" />
-              <p className="text-[13px] leading-[1.7]" style={{ fontFamily: SERIF }}>Scan to explore our collection<br />and <em>book direct</em> at stay-hospitality.com</p>
+              <div className="flex-1 text-[13px] leading-[1.7]" style={{ fontFamily: SERIF }}><L k="special.qr" def="Scan to explore our collection and book direct at stay-hospitality.com" rows={2} /></div>
             </div>
           </Page>
         )}
@@ -368,22 +379,22 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <div className="absolute inset-y-0 left-0 w-[42%] overflow-hidden">
               <img src={pa.arrival} alt="" className="h-full w-full object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.5), rgba(10,10,12,0.06) 50%)' }} />
-              <p className="absolute bottom-10 left-6 text-[9px] tracking-[0.45em] text-white/90">YOUR ARRIVAL</p>
+              <p className="absolute bottom-10 left-6 right-4 text-[9px] tracking-[0.45em] text-white/90"><L k="band.arrival" def="YOUR ARRIVAL" /></p>
             </div>
             <div className="relative ml-[46%] flex h-full flex-col">
               <H size="text-[34px]"><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
               <div className="mt-7 space-y-5">
-                <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-IN</p><p className="mt-1 text-[26px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
+                <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.inLabel" def="CHECK-IN" /></p><p className="mt-1 text-[26px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
                 <div className="h-px w-10" style={{ background: accentColor + '55' }} />
-                <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-OUT</p><p className="mt-1 text-[26px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
+                <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.outLabel" def="CHECK-OUT" /></p><p className="mt-1 text-[26px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
               </div>
               <div className="mt-9 space-y-6 text-[12.5px] font-light leading-[1.85]">
                 <div>
-                  <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Entry</p>
+                  <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.entryLabel" def="Entry" /></p>
                   <p><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p>
                 </div>
                 <div>
-                  <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Parking</p>
+                  <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.parkingLabel" def="Parking" /></p>
                   <p><T path={['arrival', 'parking']} value={s.arrival?.parking} rows={3} /></p>
                 </div>
               </div>
@@ -391,31 +402,31 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           </Page>
         ) : (
         <Page id="arrival">
-          <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" />
+          <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" k="band.arrival" />
           <H><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
           <div className="mt-6 flex gap-14">
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-IN</p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.inLabel" def="CHECK-IN" /></p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
             <div className="w-px" style={{ background: accentColor + '44' }} />
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CHECK-OUT</p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.outLabel" def="CHECK-OUT" /></p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
           </div>
           <div className="mt-8 grid flex-1 grid-cols-2 content-center gap-x-12 gap-y-8 text-[12.5px] font-light leading-[1.85]">
             <div>
-              <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Entry</p>
+              <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.entryLabel" def="Entry" /></p>
               <p className="max-w-[58ch]"><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p>
             </div>
             <div>
-              <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Parking</p>
+              <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.parkingLabel" def="Parking" /></p>
               <p className="max-w-[58ch]"><T path={['arrival', 'parking']} value={s.arrival?.parking} rows={3} /></p>
             </div>
             {has('gettingThere', !!str2(s.gettingThere?.body)) && (
               <div className={has('gettingAround', !!str2(s.gettingAround?.body)) ? '' : 'col-span-2'}>
-                <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Finding the residence</p>
+                <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.findLabel" def="Finding the residence" /></p>
                 <p className="max-w-[58ch]"><T path={['gettingThere', 'body']} value={s.gettingThere?.body} rows={3} /></p>
               </div>
             )}
             {has('gettingAround', !!str2(s.gettingAround?.body)) && (
               <div className={has('gettingThere', !!str2(s.gettingThere?.body)) ? '' : 'col-span-2'}>
-                <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>Getting around</p>
+                <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.aroundLabel" def="Getting around" /></p>
                 <p className="max-w-[58ch]"><T path={['gettingAround', 'body']} value={s.gettingAround?.body} rows={3} /></p>
               </div>
             )}
@@ -440,19 +451,19 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <div className="relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
             <div className="h-[38%] shrink-0" />
             <div>
-              <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// CONNECTED'}</p>
-              <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 18px rgba(0,0,0,0.5)' }}>wi-fi &amp; the essentials</h2>
+              <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// '}<L k="wifi.kicker" def="CONNECTED" /></p>
+              <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 18px rgba(0,0,0,0.5)' }}><L k="wifi.heading" def="wi-fi & the essentials" /></h2>
             </div>
             <div className="mt-7 grid grid-cols-2 gap-8 border-y py-6" style={{ borderColor: '#c9a96a44' }}>
-              <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>NETWORK</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
-              <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}>PASSWORD</p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
+              <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}><L k="wifi.netLabel" def="NETWORK" /></p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
+              <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}><L k="wifi.passLabel" def="PASSWORD" /></p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
             </div>
             <div className="mt-7 grid flex-1 content-evenly grid-cols-2 gap-x-8 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75">
-              <p>The password is case-sensitive — enter it exactly as printed. Once a device connects, it will remember the network for the rest of your stay.</p>
-              <p>Trouble connecting? Our team is one call away, day or night — <Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel>. And if you sign into personal accounts on any TV, remember to log out before checkout.</p>
+              <div><L k="wifi.note1" def="The password is case-sensitive — enter it exactly as printed. Once a device connects, it will remember the network for the rest of your stay." rows={4} /></div>
+              <div>{(() => { const d = 'Trouble connecting? Our team is one call away, day or night — ' + (s.contact?.customerService || '954-526-8998') + '. And if you sign into personal accounts on any TV, remember to log out before checkout.'; return edit ? <L k="wifi.note2" def={d} rows={4} /> : withTel(lbl('wifi.note2', d)) })()}</div>
             </div>
             <div className="mt-auto flex items-end justify-between pt-5 text-[8.5px] tracking-[0.28em] text-[#efeae2]/50">
-              <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span><span><Mail v={s.contact?.email}>{s.contact?.email}</Mail></span>
+              <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span><span><Mail v={s.contact?.email}><T path={['contact', 'email']} value={s.contact?.email} rows={1} /></Mail></span>
             </div>
           </div>
         </Page>
@@ -460,9 +471,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* HOW-TO GUIDE — one item per appliance/system, read from uploads + notes */}
         {has('houseGuide', (s.houseGuide?.items || []).length > 0) && (
           <Page id="howto" ghost="how" hideKey="houseGuide">
-            <Kicker>HOUSE GUIDE</Kicker>
-            <H>how-to guide</H>
-            <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80">Everything here is a feature — a minute of reading makes the whole stay effortless.</p>
+            <Kicker><L k="houseGuide.kicker" def="HOUSE GUIDE" /></Kicker>
+            <H><L k="houseGuide.heading" def="how-to guide" /></H>
+            <div className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><L k="houseGuide.intro" def="Everything here is a feature — a minute of reading makes the whole stay effortless." rows={2} /></div>
             <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-evenly' : 'grid-cols-1 content-evenly')}>
               {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
                 <div key={i} className="flex gap-5 border-b pb-6" style={{ borderColor: accentColor + '22' }}>
@@ -481,7 +492,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* GUIDELINES + CONTACT — combined, lean */}
         <Page id="guidelines" ghost="notes">
-          <Kicker>HOUSE NOTES</Kicker>
+          <Kicker><L k="guidelines.kicker" def="HOUSE NOTES" /></Kicker>
           <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
           <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
           <div className={'mt-7 flex-1 flex flex-col ' + ((s.guidelines?.items || []).length <= 3 ? 'justify-center gap-6' : 'justify-evenly gap-4')}>
@@ -493,9 +504,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             ))}
           </div>
           <div className="mt-6 grid grid-cols-3 gap-6">
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>CUSTOMER SERVICE · 24/7</p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p><p className="mt-1 text-[9.5px] font-light opacity-70">Emergencies: dial 911 first, then call us.</p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.csLabel" def="CUSTOMER SERVICE · 24/7" /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p><div className="mt-1 text-[9.5px] font-light opacity-70"><L k="contact.emergency" def="Emergencies: dial 911 first, then call us." rows={2} /></div></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><T path={['contact', 'gmLabel']} value={s.contact?.gmLabel || 'GENERAL MANAGER'} rows={1} /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}>ADDRESS</p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.addressLabel" def="ADDRESS" /></p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
           </div>
         </Page>
 
@@ -506,8 +517,8 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           const few = items.length <= 3
           return (
             <Page key={sec.key} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
-              <Kicker>{sec.tag}</Kicker>
-              <H>{sec.title}</H>
+              <Kicker><L k={sec.key + '.tag'} def={sec.tag} /></Kicker>
+              <H><L k={sec.key + '.heading'} def={sec.title} /></H>
               {anyPhoto ? (
                 <div className={'mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1 content-center' : 'grid-cols-2 content-start')}>
                   {items.map((p: any, i: number) => (
@@ -545,7 +556,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 </div>
               )}
               <div className="mt-5 border-t pt-4 text-center" style={{ borderColor: accentColor + '33' }}>
-                <p className="text-[12px] leading-[1.7]" style={{ fontFamily: SERIF }}>Want a table or a local tip? Call our front desk at <Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel> — we're happy to arrange reservations.</p>
+                <div className="text-[12px] leading-[1.7]" style={{ fontFamily: SERIF }}>{(() => { const d = "Want a table or a local tip? Call our front desk at " + (s.contact?.customerService || '954-526-8998') + " — we're happy to arrange reservations."; return edit ? <L k="local.reservations" def={d} rows={2} /> : withTel(lbl('local.reservations', d)) })()}</div>
               </div>
             </Page>
           )
@@ -554,8 +565,8 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* ADD-ONS (only if provided) */}
         {has('addons', (s.addons?.items || []).length > 0) && (
           <Page id="addons" ghost="more" hideKey="addons">
-            <Kicker>AT YOUR SERVICE</Kicker>
-            <H>exclusive add-ons</H>
+            <Kicker><L k="addons.kicker" def="AT YOUR SERVICE" /></Kicker>
+            <H><L k="addons.heading" def="exclusive add-ons" /></H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
             <div className={'mt-8 grid flex-1 content-evenly ' + ((s.addons.items || []).length <= 4 ? 'grid-cols-1 gap-y-6' : 'grid-cols-2 gap-x-10 gap-y-5')}>
               {(s.addons.items).slice(0, 10).map((p: any, i: number) => (
@@ -570,10 +581,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* CLOSING — checklist + starred review ask + thank you, on paper for readability */}
         <Page id="closing" ghost="bye">
-          <PhotoBand src={pa.closing || null} label="UNTIL NEXT TIME" />
+          <PhotoBand src={pa.closing || null} label="UNTIL NEXT TIME" k="band.closing" />
           <div className="grid flex-1 grid-cols-[1fr_1px_1.1fr] gap-x-8">
             <div>
-              <p className="text-[9px] tracking-[0.5em]" style={{ color: accentColor }}>{'// BEFORE YOU GO'}</p>
+              <p className="text-[9px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="closing.beforeLabel" def="BEFORE YOU GO" /></p>
               <ul className="mt-5 space-y-2.5 text-[11.5px] font-light leading-[1.65]">
                 {(s.beforeYouGo?.items || []).slice(0, 5).map((it: string, i: number) => (
                   <li key={i} className="flex gap-3"><span className="mt-[8px] h-1 w-1 shrink-0 rounded-full" style={{ background: accentColor }} /><T path={['beforeYouGo', 'items', String(i)] as any} value={it} rows={2} /></li>
@@ -582,14 +593,14 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             </div>
             <div style={{ background: accentColor + '33' }} />
             <div className="flex flex-col items-center justify-center px-2 text-center">
-              <p className="text-[13px] tracking-[0.5em]" style={{ color: accentColor }}>★ ★ ★ ★ ★</p>
-              <h3 className="mt-3 text-[26px] lowercase font-medium" style={{ fontFamily: SERIF }}>loved your stay?</h3>
+              <p className="text-[13px] tracking-[0.5em]" style={{ color: accentColor }}><L k="closing.stars" def="★ ★ ★ ★ ★" /></p>
+              <h3 className="mt-3 text-[26px] lowercase font-medium" style={{ fontFamily: SERIF }}><L k="closing.reviewHeading" def="loved your stay?" /></h3>
               <p className="mt-3 max-w-[40ch] text-[12px] font-light italic leading-[1.8]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
               <p className="mt-4 text-[11.5px]" style={{ fontFamily: SERIF }}>— <T path={['contact', 'signoff']} value={s.contact?.signoff || 'Jon McGill, General Manager'} rows={1} /></p>
             </div>
           </div>
           <div className="mt-5 flex flex-col items-center border-t pt-5 text-center" style={{ borderColor: accentColor + '33' }}>
-            <h2 className="text-[34px] lowercase font-medium" style={{ fontFamily: SERIF }}>thank you</h2>
+            <h2 className="text-[34px] lowercase font-medium" style={{ fontFamily: SERIF }}><L k="closing.thanksHeading" def="thank you" /></h2>
             <p className="mt-1.5 text-[9px] tracking-[0.5em]" style={{ color: accentColor }}><T path={['thankyou', 'line']} value={s.thankyou?.line} rows={1} /></p>
             <div className="mt-4"><StayLogo small /></div>
           </div>
