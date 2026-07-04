@@ -233,11 +233,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           .gb-chrome { display: none !important; }
           .gb-page { width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; page-break-after: always; break-inside: avoid; }
         }
-        @media (max-width: 820px) {
-          .gb-page { width: 760px !important; max-width: 760px !important; zoom: var(--gbScale, 0.5); }
-        }
+        @media print { .gb-page { transform: none !important; margin: 0 !important; } html, body { overflow-x: visible !important; } }
       `}</style>
-      <script dangerouslySetInnerHTML={{ __html: "(function(){function f(){var w=window.innerWidth;var s=w<=820?Math.max(0.2,Math.min(1,(w-16)/760)):1;document.documentElement.style.setProperty('--gbScale',String(s));}f();window.addEventListener('resize',f);})();" }} />
+      <script dangerouslySetInnerHTML={{ __html: "(function(){function f(){var w=window.innerWidth,m=w>0&&w<=820,ps=document.querySelectorAll('.gb-page');for(var i=0;i<ps.length;i++){var p=ps[i];if(m){p.style.transform='none';p.style.width='760px';p.style.maxWidth='760px';var h=p.offsetHeight,s=w/760;p.style.transformOrigin='top left';p.style.transform='scale('+s+')';p.style.marginLeft='0';p.style.marginRight='0';p.style.marginBottom=(16-h*(1-s))+'px';}else{p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.transformOrigin='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';}}var de=document.documentElement;de.style.overflowX=m?'hidden':'';document.body.style.overflowX=m?'hidden':'';}function clr(){var ps=document.querySelectorAll('.gb-page');for(var i=0;i<ps.length;i++){var p=ps[i];p.style.transform='none';p.style.marginBottom='';p.style.width='';p.style.maxWidth='';}document.documentElement.style.overflowX='';document.body.style.overflowX='';}f();window.addEventListener('resize',f);window.addEventListener('load',function(){setTimeout(f,50);});window.addEventListener('beforeprint',clr);window.addEventListener('afterprint',f);})();" }} />
 
       {/* Toolbar */}
       <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
@@ -477,15 +475,15 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <Page id="howto" ghost="how" hideKey="houseGuide">
             <Kicker><L k="houseGuide.kicker" def="HOUSE GUIDE" /></Kicker>
             <H><L k="houseGuide.heading" def="how-to guide" /></H>
-            <div className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><L k="houseGuide.intro" def="Everything here is a feature — a minute of reading makes the whole stay effortless." rows={2} /></div>
-            <div className={'mt-7 grid flex-1 gap-x-10 gap-y-6 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-evenly' : 'grid-cols-1 content-evenly')}>
+            <div className="mt-3 max-w-[56ch] text-[11px] font-light leading-[1.55] opacity-80"><L k="houseGuide.intro" def="Everything here is a feature — a minute of reading makes the whole stay effortless." rows={2} /></div>
+            <div className={'mt-4 grid flex-1 gap-x-8 gap-y-3 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-evenly' : 'grid-cols-1 content-evenly')}>
               {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
-                <div key={i} className="flex gap-5 border-b pb-6" style={{ borderColor: accentColor + '22' }}>
-                  <span className="text-[30px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                <div key={i} className="flex gap-3 border-b pb-3" style={{ borderColor: accentColor + '22' }}>
+                  <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
                   <div className="flex-1">
-                    <p className="text-[16px] lowercase font-medium leading-tight" style={{ fontFamily: SERIF }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
+                    <p className="text-[14px] lowercase font-medium leading-tight" style={{ fontFamily: SERIF }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                     <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
-                    <p className="mt-2 text-[11.5px] font-light leading-[1.75]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
+                    <p className="mt-1 text-[10px] font-light leading-[1.5]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
                   </div>
                   {it.photo && <img src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} />}
                 </div>
