@@ -229,13 +229,31 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         .gb-page { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         @media print {
           @page { size: A4; margin: 0; }
-          body { background: white !important; }
-          .gb-chrome { display: none !important; }
-          .gb-page { width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; page-break-after: always; break-inside: avoid; }
+          html, body { background: white !important; overflow: visible !important; }
+          .gb-chrome, .gb-nav { display: none !important; }
+          .gb-pages { position: static !important; display: block !important; overflow: visible !important; height: auto !important; }
+          .gb-slide { display: block !important; overflow: visible !important; height: auto !important; }
+          .gb-page { transform: none !important; width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-inside: avoid; }
         }
-        @media print { .gb-page { transform: none !important; margin: 0 !important; } html, body { overflow-x: visible !important; } }
+        @media (max-width: 820px) {
+          html, body { overflow: hidden !important; height: 100% !important; }
+          .gb-chrome { position: fixed !important; top: 0; left: 0; right: 0; z-index: 40; }
+          .gb-pages { position: fixed !important; top: var(--bkTop,64px) !important; bottom: var(--bkBottom,54px) !important; left: 0 !important; right: 0 !important; display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; overflow-x: auto !important; overflow-y: hidden !important; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; padding: 0 !important; margin: 0 !important; scrollbar-width: none; }
+          .gb-pages::-webkit-scrollbar { display: none; }
+          .gb-slide { flex: 0 0 100vw !important; scroll-snap-align: center; display: flex !important; align-items: center !important; justify-content: center !important; overflow: hidden; height: 100% !important; }
+          .gb-page { flex: none !important; margin: 0 !important; width: 760px !important; max-width: 760px !important; transform: scale(var(--bkScale,0.5)) !important; transform-origin: center center !important; border-radius: 8px; box-shadow: 0 12px 44px rgba(0,0,0,0.2) !important; }
+          .gb-nav { display: flex !important; }
+        }
+        .gb-nav { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 54px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; z-index: 50; font-family: Inter, system-ui, sans-serif; }
+        .gb-dots { display: flex; gap: 6px; align-items: center; }
+        .gb-dot { width: 6px; height: 6px; border-radius: 50%; background: #cbc6bc; transition: all .25s; cursor: pointer; }
+        .gb-dot.on { background: #1c1a17; width: 20px; border-radius: 3px; }
+        .gb-nav.gb-dark .gb-dot { background: rgba(255,255,255,0.35); }
+        .gb-nav.gb-dark .gb-dot.on { background: #ffffff; }
+        .gb-count { font-size: 10px; letter-spacing: .18em; color: #6b6459; text-transform: uppercase; }
+        .gb-nav.gb-dark .gb-count { color: rgba(255,255,255,0.7); }
       `}</style>
-      <script dangerouslySetInnerHTML={{ __html: "(function(){function f(){var w=window.innerWidth,m=w>0&&w<=820,ps=document.querySelectorAll('.gb-page');for(var i=0;i<ps.length;i++){var p=ps[i];if(m){p.style.transform='none';p.style.width='760px';p.style.maxWidth='760px';var h=p.offsetHeight,s=w/760;p.style.transformOrigin='top left';p.style.transform='scale('+s+')';p.style.marginLeft='0';p.style.marginRight='0';p.style.marginBottom=(16-h*(1-s))+'px';}else{p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.transformOrigin='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';}}var de=document.documentElement;de.style.overflowX=m?'hidden':'';document.body.style.overflowX=m?'hidden':'';}function clr(){var ps=document.querySelectorAll('.gb-page');for(var i=0;i<ps.length;i++){var p=ps[i];p.style.transform='none';p.style.marginBottom='';p.style.width='';p.style.maxWidth='';}document.documentElement.style.overflowX='';document.body.style.overflowX='';}f();window.addEventListener('resize',f);window.addEventListener('load',function(){setTimeout(f,50);});window.addEventListener('beforeprint',clr);window.addEventListener('afterprint',f);})();" }} />
+      <script dangerouslySetInnerHTML={{ __html: "(function(){var NAV_H=54;function isDark(el){var s=getComputedStyle(el).backgroundColor;var i=s.indexOf('(');if(i<0)return false;var m=s.substring(i+1).split(',');var r=+m[0],g=+m[1],b=+m[2];return (0.299*r+0.587*g+0.114*b)<128;}var built=false,nav,dotsWrap,countEl,wrapper;function build(){wrapper=document.querySelector('.gb-pages')||((document.querySelector('.gb-page')||{}).parentElement);if(!wrapper)return;wrapper.classList.add('gb-pages');var pages=[].slice.call(document.querySelectorAll('.gb-page'));pages.forEach(function(p){if(p.parentElement&&p.parentElement.classList.contains('gb-slide'))return;var s=document.createElement('div');s.className='gb-slide';p.parentElement.insertBefore(s,p);s.appendChild(p);});if(!nav){nav=document.createElement('div');nav.className='gb-nav';dotsWrap=document.createElement('div');dotsWrap.className='gb-dots';pages.forEach(function(p,i){var dt=document.createElement('div');dt.className='gb-dot'+(i===0?' on':'');dt.addEventListener('click',function(){wrapper.scrollTo({left:i*window.innerWidth,behavior:'smooth'});});dotsWrap.appendChild(dt);});countEl=document.createElement('div');countEl.className='gb-count';countEl.textContent='01 / '+pages.length;nav.appendChild(dotsWrap);nav.appendChild(countEl);document.body.appendChild(nav);wrapper.addEventListener('scroll',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);var ds=dotsWrap.children;for(var i=0;i<ds.length;i++){ds[i].className='gb-dot'+(i===idx?' on':'');}countEl.textContent=(idx+1<10?'0':'')+(idx+1)+' / '+pages.length;});}built=true;}function fit(){var w=window.innerWidth,mobile=w>0&&w<=820;if(mobile){if(!built)build();if(!wrapper)return;var chrome=document.querySelector('.gb-chrome');var topH=chrome?Math.ceil(chrome.getBoundingClientRect().height):64;var de=document.documentElement;de.style.setProperty('--bkTop',topH+'px');de.style.setProperty('--bkBottom',NAV_H+'px');var availH=window.innerHeight-topH-NAV_H;var scale=Math.min((w-12)/760,(availH-12)/1073);de.style.setProperty('--bkScale',scale);[].slice.call(document.querySelectorAll('.gb-page')).forEach(function(p){p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';p.style.transformOrigin='';});if(nav){var container=chrome?chrome.parentElement:document.body;nav.className='gb-nav'+(isDark(container)?' gb-dark':'');nav.style.background=getComputedStyle(container).backgroundColor;nav.style.display='flex';}}else{if(nav)nav.style.display='none';}}fit();window.addEventListener('resize',fit);window.addEventListener('load',function(){setTimeout(fit,60);});window.addEventListener('beforeprint',function(){if(nav)nav.style.display='none';});window.addEventListener('afterprint',fit);})();" }} />
 
       {/* Toolbar */}
       <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
@@ -296,7 +314,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         </div>
       )}
 
-      <div className="px-4 py-10">
+      <div className="px-4 py-10 gb-pages">
         {/* COVER — full-bleed, scrimmed, white type */}
         <Page bleed={pa.cover || photos[0] || null} id="cover">
           <div className="flex flex-1 flex-col items-center justify-center text-center">
