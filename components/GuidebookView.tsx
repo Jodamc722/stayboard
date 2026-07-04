@@ -235,7 +235,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           .gb-slide { display: block !important; overflow: visible !important; height: auto !important; }
           .gb-page { transform: none !important; width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-inside: avoid; }
         }
-        @media (max-width: 820px) {
+        @media screen and (max-width: 820px) {
           html, body { overflow: hidden !important; height: 100% !important; }
           .gb-chrome { position: fixed !important; top: 0; left: 0; right: 0; z-index: 40; }
           .gb-pages { position: fixed !important; top: var(--bkTop,64px) !important; bottom: var(--bkBottom,54px) !important; left: 0 !important; right: 0 !important; display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; overflow-x: auto !important; overflow-y: hidden !important; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; padding: 0 !important; margin: 0 !important; scrollbar-width: none; }
