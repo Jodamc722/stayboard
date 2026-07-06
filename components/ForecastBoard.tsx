@@ -12,8 +12,9 @@ function fmtRange(a: string, b: string) { const da = new Date(a + 'T12:00:00'), 
 function cellClass(v: string) {
   const s = (v || '').toLowerCase()
   if (/req\s*off/.test(s)) return 'bg-rose-100 text-rose-800'
-  if (/\boff\b/.test(s)) return 'bg-orange-100 text-orange-800'
   if (/on\s*call/.test(s)) return 'bg-yellow-200 text-yellow-900'
+  if (/\boff\b/.test(s)) return 'bg-orange-100 text-orange-800'
+  if (/work/.test(s)) return 'bg-green-100 text-green-800'
   if (s.trim()) return 'bg-white text-ink'
   return 'bg-white'
 }
@@ -94,7 +95,7 @@ export function ForecastBoard() {
               <tr key={name} className="border-t border-neutral-100">
                 <td className="group sticky left-0 z-10 bg-white p-2 text-left font-medium text-ink"><span className="flex items-center justify-between gap-2">{name}<button onClick={() => removeMember(name)} className="text-neutral-300 hover:text-red-500"><X size={13} /></button></span></td>
                 {days.map(d => (
-                  <td key={d.date} className="border-l border-neutral-100 p-0"><input value={cells[market]?.[name]?.[d.date] || ''} onChange={e => setCell(name, d.date, e.target.value)} placeholder="—" className={'w-full min-w-[92px] border-0 px-2 py-2 text-center text-[13px] outline-none focus:ring-1 focus:ring-sky-300 ' + cellClass(cells[market]?.[name]?.[d.date] || '')} /></td>
+                  <td key={d.date} className="border-l border-neutral-100 p-0"><select value={cells[market]?.[name]?.[d.date] || ''} onChange={e => setCell(name, d.date, e.target.value)} className={'w-full min-w-[104px] cursor-pointer appearance-none border-0 px-2 py-2 text-center text-[13px] font-medium outline-none focus:ring-1 focus:ring-sky-300 ' + cellClass(cells[market]?.[name]?.[d.date] || '')}><option value="">—</option><option value="Working">Working</option><option value="On Call">On Call</option><option value="OFF">OFF</option><option value="REQ OFF">REQ OFF</option></select></td>
                 ))}
               </tr>
             ))}
@@ -110,7 +111,7 @@ export function ForecastBoard() {
           <button onClick={() => addMember(newName)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-white"><Plus size={14} /> Add</button>
         </div>
         <label className="flex items-center gap-1.5 text-sm text-muted">Cleans/cleaner ({market})<input type="number" min={1} max={12} value={rateM} onChange={e => setRate({ ...rate, [market]: Math.max(1, Number(e.target.value) || 1) })} className="w-14 rounded-lg border border-neutral-300 px-2 py-1 text-sm" /></label>
-        <span className="text-xs text-muted">Type a shift (e.g. “9:30am–6pm (17 West)”) or OFF / ON CALL / REQ OFF. Saving &amp; sharing come next.</span>
+        <span className="text-xs text-muted">Set each person’s day: Working / On Call / OFF / REQ OFF. Actual shift times live in Homebase — this is weekly scheduling. Saving &amp; sharing come next.</span>
       </div>
     </div>
   )
