@@ -9,7 +9,7 @@ export const maxDuration = 60
 // A clean = a confirmed/checked Guesty checkout, deduped per unit/day (same rule as /api/schedule).
 // Botanica is vendor-cleaned (hotel staff) - tracked separately, not counted in OUR needs. ET dates.
 const LIVE = /confirm|checked/i
-const VENDOR = /botanica/i
+const VENDOR = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
 const MARKETS = ['Miami', 'Broward', 'North']
 const DAYLABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
