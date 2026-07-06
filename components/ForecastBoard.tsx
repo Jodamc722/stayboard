@@ -78,16 +78,12 @@ export function ForecastBoard() {
               ))}
             </tr>
             <tr className="text-center">
-              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Actual cleans</td>
-              {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[15px] font-bold text-ink">{d.actual[market]}</td>))}
-            </tr>
-            <tr className="text-center">
-              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Projected <span className="font-normal normal-case text-neutral-400">· 60-day avg</span></td>
-              {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[13px] text-neutral-500">{data.avgByMarketDow[market][d.dow]}</td>))}
+              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Cleans</td>
+              {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[16px] font-bold text-ink">{d.actual[market]}</td>))}
             </tr>
             <tr className="text-center">
               <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Cleaners needed</td>
-              {days.map(d => { const needed = rateM > 0 ? Math.ceil(Math.max(d.actual[market], data.avgByMarketDow[market][d.dow]) / rateM) : 0; return (<td key={d.date} className="border-l border-t border-neutral-100 p-1"><span className="inline-flex items-center rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-semibold text-white">{needed}</span></td>) })}
+              {days.map(d => { const needed = rateM > 0 ? Math.ceil(d.actual[market] / rateM) : 0; return (<td key={d.date} className="border-l border-t border-neutral-100 p-1"><span className="inline-flex items-center rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-semibold text-white">{needed}</span></td>) })}
             </tr>
           </thead>
           <tbody>
@@ -111,7 +107,7 @@ export function ForecastBoard() {
           <button onClick={() => addMember(newName)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-white"><Plus size={14} /> Add</button>
         </div>
         <label className="flex items-center gap-1.5 text-sm text-muted">Cleans/cleaner ({market})<input type="number" min={1} max={12} value={rateM} onChange={e => setRate({ ...rate, [market]: Math.max(1, Number(e.target.value) || 1) })} className="w-14 rounded-lg border border-neutral-300 px-2 py-1 text-sm" /></label>
-        <span className="text-xs text-muted">Set each person’s day: Working / On Call / OFF / REQ OFF. Actual shift times live in Homebase — this is weekly scheduling. Saving &amp; sharing come next.</span>
+        <span className="text-xs text-muted">Cleaners needed = the day’s cleans ÷ cleans-per-cleaner (adjust the rate per market). Set each person’s day; shift times stay in Homebase.</span>
       </div>
     </div>
   )
