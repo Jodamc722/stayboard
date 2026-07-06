@@ -7,7 +7,8 @@ export const maxDuration = 60
 
 // Cleaner-demand forecast for the weekly schedule. A clean = a confirmed/checked Guesty
 // checkout, deduped per unit/day (same rule as /api/schedule). Botanica is vendor-cleaned
-// (hotel staff) so it is excluded from OUR cleaner needs. Dates are America/New_York.
+// (hotel staff) so it is tracked separately, not counted toward OUR cleaner needs.
+// Dates are America/New_York.
 const LIVE = /confirm|checked/i
 const VENDOR = /botanica/i
 const MARKETS = ['Miami', 'Broward', 'North']
@@ -17,6 +18,7 @@ function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Ame
 function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
 function dow(s: string) { return new Date(s + 'T12:00:00').getDay() }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
+function zeros() { return [0, 0, 0, 0, 0, 0, 0] }
 
 async function fetchCheckouts(db: any, from: string, to: string) {
   const rows: any[] = []
@@ -56,9 +58,11 @@ export async function GET(_req: NextRequest) {
     meta[id] = { market, vendor: VENDOR.test(building) || VENDOR.test(name) }
   }
 
-  const histCount: Record<string, number[]> = {}
-  MARKETS.forEach(m => (histCount[m] = [0, 0, 0, 0, 0, 0, 0]))
-  const upByDate: Record<string, Record<string, number>> = {}
+  const hist: Record<string, number[]> = {}
+  const histVendor: Record<string, number[]> = {}
+  MARKETS.forEach(m => { hist[m] = zeros(); histVendor[m] = zeros() })
+  const upBy: Record<string, Record<string, number>> = {}
+  const upVendorBy: Record<string, Record<string, number>> = {}
 
   const seen = new Set<string>()
   for (const r of outs) {
@@ -70,29 +74,35 @@ export async function GET(_req: NextRequest) {
     if (seen.has(key)) continue
     seen.add(key)
     const m = meta[id]
-    if (!m || m.vendor) continue
+    if (!m) continue
+    const bucketHist = m.vendor ? histVendor : hist
+    const bucketUp = m.vendor ? upVendorBy : upBy
     if (date < today) {
-      histCount[m.market][dow(date)]++
+      bucketHist[m.market][dow(date)]++
     } else if (date <= upEnd) {
-      if (!upByDate[date]) upByDate[date] = {}
-      upByDate[date][m.market] = (upByDate[date][m.market] || 0) + 1
+      if (!bucketUp[date]) bucketUp[date] = {}
+      bucketUp[date][m.market] = (bucketUp[date][m.market] || 0) + 1
     }
   }
 
-  const dowOcc = [0, 0, 0, 0, 0, 0, 0]
+  const dowOcc = zeros()
   for (let d = histStart; d < today; d = addDays(d, 1)) dowOcc[dow(d)]++
-
-  const avgByMarketDow: Record<string, number[]> = {}
-  MARKETS.forEach(m => {
-    avgByMarketDow[m] = histCount[m].map((c, i) => (dowOcc[i] ? Math.round((c / dowOcc[i]) * 10) / 10 : 0))
-  })
+  const avgOf = (src: Record<string, number[]>) => {
+    const out: Record<string, number[]> = {}
+    MARKETS.forEach(m => { out[m] = src[m].map((c, i) => (dowOcc[i] ? Math.round((c / dowOcc[i]) * 10) / 10 : 0)) })
+    return out
+  }
 
   const upcoming: any[] = []
   for (let i = 0; i < 7; i++) {
     const d = addDays(today, i)
     const actual: Record<string, number> = {}
-    MARKETS.forEach(m => (actual[m] = (upByDate[d] && upByDate[d][m]) || 0))
-    upcoming.push({ date: d, dow: dow(d), day: DAYLABEL[dow(d)], actual })
+    const vendor: Record<string, number> = {}
+    MARKETS.forEach(m => {
+      actual[m] = (upBy[d] && upBy[d][m]) || 0
+      vendor[m] = (upVendorBy[d] && upVendorBy[d][m]) || 0
+    })
+    upcoming.push({ date: d, dow: dow(d), day: DAYLABEL[dow(d)], actual, vendor })
   }
 
   return NextResponse.json({
@@ -103,9 +113,10 @@ export async function GET(_req: NextRequest) {
     markets: MARKETS,
     dayLabels: DAYLABEL,
     dowOccurrences: dowOcc,
-    avgByMarketDow,
+    avgByMarketDow: avgOf(hist),
+    vendorAvgByMarketDow: avgOf(histVendor),
     upcoming,
-    note: 'Confirmed/checked checkouts, deduped per unit/day, excludes Botanica (vendor).',
+    note: 'Confirmed/checked checkouts, deduped per unit/day. avg/actual = our team; vendor = Botanica (hotel-cleaned).',
     generatedAt: new Date().toISOString(),
   })
 }
