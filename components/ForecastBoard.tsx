@@ -112,6 +112,7 @@ export function ForecastBoard() {
             const arr: any[] = Array.isArray(raw) ? raw : []
             const key = `${dt}__${mkt}`
             for (const c of arr) {
+              if (!c?.guestOut) continue // only departure (checkout) cleans count
               const unit = c?.unit || c?.name || c?.listingName || c?.title || 'Unit'
               const an0 = Array.isArray(c?.assignedNames) ? c.assignedNames : []
               const rec: Unit = { unit, listingId: c?.listingId || c?.listing_id || c?._id, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay, assigned: an0 }
