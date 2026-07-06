@@ -5,10 +5,9 @@ import { marketOf } from '@/lib/segments'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-// Cleaner-demand forecast for the weekly schedule. A clean = a confirmed/checked Guesty
-// checkout, deduped per unit/day (same rule as /api/schedule). Botanica is vendor-cleaned
-// (hotel staff) so it is tracked separately, not counted toward OUR cleaner needs.
-// Dates are America/New_York.
+// Cleaner-demand forecast for a Sunday-start week (Sun -> Sat, how the team builds the schedule).
+// A clean = a confirmed/checked Guesty checkout, deduped per unit/day (same rule as /api/schedule).
+// Botanica is vendor-cleaned (hotel staff) - tracked separately, not counted in OUR needs. ET dates.
 const LIVE = /confirm|checked/i
 const VENDOR = /botanica/i
 const MARKETS = ['Miami', 'Broward', 'North']
@@ -19,6 +18,10 @@ function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.
 function dow(s: string) { return new Date(s + 'T12:00:00').getDay() }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function zeros() { return [0, 0, 0, 0, 0, 0, 0] }
+function minD(a: string, b: string) { return a < b ? a : b }
+function maxD(a: string, b: string) { return a > b ? a : b }
+// Sunday on or before a date (week starts Sunday).
+function sunOf(s: string) { return addDays(s, -dow(s)) }
 
 async function fetchCheckouts(db: any, from: string, to: string) {
   const rows: any[] = []
@@ -35,15 +38,22 @@ async function fetchCheckouts(db: any, from: string, to: string) {
   return rows
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const HIST = 60
   const today = ymd(new Date())
   const histStart = addDays(today, -HIST)
-  const upEnd = addDays(today, 6)
+
+  const sp = new URL(req.url).searchParams
+  const wsParam = sp.get('weekStart') || ''
+  const weekStart = sunOf(/^\d{4}-\d{2}-\d{2}$/.test(wsParam) ? wsParam : today)
+  const weekEnd = addDays(weekStart, 6)
+
+  const qFrom = minD(histStart, weekStart)
+  const qTo = maxD(addDays(today, 6), weekEnd)
 
   const db = supabaseAdmin()
   const [outs, { data: listings }] = await Promise.all([
-    fetchCheckouts(db, histStart, upEnd),
+    fetchCheckouts(db, qFrom, qTo),
     db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000),
   ])
   if (!listings || !listings.length) return NextResponse.json({ ok: false, error: 'Listing data unavailable - hit Sync and retry.' }, { status: 503 })
@@ -61,8 +71,8 @@ export async function GET(_req: NextRequest) {
   const hist: Record<string, number[]> = {}
   const histVendor: Record<string, number[]> = {}
   MARKETS.forEach(m => { hist[m] = zeros(); histVendor[m] = zeros() })
-  const upBy: Record<string, Record<string, number>> = {}
-  const upVendorBy: Record<string, Record<string, number>> = {}
+  const wkBy: Record<string, Record<string, number>> = {}
+  const wkVendorBy: Record<string, Record<string, number>> = {}
 
   const seen = new Set<string>()
   for (const r of outs) {
@@ -75,13 +85,13 @@ export async function GET(_req: NextRequest) {
     seen.add(key)
     const m = meta[id]
     if (!m) continue
-    const bucketHist = m.vendor ? histVendor : hist
-    const bucketUp = m.vendor ? upVendorBy : upBy
-    if (date < today) {
-      bucketHist[m.market][dow(date)]++
-    } else if (date <= upEnd) {
-      if (!bucketUp[date]) bucketUp[date] = {}
-      bucketUp[date][m.market] = (bucketUp[date][m.market] || 0) + 1
+    if (date >= histStart && date < today) {
+      (m.vendor ? histVendor : hist)[m.market][dow(date)]++
+    }
+    if (date >= weekStart && date <= weekEnd) {
+      const b = m.vendor ? wkVendorBy : wkBy
+      if (!b[date]) b[date] = {}
+      b[date][m.market] = (b[date][m.market] || 0) + 1
     }
   }
 
@@ -93,30 +103,34 @@ export async function GET(_req: NextRequest) {
     return out
   }
 
-  const upcoming: any[] = []
+  const week: any[] = []
   for (let i = 0; i < 7; i++) {
-    const d = addDays(today, i)
+    const d = addDays(weekStart, i)
     const actual: Record<string, number> = {}
     const vendor: Record<string, number> = {}
     MARKETS.forEach(m => {
-      actual[m] = (upBy[d] && upBy[d][m]) || 0
-      vendor[m] = (upVendorBy[d] && upVendorBy[d][m]) || 0
+      actual[m] = (wkBy[d] && wkBy[d][m]) || 0
+      vendor[m] = (wkVendorBy[d] && wkVendorBy[d][m]) || 0
     })
-    upcoming.push({ date: d, dow: dow(d), day: DAYLABEL[dow(d)], actual, vendor })
+    week.push({ date: d, dow: dow(d), day: DAYLABEL[dow(d)], actual, vendor, isToday: d === today, isPast: d < today })
   }
 
   return NextResponse.json({
     ok: true,
     today,
-    histStart,
     histDays: HIST,
     markets: MARKETS,
     dayLabels: DAYLABEL,
+    weekStart,
+    weekEnd,
+    prevWeekStart: addDays(weekStart, -7),
+    nextWeekStart: addDays(weekStart, 7),
+    isCurrentWeek: weekStart === sunOf(today),
     dowOccurrences: dowOcc,
     avgByMarketDow: avgOf(hist),
     vendorAvgByMarketDow: avgOf(histVendor),
-    upcoming,
-    note: 'Confirmed/checked checkouts, deduped per unit/day. avg/actual = our team; vendor = Botanica (hotel-cleaned).',
+    week,
+    note: 'Week runs Sun->Sat. avg/actual = our team; vendor = Botanica (hotel-cleaned).',
     generatedAt: new Date().toISOString(),
   })
 }
