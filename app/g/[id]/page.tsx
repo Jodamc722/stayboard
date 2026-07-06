@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
       if (i >= 0) { const start = s.lastIndexOf('http', i); if (start >= 0 && (best < 0 || start < best)) { best = start; img = s.slice(start, i + ext.length) } }
     }
   } catch {}
-  const title = name + ' — Guest Guidebook'
+  const title = /guidebook/i.test(name) ? name : name + ' — Guest Guidebook'
   const description = 'Your private guide to ' + name + ': Wi-Fi, check-in, the house guide, local picks and everything you need for a perfect stay.'
   return { ...base, title, description, openGraph: { title, description, type: 'website', images: img ? [{ url: img }] : undefined }, twitter: { card: img ? 'summary_large_image' : 'summary', title, description, images: img ? [img] : undefined } }
 }
