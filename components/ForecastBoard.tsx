@@ -22,7 +22,8 @@ type FC = {
   dayLabels?: string[]
   week: Day[]
 }
-type Unit = { unit: string; bedrooms?: number | null; hub?: string; sameDay?: boolean }
+type Unit = { unit: string; listingId?: string; bedrooms?: number | null; hub?: string; sameDay?: boolean; assigned?: string[] }
+type HK = { id: string; name: string }
 
 const DEFAULT_RATE: Record<string, number> = { Miami: 5, Broward: 4, North: 4 }
 const MARKETS = ['Miami', 'Broward', 'North']
@@ -62,6 +63,8 @@ export function ForecastBoard() {
   const [open, setOpen] = useState('') // `${date}__${market}__${kind}` for the drill-down panel
   const [units, setUnits] = useState<Record<string, Unit[]>>({}) // `${date}__${market}` -> our cleans
   const [vendorUnits, setVendorUnits] = useState<Record<string, Unit[]>>({})
+  const [hkPeople, setHkPeople] = useState<HK[]>([])
+  const [assignState, setAssignState] = useState<Record<string, 'idle' | 'saving' | 'done' | 'err'>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const dirty = useRef(false)
@@ -103,15 +106,22 @@ export function ForecastBoard() {
             const key = `${dt}__${mkt}`
             for (const c of arr) {
               const unit = c?.unit || c?.name || c?.listingName || c?.title || 'Unit'
-              const rec: Unit = { unit, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay }
+              const an0 = Array.isArray(c?.assignedNames) ? c.assignedNames : []
+              const rec: Unit = { unit, listingId: c?.listingId || c?.listing_id || c?._id, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay, assigned: an0 }
               if (VENDOR.test(String(unit)) || c?.vendor) (vend[key] ||= []).push(rec)
               else (ours[key] ||= []).push(rec)
-                ;(Array.isArray(c?.assignedNames) ? c.assignedNames : []).forEach((n: string) => n && names.add(n))
+              an0.forEach((n: string) => { if (n) names.add(n) })
             }
           }
         }
         setUnits(ours); setVendorUnits(vend)
         if (names.size) setHk(Array.from(names).sort())
+        const hp: HK[] = Array.isArray(j?.housekeepers)
+          ? j.housekeepers
+              .map((h: any) => ({ id: String(h?.id ?? h?._id ?? h?.userId ?? ''), name: h?.name ?? h?.fullName ?? '' }))
+              .filter((h: HK) => h.id && h.name)
+          : []
+        if (hp.length) setHkPeople(hp)
       })
       .catch(() => {})
   }, [weekStart])
@@ -171,6 +181,24 @@ export function ForecastBoard() {
         return next
       })
     })
+  }
+
+  // Assign a cleaner to a clean and push it to Breezeway (reuses the schedule board's endpoint).
+  async function assignUnit(u: Unit, date: string, personId: string) {
+    if (!u.listingId || !personId) return
+    const k = `${u.listingId}__${date}`
+    setAssignState(a => ({ ...a, [k]: 'saving' }))
+    try {
+      const r = await fetch('/api/schedule/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId: u.listingId, date, assigneeIds: [personId] }),
+      })
+      const j = await r.json().catch(() => ({}))
+      setAssignState(a => ({ ...a, [k]: j && j.ok === false ? 'err' : 'done' }))
+    } catch {
+      setAssignState(a => ({ ...a, [k]: 'err' }))
+    }
   }
 
   const days = data?.week || []
@@ -347,15 +375,39 @@ export function ForecastBoard() {
           {openUnits.length === 0 ? (
             <div className="text-sm text-neutral-400">No unit detail available for this day.</div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {openUnits.map((u, i) => (
-                <div key={i} className="text-xs px-2 py-1.5 rounded border border-neutral-100 bg-neutral-50 flex items-center justify-between">
-                  <span className="text-neutral-800 truncate">{u.unit}</span>
-                  <span className="text-neutral-400 ml-2 shrink-0">
-                    {u.bedrooms != null ? `${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}
-                  </span>
-                </div>
-              ))}
+            <div className="space-y-1">
+              {openUnits.map((u, i) => {
+                const isVendor = open.endsWith('__vendor')
+                const od = open.split('__')[0]
+                const st = u.listingId ? assignState[`${u.listingId}__${od}`] : undefined
+                return (
+                  <div key={i} className="text-xs px-2 py-1.5 rounded border border-neutral-100 bg-neutral-50 flex items-center gap-2">
+                    <span className="text-neutral-800 truncate flex-1">{u.unit}</span>
+                    <span className="text-neutral-400 shrink-0">
+                      {u.bedrooms != null ? `${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}
+                    </span>
+                    {!isVendor && u.assigned && u.assigned.length > 0 && (
+                      <span className="text-green-700 shrink-0 truncate max-w-[130px]" title={u.assigned.join(', ')}>{u.assigned.join(', ')}</span>
+                    )}
+                    {!isVendor && u.listingId && hkPeople.length > 0 && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <select
+                          defaultValue=""
+                          onChange={e => { const v = e.target.value; if (v) assignUnit(u, od, v) }}
+                          className="text-xs rounded border border-neutral-200 px-1 py-0.5 bg-white cursor-pointer"
+                          title="Assign a cleaner — pushes to Breezeway"
+                        >
+                          <option value="">Assign…</option>
+                          {hkPeople.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                        </select>
+                        {st === 'saving' && <Loader2 size={12} className="animate-spin text-neutral-400" />}
+                        {st === 'done' && <Check size={12} className="text-green-600" />}
+                        {st === 'err' && <span className="text-rose-600 font-semibold">!</span>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
