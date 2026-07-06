@@ -81,6 +81,12 @@ export function ForecastBoard() {
               <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Cleans</td>
               {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[16px] font-bold text-ink">{d.actual[market]}</td>))}
             </tr>
+            {data.week.some(d => (((d.vendor && d.vendor[market]) || 0) > 0)) && (
+            <tr className="text-center">
+              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-medium tracking-wide text-neutral-400">Botanica <span className="text-neutral-300">(vendor · not staffed)</span></td>
+              {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[12px] text-neutral-400">{(d.vendor && d.vendor[market]) || 0}</td>))}
+            </tr>
+            )}
             <tr className="text-center">
               <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Cleaners needed</td>
               {days.map(d => { const needed = rateM > 0 ? Math.ceil(d.actual[market] / rateM) : 0; return (<td key={d.date} className="border-l border-t border-neutral-100 p-1"><span className="inline-flex items-center rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-semibold text-white">{needed}</span></td>) })}
