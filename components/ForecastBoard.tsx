@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, UploadCloud } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, UploadCloud, Sparkles } from 'lucide-react'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[] }
@@ -10,6 +10,12 @@ type Pending = { listingId: string; date: string; id: string; name: string }
 
 const DEFAULT_RATE: Record<string, number> = { Miami: 5, Broward: 4, North: 4 }
 const MARKETS = ['Miami', 'Broward', 'North']
+// Default cleaner roster per market (from ops' weekly sheet). Generate seeds these.
+const BROWARD_TEAM = ['Roberto', 'Guillermo', 'Maribel', 'Vilma', 'Miriam', 'Kenia', 'Paola', 'Yessica', 'Maryurie', 'Eber', 'Leydi']
+const MIAMI_TEAM = ['Roberto', 'Yoslenis', 'Ernesto', 'George', 'Maraly', 'Abel', 'Elyani', 'Monica', 'Yaribel', 'Alejandro', 'Dayrene', 'Michael', 'Shaany', 'Helem', 'Yunisleydis', 'Yaneisis', 'Mileydis', 'Fernanda']
+const DEFAULT_TEAM: Record<string, string[]> = { Miami: MIAMI_TEAM, Broward: BROWARD_TEAM, North: [] }
+// Non-cleaners (supervisor/ops) — on the roster but NOT counted toward cleaners needed.
+const NON_CLEANERS: Record<string, string> = { Guillermo: 'supervisor', Roberto: 'ops', Yoslenis: 'supervisor', George: 'handyman', Ernesto: 'handyman' }
 const STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
 // Vendor-cleaned buildings (hotel/vendor staff) — not our cleaners. Mirrors the forecast API.
 const VENDOR = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
@@ -189,6 +195,26 @@ export function ForecastBoard() {
     })
   }
 
+  // Seed this week's roster from the market's default team; drafts everyone Working on empty days.
+  function generateWeek() {
+    const team = DEFAULT_TEAM[market] || []
+    const all = Array.from(new Set([...members, ...team]))
+    if (!all.length) return
+    mutate(() => {
+      setMembers(all)
+      setCells(c => {
+        const next = { ...c }
+        for (const mem of all) {
+          for (const d of days) {
+            const k = `${mem}__${d.date}`
+            if (!next[k]) next[k] = 'Working'
+          }
+        }
+        return next
+      })
+    })
+  }
+
   // Staged, not pushed — assignments wait in the scheduler until you hit "Push to Breezeway".
   function stageAssign(u: Unit, date: string, id: string) {
     if (!u.listingId || !id) return
@@ -220,7 +246,7 @@ export function ForecastBoard() {
 
   const days = data?.week || []
   const rateM = rate[market] || 0
-  const workingOn = (date: string) => members.filter(m => /work/i.test(cells[`${m}__${date}`] || '')).length
+  const workingOn = (date: string) => members.filter(m => !NON_CLEANERS[m] && /work/i.test(cells[`${m}__${date}`] || '')).length
   const needOn = (d: Day) => rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) / rateM) : 0
   const feeOn = (date: string) => (feeByDate[date] && feeByDate[date][market]) || 0
   const selUnits = selDate ? (units[`${selDate}__${market}`] || []) : []
@@ -245,6 +271,7 @@ export function ForecastBoard() {
               <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 text-sm font-medium capitalize ${view === v ? 'bg-neutral-100 text-neutral-900' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>{v}</button>
             ))}
           </div>
+          <button onClick={generateWeek} title="Seed this week from the default team" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate</button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={() => data && setWeekStart(data.prevWeekStart)} className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronLeft size={16} /></button>
@@ -287,7 +314,7 @@ export function ForecastBoard() {
                   <td className="px-3 py-1.5 text-left sticky left-0 bg-white">
                     <div className="flex items-center gap-1.5">
                       <button onClick={() => removeMember(mem)} className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={12} /></button>
-                      <span className="font-medium text-neutral-800">{shortName(mem)}</span>
+                      <span className="font-medium text-neutral-800">{shortName(mem)}{NON_CLEANERS[mem] && <span className="text-neutral-400 text-[11px] font-normal"> · {NON_CLEANERS[mem]}</span>}</span>
                     </div>
                   </td>
                   {days.map(d => {
@@ -352,7 +379,7 @@ export function ForecastBoard() {
                     return (
                       <div key={mem} className="flex items-center gap-2 group">
                         <button onClick={() => removeMember(mem)} className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={12} /></button>
-                        <span className="flex-1 text-sm text-neutral-800">{shortName(mem)}</span>
+                        <span className="flex-1 text-sm text-neutral-800">{shortName(mem)}{NON_CLEANERS[mem] && <span className="text-neutral-400 text-[11px]"> · {NON_CLEANERS[mem]}</span>}</span>
                         <select value={v} onChange={e => setCell(mem, selDate, e.target.value)} className={`text-xs rounded-full px-2.5 py-1 border-0 cursor-pointer font-medium ${statusChip(v)}`}>
                           <option value="">— set —</option>
                           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -388,24 +415,31 @@ export function ForecastBoard() {
                     const pend = pending[key]
                     const isAssigned = !!(u.assigned && u.assigned.length > 0)
                     const st = u.listingId ? assignState[key] : undefined
+                    const display = pend ? shortName(pend.name) : (u.assigned || []).map(shortName).join(', ')
+                    const settled = isAssigned || st === 'done'
                     return (
-                      <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${pend ? 'bg-amber-50' : isAssigned || st === 'done' ? '' : 'bg-rose-50'}`}>
+                      <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${pend ? 'bg-amber-50' : settled ? '' : 'bg-rose-50'}`}>
                         <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}</span></span>
-                        {pend ? (
-                          <span className="text-xs text-amber-700 shrink-0 flex items-center gap-1">→ {shortName(pend.name)}<button onClick={() => unstage(key)} className="text-amber-400 hover:text-amber-700"><X size={11} /></button></span>
-                        ) : (
-                          <div className="flex items-center gap-1 shrink-0">
-                            {(isAssigned || st === 'done') && <span className="text-xs text-green-700 truncate max-w-[110px] flex items-center gap-1"><Check size={12} />{(u.assigned || []).map(shortName).join(', ') || 'Pushed'}</span>}
-                            {u.listingId && hkPeople.length > 0 && st !== 'saving' && (
-                              <select defaultValue="" onChange={e => { const v = e.target.value; if (v) stageAssign(u, selDate, v) }} className="text-xs rounded-full border border-neutral-200 px-2 py-0.5 bg-white cursor-pointer" title="Stage a cleaner (push later)">
-                                <option value="">{isAssigned ? 'Change…' : 'Assign…'}</option>
-                                {hkPeople.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-                              </select>
-                            )}
-                            {st === 'saving' && <Loader2 size={12} className="animate-spin text-neutral-400" />}
-                            {st === 'err' && <span className="text-rose-600 font-semibold">!</span>}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {u.listingId && hkPeople.length > 0 && st !== 'saving' ? (
+                            <select
+                              value={display ? '__cur__' : ''}
+                              onChange={e => { const val = e.target.value; if (val && val !== '__cur__') stageAssign(u, selDate, val) }}
+                              className={`text-xs rounded-full border px-2.5 py-1 cursor-pointer max-w-[150px] font-medium ${pend ? 'border-amber-300 bg-amber-50 text-amber-800' : display ? 'border-green-200 bg-green-50 text-green-800' : 'border-neutral-200 bg-white text-neutral-600'}`}
+                              title="Assign or change cleaner — pushes on your command"
+                            >
+                              {display && <option value="__cur__">{display}{pend ? ' • staged' : ''}</option>}
+                              <option value="">{display ? 'Change…' : 'Assign…'}</option>
+                              {hkPeople.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                            </select>
+                          ) : settled ? (
+                            <span className="text-xs text-green-700 truncate max-w-[140px] flex items-center gap-1"><Check size={12} />{display || 'Pushed'}</span>
+                          ) : null}
+                          {pend && <button onClick={() => unstage(key)} title="Remove staged cleaner" className="text-amber-400 hover:text-amber-700"><X size={12} /></button>}
+                          {st === 'saving' && <Loader2 size={12} className="animate-spin text-neutral-400" />}
+                          {st === 'done' && <Check size={12} className="text-green-600" />}
+                          {st === 'err' && <span className="text-rose-600 font-semibold">!</span>}
+                        </div>
                       </div>
                     )
                   })}
