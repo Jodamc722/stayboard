@@ -62,6 +62,7 @@ export function ForecastBoard() {
   const [assignState, setAssignState] = useState<Record<string, 'idle' | 'saving' | 'done' | 'err'>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [feeByDate, setFeeByDate] = useState<Record<string, Record<string, number>>>({})
+  const [cleanTab, setCleanTab] = useState<'ours' | 'vendor'>('ours')
   const dirty = useRef(false)
   const loadKey = useRef('')
 
@@ -369,13 +370,18 @@ export function ForecastBoard() {
               </div>
 
               <div className="rounded-xl border border-neutral-200 bg-white p-3.5">
-                <div className="flex items-center justify-between mb-2.5">
-                  <div className="text-sm font-semibold text-neutral-800">Cleans — {selUnits.length}{feeOn(selDate) > 0 && <span className="font-normal text-emerald-600"> · {money(feeOn(selDate))} cleaning fees</span>}</div>
-                  {unassignedCount > 0
-                    ? <div className="text-xs text-rose-600 flex items-center gap-1"><AlertTriangle size={12} />{unassignedCount} unassigned</div>
-                    : <div className="text-xs text-green-600">all assigned</div>}
+                <div className="flex items-center justify-between mb-2.5 gap-2 flex-wrap">
+                  <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden text-sm">
+                    <button onClick={() => setCleanTab('ours')} className={`px-3 py-1 font-medium ${cleanTab === 'ours' ? 'bg-neutral-100 text-neutral-900' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>Cleans {selUnits.length}</button>
+                    <button onClick={() => setCleanTab('vendor')} className={`px-3 py-1 font-medium ${cleanTab === 'vendor' ? 'bg-amber-100 text-amber-800' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>Vendor {selVendor.length}</button>
+                  </div>
+                  {cleanTab === 'ours'
+                    ? (unassignedCount > 0
+                        ? <div className="text-xs text-rose-600 flex items-center gap-1"><AlertTriangle size={12} />{unassignedCount} unassigned{feeOn(selDate) > 0 && <span className="text-emerald-600 ml-1">· {money(feeOn(selDate))}</span>}</div>
+                        : <div className="text-xs text-green-600">all assigned{feeOn(selDate) > 0 && <span className="text-emerald-600 ml-1">· {money(feeOn(selDate))}</span>}</div>)
+                    : <div className="text-xs text-amber-600">vendor-cleaned · not staffed</div>}
                 </div>
-                <div className="space-y-1.5 max-h-[420px] overflow-auto">
+                <div className={`space-y-1.5 max-h-[420px] overflow-auto ${cleanTab === 'ours' ? '' : 'hidden'}`}>
                   {selUnits.length === 0 && <div className="text-xs text-neutral-400 py-2">No cleans booked this day.</div>}
                   {selUnits.map((u, i) => {
                     const key = `${u.listingId}__${selDate}`
@@ -404,7 +410,16 @@ export function ForecastBoard() {
                     )
                   })}
                 </div>
-                <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-neutral-100">
+                <div className={`space-y-1.5 max-h-[420px] overflow-auto ${cleanTab === 'vendor' ? '' : 'hidden'}`}>
+                  {selVendor.length === 0 && <div className="text-xs text-neutral-400 py-2">No vendor cleans this day.</div>}
+                  {selVendor.map((u, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 bg-amber-50">
+                      <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}</span></span>
+                      <span className="text-[11px] text-amber-700 shrink-0">vendor</span>
+                    </div>
+                  ))}
+                </div>
+                <div className={`flex items-center justify-between gap-2 mt-2 pt-2 border-t border-neutral-100 ${cleanTab === 'ours' ? '' : 'hidden'}`}>
                   <span className="text-[11px] text-amber-600">{pendingDay > 0 ? `${pendingDay} staged — not pushed yet` : selVendor.length > 0 ? `+ ${selVendor.length} vendor (not staffed)` : 'Assign, then push when ready'}</span>
                   <button onClick={() => pushDay(selDate)} disabled={pendingDay === 0} className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium ${pendingDay > 0 ? 'bg-neutral-900 text-white hover:bg-neutral-700' : 'bg-neutral-100 text-neutral-400 cursor-not-allowed'}`}><UploadCloud size={13} />Push{pendingDay > 0 ? ` ${pendingDay}` : ''} to Breezeway</button>
                 </div>
