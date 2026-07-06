@@ -1,13 +1,35 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2 } from 'lucide-react'
 
-type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday: boolean; isPast: boolean }
-type FC = { ok: boolean; today: string; histDays: number; markets: string[]; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; avgByMarketDow: Record<string, number[]>; week: Day[] }
+type Day = {
+  date: string
+  dow: number
+  day: string
+  actual: Record<string, number>
+  vendor: Record<string, number>
+  isToday?: boolean
+  isPast?: boolean
+}
+type FC = {
+  ok: boolean
+  today: string
+  weekStart: string
+  weekEnd: string
+  prevWeekStart: string
+  nextWeekStart: string
+  isCurrentWeek: boolean
+  dayLabels?: string[]
+  week: Day[]
+}
+type Unit = { unit: string; bedrooms?: number | null; hub?: string; sameDay?: boolean }
 
 const DEFAULT_RATE: Record<string, number> = { Miami: 5, Broward: 4, North: 4 }
-const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-function fmtRange(a: string, b: string) { const da = new Date(a + 'T12:00:00'), db = new Date(b + 'T12:00:00'); return MON[da.getMonth()] + ' ' + da.getDate() + ' – ' + MON[db.getMonth()] + ' ' + db.getDate() }
+const MARKETS = ['Miami', 'Broward', 'North']
+const STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
+// Vendor-cleaned buildings (hotel/vendor staff) — not our cleaners. Mirrors the forecast API.
+const VENDOR = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 function cellClass(v: string) {
   const s = (v || '').toLowerCase()
@@ -15,106 +37,333 @@ function cellClass(v: string) {
   if (/on\s*call/.test(s)) return 'bg-yellow-200 text-yellow-900'
   if (/\boff\b/.test(s)) return 'bg-orange-100 text-orange-800'
   if (/work/.test(s)) return 'bg-green-100 text-green-800'
-  if (s.trim()) return 'bg-white text-ink'
-  return 'bg-white'
+  return 'bg-white text-neutral-700'
+}
+function fmtRange(a: string, b: string) {
+  if (!a || !b) return ''
+  const da = new Date(a + 'T12:00:00'), db = new Date(b + 'T12:00:00')
+  return `${MON[da.getMonth()]} ${da.getDate()} – ${MON[db.getMonth()]} ${db.getDate()}`
+}
+function shortDate(d: string) {
+  const dt = new Date(d + 'T12:00:00')
+  return `${MON[dt.getMonth()]} ${dt.getDate()}`
 }
 
-export function ForecastBoard() {
+export default function ForecastBoard() {
   const [data, setData] = useState<FC | null>(null)
   const [err, setErr] = useState('')
   const [weekStart, setWeekStart] = useState('')
   const [market, setMarket] = useState('Miami')
-  const [rate, setRate] = useState<Record<string, number>>(DEFAULT_RATE)
+  const [rate, setRate] = useState<Record<string, number>>({ ...DEFAULT_RATE })
   const [hk, setHk] = useState<string[]>([])
-  const [members, setMembers] = useState<Record<string, string[]>>({ Miami: [], Broward: [], North: [] })
-  const [cells, setCells] = useState<Record<string, Record<string, Record<string, string>>>>({ Miami: {}, Broward: {}, North: {} })
+  const [members, setMembers] = useState<string[]>([])
+  const [cells, setCells] = useState<Record<string, string>>({})
   const [newName, setNewName] = useState('')
+  const [open, setOpen] = useState('') // `${date}__${market}__${kind}` for the drill-down panel
+  const [units, setUnits] = useState<Record<string, Unit[]>>({}) // `${date}__${market}` -> our cleans
+  const [vendorUnits, setVendorUnits] = useState<Record<string, Unit[]>>({})
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
+  const dirty = useRef(false)
+  const loadKey = useRef('')
+
+  // ---- forecast (counts) ----
   useEffect(() => {
-    const url = '/api/schedule/forecast' + (weekStart ? ('?weekStart=' + weekStart) : '')
-    fetch(url).then(r => r.json()).then((j: FC) => { if (!j.ok) { setErr((j as any).error || 'Failed'); return } setData(j) }).catch(e => setErr(String(e)))
+    const url = '/api/schedule/forecast' + (weekStart ? '?weekStart=' + weekStart : '')
+    fetch(url)
+      .then(r => r.json())
+      .then((j: FC) => {
+        if (!j || !j.ok) { setErr('Could not load forecast'); return }
+        setData(j); setErr('')
+        if (!weekStart) setWeekStart(j.weekStart)
+      })
+      .catch(() => setErr('Could not load forecast'))
   }, [weekStart])
 
+  // ---- actual cleans (drill-down) + housekeeper picklist, from the same week data ----
   useEffect(() => {
-    fetch('/api/schedule?view=week').then(r => r.json()).then(j => {
-      const names = (j.housekeepers || []).map((h: any) => (h && h.name) ? h.name : h).filter(Boolean)
-      setHk(Array.from(new Set(names)).sort() as string[])
-    }).catch(() => {})
-  }, [])
+    const u = '/api/schedule?view=week' + (weekStart ? '&date=' + weekStart : '')
+    fetch(u)
+      .then(r => r.json())
+      .then((j: any) => {
+        const days: any[] = Array.isArray(j?.days) ? j.days : []
+        const ours: Record<string, Unit[]> = {}
+        const vend: Record<string, Unit[]> = {}
+        const names = new Set<string>()
+        for (const day of days) {
+          const dt: string = day?.date
+          if (!dt) continue
+          const mk = day?.markets || {}
+          const entries: [string, any][] = Array.isArray(mk)
+            ? mk.map((x: any) => [x.market || x.name, x.cleans || x.items || x])
+            : Object.entries(mk).map(([k, v]: any) => [k, (v && (v.cleans || v.items)) || v])
+          for (const [mkt, raw] of entries) {
+            if (!MARKETS.includes(mkt)) continue
+            const arr: any[] = Array.isArray(raw) ? raw : []
+            const key = `${dt}__${mkt}`
+            for (const c of arr) {
+              const unit = c?.unit || c?.name || c?.listingName || c?.title || 'Unit'
+              const rec: Unit = { unit, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay }
+              if (VENDOR.test(String(unit)) || c?.vendor) (vend[key] ||= []).push(rec)
+              else (ours[key] ||= []).push(rec)
+                ;(Array.isArray(c?.assignedNames) ? c.assignedNames : []).forEach((n: string) => n && names.add(n))
+            }
+          }
+        }
+        setUnits(ours); setVendorUnits(vend)
+        if (names.size) setHk(Array.from(names).sort())
+      })
+      .catch(() => {})
+  }, [weekStart])
 
-  if (err) return <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Error: {err}</div>
-  if (!data) return <div className="p-4 text-sm text-muted">Loading…</div>
+  // ---- load saved schedule for this week + market ----
+  useEffect(() => {
+    if (!weekStart) return
+    const key = `${weekStart}__${market}`
+    loadKey.current = key
+    fetch(`/api/schedule/team?weekStart=${encodeURIComponent(weekStart)}&market=${encodeURIComponent(market)}`)
+      .then(r => r.json())
+      .then((j: any) => {
+        if (loadKey.current !== key) return
+        const doc = j?.doc || {}
+        setMembers(Array.isArray(doc.members) ? doc.members : [])
+        setCells(doc.cells && typeof doc.cells === 'object' ? doc.cells : {})
+        if (typeof doc.rate === 'number' && doc.rate > 0) setRate(r => ({ ...r, [market]: doc.rate }))
+        dirty.current = false
+        setSaveState('idle')
+      })
+      .catch(() => { setMembers([]); setCells({}); dirty.current = false })
+  }, [weekStart, market])
 
-  const days = data.week
-  const rateM = rate[market] || 4
-  const setCell = (name: string, date: string, val: string) => setCells(prev => ({ ...prev, [market]: { ...prev[market], [name]: { ...(prev[market]?.[name] || {}), [date]: val } } }))
-  const addMember = (name: string) => { const n = name.trim(); if (!n) return; setMembers(prev => (prev[market].includes(n) ? prev : { ...prev, [market]: [...prev[market], n] })); setNewName('') }
-  const removeMember = (name: string) => setMembers(prev => ({ ...prev, [market]: prev[market].filter(x => x !== name) }))
-  const roster = members[market] || []
+  // ---- auto-save (debounced) when the user edits ----
+  useEffect(() => {
+    if (!weekStart || !dirty.current) return
+    setSaveState('saving')
+    const t = setTimeout(() => {
+      fetch('/api/schedule/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekStart, market, doc: { members, cells, rate: rate[market] } }),
+      })
+        .then(r => r.json())
+        .then((j: any) => { setSaveState(j?.ok ? 'saved' : 'error'); dirty.current = false })
+        .catch(() => setSaveState('error'))
+    }, 700)
+    return () => clearTimeout(t)
+  }, [members, cells, rate, weekStart, market])
+
+  function mutate(fn: () => void) { dirty.current = true; fn() }
+  function setCell(member: string, date: string, val: string) {
+    mutate(() => setCells(c => ({ ...c, [`${member}__${date}`]: val })))
+  }
+  function addMember(name: string) {
+    const n = name.trim()
+    if (!n || members.includes(n)) return
+    mutate(() => setMembers(m => [...m, n]))
+    setNewName('')
+  }
+  function removeMember(name: string) {
+    mutate(() => {
+      setMembers(m => m.filter(x => x !== name))
+      setCells(c => {
+        const next: Record<string, string> = {}
+        for (const k in c) if (!k.startsWith(name + '__')) next[k] = c[k]
+        return next
+      })
+    })
+  }
+
+  const days = data?.week || []
+  const rateM = rate[market] || 0
+  const hasVendor = days.some(d => ((d.vendor && d.vendor[market]) || 0) > 0)
+  const openUnits = open
+    ? (open.endsWith('__vendor') ? vendorUnits[open.replace('__vendor', '')] : units[open.replace('__actual', '')]) || []
+    : []
 
   return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1">
-          {data.markets.map(m => (
-            <button key={m} onClick={() => setMarket(m)} className={'rounded-md px-3 py-1.5 text-sm font-semibold ' + (market === m ? 'bg-white text-ink shadow-sm' : 'text-neutral-500 hover:text-ink')}>{m}</button>
+    <div className="space-y-3">
+      {/* market tabs + save status */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden">
+          {MARKETS.map(m => (
+            <button
+              key={m}
+              onClick={() => { setOpen(''); setMarket(m) }}
+              className={`px-4 py-1.5 text-sm font-medium ${market === m ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}
+            >{m}</button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setWeekStart(data.prevWeekStart)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50"><ChevronLeft size={16} /></button>
-          <div className="min-w-[150px] text-center"><div className="text-sm font-semibold text-ink">{fmtRange(data.weekStart, data.weekEnd)}</div><div className="text-[11px] text-muted">{data.isCurrentWeek ? 'This week · Sun–Sat' : 'Sun–Sat'}</div></div>
-          <button onClick={() => setWeekStart(data.nextWeekStart)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50"><ChevronRight size={16} /></button>
-          {!data.isCurrentWeek && <button onClick={() => setWeekStart('')} className="ml-1 text-xs text-neutral-500 underline hover:text-black">This week</button>}
+        <div className="text-xs text-neutral-500 flex items-center gap-1.5">
+          {saveState === 'saving' && (<><Loader2 size={13} className="animate-spin" /> Saving…</>)}
+          {saveState === 'saved' && (<><Check size={13} className="text-green-600" /> Saved</>)}
+          {saveState === 'error' && (<span className="text-rose-600">Save failed</span>)}
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
+      {/* week nav */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => { setOpen(''); data && setWeekStart(data.prevWeekStart) }} className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronLeft size={16} /></button>
+        <div className="text-sm font-semibold text-neutral-800 min-w-[150px] text-center">{data ? fmtRange(data.weekStart, data.weekEnd) : '…'}</div>
+        <button onClick={() => { setOpen(''); data && setWeekStart(data.nextWeekStart) }} className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronRight size={16} /></button>
+        {data && !data.isCurrentWeek && (
+          <button onClick={() => { setOpen(''); setWeekStart('') }} className="text-xs px-2 py-1 rounded border border-neutral-200 hover:bg-neutral-50">This week</button>
+        )}
+        <div className="ml-auto flex items-center gap-1.5 text-xs text-neutral-500">
+          <span>{market} cleans / cleaner</span>
+          <input
+            type="number" min={1} value={rateM}
+            onChange={e => mutate(() => setRate(r => ({ ...r, [market]: Math.max(1, Number(e.target.value) || 1) })))}
+            className="w-14 px-1.5 py-1 rounded border border-neutral-200 text-center"
+          />
+        </div>
+      </div>
+
+      {err && <div className="text-sm text-rose-600">{err}</div>}
+
+      {/* grid */}
+      <div className="overflow-x-auto rounded-lg border border-neutral-200">
+        <table className="w-full text-sm">
           <thead>
-            <tr>
-              <th className="sticky left-0 z-10 bg-neutral-50 p-2 text-left text-xs font-semibold text-muted">{market} team</th>
+            <tr className="bg-neutral-50 text-neutral-500">
+              <th className="text-left font-medium px-3 py-2 sticky left-0 bg-neutral-50 min-w-[150px]">Team member</th>
               {days.map(d => (
-                <th key={d.date} className={'border-l border-neutral-100 p-2 text-center ' + (d.isToday ? 'bg-sky-50' : 'bg-neutral-50')}><div className="text-xs font-semibold text-ink">{d.day}</div><div className="text-[11px] text-muted">{d.date.slice(5)}</div></th>
+                <th key={d.date} className={`px-2 py-2 text-center font-medium ${d.isToday ? 'text-neutral-900' : ''}`}>
+                  <div>{d.day}</div>
+                  <div className="text-[11px] font-normal text-neutral-400">{shortDate(d.date)}</div>
+                </th>
               ))}
-            </tr>
-            <tr className="text-center">
-              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Cleans</td>
-              {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[16px] font-bold text-ink">{d.actual[market]}</td>))}
-            </tr>
-            {data.week.some(d => (((d.vendor && d.vendor[market]) || 0) > 0)) && (
-            <tr className="text-center">
-              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-medium tracking-wide text-neutral-400">Botanica <span className="text-neutral-300">(vendor · not staffed)</span></td>
-              {days.map(d => (<td key={d.date} className="border-l border-t border-neutral-100 p-1.5 text-[12px] text-neutral-400">{(d.vendor && d.vendor[market]) || 0}</td>))}
-            </tr>
-            )}
-            <tr className="text-center">
-              <td className="sticky left-0 z-10 bg-white p-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">Cleaners needed</td>
-              {days.map(d => { const needed = rateM > 0 ? Math.ceil(d.actual[market] / rateM) : 0; return (<td key={d.date} className="border-l border-t border-neutral-100 p-1"><span className="inline-flex items-center rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-semibold text-white">{needed}</span></td>) })}
             </tr>
           </thead>
           <tbody>
-            {roster.map(name => (
-              <tr key={name} className="border-t border-neutral-100">
-                <td className="group sticky left-0 z-10 bg-white p-2 text-left font-medium text-ink"><span className="flex items-center justify-between gap-2">{name}<button onClick={() => removeMember(name)} className="text-neutral-300 hover:text-red-500"><X size={13} /></button></span></td>
-                {days.map(d => (
-                  <td key={d.date} className="border-l border-neutral-100 p-0"><select value={cells[market]?.[name]?.[d.date] || ''} onChange={e => setCell(name, d.date, e.target.value)} className={'w-full min-w-[104px] cursor-pointer appearance-none border-0 px-2 py-2 text-center text-[13px] font-medium outline-none focus:ring-1 focus:ring-sky-300 ' + cellClass(cells[market]?.[name]?.[d.date] || '')}><option value="">—</option><option value="Working">Working</option><option value="On Call">On Call</option><option value="OFF">OFF</option><option value="REQ OFF">REQ OFF</option></select></td>
-                ))}
+            {/* Cleans (booked) — click to see the actual units */}
+            <tr className="border-t border-neutral-200 bg-white">
+              <td className="px-3 py-2 text-left text-neutral-500 sticky left-0 bg-white">Cleans (booked)</td>
+              {days.map(d => {
+                const n = (d.actual && d.actual[market]) || 0
+                const k = `${d.date}__${market}__actual`
+                return (
+                  <td key={d.date} className="px-2 py-1.5 text-center">
+                    <button
+                      onClick={() => setOpen(open === k ? '' : k)}
+                      disabled={n === 0}
+                      className={`min-w-[34px] px-2 py-1 rounded font-semibold ${n === 0 ? 'text-neutral-300' : open === k ? 'bg-neutral-900 text-white' : 'text-neutral-900 hover:bg-neutral-100'}`}
+                      title={n ? 'Click to see the units' : ''}
+                    >{n}</button>
+                  </td>
+                )
+              })}
+            </tr>
+
+            {/* Vendor (not staffed) */}
+            {hasVendor && (
+              <tr className="border-t border-neutral-100 bg-white">
+                <td className="px-3 py-2 text-left text-neutral-400 sticky left-0 bg-white">Vendor <span className="text-neutral-300">(not staffed)</span></td>
+                {days.map(d => {
+                  const n = (d.vendor && d.vendor[market]) || 0
+                  const k = `${d.date}__${market}__vendor`
+                  return (
+                    <td key={d.date} className="px-2 py-1.5 text-center">
+                      <button
+                        onClick={() => setOpen(open === k ? '' : k)}
+                        disabled={n === 0}
+                        className={`min-w-[34px] px-2 py-1 rounded text-amber-700 ${n === 0 ? 'text-neutral-300' : open === k ? 'bg-amber-500 text-white' : 'hover:bg-amber-50'}`}
+                      >{n}</button>
+                    </td>
+                  )
+                })}
+              </tr>
+            )}
+
+            {/* Cleaners needed */}
+            <tr className="border-t border-neutral-100 bg-neutral-50/60">
+              <td className="px-3 py-2 text-left font-medium text-neutral-700 sticky left-0 bg-neutral-50/60">Cleaners needed</td>
+              {days.map(d => {
+                const n = (d.actual && d.actual[market]) || 0
+                const need = rateM > 0 ? Math.ceil(n / rateM) : 0
+                return <td key={d.date} className="px-2 py-2 text-center font-semibold text-neutral-900">{need || '—'}</td>
+              })}
+            </tr>
+
+            {/* spacer */}
+            <tr><td colSpan={days.length + 1} className="py-1 bg-white"></td></tr>
+
+            {/* team members */}
+            {members.map(mem => (
+              <tr key={mem} className="border-t border-neutral-100 group">
+                <td className="px-3 py-1.5 text-left sticky left-0 bg-white">
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => removeMember(mem)} className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={13} /></button>
+                    <span className="font-medium text-neutral-800">{mem}</span>
+                  </div>
+                </td>
+                {days.map(d => {
+                  const v = cells[`${mem}__${d.date}`] || ''
+                  return (
+                    <td key={d.date} className="px-1 py-1 text-center">
+                      <select
+                        value={v}
+                        onChange={e => setCell(mem, d.date, e.target.value)}
+                        className={`w-full text-xs rounded px-1 py-1 border-0 cursor-pointer ${cellClass(v)}`}
+                      >
+                        <option value="">—</option>
+                        {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                  )
+                })}
               </tr>
             ))}
-            {roster.length === 0 && (<tr><td colSpan={8} className="p-4 text-center text-sm text-muted">No team members yet — add people below.</td></tr>)}
+
+            {/* add member */}
+            <tr className="border-t border-neutral-100 bg-white">
+              <td className="px-3 py-2 sticky left-0 bg-white" colSpan={days.length + 1}>
+                <div className="flex items-center gap-2">
+                  <input
+                    list="hk-list" value={newName}
+                    onChange={e => setNewName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addMember(newName) }}
+                    placeholder="Add team member…"
+                    className="text-sm px-2 py-1 rounded border border-neutral-200 w-52"
+                  />
+                  <datalist id="hk-list">{hk.map(n => <option key={n} value={n} />)}</datalist>
+                  <button onClick={() => addMember(newName)} className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded bg-neutral-900 text-white hover:bg-neutral-700"><Plus size={14} /> Add</button>
+                </div>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <input list="hk-list" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addMember(newName) }} placeholder={'Add to ' + market + '…'} className="w-56 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm" />
-          <datalist id="hk-list">{hk.map(n => <option key={n} value={n} />)}</datalist>
-          <button onClick={() => addMember(newName)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-white"><Plus size={14} /> Add</button>
+      {/* drill-down panel */}
+      {open && (
+        <div className="rounded-lg border border-neutral-200 bg-white p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-semibold text-neutral-800">
+              {open.endsWith('__vendor') ? 'Vendor cleans' : 'Cleans'} · {market} · {shortDate(open.split('__')[0])}
+              <span className="text-neutral-400 font-normal"> · {openUnits.length} unit{openUnits.length === 1 ? '' : 's'}</span>
+            </div>
+            <button onClick={() => setOpen('')} className="text-neutral-400 hover:text-neutral-700"><X size={15} /></button>
+          </div>
+          {openUnits.length === 0 ? (
+            <div className="text-sm text-neutral-400">No unit detail available for this day.</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {openUnits.map((u, i) => (
+                <div key={i} className="text-xs px-2 py-1.5 rounded border border-neutral-100 bg-neutral-50 flex items-center justify-between">
+                  <span className="text-neutral-800 truncate">{u.unit}</span>
+                  <span className="text-neutral-400 ml-2 shrink-0">
+                    {u.bedrooms != null ? `${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        <label className="flex items-center gap-1.5 text-sm text-muted">Cleans/cleaner ({market})<input type="number" min={1} max={12} value={rateM} onChange={e => setRate({ ...rate, [market]: Math.max(1, Number(e.target.value) || 1) })} className="w-14 rounded-lg border border-neutral-300 px-2 py-1 text-sm" /></label>
-        <span className="text-xs text-muted">Cleaners needed = the day’s cleans ÷ cleans-per-cleaner (adjust the rate per market). Set each person’s day; shift times stay in Homebase.</span>
-      </div>
+      )}
+
+      <p className="text-xs text-neutral-400 leading-relaxed">
+        Cleaners needed = the day’s booked cleans ÷ cleans-per-cleaner (adjust the rate per market). Click a cleans number to see the exact units — bigger or spread-out units may need a lower rate. Set each person’s status for the week; shift times stay in Homebase. Changes save automatically. Vendor buildings (Botanica, Park Towers, Amrit, Capri, Lucerne) are shown separately and not counted in cleaners needed.
+      </p>
     </div>
   )
 }
