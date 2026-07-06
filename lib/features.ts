@@ -20,6 +20,11 @@ export const FEATURES: Feature[] = [
   { key: 'requests',      label: 'Requests',          path: '/requests' },
   { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize' },
   { key: 'custom-fields', label: 'Custom Fields',     path: '/settings/custom-fields' },
+  { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule' },
+  { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast' },
+  { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners' },
+  { key: 'listings',      label: 'Listings',          path: '/listings' },
+  { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks' },
 ]
 
 export function featureEnabled(features: Record<string, any> | null | undefined, key: string): boolean {
