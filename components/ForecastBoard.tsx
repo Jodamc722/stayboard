@@ -39,6 +39,9 @@ function shortDate(d: string) {
 function dayNum(d: string) {
   return new Date(d + 'T12:00:00').getDate()
 }
+function money(n: number) {
+  return '$' + Math.round(n || 0).toLocaleString()
+}
 
 export function ForecastBoard() {
   const [data, setData] = useState<FC | null>(null)
@@ -58,6 +61,7 @@ export function ForecastBoard() {
   const [pending, setPending] = useState<Record<string, Pending>>({})
   const [assignState, setAssignState] = useState<Record<string, 'idle' | 'saving' | 'done' | 'err'>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [feeByDate, setFeeByDate] = useState<Record<string, Record<string, number>>>({})
   const dirty = useRef(false)
   const loadKey = useRef('')
 
@@ -117,6 +121,15 @@ export function ForecastBoard() {
           : []
         if (hp.length) setHkPeople(hp)
       })
+      .catch(() => {})
+  }, [weekStart])
+
+  // cleaning-fee revenue per day/market (isolated endpoint; never blocks the scheduler)
+  useEffect(() => {
+    const u = '/api/schedule/fees' + (weekStart ? '?weekStart=' + weekStart : '')
+    fetch(u)
+      .then(r => r.json())
+      .then((j: any) => { setFeeByDate(j && j.fee && typeof j.fee === 'object' ? j.fee : {}) })
       .catch(() => {})
   }, [weekStart])
 
@@ -208,6 +221,7 @@ export function ForecastBoard() {
   const rateM = rate[market] || 0
   const workingOn = (date: string) => members.filter(m => /work/i.test(cells[`${m}__${date}`] || '')).length
   const needOn = (d: Day) => rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) / rateM) : 0
+  const feeOn = (date: string) => (feeByDate[date] && feeByDate[date][market]) || 0
   const selUnits = selDate ? (units[`${selDate}__${market}`] || []) : []
   const selVendor = selDate ? (vendorUnits[`${selDate}__${market}`] || []) : []
   const selDay = days.find(d => d.date === selDate)
@@ -258,6 +272,7 @@ export function ForecastBoard() {
                     <th key={d.date} className="px-2 py-2 text-center font-medium">
                       <div className={`text-[11px] ${d.isToday ? 'text-neutral-900' : 'text-neutral-400'}`}>{d.day} {dayNum(d.date)}</div>
                       <div className="text-[10px] text-neutral-400">{(d.actual && d.actual[market]) || 0} cl · need {need || 0}</div>
+                      {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600">{money(feeOn(d.date))}</div>}
                       {need > 0 && <span className={`inline-block mt-0.5 text-[10px] px-1.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
                     </th>
                   )
@@ -314,7 +329,8 @@ export function ForecastBoard() {
                   <div className={`text-[11px] ${d.isToday ? 'text-neutral-900 font-semibold' : 'text-neutral-400'}`}>{d.day}</div>
                   <div className="text-[11px] text-neutral-400 mb-0.5">{dayNum(d.date)}</div>
                   <div className="text-lg font-semibold text-neutral-900 leading-none">{need || '—'}</div>
-                  <div className="text-[10px] text-neutral-400 mb-1">{(d.actual && d.actual[market]) || 0} cl</div>
+                  <div className="text-[10px] text-neutral-400">{(d.actual && d.actual[market]) || 0} cl</div>
+                  {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600 mb-1">{money(feeOn(d.date))}</div>}
                   {need > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
                 </button>
               )
@@ -354,7 +370,7 @@ export function ForecastBoard() {
 
               <div className="rounded-xl border border-neutral-200 bg-white p-3.5">
                 <div className="flex items-center justify-between mb-2.5">
-                  <div className="text-sm font-semibold text-neutral-800">Cleans — {selUnits.length}</div>
+                  <div className="text-sm font-semibold text-neutral-800">Cleans — {selUnits.length}{feeOn(selDate) > 0 && <span className="font-normal text-emerald-600"> · {money(feeOn(selDate))} cleaning fees</span>}</div>
                   {unassignedCount > 0
                     ? <div className="text-xs text-rose-600 flex items-center gap-1"><AlertTriangle size={12} />{unassignedCount} unassigned</div>
                     : <div className="text-xs text-green-600">all assigned</div>}
