@@ -53,6 +53,7 @@ const SECTIONS: {
     title: 'Ops',
     items: [
       { to: '/schedule', label: 'Schedule',  Icon: CalendarRange },
+      { to: '/schedule/forecast', label: 'Forecast', Icon: CalendarDays },
       { to: '/plan',     label: 'Ops Plans', Icon: ListChecks },
       { to: '/requests', label: 'Requests',  Icon: ClipboardList },
     ],
