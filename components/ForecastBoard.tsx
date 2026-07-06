@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, UploadCloud, Sparkles } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, UploadCloud, Sparkles, RefreshCw } from 'lucide-react'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[] }
@@ -69,6 +69,8 @@ export function ForecastBoard() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [feeByDate, setFeeByDate] = useState<Record<string, Record<string, number>>>({})
   const [cleanTab, setCleanTab] = useState<'ours' | 'vendor'>('ours')
+  const [nonce, setNonce] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
   const dirty = useRef(false)
   const loadKey = useRef('')
 
@@ -87,7 +89,7 @@ export function ForecastBoard() {
         })
       })
       .catch(() => setErr('Could not load forecast'))
-  }, [weekStart])
+  }, [weekStart, nonce])
 
   useEffect(() => {
     const u = '/api/schedule?view=week' + (weekStart ? '&date=' + weekStart : '')
@@ -129,7 +131,7 @@ export function ForecastBoard() {
         if (hp.length) setHkPeople(hp)
       })
       .catch(() => {})
-  }, [weekStart])
+  }, [weekStart, nonce])
 
   // cleaning-fee revenue per day/market (isolated endpoint; never blocks the scheduler)
   useEffect(() => {
@@ -138,7 +140,7 @@ export function ForecastBoard() {
       .then(r => r.json())
       .then((j: any) => { setFeeByDate(j && j.fee && typeof j.fee === 'object' ? j.fee : {}) })
       .catch(() => {})
-  }, [weekStart])
+  }, [weekStart, nonce])
 
   useEffect(() => {
     if (!weekStart) return
@@ -215,6 +217,14 @@ export function ForecastBoard() {
     })
   }
 
+  // Manual refresh — bust the schedule cache, then re-pull cleans/forecast/fees.
+  async function refresh() {
+    setRefreshing(true)
+    try { await fetch('/api/schedule/sync', { method: 'POST' }) } catch {}
+    setNonce(n => n + 1)
+    setTimeout(() => setRefreshing(false), 900)
+  }
+
   // Staged, not pushed — assignments wait in the scheduler until you hit "Push to Breezeway".
   function stageAssign(u: Unit, date: string, id: string) {
     if (!u.listingId || !id) return
@@ -272,6 +282,7 @@ export function ForecastBoard() {
             ))}
           </div>
           <button onClick={generateWeek} title="Seed this week from the default team" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate</button>
+          <button onClick={refresh} title="Refresh cleans, forecast and fees" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />Refresh</button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={() => data && setWeekStart(data.prevWeekStart)} className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronLeft size={16} /></button>
