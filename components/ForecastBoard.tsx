@@ -198,19 +198,35 @@ export function ForecastBoard() {
     })
   }
 
-  // Seed this week's roster from the market's default team; drafts everyone Working on empty days.
+  // Smart draft: seed the market's default team, then match how many cleaners work each day
+  // to the forecasted need — load-balanced so days off are shared fairly. Honors any REQ OFF
+  // already set. Non-cleaners (supervisor/ops/handyman) run Mon–Sat, off Sunday.
   function generateWeek() {
     const team = DEFAULT_TEAM[market] || []
     const all = Array.from(new Set([...members, ...team]))
     if (!all.length) return
+    const cleaners = all.filter(m => !NON_CLEANERS[m])
+    const nonCleaners = all.filter(m => NON_CLEANERS[m])
     mutate(() => {
       setMembers(all)
       setCells(c => {
         const next = { ...c }
-        for (const mem of all) {
-          for (const d of days) {
-            const k = `${mem}__${d.date}`
-            if (!next[k]) next[k] = 'Working'
+        const isReqOff = (m: string, date: string) => /req\s*off/i.test(next[`${m}__${date}`] || '')
+        const load: Record<string, number> = {}
+        cleaners.forEach(m => { load[m] = 0 })
+        for (const d of days) {
+          const need = needOn(d)
+          const avail = cleaners.filter(m => !isReqOff(m, d.date))
+          const picked = [...avail].sort((a, b) => load[a] - load[b]).slice(0, Math.min(need, avail.length))
+          const working = new Set(picked)
+          picked.forEach(m => { load[m] += 1 })
+          for (const m of cleaners) {
+            if (isReqOff(m, d.date)) continue
+            next[`${m}__${d.date}`] = working.has(m) ? 'Working' : 'OFF'
+          }
+          for (const m of nonCleaners) {
+            if (isReqOff(m, d.date)) continue
+            next[`${m}__${d.date}`] = d.dow === 0 ? 'OFF' : 'Working'
           }
         }
         return next
