@@ -49,7 +49,7 @@ function shortDate(d: string) {
   return `${MON[dt.getMonth()]} ${dt.getDate()}`
 }
 
-export default function ForecastBoard() {
+export function ForecastBoard() {
   const [data, setData] = useState<FC | null>(null)
   const [err, setErr] = useState('')
   const [weekStart, setWeekStart] = useState('')
