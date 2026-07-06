@@ -340,7 +340,7 @@ async function pushBlocks() {
                     ))}
                   </div>
                 )}
-                <a href="/schedule/forecast" className="text-xs text-brand-700 hover:underline inline-block mt-3">Open the Schedule hub -></a>
+                <a href="/schedule/forecast" className="text-xs text-brand-700 hover:underline inline-block mt-3">Open the Schedule hub &rarr;</a>
               </div>
             </div>
           )}
