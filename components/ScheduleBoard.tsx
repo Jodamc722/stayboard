@@ -462,7 +462,8 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   if (disabled) return <div className="text-[10px] text-muted italic">{existing || 'Assign in Breezeway'}</div>
   const label = value ? value.name : (existing || '')
   const _lp = label ? label.split(', ') : []
-  const shortLabel = _lp.length > 1 ? _lp[0] + ' +' + (_lp.length - 1) : label
+  const _sn = (n: string) => { const p = (n || '').trim().split(/\s+/).filter(Boolean); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
+  const shortLabel = _lp.length > 1 ? _sn(_lp[0]) + ' +' + (_lp.length - 1) : _sn(label)
   const shownAsExisting = !value && !!existing
   return (
     <div className="relative max-w-[240px]" ref={ref}>
