@@ -46,7 +46,16 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const path = request.nextUrl.pathname
-  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path === '/no-access' || path.startsWith('/api') || path.startsWith('/g/')
+  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path.startsWith('/signup') || path === '/no-access' || path.startsWith('/api') || path.startsWith('/g/') || path === '/manifest.json' || path.startsWith('/favicon') || path === '/robots.txt'
+
+  // Lock the whole app behind auth: any visitor without a session on a non-public path is sent to /login.
+  // The public guest guidebook (/g/) stays open, so a shared book link can never expose the app itself.
+  if (!user && !isOpenPath) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    url.search = ''
+    return NextResponse.redirect(url)
+  }
   if (user && !isOpenPath) {
     const email = String(user.email || '').toLowerCase()
     if (email && email !== SUPERADMIN) {
