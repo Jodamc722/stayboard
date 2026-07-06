@@ -49,6 +49,10 @@ function shortDate(d: string) {
   const dt = new Date(d + 'T12:00:00')
   return `${MON[dt.getMonth()]} ${dt.getDate()}`
 }
+function shortName(n: string) {
+  const p = (n || '').trim().split(/\s+/).filter(Boolean)
+  return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : (p[0] || '')
+}
 
 export function ForecastBoard() {
   const [data, setData] = useState<FC | null>(null)
@@ -387,7 +391,7 @@ export function ForecastBoard() {
                       {u.bedrooms != null ? `${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}
                     </span>
                     {!isVendor && u.assigned && u.assigned.length > 0 && (
-                      <span className="text-green-700 shrink-0 truncate max-w-[130px]" title={u.assigned.join(', ')}>{u.assigned.join(', ')}</span>
+                      <span className="text-green-700 shrink-0 truncate max-w-[130px]" title={u.assigned.join(', ')}>{u.assigned.map(shortName).join(', ')}</span>
                     )}
                     {!isVendor && u.listingId && hkPeople.length > 0 && (
                       <div className="flex items-center gap-1 shrink-0">
