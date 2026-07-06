@@ -47,6 +47,32 @@ export function ScheduleBoard() {
   const [market, setMarket] = useState<'all' | typeof MARKETS[number]>('all')
   const [sortBy, setSortBy] = useState<'building' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
+  const [showWho, setShowWho] = useState(false)
+  const [whoLoading, setWhoLoading] = useState(false)
+  const [whoRoster, setWhoRoster] = useState<{ market: string; name: string; status: string }[]>([])
+  async function openWho() {
+    setShowWho(true); setWhoLoading(true); setWhoRoster([])
+    const todayISO = new Date().toISOString().slice(0, 10)
+    const d = date && date.length >= 10 ? date.slice(0, 10) : todayISO
+    const wd = new Date(d + 'T12:00:00'); wd.setDate(wd.getDate() - wd.getDay())
+    const ws = wd.toISOString().slice(0, 10)
+    const mkts = market === 'all' ? [...MARKETS] : [market]
+    const rows: { market: string; name: string; status: string }[] = []
+    for (const mk of mkts) {
+      try {
+        const r = await fetch(`/api/schedule/team?weekStart=${ws}&market=${mk}`)
+        const j = await r.json()
+        const dd = j && j.doc ? j.doc : {}
+        const mem: string[] = Array.isArray(dd.members) ? dd.members : []
+        const cs = dd.cells && typeof dd.cells === 'object' ? dd.cells : {}
+        for (const m of mem) {
+          const s = String(cs[`${m}__${d}`] || '')
+          if (/work|on\s*call/i.test(s)) rows.push({ market: mk, name: m, status: /work/i.test(s) ? 'Working' : 'On Call' })
+        }
+      } catch {}
+    }
+    setWhoRoster(rows); setWhoLoading(false)
+  }
   const [cleared, setCleared] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [pushing, setPushing] = useState(false)
@@ -291,7 +317,33 @@ async function pushBlocks() {
           {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2 py-1.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
 {data && view === 'day' && data.breezeway && <button onClick={loadSuggestions} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" title="Suggest audits from recent low guest reviews that fit this day (checkout or vacant)">Audit ideas</button>}
 {data && view === 'day' && <button onClick={exportCsv} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Export to CSV"><Download size={13} /> Export</button>}
+          <button onClick={openWho} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-white text-brand-700 hover:bg-brand-50" title="See who is working this day"><User size={13} /> Who's working</button>
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
+          {showWho && (
+            <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center pt-24" onClick={() => setShowWho(false)}>
+              <div className="bg-white rounded-xl shadow-xl w-[440px] max-w-[92vw] max-h-[70vh] overflow-auto p-4 text-left" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-semibold text-ink">Who's working - {date || 'today'}</div>
+                  <button onClick={() => setShowWho(false)} className="text-[12px] text-muted hover:text-ink">Close</button>
+                </div>
+                {whoLoading ? (
+                  <div className="text-xs text-muted py-3">Loading...</div>
+                ) : whoRoster.length === 0 ? (
+                  <div className="text-xs text-muted py-3">No roster set for this day. Build it in the Schedule hub.</div>
+                ) : (
+                  <div className="space-y-1">
+                    {whoRoster.map((r, wi) => (
+                      <div key={wi} className="flex items-center justify-between text-sm border-b border-brand-100 py-1">
+                        <span className="text-ink">{r.name} <span className="text-muted text-xs">- {r.market}</span></span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full ${/work/i.test(r.status) ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-800'}`}>{r.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <a href="/schedule/forecast" className="text-xs text-brand-700 hover:underline inline-block mt-3">Open the Schedule hub -></a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
