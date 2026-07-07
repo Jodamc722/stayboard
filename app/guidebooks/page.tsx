@@ -22,6 +22,14 @@ export default async function GuidebooksPage() {
     rows = data || []
   } catch { /* table missing */ }
 
+  const _seen = new Set<string>()
+  rows = rows.filter((r: any) => {
+    const k = String(r.listing_id || r.id)
+    if (!r.listing_id) return true
+    if (_seen.has(k)) return false
+    _seen.add(k)
+    return true
+  })
   const gbIds = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
   const nickById: Record<string, string> = {}
   if (gbIds.length) {
