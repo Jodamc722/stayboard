@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const listingId = str(body?.listingId)
+  const selectedRecs = Array.isArray(body?.selectedRecs) ? body.selectedRecs.map((x: any) => String(x).trim()).filter(Boolean) : []
   const answers = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
   const theme = str(body?.theme) || 'editorial'
   const tone = str(body?.tone) || 'warm'
@@ -337,7 +338,7 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
     wifi: { network: str(l.wifiName), password: str(l.wifiPassword) },
     gettingThere: { heading: 'getting to the residence', body: a('entry', 'Follow the check-in instructions in your confirmation message — and if you need a hand, the team is one message away.') },
     gettingAround: { heading: 'getting around', body: a('gettingAround', '') },
-    localPlaces: { items: splitList(a('localPlaces', '')) },
+    localPlaces: { items: selectedRecs.length ? selectedRecs : splitList(a('localPlaces', '')) },
     restaurants: { items: splitList(a('restaurants', '')) },
     addons: { intro: 'Optional experiences, arranged on request. Advance notice recommended.', items: splitList(a('addons', '')) },
     beforeYouGo: { items: [
