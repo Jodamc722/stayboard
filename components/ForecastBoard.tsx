@@ -56,6 +56,8 @@ export function ForecastBoard() {
   const [market, setMarket] = useState('Miami')
   const [view, setView] = useState<'day' | 'week'>('day')
   const [rate, setRate] = useState<Record<string, number>>({ ...DEFAULT_RATE })
+  const [growth, setGrowth] = useState(10)
+  const [locked, setLocked] = useState(false)
   const [hk, setHk] = useState<string[]>([])
   const [hkPeople, setHkPeople] = useState<HK[]>([])
   const [members, setMembers] = useState<string[]>([])
@@ -155,6 +157,7 @@ export function ForecastBoard() {
         setMembers(Array.isArray(doc.members) ? doc.members : [])
         setCells(doc.cells && typeof doc.cells === 'object' ? doc.cells : {})
         if (typeof doc.rate === 'number' && doc.rate > 0) setRate(r => ({ ...r, [market]: doc.rate }))
+        setLocked(!!doc.locked)
         dirty.current = false
         setSaveState('idle')
       })
@@ -168,14 +171,14 @@ export function ForecastBoard() {
       fetch('/api/schedule/team', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weekStart, market, doc: { members, cells, rate: rate[market] } }),
+        body: JSON.stringify({ weekStart, market, doc: { members, cells, rate: rate[market], locked } }),
       })
         .then(r => r.json())
         .then((j: any) => { setSaveState(j?.ok ? 'saved' : 'error'); dirty.current = false })
         .catch(() => setSaveState('error'))
     }, 700)
     return () => clearTimeout(t)
-  }, [members, cells, rate, weekStart, market])
+  }, [members, cells, rate, locked, weekStart, market])
 
   function mutate(fn: () => void) { dirty.current = true; fn() }
   function setCell(member: string, date: string, val: string) {
@@ -202,6 +205,7 @@ export function ForecastBoard() {
   // to the forecasted need — load-balanced so days off are shared fairly. Honors any REQ OFF
   // already set. Non-cleaners (supervisor/ops/handyman) run Mon–Sat, off Sunday.
   function generateWeek() {
+    if (locked) { setErr('This week is locked — unlock to regenerate. Manual edits still save.'); return }
     const team = DEFAULT_TEAM[market] || []
     const all = Array.from(new Set([...members, ...team]))
     if (!all.length) return
@@ -274,7 +278,7 @@ export function ForecastBoard() {
   const days = data?.week || []
   const rateM = rate[market] || 0
   const workingOn = (date: string) => members.filter(m => !NON_CLEANERS[m] && /work/i.test(cells[`${m}__${date}`] || '')).length
-  const needOn = (d: Day) => rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) / rateM) : 0
+  const needOn = (d: Day) => rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) * (1 + growth / 100) / rateM) : 0
   const feeOn = (date: string) => (feeByDate[date] && feeByDate[date][market]) || 0
   const selUnits = selDate ? (units[`${selDate}__${market}`] || []) : []
   const selVendor = selDate ? (vendorUnits[`${selDate}__${market}`] || []) : []
@@ -299,7 +303,15 @@ export function ForecastBoard() {
             ))}
           </div>
           {view === 'week' && (
-            <button onClick={generateWeek} title="Draft the whole week — staff each day to the forecast. Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
+              <label title="Plan for growth — pads each day's target above the forecast" className="inline-flex items-center gap-1 text-xs text-neutral-500">+
+                <input type="number" min={0} max={100} value={growth} onChange={(e) => setGrowth(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} className="w-12 text-xs border border-neutral-200 rounded px-1 py-0.5" />% buffer
+              </label>
+            )}
+            {view === 'week' && (
+              <button onClick={() => { setLocked((x) => !x); dirty.current = true }} title="Lock this week so Generate won't overwrite it. Manual edits still save." className={`inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border ${locked ? 'bg-amber-100 border-amber-300 text-amber-800' : 'border-neutral-200 hover:bg-neutral-50'}`}>{locked ? 'Locked · tap to unlock' : 'Lock week'}</button>
+            )}
+            {view === 'week' && (
+            <button onClick={generateWeek} disabled={locked} title="Draft the whole week — staff each day to the forecast. Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
           )}
           <button onClick={refresh} title="Refresh cleans, forecast and fees" className="inline-flex items-center justify-center text-sm w-8 h-8 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></button>
         </div>
