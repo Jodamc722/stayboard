@@ -26,6 +26,7 @@ export function BulkGuidebookBuilder() {
   const [recPick, setRecPick] = useState<Record<number, boolean>>({})
   const [recBusy, setRecBusy] = useState(false)
   const [running, setRunning] = useState(false)
+  const [overwrite, setOverwrite] = useState(false)
   const [results, setResults] = useState<Res[]>([])
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export function BulkGuidebookBuilder() {
     for (const l of chosen) {
       setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: 'running' } : x)))
       try {
-        const r = await fetch('/api/guidebook', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: l.id, answers, theme: 'editorial', tone: 'warm', audience: 'all guests', highlights: '', selectedRecs }) })
+        const r = await fetch('/api/guidebook', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: l.id, answers, theme: 'editorial', tone: 'warm', audience: 'all guests', highlights: '', selectedRecs, force: overwrite }) })
         const d = await r.json().catch(() => ({}))
         const skipped = !!(d?.exists && !d?.id)
         const ok = r.ok && d?.id
@@ -136,6 +137,10 @@ export function BulkGuidebookBuilder() {
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted">{running ? ('Generating… ' + doneCount + ' of ' + results.length) : (chosen.length + ' guidebook' + (chosen.length === 1 ? '' : 's') + ' will be created')}</div>
+            <label className="flex items-center gap-1.5 text-xs text-muted cursor-pointer select-none">
+              <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} disabled={running} className="accent-neutral-900" />
+              Overwrite existing
+            </label>
             <button type="button" onClick={generateAll} disabled={!chosen.length || running} className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 text-white px-4 py-2 text-sm font-semibold hover:bg-neutral-700 disabled:opacity-50">
               {running ? <Loader2 size={15} className="animate-spin" /> : <ArrowRight size={15} />}
               {running ? 'Working…' : 'Generate all'}
