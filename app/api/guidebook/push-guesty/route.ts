@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
   const isGuidebook = (nm: any) => norm(nm) === 'guidebook' || /guide\s?book/i.test(String(nm || ''))
   let fieldId = ''
   const available: string[] = []
+  const __DBG__: any[] = []
 
   try {
     const { data: fields } = await sb.from('guesty_custom_fields').select('id, name')
@@ -38,13 +39,14 @@ export async function POST(req: NextRequest) {
 
   if (!fieldId) {
     const acct = process.env.GUESTY_ACCOUNT_ID || ''
-    const urls = [BASE + '/accounts/' + acct + '/custom-fields?limit=200', BASE + '/reservations/custom-fields?limit=200', BASE + '/custom-fields?limit=200']
+    const urls = [BASE + '/listings/custom-fields?limit=200', BASE + '/custom-fields?model=listing&limit=200', BASE + '/custom-fields?type=listing&limit=200', BASE + '/custom-fields?limit=200', BASE + '/accounts/' + acct + '/custom-fields?limit=200', BASE + '/reservations/custom-fields?limit=200']
     for (const u of urls) {
       try {
         const r = await fetch(u, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } })
-        if (!r.ok) continue
+        __DBG__.push({ url: u, status: r.status }); if (!r.ok) continue
         const j: any = await r.json().catch(() => ({}))
         const arr: any[] = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || [])
+        if (__DBG__.length) __DBG__[__DBG__.length - 1].count = arr.length
         for (const f of arr) { const nm = String(f?.name || ''); if (nm) available.push(nm) }
         const gf = arr.find((f: any) => isGuidebook(f?.name))
         if (gf) { fieldId = String(gf._id || gf.id || gf.fieldId); break }
@@ -53,7 +55,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!fieldId) {
-    return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found (checked synced table + live Guesty).', available: Array.from(new Set(available)) }, { status: 400 })
+    return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found (checked synced table + live Guesty).', available: Array.from(new Set(available)), debug: __DBG__, acctSet: !!process.env.GUESTY_ACCOUNT_ID }, { status: 400 })
   }
 
   let q = sb.from('guidebooks').select('id, listing_id, listing_name, updated_at').not('sections', 'is', null).order('updated_at', { ascending: false }).limit(2000)
