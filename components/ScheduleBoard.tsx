@@ -44,7 +44,7 @@ export function ScheduleBoard() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [market, setMarket] = useState<'all' | typeof MARKETS[number]>('all')
+  const [market, setMarket] = useState<'all' | 'vendor' | typeof MARKETS[number]>('all')
   const [sortBy, setSortBy] = useState<'building' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
   const [showWho, setShowWho] = useState(false)
@@ -57,7 +57,7 @@ export function ScheduleBoard() {
     const d = date && date.length >= 10 ? date.slice(0, 10) : todayISO
     const wd = new Date(d + 'T12:00:00'); wd.setDate(wd.getDate() - wd.getDay())
     const ws = wd.toISOString().slice(0, 10)
-    const mkts = market === 'all' ? [...MARKETS] : [market]
+    const mkts = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
     const rows: { market: string; name: string; status: string }[] = []
     for (const mk of mkts) {
       try {
@@ -135,8 +135,8 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   }
 
   const selectedKeys = Object.keys(selected).filter(k => selected[k])
-  const visibleMarkets = market === 'all' ? [...MARKETS] : [market]
-  const dayCleans = useMemo(() => { const all: Clean[] = []; visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => all.push(c))); return all }, [data, market])
+  const visibleMarkets = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
+  const dayCleans = useMemo(() => { const all: Clean[] = []; visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => all.push(c))); return market === 'vendor' ? all.filter((c) => c.vendor) : all }, [data, market])
 
   const rows = useMemo(() => {
     const a = [...dayCleans]
@@ -379,8 +379,8 @@ async function pushBlocks() {
 )}
 
 <div className="flex items-center gap-2 flex-wrap">
-        {(['all', ...MARKETS] as const).map(m => (
-          <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m}{data && m !== 'all' ? ` · ${data.totals.byMarket.find(x => x.market === m)?.count ?? 0}` : ''}</button>
+        {(['all', ...MARKETS, 'vendor'] as const).map(m => (
+          <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? ` · ${data.totals.byMarket.find(x => x.market === m)?.count ?? 0}` : ''}</button>
         ))}
         {data && <span className="text-[12px] text-ink font-semibold ml-1">{data.totals.cleans} cleans this {view}</span>}
         {view === 'day' && (
