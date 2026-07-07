@@ -79,21 +79,26 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
     setBusy(true); setErr('')
     const selectedRecs = [...recs.filter((_, i) => recPick[i]).map((r) => (r.blurb ? (r.name + ' — ' + r.blurb) : r.name)), ...extraRecs]
     try {
-      const r = await fetch('/api/guidebook', {
+      const p = fetch('/api/guidebook', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           listingId, answers, theme, tone, audience, highlights, selectedRecs, force,
           uploadedPhotos: ups.filter(u => u.kind === 'photo').map(u => u.url),
           docUrls: ups.filter(u => u.kind === 'doc').map(u => u.url),
         }),
-      })
-      const d = await r.json().catch(() => ({}))
+      }).then((r) => r.json().catch(() => ({})))
+      const d: any = await Promise.race([p, new Promise((res) => setTimeout(() => res('__BG__'), 4500))])
+      if (d === '__BG__') {
+        p.catch(() => {})
+        router.push('/guidebooks?generating=1')
+        return
+      }
       if (d?.exists && !force) {
         setBusy(false)
         if (window.confirm(d?.message || 'Guidebook already created. Would you like to recreate?')) { generate(true) }
         return
       }
-      if (!r.ok || !d?.id) throw new Error(d?.error || 'Generation failed')
+      if (!d?.id) throw new Error(d?.error || 'Generation failed')
       router.push(`/guidebooks/${d.id}`)
     } catch (e: any) { setErr(e?.message || String(e)); setBusy(false) }
   }
