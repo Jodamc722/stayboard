@@ -32,12 +32,17 @@ export default async function GuidebooksPage() {
   })
   const gbIds = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
   const nickById: Record<string, string> = {}
+  const buildingById: Record<string, string> = {}
   if (gbIds.length) {
     try {
-      const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title').in('id', gbIds)
-      for (const l of (ls || [])) nickById[l.id] = l.nickname || l.title || ''
+      const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building').in('id', gbIds)
+      for (const l of (ls || [])) { nickById[l.id] = l.nickname || l.title || ''; buildingById[l.id] = l.building || 'Other' }
     } catch { /* listings table missing */ }
   }
+  const _groups: Record<string, any[]> = {}
+  for (const r of rows) { const b = buildingById[r.listing_id] || 'Other'; (_groups[b] = _groups[b] || []).push(r) }
+  const groups = Object.keys(_groups).sort((a, b) => a.localeCompare(b)).map((name) => ({ name, items: _groups[name] }))
+
 
   return (
     <Shell>
@@ -53,8 +58,12 @@ export default async function GuidebooksPage() {
           No guidebooks yet. Open a property in <Link href="/listings" className="underline font-semibold">Listings</Link> and click “Generate Guidebook”.
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map(g => (
+        <div className="space-y-8">
+          {groups.map((grp) => (
+            <div key={grp.name}>
+              <h3 className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold mb-2.5">{grp.name} <span className="text-line">·</span> {grp.items.length}</h3>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {grp.items.map(g => (
             <Link key={g.id} href={`/guidebooks/${g.id}`}
               className="group rounded-2xl border border-line bg-white p-5 hover:border-ink/30 hover:shadow-sm transition">
               <div className="flex items-start justify-between gap-2">
@@ -66,6 +75,9 @@ export default async function GuidebooksPage() {
                 <ArrowRight size={16} className="text-muted group-hover:text-ink transition" />
               </div>
             </Link>
+          ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
