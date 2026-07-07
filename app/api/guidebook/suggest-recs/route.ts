@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ recs: [] })
 
-  const { data: l } = await supabaseAdmin
+  const { data: l } = await supabaseAdmin()
     .from('guesty_listings')
     .select('address_full, address_city, title, nickname')
     .eq('id', listingId)
