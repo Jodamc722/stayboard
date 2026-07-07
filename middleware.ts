@@ -8,7 +8,16 @@ const SUPERADMIN = 'jon@stay-hospitality.com'
 
 // Allowlist check via Supabase REST with the service key. FAIL-OPEN: any error, a missing table, or an
 // empty allowlist (no active members yet) returns true so nobody is ever locked out by accident.
+const _memberCache = new Map<string, { at: number; val: { allowed: boolean; features: Record<string, any> | null } }>()
+const _MEMBER_TTL = 60_000
 async function getMember(email: string): Promise<{ allowed: boolean; features: Record<string, any> | null }> {
+  const _c = _memberCache.get(email)
+  if (_c && Date.now() - _c.at < _MEMBER_TTL) return _c.val
+  const _v = await getMemberRaw(email)
+  _memberCache.set(email, { at: Date.now(), val: _v })
+  return _v
+}
+async function getMemberRaw(email: string): Promise<{ allowed: boolean; features: Record<string, any> | null }> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_KEY
   if (!url || !key) return { allowed: true, features: null }
