@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const listingId = str(body?.listingId)
   const selectedRecs = Array.isArray(body?.selectedRecs) ? body.selectedRecs.map((x: any) => String(x).trim()).filter(Boolean) : []
+  const force = body?.force === true
   const answers = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
   const theme = str(body?.theme) || 'editorial'
   const tone = str(body?.tone) || 'warm'
@@ -104,6 +105,13 @@ export async function POST(req: NextRequest) {
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
 
   const db = supabaseAdmin()
+  const { data: existingBooks } = await db.from('guidebooks').select('id').eq('listing_id', listingId)
+  if (existingBooks && existingBooks.length && !force) {
+    return NextResponse.json({ exists: true, existingId: existingBooks[0].id, message: 'Guidebook already created. Would you like to recreate?' })
+  }
+  if (existingBooks && existingBooks.length && force) {
+    await db.from('guidebooks').delete().eq('listing_id', listingId)
+  }
   const [{ data: rows }, { data: revRows }] = await Promise.all([
     db.from('guesty_listings')
       .select("id, title, nickname, building, unit, bedrooms, bathrooms, max_occupancy, address_full, address_city, pictures, amenities, pub:raw->publicDescription, wifiName:raw->>wifiName, wifiPassword:raw->>wifiPassword, ci:raw->>defaultCheckInTime, co:raw->>defaultCheckOutTime")
@@ -230,8 +238,26 @@ ${JSON.stringify(fallback)}`
 
   // LOCAL PAGES ARE MANDATORY: refill from the building guide if the AI came back empty.
   sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'localPlaces' && k !== 'restaurants')
-  if (!(sections.restaurants?.items || []).length && bg) {
-    sections.restaurants = { items: bg.recs.food.slice(0, 4).map((n: string) => ({ name: n, note: '' })) }
+  if (bg) {
+    const rEx = (sections.restaurants?.items || [])
+    if (rEx.length < 3) {
+      const have = new Set(rEx.map((x: any) => String(x?.name || x).toLowerCase().trim()))
+      const add = (bg.recs.food || []).filter((n: string) => !have.has(n.toLowerCase().trim())).map((n: string) => ({ name: n, note: '' }))
+      sections.restaurants = { items: [...rEx, ...add].slice(0, 5) }
+    }
+    const lEx = (sections.localPlaces?.items || [])
+    if (lEx.length < 3) {
+      const cand = [
+        ...(selectedRecs || []).map((s: string) => ({ name: String(s).split(' — ')[0].trim(), note: (String(s).split(' — ')[1] || '').trim() })),
+        ...(bg.recs.beach ? [{ name: String(bg.recs.beach).split(/ ~| - /)[0].trim(), note: 'A local favorite — worth the short trip.' }] : []),
+        ...(bg.recs.coffee ? [{ name: String(bg.recs.coffee).split(/ \/ | \+ /)[0].trim(), note: 'Great coffee close by.' }] : []),
+        ...(bg.recs.grocery ? [{ name: String(bg.recs.grocery).split(/ \+ | \/ /)[0].trim(), note: 'Stock the kitchen for your stay.' }] : []),
+        ...(bg.recs.tip ? [{ name: 'Local tip', note: bg.recs.tip }] : []),
+      ]
+      const have2 = new Set(lEx.map((x: any) => String(x?.name || x).toLowerCase().trim()))
+      const add2 = cand.filter((c) => c.name && !have2.has(c.name.toLowerCase().trim()))
+      sections.localPlaces = { items: [...lEx, ...add2].slice(0, 5) }
+    }
   }
 
   // Getting Around renders ONLY when the operator supplied notes (audit: never invent transport info).
