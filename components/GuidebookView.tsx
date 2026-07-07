@@ -642,6 +642,22 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <div className="mt-4"><StayLogo small /></div>
           </div>
         </Page>
+        <Page id="booknext" ghost="stay">
+          <div className="flex flex-1 flex-col items-center justify-center text-center">
+            <p className="text-[10px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="booknext.kicker" def="COME BACK SOON" /></p>
+            <h2 className="mt-4 text-[40px] lowercase font-medium leading-[1.05]" style={{ fontFamily: SERIF }}><L k="booknext.heading" def="book your next day" /></h2>
+            <p className="mt-4 max-w-[42ch] text-[13px] font-light leading-[1.8]" style={{ fontFamily: SERIF }}><L k="booknext.body" def="We would love to host you again. Scan the code to book directly with us and enjoy a little something off your next stay." rows={3} /></p>
+            <div className="mt-7 rounded-2xl bg-white p-3 shadow-[0_2px_20px_rgba(0,0,0,0.10)]">
+              <img src={'https://api.qrserver.com/v1/create-qr-code/?size=340x340&data=' + encodeURIComponent(lbl('booknext.url', 'https://stay-hospitality.com'))} alt="Book your next stay" className="h-40 w-40" />
+            </div>
+            <div className="mt-6 flex items-center gap-2 text-[12px]">
+              <span style={{ fontFamily: SERIF }}><L k="booknext.codeLabel" def="Use code" /></span>
+              <span className="font-semibold tracking-[0.2em] px-3 py-1 rounded-full" style={{ background: accentColor + '22', color: accentColor }}><L k="booknext.code" def="STAY10" /></span>
+              <span style={{ fontFamily: SERIF }}><L k="booknext.codeSuffix" def="for 10% off" /></span>
+            </div>
+            {edit && <input value={lbl('booknext.url', 'https://stay-hospitality.com')} onChange={e => set(['_labels', 'booknext.url'], e.target.value)} placeholder="Booking link the QR points to" className="mt-6 w-[60%] bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1.5 text-[12px]" />}
+          </div>
+        </Page>
       </div>
     </div>
   )
