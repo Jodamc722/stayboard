@@ -18,7 +18,7 @@ export default async function GuidebooksPage() {
   try {
     const { data } = await supabaseAdmin().from('guidebooks')
       .select('id, listing_id, listing_name, title, theme, status, updated_at')
-      .order('updated_at', { ascending: false }).limit(200)
+      .order('updated_at', { ascending: false }).limit(2000)
     rows = data || []
   } catch { /* table missing */ }
 
