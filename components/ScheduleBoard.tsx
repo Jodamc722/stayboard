@@ -319,8 +319,8 @@ async function pushBlocks() {
 
 {data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV</button></div></>)}</div>)}
           <a href="/schedule/forecast" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700" title="Go to the weekly scheduler"><CalendarRange size={14} />Weekly scheduler</a>
-          <button onClick={openWho} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-white text-brand-700 hover:bg-brand-50" title="See who is working this day"><User size={13} /> Who's working</button>
-          <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
+          <button onClick={openWho} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="See who is working this day"><User size={13} /> Who's working</button>
+          <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
           {showWho && (
             <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center pt-24" onClick={() => setShowWho(false)}>
               <div className="bg-white rounded-xl shadow-xl w-[440px] max-w-[92vw] max-h-[70vh] overflow-auto p-4 text-left" onClick={e => e.stopPropagation()}>
@@ -382,7 +382,7 @@ async function pushBlocks() {
         {(['all', ...MARKETS] as const).map(m => (
           <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m}{data && m !== 'all' ? ` · ${data.totals.byMarket.find(x => x.market === m)?.count ?? 0}` : ''}</button>
         ))}
-        {data && <span className="text-[12px] text-muted ml-1">{data.totals.cleans} cleans this {view}</span>}
+        {data && <span className="text-[12px] text-ink font-semibold ml-1">{data.totals.cleans} cleans this {view}</span>}
         {view === 'day' && (
           <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
             <ArrowDownUp size={13} /> Sort
