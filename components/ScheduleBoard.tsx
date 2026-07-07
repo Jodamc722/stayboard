@@ -48,6 +48,7 @@ export function ScheduleBoard() {
   const [sortBy, setSortBy] = useState<'building' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
   const [showWho, setShowWho] = useState(false)
+  const [workingSet, setWorkingSet] = useState<Set<string>>(new Set())
   const [whoLoading, setWhoLoading] = useState(false)
   const [whoRoster, setWhoRoster] = useState<{ market: string; name: string; status: string }[]>([])
   const [moreOpen, setMoreOpen] = useState(false)
@@ -74,6 +75,31 @@ export function ScheduleBoard() {
     }
     setWhoRoster(rows); setWhoLoading(false)
   }
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const dd0 = date && date.length >= 10 ? date.slice(0, 10) : new Date().toISOString().slice(0, 10)
+        const wd = new Date(dd0 + 'T12:00:00'); wd.setDate(wd.getDate() - wd.getDay())
+        const ws = wd.toISOString().slice(0, 10)
+        const mkts = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
+        const set = new Set<string>()
+        for (const mk of mkts) {
+          try {
+            const r = await fetch(`/api/schedule/team?weekStart=${ws}&market=${mk}`)
+            const j = await r.json()
+            const dc = j && j.doc ? j.doc : {}
+            const mem: string[] = Array.isArray(dc.members) ? dc.members : []
+            const cs = dc.cells && typeof dc.cells === 'object' ? dc.cells : {}
+            for (const m of mem) { const s = String(cs[`${m}__${dd0}`] || ''); if (/work|on.?call/i.test(s)) set.add(m) }
+          } catch {}
+        }
+        if (!cancelled) setWorkingSet(set)
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [date, market])
+
   const [cleared, setCleared] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [pushing, setPushing] = useState(false)
@@ -439,7 +465,7 @@ async function pushBlocks() {
                         <td className="px-2.5 py-2.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />{c.syncStatus === 'guesty-only' && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}{c.movedTo && <span title={`Moved to ${c.movedTo} → the clean now happens that day`} className="inline-block ml-0.5 text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1 align-middle">Moved → {c.movedTo.slice(5)}</span>}
                         {c.movedFrom && <span title={`Moved clean → originally a checkout on ${c.movedFrom}`} className="inline-block ml-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-300 rounded px-1 align-middle">Moved clean</span>}
                         {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}</td>
-                        <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} /></td>
+                        <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} />{(() => { const _asg = (overrides[keyOf(c)]?.name) || (cleared[keyOf(c)] ? '' : (e.source === 'existing' ? e.label : '')); return _asg && workingSet.size > 0 && !workingSet.has(_asg) ? <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5" title="This cleaner isn't on the schedule for this day">⚠ Not scheduled</div> : null })()}</td>
                         <td className="px-2.5 py-2.5 align-middle whitespace-nowrap"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span>{c.vendor && <span className="ml-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">vendor</span>}</td>
                         <td className="px-2.5 py-2.5 align-middle font-medium text-ink">{c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
                         <td className="px-2.5 py-2.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
