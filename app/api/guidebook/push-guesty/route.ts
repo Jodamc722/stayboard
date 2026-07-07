@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getToken } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
-// Writes each guidebook's public link (/g/<id>) into the Guesty "Guidebook"
-// custom field, per listing. Uses the dedicated /custom-fields endpoint so it
-// only updates that one field and never clobbers door codes or other fields.
+// Writes each guidebook's guest shareable link (/g/<id>) into the property-level
+// "Guidebook" custom field in Guesty, per listing. Uses the dedicated
+// /custom-fields endpoint so it only updates that one field.
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -20,11 +21,40 @@ export async function POST(req: NextRequest) {
   const bookIds: string[] = Array.isArray(body?.bookIds) ? body.bookIds.map((x: any) => String(x)) : []
   const sb = supabaseAdmin()
 
-  const { data: fields } = await sb.from('guesty_custom_fields').select('id, name')
-  const gf = (fields || []).find((f: any) => String(f?.name || '').trim().toLowerCase() === 'guidebook')
-    || (fields || []).find((f: any) => /guide\s?book/i.test(String(f?.name || '')))
-  if (!gf) return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found. Create it in Guesty, sync custom fields, then retry.', available: (fields || []).map((f: any) => f?.name).filter(Boolean) }, { status: 400 })
-  const fieldId = String(gf.id)
+  const token = await getToken()
+  if (!token) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry in a moment.' }, { status: 503 })
+
+  const norm = (s: any) => String(s || '').trim().toLowerCase()
+  const isGuidebook = (nm: any) => norm(nm) === 'guidebook' || /guide\s?book/i.test(String(nm || ''))
+  let fieldId = ''
+  const available: string[] = []
+
+  try {
+    const { data: fields } = await sb.from('guesty_custom_fields').select('id, name')
+    for (const f of (fields || [])) { if ((f as any)?.name) available.push(String((f as any).name)) }
+    const gf = (fields || []).find((f: any) => isGuidebook(f?.name))
+    if (gf) fieldId = String((gf as any).id)
+  } catch {}
+
+  if (!fieldId) {
+    const acct = process.env.GUESTY_ACCOUNT_ID || ''
+    const urls = [BASE + '/accounts/' + acct + '/custom-fields?limit=200', BASE + '/reservations/custom-fields?limit=200', BASE + '/custom-fields?limit=200']
+    for (const u of urls) {
+      try {
+        const r = await fetch(u, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } })
+        if (!r.ok) continue
+        const j: any = await r.json().catch(() => ({}))
+        const arr: any[] = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || [])
+        for (const f of arr) { const nm = String(f?.name || ''); if (nm) available.push(nm) }
+        const gf = arr.find((f: any) => isGuidebook(f?.name))
+        if (gf) { fieldId = String(gf._id || gf.id || gf.fieldId); break }
+      } catch {}
+    }
+  }
+
+  if (!fieldId) {
+    return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found (checked synced table + live Guesty).', available: Array.from(new Set(available)) }, { status: 400 })
+  }
 
   let q = sb.from('guidebooks').select('id, listing_id, listing_name, updated_at').not('sections', 'is', null).order('updated_at', { ascending: false }).limit(2000)
   if (!all && bookIds.length) q = q.in('id', bookIds)
@@ -38,10 +68,6 @@ export async function POST(req: NextRequest) {
     return true
   })
 
-  const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
-  const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30000)
-  if (!valid) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry in a moment.' }, { status: 503 })
-
   const origin = req.nextUrl.origin
   const results: any[] = []
   for (const b of rows) {
@@ -49,7 +75,7 @@ export async function POST(req: NextRequest) {
     try {
       const r = await fetch(BASE + '/listings/' + encodeURIComponent(String(b.listing_id)) + '/custom-fields', {
         method: 'PUT',
-        headers: { Authorization: 'Bearer ' + tok!.access_token, Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: { Authorization: 'Bearer ' + token, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ customFields: [{ fieldId, value: url }] }),
       })
       const ok = r.ok
