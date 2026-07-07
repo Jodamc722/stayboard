@@ -22,6 +22,15 @@ export default async function GuidebooksPage() {
     rows = data || []
   } catch { /* table missing */ }
 
+  const gbIds = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
+  const nickById: Record<string, string> = {}
+  if (gbIds.length) {
+    try {
+      const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title').in('id', gbIds)
+      for (const l of (ls || [])) nickById[l.id] = l.nickname || l.title || ''
+    } catch { /* listings table missing */ }
+  }
+
   return (
     <Shell>
       <header className="mb-7">
@@ -43,6 +52,7 @@ export default async function GuidebooksPage() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="font-semibold text-ink leading-snug">{g.listing_name || g.title}</p>
+                  {nickById[g.listing_id] ? <p className="text-[11px] text-muted/80 mt-0.5">{nickById[g.listing_id]}</p> : null}
                   <p className="text-xs text-muted mt-1">{new Date(g.updated_at).toLocaleDateString()} · {g.theme === 'dark' ? 'Dark luxe' : 'Coastal editorial'} · {g.status}</p>
                 </div>
                 <ArrowRight size={16} className="text-muted group-hover:text-ink transition" />
