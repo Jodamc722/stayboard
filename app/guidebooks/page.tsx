@@ -28,6 +28,7 @@ export default async function GuidebooksPage() {
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Guests</p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Guidebooks</h1>
         <p className="text-sm text-muted mt-1">Generated guest guidebooks. Create one from any property page → “Generate Guidebook”.</p>
+        <Link href="/guidebooks/bulk" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg bg-neutral-900 text-white px-3.5 py-2 hover:bg-neutral-700">Bulk build a building <ArrowRight size={15} /></Link>
       </header>
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted">
