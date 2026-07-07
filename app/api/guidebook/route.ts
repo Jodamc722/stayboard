@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
     } catch { /* skip doc */ }
   }
 
-  const fallback = buildFallback({ name, building, city, l, answers })
+  const fallback = buildFallback({ name, building, city, l, answers, selectedRecs })
 
   // ---- PASS 2: COMPOSE — the 30-years-of-experience writer. ----
   let sections: any = fallback
@@ -302,8 +302,8 @@ ${JSON.stringify(fallback)}`
   return NextResponse.json({ ok: true, id: (ins || [])[0]?.id })
 }
 
-function buildFallback(ctx: { name: string; building: string; city: string; l: any; answers: any }) {
-  const { name, building, city, l, answers } = ctx
+function buildFallback(ctx: { name: string; building: string; city: string; l: any; answers: any; selectedRecs: string[] }) {
+  const { name, building, city, l, answers, selectedRecs } = ctx
   const a = (k: string, dflt = '') => str(answers?.[k]) || dflt
   const place = [building || name, city].filter(Boolean).join('  ·  ')
   return {
