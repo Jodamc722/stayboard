@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
 
   const norm = (s: any) => String(s || '').trim().toLowerCase()
   const isGuidebook = (nm: any) => norm(nm) === 'guidebook' || /guide\s?book/i.test(String(nm || ''))
+  const nameOf = (f: any) => String(f?.name || f?.displayName || f?.title || f?.label || f?.fieldName || f?.key || '')
   let fieldId = ''
   const available: string[] = []
   const __DBG__: any[] = []
@@ -67,8 +68,8 @@ export async function POST(req: NextRequest) {
         const j: any = await r.json().catch(() => ({}))
         const arr: any[] = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || [])
         if (__DBG__.length) __DBG__[__DBG__.length - 1].count = arr.length
-        for (const f of arr) { const nm = String(f?.name || ''); if (nm) available.push(nm) }
-        const gf = arr.find((f: any) => isGuidebook(f?.name))
+        for (const f of arr) { const nm = nameOf(f); if (nm) available.push(nm) }
+        const gf = arr.find((f: any) => isGuidebook(nameOf(f)))
         if (gf) { fieldId = String(gf._id || gf.id || gf.fieldId); break }
       } catch {}
     }
