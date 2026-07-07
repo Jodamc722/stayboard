@@ -5,7 +5,7 @@
 // copywriter prompt REWRITES the operator's raw answers into polished editorial prose, keeps the book
 // LEAN (only sections that earn their place; appliance how-tos only for non-traditional gear), and
 // assigns photos per page. GET/PUT/DELETE unchanged. AI failure falls back to a clean template.
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
@@ -124,6 +124,11 @@ export async function POST(req: NextRequest) {
   const name = l.title || l.nickname || 'Your Residence'
   const building = str(l.building)
   const city = str(l.address_city) || ''
+  const { data: _draft } = await db.from('guidebooks').insert({ listing_id: listingId, listing_name: name, title: `${name} — Guest Guidebook`, theme, status: 'draft', answers: { ...answers, _tone: tone, _audience: audience, _highlights: highlights, _generating: true }, created_by: user.email || null }).select('id').limit(1)
+  const bookId = (_draft || [])[0]?.id
+  if (!bookId) return NextResponse.json({ error: 'Could not create guidebook (run the guidebooks SQL in Supabase first?)' }, { status: 500 })
+  after(async () => {
+   try {
   const pub = l.pub || {}
   const summary = [str(pub.summary), str(pub.space), str(pub.neighborhood)].filter(Boolean).join('\n').slice(0, 3500)
   const praise = (revRows || []).filter((r: any) => Number(r.rating) >= 4 && str(r.content).length > 40).slice(0, 6).map((r: any) => str(r.content).replace(/\s+/g, ' ').slice(0, 240))
@@ -314,18 +319,17 @@ ${JSON.stringify(fallback)}`
   sections._photoAssign = photoAssign
   if (!Array.isArray(sections.omit)) sections.omit = []
 
-  const { data: ins, error } = await db.from('guidebooks').insert({
-    listing_id: listingId,
+    await db.from('guidebooks').update({
     listing_name: name,
     title: `${name} — Guest Guidebook`,
-    theme,
-    status: 'draft',
     answers: { ...answers, _tone: tone, _audience: audience, _highlights: highlights },
     sections,
-    created_by: user.email || null,
-  }).select('id').limit(1)
-  if (error) return NextResponse.json({ error: error.message + ' (run the guidebooks SQL in Supabase first?)' }, { status: 500 })
-  return NextResponse.json({ ok: true, id: (ins || [])[0]?.id })
+  }).eq('id', bookId)
+   } catch (e) {
+    await db.from('guidebooks').update({ answers: { ...answers, _tone: tone, _audience: audience, _highlights: highlights, _error: true } }).eq('id', bookId).catch(() => {})
+   }
+  })
+  return NextResponse.json({ ok: true, id: bookId, generating: true })
 }
 
 function buildFallback(ctx: { name: string; building: string; city: string; l: any; answers: any; selectedRecs: string[] }) {
