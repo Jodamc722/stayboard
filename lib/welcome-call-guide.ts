@@ -61,7 +61,7 @@ export const BUILDINGS: BuildingGuide[] = [
     parking: 'Secured garage on site - confirm they have the garage/fob instructions.',
     access: 'Secured building entry + unit code. Walk them through the building door + elevator.',
     questions: ['Are you driving in? (garage parking)', 'First time in South Beach?'],
-    recs: { food: ['Pubbelly Sushi', 'Lucali (pizza)', 'Sardinia (Italian)'], coffee: 'Panther Coffee / Pura Vida nearby', grocery: 'Whole Foods + Fresh Market on West Ave (walk)', beach: 'South Beach ~10-min walk east', tip: 'Lincoln Road + Sunset Harbour shops are a 5-min walk - no car needed.' },
+    recs: { food: ['Pubbelly Sushi', 'Lucali (pizza)', 'Sardinia (Italian)'], coffee: 'Panther Coffee / Pura Vida nearby', grocery: "Trader Joe's + Fresh Market on West Ave (walk)", beach: 'South Beach ~10-min walk east', tip: 'Lincoln Road + Sunset Harbour shops are a 5-min walk - no car needed.' },
   },
   {
     key: 'elser', name: 'The Elser', area: 'Downtown Miami - Biscayne Blvd, on the bay',
