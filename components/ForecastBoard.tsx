@@ -278,7 +278,9 @@ export function ForecastBoard() {
   const days = data?.week || []
   const rateM = rate[market] || 0
   const workingOn = (date: string) => members.filter(m => !NON_CLEANERS[m] && /work/i.test(cells[`${m}__${date}`] || '')).length
-  const needOn = (d: Day) => rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) * (1 + growth / 100) / rateM) : 0
+  const vendorMode = market === 'Vendor'
+  const sumVendor = (d: Day) => MARKETS.reduce((s: number, m: string) => s + ((d.vendor && d.vendor[m]) || 0), 0)
+  const needOn = (d: Day) => vendorMode ? 0 : rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) * (1 + growth / 100) / rateM) : 0
   const feeOn = (date: string) => (feeByDate[date] && feeByDate[date][market]) || 0
   const selUnits = selDate ? (units[`${selDate}__${market}`] || []) : []
   const selVendor = selDate ? (vendorUnits[`${selDate}__${market}`] || []) : []
@@ -293,7 +295,7 @@ export function ForecastBoard() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden">
-            {MARKETS.map(m => (
+            {[...MARKETS, 'Vendor'].map((m) => (
               <button key={m} onClick={() => setMarket(m)} className={`px-4 py-1.5 text-sm font-medium ${market === m ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}>{m}</button>
             ))}
           </div>
@@ -341,7 +343,7 @@ export function ForecastBoard() {
                   return (
                     <th key={d.date} className="px-2 py-2 text-center font-medium">
                       <div className={`text-[11px] ${d.isToday ? 'text-neutral-900' : 'text-neutral-400'}`}>{d.day} {dayNum(d.date)}</div>
-                      <div className="text-[10px] text-neutral-400">{(d.actual && d.actual[market]) || 0} cl · need {need || 0}</div>
+                      <div className="text-[10px] text-neutral-400">{vendorMode ? sumVendor(d) : ((d.actual && d.actual[market]) || 0)} cl · need {need || 0}</div>
                       {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600">{money(feeOn(d.date))}</div>}
                       {need > 0 && <span className={`inline-block mt-0.5 text-[10px] px-1.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
                     </th>
@@ -399,7 +401,7 @@ export function ForecastBoard() {
                   <div className={`text-[11px] ${d.isToday ? 'text-neutral-900 font-semibold' : 'text-neutral-400'}`}>{d.day}</div>
                   <div className="text-[11px] text-neutral-400 mb-0.5">{dayNum(d.date)}</div>
                   <div className="text-lg font-semibold text-neutral-900 leading-none">{need || '—'}</div>
-                  <div className="text-[10px] text-neutral-400">{(d.actual && d.actual[market]) || 0} cl</div>
+                  <div className="text-[10px] text-neutral-400">{vendorMode ? sumVendor(d) : ((d.actual && d.actual[market]) || 0)} cl</div>
                   {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600 mb-1">{money(feeOn(d.date))}</div>}
                   {need > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
                 </button>
