@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   const { data: fields } = await sb.from('guesty_custom_fields').select('id, name')
   const gf = (fields || []).find((f: any) => String(f?.name || '').trim().toLowerCase() === 'guidebook')
     || (fields || []).find((f: any) => /guide\s?book/i.test(String(f?.name || '')))
-  if (!gf) return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found. Create it in Guesty, sync custom fields, then retry.' }, { status: 400 })
+  if (!gf) return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found. Create it in Guesty, sync custom fields, then retry.', available: (fields || []).map((f: any) => f?.name).filter(Boolean) }, { status: 400 })
   const fieldId = String(gf.id)
 
   let q = sb.from('guidebooks').select('id, listing_id, listing_name, updated_at').not('sections', 'is', null).order('updated_at', { ascending: false }).limit(2000)
