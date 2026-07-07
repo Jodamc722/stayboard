@@ -4,7 +4,7 @@
 // gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact A4 output (@page, exact colors, no app chrome).
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Paperclip, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
@@ -102,18 +102,25 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
     router.push('/guidebooks')
   }
 
-  const T = ({ path, value, className, rows = 2 }: { path: string[]; value: string; className?: string; rows?: number }) =>
-    edit
-      ? <textarea rows={rows} value={value || ''} onChange={e => set(path, e.target.value)} className={'w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px] ' + (className || '')} />
+  const _live = useRef<any>({})
+
+  const T = useMemo(() => function T({ path, value, className, rows = 2 }: { path: string[]; value: string; className?: string; rows?: number }) {
+    const { edit, set } = _live.current
+    return edit
+      ? <textarea rows={rows} value={value || ''} onChange={(e: any) => set(path, e.target.value)} className={'w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px] ' + (className || '')} />
       : <span className={className}>{value}</span>
+  }, [])
 
   // v3.4: EVERY fixed label/caption in the book is editable. Overrides live in sections._labels
   // (underscore key — preserved by revise/ingest); falls back to the original wording.
   const lbl = (k: string, def: string) => { const o = (s._labels || {})[k]; return typeof o === 'string' ? o : def }
-  const L = ({ k, def, rows = 1 }: { k: string; def: string; rows?: number }) =>
-    edit
-      ? <textarea rows={rows} value={lbl(k, def)} onChange={e => set(['_labels', k], e.target.value)} className="w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px]" />
+  _live.current = { edit, set, lbl }
+  const L = useMemo(() => function L({ k, def, rows = 1 }: { k: string; def: string; rows?: number }) {
+    const { edit, set, lbl } = _live.current
+    return edit
+      ? <textarea rows={rows} value={lbl(k, def)} onChange={(e: any) => set(['_labels', k], e.target.value)} className="w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px]" />
       : <>{lbl(k, def)}</>
+  }, [])
   // Keeps tap-to-call on the digital view when an editable text contains the service number.
   const withTel = (txt: string) => { const num = String(s.contact?.customerService || ''); if (edit || !num || !txt.includes(num)) return <>{txt}</>; const i = txt.indexOf(num); return <>{txt.slice(0, i)}<Tel v={num}>{num}</Tel>{txt.slice(i + num.length)}</> }
 
