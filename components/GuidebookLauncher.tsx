@@ -74,7 +74,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
     if (!n) return
     setExtraRecs((x) => [...x, n]); setNewRec('')
   }
-  async function generate() {
+  async function generate(force = false) {
     if (missing.length) { setErr('Please answer: ' + missing.join(', ')); return }
     setBusy(true); setErr('')
     const selectedRecs = [...recs.filter((_, i) => recPick[i]).map((r) => (r.blurb ? (r.name + ' — ' + r.blurb) : r.name)), ...extraRecs]
@@ -82,12 +82,17 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
       const r = await fetch('/api/guidebook', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          listingId, answers, theme, tone, audience, highlights, selectedRecs,
+          listingId, answers, theme, tone, audience, highlights, selectedRecs, force,
           uploadedPhotos: ups.filter(u => u.kind === 'photo').map(u => u.url),
           docUrls: ups.filter(u => u.kind === 'doc').map(u => u.url),
         }),
       })
       const d = await r.json().catch(() => ({}))
+      if (d?.exists && !force) {
+        setBusy(false)
+        if (window.confirm(d?.message || 'Guidebook already created. Would you like to recreate?')) { generate(true) }
+        return
+      }
       if (!r.ok || !d?.id) throw new Error(d?.error || 'Generation failed')
       router.push(`/guidebooks/${d.id}`)
     } catch (e: any) { setErr(e?.message || String(e)); setBusy(false) }
@@ -213,7 +218,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
 
             <div className="flex items-center justify-between border-t border-line px-5 py-4">
               <p className="text-xs text-red-600 max-w-[55%]">{err}</p>
-              <button onClick={generate} disabled={busy || uploading}
+              <button onClick={() => generate()} disabled={busy || uploading}
                 className="inline-flex items-center gap-2 rounded-lg bg-ink text-white px-4 py-2 text-sm font-semibold disabled:opacity-50">
                 {busy ? <Loader2 size={15} className="animate-spin" /> : <BookOpen size={15} />} {busy ? 'Analyzing photos & writing…' : 'Generate'}
               </button>
