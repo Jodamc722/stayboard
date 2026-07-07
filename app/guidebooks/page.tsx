@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { BookOpen, ArrowRight } from 'lucide-react'
+import { PushGuestyButton } from '@/components/PushGuestyButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +52,7 @@ export default async function GuidebooksPage() {
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Guidebooks</h1>
         <p className="text-sm text-muted mt-1">Generated guest guidebooks. Create one from any property page → “Generate Guidebook”.</p>
         <Link href="/guidebooks/bulk" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg bg-neutral-900 text-white px-3.5 py-2 hover:bg-neutral-700">Bulk build a building <ArrowRight size={15} /></Link>
+        <span className="ml-2 align-middle inline-block"><PushGuestyButton /></span>
       </header>
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted">
