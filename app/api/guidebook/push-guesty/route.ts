@@ -38,7 +38,14 @@ export async function POST(req: NextRequest) {
   } catch {}
 
   if (!fieldId) {
-    const acct = process.env.GUESTY_ACCOUNT_ID || ''
+    let acct = String(body?.accountId || process.env.GUESTY_ACCOUNT_ID || '')
+    if (!acct) {
+      try {
+        const { data: anyL } = await sb.from('guesty_listings').select('raw').not('raw', 'is', null).limit(1).maybeSingle()
+        const rw: any = (anyL as any)?.raw || {}
+        acct = String(rw.accountId || rw.accountID || rw.account?._id || rw.account?.id || '')
+      } catch {}
+    }
     const urls = [BASE + '/listings/custom-fields?limit=200', BASE + '/custom-fields?model=listing&limit=200', BASE + '/custom-fields?type=listing&limit=200', BASE + '/custom-fields?limit=200', BASE + '/accounts/' + acct + '/custom-fields?limit=200', BASE + '/reservations/custom-fields?limit=200']
     for (const u of urls) {
       try {
