@@ -511,9 +511,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <Kicker><L k="houseGuide.kicker" def="HOUSE GUIDE" /></Kicker>
             <H><L k="houseGuide.heading" def="how-to guide" /></H>
             <div className="mt-3 max-w-[56ch] text-[11px] font-light leading-[1.55] opacity-80"><L k="houseGuide.intro" def="Everything here is a feature — a minute of reading makes the whole stay effortless." rows={2} /></div>
-            <div className={'mt-4 grid flex-1 gap-x-8 gap-y-3 ' + ((s.houseGuide.items || []).length > 3 ? 'grid-cols-2 content-evenly' : 'grid-cols-1 content-evenly')}>
+            <div className={'mt-4 flex-1 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-2' : 'columns-1')}>
               {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
-                <div key={i} className="flex gap-3 border-b pb-3" style={{ borderColor: accentColor + '22' }}>
+                <div key={i} className="flex gap-3 border-b pb-3 mb-3 break-inside-avoid" style={{ borderColor: accentColor + '22' }}>
                   <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
                   <div className="flex-1">
                     <p className="text-[14px] lowercase font-medium leading-tight" style={{ fontFamily: SERIF }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
