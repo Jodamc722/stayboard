@@ -73,6 +73,7 @@ export function ForecastBoard() {
   const [cleanTab, setCleanTab] = useState<'ours' | 'vendor'>('ours')
   const [nonce, setNonce] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
+  const [lastSync, setLastSync] = useState<number | null>(null)
   const dirty = useRef(false)
   const loadKey = useRef('')
 
@@ -243,8 +244,15 @@ export function ForecastBoard() {
     setRefreshing(true)
     try { await fetch('/api/schedule/sync', { method: 'POST' }) } catch {}
     setNonce(n => n + 1)
+    setLastSync(Date.now())
     setTimeout(() => setRefreshing(false), 900)
   }
+
+  useEffect(() => {
+    setLastSync(Date.now())
+    const iv = setInterval(() => { refresh() }, 15 * 60 * 1000)
+    return () => clearInterval(iv)
+  }, [])
 
   // Staged, not pushed — assignments wait in the scheduler until you hit "Push to Breezeway".
   function stageAssign(u: Unit, date: string, id: string) {
@@ -315,6 +323,7 @@ export function ForecastBoard() {
             {view === 'week' && (
             <button onClick={generateWeek} disabled={locked} title="Draft the whole week — staff each day to the forecast. Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
           )}
+          {lastSync && <span className="text-[11px] text-neutral-400 self-center mr-0.5">Synced {new Date(lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
           <button onClick={refresh} title="Refresh cleans, forecast and fees" className="inline-flex items-center justify-center text-sm w-8 h-8 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
