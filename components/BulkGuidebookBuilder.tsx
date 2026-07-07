@@ -5,7 +5,7 @@ import { Loader2, Check, AlertTriangle, ArrowRight } from 'lucide-react'
 type Listing = { id: string; name: string }
 type Bld = { name: string; listings: Listing[] }
 type Rec = { name: string; type?: string; blurb?: string; area?: string }
-type Res = { id: string; name: string; status: 'pending' | 'running' | 'done' | 'err'; bookId?: string }
+type Res = { id: string; name: string; status: 'pending' | 'running' | 'done' | 'err' | 'skip'; bookId?: string }
 
 const SHARED = [
   { key: 'entry', label: 'Building access & elevator', hint: 'Lobby entry, fob or code, elevator, which floors — the parts every unit shares.' },
@@ -65,8 +65,9 @@ export function BulkGuidebookBuilder() {
       try {
         const r = await fetch('/api/guidebook', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: l.id, answers, theme: 'editorial', tone: 'warm', audience: 'all guests', highlights: '', selectedRecs }) })
         const d = await r.json().catch(() => ({}))
+        const skipped = !!(d?.exists && !d?.id)
         const ok = r.ok && d?.id
-        setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: ok ? 'done' : 'err', bookId: d?.id } : x)))
+        setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: skipped ? 'skip' : (ok ? 'done' : 'err'), bookId: d?.id } : x)))
       } catch {
         setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: 'err' } : x)))
       }
@@ -144,9 +145,9 @@ export function BulkGuidebookBuilder() {
             <div className="mt-3 space-y-1.5">
               {results.map((r) => (
                 <div key={r.id} className="flex items-center gap-2 text-sm rounded-lg border border-line px-2.5 py-1.5">
-                  {r.status === 'done' ? <Check size={14} className="text-emerald-600" /> : r.status === 'running' ? <Loader2 size={14} className="animate-spin text-neutral-400" /> : r.status === 'err' ? <AlertTriangle size={14} className="text-rose-500" /> : <span className="h-3.5 w-3.5" />}
+                  {r.status === 'done' ? <Check size={14} className="text-emerald-600" /> : r.status === 'running' ? <Loader2 size={14} className="animate-spin text-neutral-400" /> : r.status === 'skip' ? <AlertTriangle size={14} className="text-amber-500" /> : r.status === 'err' ? <AlertTriangle size={14} className="text-rose-500" /> : <span className="h-3.5 w-3.5" />}
                   <span className="flex-1 truncate">{r.name}</span>
-                  {r.bookId ? <a href={'/guidebooks/' + r.bookId} className="text-xs font-semibold text-brand-700 hover:underline">Open</a> : r.status === 'err' ? <span className="text-xs text-rose-500">failed</span> : null}
+                  {r.bookId ? <a href={'/guidebooks/' + r.bookId} className="text-xs font-semibold text-brand-700 hover:underline">Open</a> : r.status === 'skip' ? <span className="text-xs text-amber-600">already has one</span> : r.status === 'err' ? <span className="text-xs text-rose-500">failed</span> : null}
                 </div>
               ))}
             </div>
