@@ -34,6 +34,11 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
   const [highlights, setHighlights] = useState('')
   const [ups, setUps] = useState<Up[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [recs, setRecs] = useState<{ name: string; type?: string; blurb?: string; area?: string }[]>([])
+  const [recPick, setRecPick] = useState<Record<number, boolean>>({})
+  const [recBusy, setRecBusy] = useState(false)
+  const [newRec, setNewRec] = useState('')
+  const [extraRecs, setExtraRecs] = useState<string[]>([])
 
   const missing = QUESTIONS.filter(q => q.required && !String(answers[q.key] || '').trim()).map(q => q.label)
 
@@ -51,14 +56,33 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setUploading(false); if (fileRef.current) fileRef.current.value = '' }
   }
 
+  async function suggestRecs() {
+    setRecBusy(true)
+    try {
+      const r = await fetch('/api/guidebook/suggest-recs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId }) })
+      const d = await r.json().catch(() => ({}))
+      const list = Array.isArray(d?.recs) ? d.recs : []
+      setRecs(list)
+      const pick: Record<number, boolean> = {}
+      list.forEach((_: any, i: number) => { pick[i] = i < 6 })
+      setRecPick(pick)
+    } catch {}
+    setRecBusy(false)
+  }
+  function addExtraRec() {
+    const n = newRec.trim()
+    if (!n) return
+    setExtraRecs((x) => [...x, n]); setNewRec('')
+  }
   async function generate() {
     if (missing.length) { setErr('Please answer: ' + missing.join(', ')); return }
     setBusy(true); setErr('')
+    const selectedRecs = [...recs.filter((_, i) => recPick[i]).map((r) => (r.blurb ? (r.name + ' — ' + r.blurb) : r.name)), ...extraRecs]
     try {
       const r = await fetch('/api/guidebook', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          listingId, answers, theme, tone, audience, highlights,
+          listingId, answers, theme, tone, audience, highlights, selectedRecs,
           uploadedPhotos: ups.filter(u => u.kind === 'photo').map(u => u.url),
           docUrls: ups.filter(u => u.kind === 'doc').map(u => u.url),
         }),
@@ -144,6 +168,36 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
                 <textarea rows={2} value={highlights} onChange={e => setHighlights(e.target.value)}
                   placeholder='e.g. "the rooftop pool at sunset", "walkability to the beach", "the Wolf range"'
                   className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ink/20" />
+              </div>
+
+              {/* Things to do nearby — AI suggests, you pick */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-ink">Things to do nearby</label>
+                  <button type="button" onClick={suggestRecs} disabled={recBusy} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline disabled:opacity-50">{recBusy ? 'Finding…' : (recs.length ? 'Refresh' : 'Suggest spots')}</button>
+                </div>
+                {recs.length > 0 && (
+                  <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {recs.map((r, i) => (
+                      <label key={i} className="flex items-start gap-2 rounded-lg border border-line px-2.5 py-2 text-sm cursor-pointer hover:bg-app">
+                        <input type="checkbox" checked={!!recPick[i]} onChange={(e) => setRecPick((p) => ({ ...p, [i]: e.target.checked }))} className="mt-0.5 accent-ink" />
+                        <span className="leading-tight"><span className="font-medium text-ink">{r.name}</span>{r.blurb ? <span className="text-neutral-500"> — {r.blurb}</span> : null}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-1.5 flex gap-2">
+                  <input value={newRec} onChange={(e) => setNewRec(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExtraRec() } }} placeholder="Add your own spot…" className="flex-1 rounded-lg border border-line px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ink/20" />
+                  <button type="button" onClick={addExtraRec} className="rounded-lg border border-line px-3 py-2 text-sm font-semibold hover:bg-app">Add</button>
+                </div>
+                {extraRecs.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {extraRecs.map((x, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 rounded-full bg-app border border-line px-2 py-0.5 text-xs">{x}<button type="button" onClick={() => setExtraRecs((a) => a.filter((_, j) => j !== i))} className="text-neutral-400 hover:text-red-500">×</button></span>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-1 text-[11px] text-neutral-500">Checked spots go into the book; leave empty to let the AI choose.</p>
               </div>
 
               {/* Interview */}
