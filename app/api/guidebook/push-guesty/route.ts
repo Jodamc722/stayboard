@@ -46,6 +46,19 @@ export async function POST(req: NextRequest) {
         acct = String(rw.accountId || rw.accountID || rw.account?._id || rw.account?.id || '')
       } catch {}
     }
+    if (!acct) {
+      for (const au of [BASE + '/accounts/me', BASE + '/accounts', BASE + '/accounts?limit=1']) {
+        try {
+          const ar = await fetch(au, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } })
+          __DBG__.push({ url: au, status: ar.status })
+          if (!ar.ok) continue
+          const aj: any = await ar.json().catch(() => ({}))
+          const one: any = Array.isArray(aj) ? aj[0] : (aj?.results?.[0] || aj?.data?.[0] || aj)
+          const cand = String(one?._id || one?.id || one?.accountId || '')
+          if (cand) { acct = cand; break }
+        } catch {}
+      }
+    }
     const urls = [BASE + '/listings/custom-fields?limit=200', BASE + '/custom-fields?model=listing&limit=200', BASE + '/custom-fields?type=listing&limit=200', BASE + '/custom-fields?limit=200', BASE + '/accounts/' + acct + '/custom-fields?limit=200', BASE + '/reservations/custom-fields?limit=200']
     for (const u of urls) {
       try {
