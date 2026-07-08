@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, UploadCloud, Sparkles, RefreshCw } from 'lucide-react'
+import ListingOpsPanel from './ListingOpsPanel'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[] }
@@ -64,6 +65,7 @@ export function ForecastBoard() {
   const [cells, setCells] = useState<Record<string, string>>({})
   const [newName, setNewName] = useState('')
   const [selDate, setSelDate] = useState('')
+  const [opsFor, setOpsFor] = useState<{ listingId: string; unit: string; date?: string } | null>(null)
   const [units, setUnits] = useState<Record<string, Unit[]>>({})
   const [vendorUnits, setVendorUnits] = useState<Record<string, Unit[]>>({})
   const [pending, setPending] = useState<Record<string, Pending>>({})
@@ -300,6 +302,7 @@ export function ForecastBoard() {
 
   return (
     <div className="space-y-4">
+      {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden">
@@ -472,7 +475,7 @@ export function ForecastBoard() {
                     const settled = isAssigned || st === 'done'
                     return (
                       <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${pend ? 'bg-amber-50' : settled ? '' : 'bg-rose-50'}`}>
-                        <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}</span></span>
+                        <span className="flex-1 text-neutral-800 truncate">{u.listingId ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpsFor({ listingId: String(u.listingId), unit: String(u.unit), date: selDate }) }} className="text-left hover:underline decoration-dotted underline-offset-2">{u.unit}</button> : u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}</span></span>
                         {u.movedTo && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-medium px-1.5 py-0.5">Moved → {u.movedTo.slice(5)}</span>}
                         {u.movedFrom && <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-medium px-1.5 py-0.5">Moved clean</span>}
                         <div className="flex items-center gap-1 shrink-0">
