@@ -15,12 +15,15 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   const name = gb.title || 'Your Stay'
   let img = ''
   try {
-    const s = JSON.stringify(gb)
-    const exts = ['.jpg', '.jpeg', '.png', '.webp']
-    let best = -1
-    for (const ext of exts) {
-      const i = s.indexOf(ext)
-      if (i >= 0) { const start = s.lastIndexOf('http', i); if (start >= 0 && (best < 0 || start < best)) { best = start; img = s.slice(start, i + ext.length) } }
+    const photos = (gb as any)?.sections?._photos
+    if (Array.isArray(photos) && photos.length && typeof photos[0] === 'string') img = photos[0]
+    if (!img) {
+      const s = JSON.stringify(gb)
+      const exts = ['jpg', 'jpeg', 'png', 'webp']
+      for (const ext of exts) {
+        const i = s.indexOf(ext)
+        if (i >= 0) { const start = s.lastIndexOf('http', i); if (start >= 0) { img = s.slice(start, i + ext.length); break } }
+      }
     }
   } catch {}
   const title = /guidebook/i.test(name) ? name : name + ' — Guest Guidebook'
