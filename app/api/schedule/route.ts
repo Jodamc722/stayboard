@@ -295,7 +295,7 @@ cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miam
 } catch { /* schedule_manual_cleans not created yet - run the SQL */ }
 // MISSING CLEAN: a confirmed Guesty checkout with NO Breezeway departure task on any
 // day (same-day + cross-day matching both failed) = the clean was never scheduled.
-for (const c of cleans) { if (c.syncStatus === 'guesty-only' && c.guestOut && !c.vendor) c.missing = true }
+for (const c of cleans) { if (c.syncStatus === 'guesty-only' && c.guestOut && !c.vendor && c.date >= today && c.date <= addDays(today, 14)) c.missing = true }
 
 const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
