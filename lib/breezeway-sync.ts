@@ -32,7 +32,7 @@ export async function syncBreezewayTasks(
     const p: any = active[i]
     let r: any
     try {
-      r = await bzApi('task?home_id=' + encodeURIComponent(String(p.home_id)) + '&limit=100')
+      r = await bzApi('/task/?home_id=' + encodeURIComponent(String(p.home_id)) + '&limit=100')
     } catch {
       continue
     }
