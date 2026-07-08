@@ -4,7 +4,7 @@ import { bzApi, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 // Instant, targeted mirror refresh for just the units shown on a given day, so a
 // fresh Breezeway assignment appears in seconds when the user hits Refresh -
@@ -50,7 +50,9 @@ async function run(req: NextRequest) {
   const active = ((props || []) as any[]).filter((p) => String(p.status || '').toLowerCase() === 'active')
 
   let upserted = 0
+  const started = Date.now()
   for (const p of active) {
+    if (Date.now() - started > 260000) break
     let r: any
     try { r = await bzApi('/task/?home_id=' + encodeURIComponent(String(p.home_id)) + '&limit=500') } catch { continue }
     if (!r?.ok) continue
