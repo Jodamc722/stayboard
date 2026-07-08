@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, Uplo
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[] }
-type Unit = { unit: string; listingId?: string; bedrooms?: number | null; hub?: string; sameDay?: boolean; assigned?: string[] }
+type Unit = { unit: string; movedTo?: string | null; movedFrom?: string | null; listingId?: string; bedrooms?: number | null; hub?: string; sameDay?: boolean; assigned?: string[] }
 type HK = { id: string; name: string }
 type Pending = { listingId: string; date: string; id: string; name: string }
 
@@ -118,7 +118,7 @@ export function ForecastBoard() {
               if (!c?.guestOut) continue // only departure (checkout) cleans count
               const unit = c?.unit || c?.name || c?.listingName || c?.title || 'Unit'
               const an0 = Array.isArray(c?.assignedNames) ? c.assignedNames : []
-              const rec: Unit = { unit, listingId: c?.listingId || c?.listing_id || c?._id, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay, assigned: an0 }
+              const rec: Unit = { unit, listingId: c?.listingId || c?.listing_id || c?._id, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay, assigned: an0, movedTo: c?.movedTo, movedFrom: c?.movedFrom }
               if (VENDOR.test(String(unit)) || c?.vendor) (vend[key] ||= []).push(rec)
               else (ours[key] ||= []).push(rec)
               an0.forEach((n: string) => { if (n) names.add(n) })
@@ -295,7 +295,7 @@ export function ForecastBoard() {
   const selDay = days.find(d => d.date === selDate)
   const selNeed = selDay ? needOn(selDay) : 0
   const selWorking = selDate ? workingOn(selDate) : 0
-  const unassignedCount = selUnits.filter(u => !(u.assigned && u.assigned.length > 0)).length
+  const unassignedCount = selUnits.filter(u => !u.movedTo && !(u.assigned && u.assigned.length > 0)).length
   const pendingDay = Object.values(pending).filter(p => p.date === selDate).length
 
   return (
@@ -473,6 +473,8 @@ export function ForecastBoard() {
                     return (
                       <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${pend ? 'bg-amber-50' : settled ? '' : 'bg-rose-50'}`}>
                         <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}</span></span>
+                        {u.movedTo && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-medium px-1.5 py-0.5">Moved → {u.movedTo.slice(5)}</span>}
+                        {u.movedFrom && <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-medium px-1.5 py-0.5">Moved clean</span>}
                         <div className="flex items-center gap-1 shrink-0">
                           {u.listingId && hkPeople.length > 0 && st !== 'saving' ? (
                             <select
