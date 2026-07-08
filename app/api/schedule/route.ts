@@ -103,7 +103,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -296,6 +296,9 @@ cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miam
 // MISSING CLEAN: a confirmed Guesty checkout with NO Breezeway departure task on any
 // day (same-day + cross-day matching both failed) = the clean was never scheduled.
 for (const c of cleans) { if (c.syncStatus === 'guesty-only' && c.guestOut && !c.vendor && c.date >= today && c.date <= addDays(today, 14)) c.missing = true }
+// WALK-IN RISK: departure clean scheduled while a confirmed guest is still in-house
+// through that day (arrived before, checks out after) = cleaning an occupied unit.
+for (const c of cleans) { if (!c.date || c.vendor) continue; const occ = (outs || []).some((r: any) => { const st = String(r.status || '').toLowerCase(); if (!(st.includes('confirm') || st.includes('check'))) return false; if (String(r.listing_id) !== c.listingId) return false; const ci = String(r.check_in || '').slice(0, 10); const co = String(r.check_out || '').slice(0, 10); return !!ci && !!co && ci < c.date && co > c.date; }); if (occ) c.walkInRisk = true }
 
 const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
