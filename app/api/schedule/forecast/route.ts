@@ -94,6 +94,22 @@ export async function GET(req: NextRequest) {
       b[date][m.market] = (b[date][m.market] || 0) + 1
     }
   }
+  // Fold in Breezeway departure cleans for the current week - next-day / moved cleans
+  // have no same-day Guesty checkout but ARE real turnovers (match the daily board).
+  const bzWeek = (await db.from('breezeway_tasks_sync').select('reference_property_id, scheduled_date, name').ilike('name', '%Departure%').gte('scheduled_date', weekStart).lte('scheduled_date', weekEnd)).data as any[] | null;
+  for (const t of (bzWeek || [])) {
+    const bid = String((t as any).reference_property_id || '');
+    const bdate = str((t as any).scheduled_date).slice(0, 10);
+    if (!bid || !bdate) continue;
+    const bkey = bid + '__' + bdate;
+    if (seen.has(bkey)) continue;
+    seen.add(bkey);
+    const bm = meta[bid];
+    if (!bm) continue;
+    const bb = bm.vendor ? wkVendorBy : wkBy;
+    if (!bb[bdate]) bb[bdate] = {};
+    bb[bdate][bm.market] = (bb[bdate][bm.market] || 0) + 1;
+  }
 
   const dowOcc = zeros()
   for (let d = histStart; d < today; d = addDays(d, 1)) dowOcc[dow(d)]++
