@@ -308,7 +308,7 @@ const dayCleans = cleans.filter(c => c.date === date).sort((a, b) => (b.sameDayT
 const markets: Record<string, Clean[]> = {}
 for (const m of MARKETS) markets[m] = dayCleans.filter(c => c.market === m)
 const d = new Date(date + 'T12:00:00')
-return { date, dow: DAYLABEL[d.getDay()], count: dayCleans.filter((c) => !c.movedTo).length, markets }
+return { date, dow: DAYLABEL[d.getDay()], count: dayCleans.filter((c) => !c.movedTo).length, additional: mirror.filter((t: any) => String(t.scheduled_date || '').slice(0, 10) === date && !String(t.name || '').toLowerCase().includes('departure')).length, markets }
 })
 
 let housekeepers: { id: number; name: string; region: string | null }[] = []
