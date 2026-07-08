@@ -103,7 +103,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -293,6 +293,9 @@ const m = meta[id]
 cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other', date: d, guestOut: null, nights: null, bedrooms: m?.bedrooms ?? null, checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m?.doorCode || null, newDoorCode: null, cleaningTime: m?.cleaningTime || null, vendor: m?.vendor || null, assignedIds: [], assignedNames: [], syncStatus: 'synced', breezewayTaskId: mr.breezeway_task_id ? String(mr.breezeway_task_id) : null, manual: true })
 }
 } catch { /* schedule_manual_cleans not created yet - run the SQL */ }
+// MISSING CLEAN: a confirmed Guesty checkout with NO Breezeway departure task on any
+// day (same-day + cross-day matching both failed) = the clean was never scheduled.
+for (const c of cleans) { if (c.syncStatus === 'guesty-only' && c.guestOut && !c.vendor) c.missing = true }
 
 const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
