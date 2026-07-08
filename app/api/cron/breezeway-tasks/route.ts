@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncBreezewayTasks } from '@/lib/breezeway-sync'
+import { revalidateTag } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -18,6 +19,7 @@ async function run(req: NextRequest) {
     }
   }
   const result = await syncBreezewayTasks(250000)
+  try { revalidateTag('schedule') } catch {}
   return NextResponse.json({ ranAt: new Date().toISOString(), ...result })
 }
 
