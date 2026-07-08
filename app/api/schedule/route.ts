@@ -103,7 +103,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -235,7 +235,8 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
 // (a) a 'guesty-only' row whose task lives on ANOTHER day -> mark synced + taskDate + assignee;
 // (b) a task scheduled on a day with no matching checkout -> add it as a row on its real day.
 try {
-const movedIns: Clean[] = []
+const extendedTaskIds = new Set<string>()
+      const movedIns: Clean[] = []
 for (const c of cleans) {
 if (c.syncStatus !== 'guesty-only') continue
 const mv = mirror.find((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date && !t.finished_at)
@@ -244,7 +245,18 @@ const mvDate = String(mv.scheduled_date).slice(0, 10)
 const ppl = Array.isArray(mv.assignees) ? mv.assignees : []
 const mvIds = ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n))
 const mvNames = ppl.map((p: any) => String(p.name || '')).filter(Boolean)
-const mvStatus: any = mv.finished_at ? 'completed' : mv.started_at ? 'in_progress' : 'created'
+if (mvDate < c.date) {
+          c.extended = true
+          c.extendedFrom = mvDate
+          c.syncStatus = 'synced'
+          c.breezewayTaskId = String(mv.id)
+          c.breezewayReportUrl = mv.report_url ? String(mv.report_url) : null
+          if (mvIds.length) c.assignedIds = mvIds
+          if (mvNames.length) c.assignedNames = mvNames
+          extendedTaskIds.add(String(mv.id))
+          continue
+        }
+        const mvStatus: any = mv.finished_at ? 'completed' : mv.started_at ? 'in_progress' : 'created'
 const mvReport = mv.report_url ? String(mv.report_url) : null
 const mvTaskId = String(mv.id)
 c.syncStatus = 'synced'
@@ -257,6 +269,7 @@ movedIns.push({ ...c, date: mvDate, movedTo: null, movedFrom: c.date, ghost: fal
 }
 cleans.push(...movedIns)
 for (const t of mirror) {
+      if (extendedTaskIds.has(String(t.id))) continue
 const d = String(t.scheduled_date).slice(0, 10)
 if (d < start || d > end) continue
 if (t.finished_at && d > today) continue
