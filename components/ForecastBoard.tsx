@@ -422,7 +422,7 @@ export function ForecastBoard() {
           </div>
 
           {selDay && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-3">
               <div className="rounded-xl border border-neutral-200 bg-white p-3.5">
                 <div className="flex items-center justify-between mb-2.5">
                   <div className="text-sm font-semibold text-neutral-800">Working — {selDay.day} {shortDate(selDate)}</div>
