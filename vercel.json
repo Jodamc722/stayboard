@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/cron/breezeway-tasks",
-      "schedule": "30 */2 * * *"
+      "schedule": "*/30 * * * *"
     }
   ]
 }
