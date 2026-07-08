@@ -476,8 +476,8 @@ export function ForecastBoard() {
                     return (
                       <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${pend ? 'bg-amber-50' : settled ? '' : 'bg-rose-50'}`}>
                         <span className="flex-1 text-neutral-800 truncate">{u.listingId ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpsFor({ listingId: String(u.listingId), unit: String(u.unit), date: selDate }) }} className="text-left hover:underline decoration-dotted underline-offset-2">{u.unit}</button> : u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · SDT' : ''}</span></span>
-                        {u.movedTo && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-medium px-1.5 py-0.5">Moved out → {u.movedTo.slice(5)}</span>}
-                        {u.movedFrom && <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-medium px-1.5 py-0.5">Moved in ← {u.movedFrom.slice(5)}</span>}
+                        {u.movedTo && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-medium px-1.5 py-0.5">Moved to {u.movedTo.slice(5)}</span>}
+                        {u.movedFrom && <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-medium px-1.5 py-0.5">Moved to today</span>}
                         {u.walkInRisk && <span className="shrink-0 rounded bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5">⚠ Guest in-house</span>}
                         {u.extended && <span className="shrink-0 rounded bg-violet-100 text-violet-700 text-[10px] font-medium px-1.5 py-0.5">Extended</span>}
                         {u.missing && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5 py-0.5">⚠ No clean</span>}
