@@ -42,7 +42,7 @@ export async function syncBreezewayTasks(
 
   // Properties with a checkout in the visible window, ordered soonest-first.
   const today = etToday()
-  const from = addDays(today, -2)
+  const from = addDays(today, -1)
   const to = addDays(today, 21)
   const { data: deps } = await db
     .from('guesty_reservations')
@@ -52,9 +52,16 @@ export async function syncBreezewayTasks(
     .order('check_out', { ascending: true })
     .limit(5000)
 
+  // Sort deps so TODAY and forward come first (ascending), then recent past last.
+  const depsSorted = ((deps || []) as any[]).slice().sort((a, b) => {
+    const ax = String(a.check_out || ''), bx = String(b.check_out || '')
+    const aPast = ax < today ? 1 : 0, bPast = bx < today ? 1 : 0
+    if (aPast !== bPast) return aPast - bPast
+    return ax < bx ? -1 : ax > bx ? 1 : 0
+  })
   const seen = new Set<string>()
   let ordered: any[] = []
-  for (const d of (deps || []) as any[]) {
+  for (const d of depsSorted) {
     const k = String(d.listing_id || '')
     if (!k || seen.has(k)) continue
     seen.add(k)
