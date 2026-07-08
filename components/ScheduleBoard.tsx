@@ -6,6 +6,7 @@
 // you click Push. The schedule is cached and only re-pulls on the morning/noon cron or when you hit Sync.
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download } from 'lucide-react'
+import ListingOpsPanel from './ListingOpsPanel'
 
 type Clean = { listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: string; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
@@ -40,6 +41,7 @@ function descFor(c: Clean): string {
 export function ScheduleBoard() {
   const [view, setView] = useState<'week' | 'day'>('week')
   const [date, setDate] = useState<string>('')
+  const [opsFor, setOpsFor] = useState<{ listingId: string; unit: string; date?: string } | null>(null)
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -326,6 +328,7 @@ async function pushBlocks() {
 
   return (
     <div className="space-y-4">
+      {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-lg border border-line overflow-hidden">
           {(['day', 'week'] as const).map(v => (
@@ -467,7 +470,7 @@ async function pushBlocks() {
                         {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}</td>
                         <td className="px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} />{(() => { const _asg = (overrides[keyOf(c)]?.name) || (cleared[keyOf(c)] ? '' : (e.source === 'existing' ? e.label : '')); return _asg && workingSet.size > 0 && !workingSet.has(_asg) ? <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5" title="This cleaner isn't on the schedule for this day">⚠ Not scheduled</div> : null })()}</td>
                         <td className="px-2.5 py-2.5 align-middle whitespace-nowrap"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${HUB_COLOR(c.hub)}`}>{c.hub}</span>{c.vendor && <span className="ml-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">vendor</span>}</td>
-                        <td className="px-2.5 py-2.5 align-middle font-medium text-ink">{c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
+                        <td className="px-2.5 py-2.5 align-middle font-medium text-ink">{c.listingId ? <button type="button" onClick={() => setOpsFor({ listingId: String(c.listingId), unit: String(c.unit), date })} className="text-left hover:underline decoration-dotted underline-offset-2">{c.unit}</button> : c.unit}{c.sameDayTurn && <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> turn</span>}</td>
                         <td className="px-2.5 py-2.5 align-middle text-center text-muted">{c.bedrooms ?? '—'}</td>
                         <td className="px-2.5 py-2.5 align-middle text-ink/90">{c.blocked ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">Moved from {c.blockedFrom}</span> : c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5 hover:bg-violet-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : c.guestOut || <span className="text-muted italic">—</span>}</td>
                         <td className="px-2.5 py-2.5 align-middle whitespace-nowrap">{c.checkOutTime || '11:00'}</td>
