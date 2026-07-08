@@ -126,7 +126,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       setOverrides({}); setCleared({}); setSelected({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
-  useEffect(() => { load('week', '') }, [])
+  useEffect(() => { const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date'); if (_d) { setView('day'); setDate(_d); load('day', _d) } else { load('week', '') } }, [])
 
   async function sync() {
     setSyncing(true); setError(null)
