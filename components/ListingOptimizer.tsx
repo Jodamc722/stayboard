@@ -45,6 +45,9 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     if (busy) return
     setWasRecreate(freshFeel)
     setOpen(true); setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null); setSectionMsg({})
+    // RECREATE 2.0: a full Recreate also kicks off the photo pass (AI order + captions + hero
+    // suggestion + image enhancement) in the PhotoOrganizer panel below — one click, whole listing.
+    if (freshFeel) { try { window.dispatchEvent(new CustomEvent('stay:recreate-listing')) } catch { /* no-op */ } }
     try {
       const base = genPrompt.trim()
       const instruction = freshFeel
@@ -187,7 +190,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
             <Pencil size={15} /> Edit current
           </button>
-          <button onClick={() => generate(true)} disabled={busy} title="Brand-new title + all descriptions with a fresh angle"
+          <button onClick={() => generate(true)} disabled={busy} title="Brand-new title + all descriptions with a fresh angle — also runs the photo pass below (order, captions, cover suggestion, image enhancement)"
             className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2.5 text-sm font-semibold hover:bg-brand-50 disabled:opacity-50">
             <Sparkles size={15} /> Recreate (fresh feel)
           </button>
