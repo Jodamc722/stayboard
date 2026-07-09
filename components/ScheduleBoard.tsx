@@ -451,7 +451,7 @@ async function pushBlocks() {
               <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.length})
             </label>
           )}
-{rows.length > 0 && <span className="ml-3 text-[10px] text-muted"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-200 align-middle mr-1"></span>clean started <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-200 align-middle ml-2 mr-1"></span>clean finished</span>}
+{rows.length > 0 && <span className="ml-3 text-[10px] text-muted"><span className="text-emerald-500 mr-1">●</span>in progress <span className="text-emerald-600 ml-2 mr-1">✓</span>finished <span className="text-neutral-300 ml-2 mr-1">○</span>not started</span>}
           {rows.filter(r => r.syncStatus === 'guesty-only').length > 0 && (
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {rows.filter(r => r.syncStatus === 'guesty-only').length} clean{rows.filter(r => r.syncStatus === 'guesty-only').length === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
           )}
