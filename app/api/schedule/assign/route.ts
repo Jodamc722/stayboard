@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     const date = String(it?.date || '').slice(0, 10)
     const assigneeIds = (Array.isArray(it?.assigneeIds) ? it.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
     const description = typeof it?.description === 'string' ? it.description.slice(0, 1500) : ''
+    const sdt = it?.sameDayTurn === true
     if (!listingId || !date) { results.push({ listingId, date, ok: false, error: 'missing listingId/date' }); continue }
     try {
       const tasks = await listPropertyHousekeeping(listingId, date, date)
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
       // assignments REPLACES the task's assignees (override, not append). name is sent because the
       // Breezeway update treats it as required; re-pushing a different cleaner swaps the assignment.
       const payload: Record<string, any> = { assignments: assigneeIds }
-      payload.name = clean.name || 'Clean'
+      const baseName = clean.name || 'Clean'; payload.name = (sdt && !baseName.includes('SAME-DAY TURN')) ? (baseName + '  ⚠ SAME-DAY TURN') : baseName
       if (description) payload.description = description
       const r = await updateBreezewayTask(clean.id, payload)
       if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: `Breezeway ${r.status}: ${r.text.slice(0, 140)}` }); continue }
