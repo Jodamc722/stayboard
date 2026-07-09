@@ -180,6 +180,19 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayCleans, sortBy, overrides, cleared])
 
+  function statusCls(c: Clean): string {
+    const st = String(c.taskStatus || '')
+    if (st === 'completed') return 'bg-emerald-100 border-l-4 border-l-emerald-600'
+    if (st === 'in_progress') return 'bg-emerald-50 border-l-4 border-l-emerald-300'
+    const isToday = !!data && data.today === c.date
+    if (isToday && !c.vendor) {
+      const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(new Date()))
+      if (h >= 15) return 'bg-red-50 border-l-4 border-l-red-500'
+      if (h >= 14) return 'bg-amber-50 border-l-4 border-l-amber-400'
+    }
+    return ''
+  }
+
   async function push() {
     if (!selectedKeys.length) return
     setPushing(true); setPushMsg(null); setError(null)
@@ -461,7 +474,7 @@ async function pushBlocks() {
                     const e = effective(c)
                     const newBuilding = sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))
                     return (
-                      <tr key={keyOf(c)} className={`group hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : c.taskStatus === 'completed' ? 'bg-emerald-50/70' : c.taskStatus === 'in_progress' ? 'bg-yellow-50' : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
+                      <tr key={keyOf(c)} className={`group hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : statusCls(c) ? statusCls(c) : c.sameDayTurn ? 'bg-rose-50/40' : ''}`}>
                         <td className="px-2.5 py-2.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />{c.syncStatus === 'guesty-only' && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}{c.movedTo && <span title={`Moved to ${c.movedTo} → the clean now happens that day`} className="inline-block ml-0.5 text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1 align-middle">Moved to {c.movedTo.slice(5)}</span>}
                         {c.movedFrom && <span title={`Moved clean → originally a checkout on ${c.movedFrom}`} className="inline-block ml-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-300 rounded px-1 align-middle">Moved to today</span>}
                         {c.extended && <span title={'EXTENDED - guest stay was extended; the clean auto-moved to the new checkout' + (c.extendedFrom ? ' (was ' + c.extendedFrom + ')' : '')} className="inline-block ml-0.5 text-[9px] font-bold text-violet-700 bg-violet-50 border border-violet-300 rounded px-1 align-middle">Extended{c.extendedFrom ? ' \u00b7 was ' + c.extendedFrom.slice(5) : ''}</span>}
