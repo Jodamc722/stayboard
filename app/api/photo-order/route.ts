@@ -21,6 +21,9 @@ export async function POST(req: NextRequest) {
   // Optional per-photo replacement image URLs (from /api/photo-enhance). Swapping `original`
   // makes Guesty re-ingest the enhanced file and syncs it to every channel.
   const urls: Record<string, string> = (body?.urls && typeof body.urls === 'object') ? body.urls : {}
+  // Optional NEW photos (from /api/photo-upload): { tempId: { url, caption } }. Temp ids appear in
+  // `order` at the position the human chose; we insert a fresh picture object there.
+  const adds: Record<string, { url?: string; caption?: string }> = (body?.adds && typeof body.adds === 'object') ? body.adds : {}
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   if (order.length === 0) return NextResponse.json({ error: 'order array required' }, { status: 400 })
 
@@ -38,14 +41,24 @@ export async function POST(req: NextRequest) {
   const byId = new Map<string, any>()
   current.forEach((p, i) => byId.set(String(p?._id ?? `idx-${i}`), p))
   const used = new Set<string>()
-  const ordered: { id: string; p: any }[] = []
-  for (const id of order) { const p = byId.get(id); if (p && !used.has(id)) { used.add(id); ordered.push({ id, p }) } }
+  const ordered: { id: string; p: any; isNew?: boolean }[] = []
+  for (const id of order) {
+    const p = byId.get(id)
+    if (p && !used.has(id)) { used.add(id); ordered.push({ id, p }); continue }
+    const a = adds[id]
+    if (a && typeof a.url === 'string' && /^https:\/\//.test(a.url) && !used.has(id)) {
+      used.add(id)
+      ordered.push({ id, isNew: true, p: { original: a.url, thumbnail: a.url, ...(a.caption && a.caption.trim() ? { caption: a.caption.trim() } : {}) } })
+    }
+  }
   current.forEach((p, i) => { const id = String(p?._id ?? `idx-${i}`); if (!used.has(id)) { used.add(id); ordered.push({ id, p }) } })
-  if (ordered.length !== current.length) {
+  if (ordered.filter(o => !o.isNew).length !== current.length) {
     return NextResponse.json({ error: 'reorder integrity check failed' }, { status: 500 })
   }
+  const addedCount = ordered.filter(o => o.isNew).length
   let swappedCount = 0
   const reordered: any[] = ordered.filter(o => !removeSet.has(o.id)).map(o => {
+    if (o.isNew) return o.p // new photos already carry url + caption
     let p = typeof captions[o.id] === 'string' ? { ...o.p, caption: captions[o.id] } : o.p
     const u = urls[o.id]
     if (typeof u === 'string' && /^https:\/\//.test(u)) {
@@ -102,5 +115,5 @@ export async function POST(req: NextRequest) {
     }
   } catch { verifyNote = 'Pushed, but could not immediately re-read the listing to verify (Guesty may still be applying it).' }
 
-  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount, swapped: swappedCount, verified, verifyNote, guestyStatus: r.status })
+  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount, swapped: swappedCount, added: addedCount, verified, verifyNote, guestyStatus: r.status })
 }
