@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun } from 'lucide-react'
 
 type Photo = { _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string }
 type Result = {
@@ -39,8 +39,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [toRemove, setToRemove] = useState<Set<string>>(new Set())
   const [dragId, setDragId] = useState<string | null>(null)
   const [guidance, setGuidance] = useState('')
+  // ENHANCE state: enhanced[id] = hosted enhanced URL; useEnhanced = ids whose enhanced version
+  // will replace the live photo on push. Originals are always mirrored to our storage first.
+  const [enhanced, setEnhanced] = useState<Record<string, string>>({})
+  const [useEnhanced, setUseEnhanced] = useState<Set<string>>(new Set())
+  const [enhancing, setEnhancing] = useState(false)
 
-  async function analyze(hero?: string, guidanceText?: string) {
+  async function analyze(hero?: string, guidanceText?: string): Promise<string[] | null> {
     setBusy(true); setError(null); setPushedMsg(null)
     try {
       const r = await fetch('/api/optimize-photos', {
@@ -54,8 +59,47 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       ;(j.photos || []).forEach((p: Photo) => { map[p._id] = p })
       setPhotos(map); setHeroId(j.heroId); setOrder(j.proposedOrder); setProposed(j.proposedOrder)
       setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
-    } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
+      return j.proposedOrder as string[]
+    } catch (e: any) { setError(e.message || String(e)); return null } finally { setBusy(false) }
   }
+
+  // Enhance (and mirror) the photos: gentle brightness/saturation/contrast + sharpen, hosted on our
+  // storage. Defaults every successfully enhanced photo to "use enhanced" — each card can opt out.
+  async function enhance(ids?: string[]) {
+    setOpen(true); setEnhancing(true); setError(null); setPushedMsg(null)
+    try {
+      const r = await fetch('/api/photo-enhance', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, ...(ids && ids.length ? { photoIds: ids } : {}) }),
+      })
+      const raw = await r.text()
+      let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+      if (!r.ok || !j) throw new Error((j && j.error) || (r.status === 504 ? 'Enhancing timed out - try again (results so far are saved).' : 'Failed to enhance photos. Please try again.'))
+      const map: Record<string, string> = {}
+      ;(j.photos || []).forEach((p: { _id: string; enhancedUrl: string }) => { if (p._id && p.enhancedUrl) map[p._id] = p.enhancedUrl })
+      setEnhanced(prev => ({ ...prev, ...map }))
+      setUseEnhanced(prev => { const n = new Set(prev); Object.keys(map).forEach(id => n.add(id)); return n })
+      if (j.failedCount > 0) setError(`${j.failedCount} photo(s) could not be enhanced — the rest are ready below.`)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setEnhancing(false) }
+  }
+
+  function toggleEnhanced(id: string) {
+    setUseEnhanced(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  // RECREATE 2.0: when the listing optimizer runs a full Recreate, it fires this event so the photo
+  // pass (analyze order + captions + enhance every image) runs automatically alongside the new copy.
+  useEffect(() => {
+    const run = async () => {
+      setOpen(true)
+      const ord = await analyze()
+      if (ord && ord.length > 0) await enhance(ord)
+    }
+    const handler = () => { run() }
+    window.addEventListener('stay:recreate-listing', handler)
+    return () => window.removeEventListener('stay:recreate-listing', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listingId])
 
   function move(id: string, dir: -1 | 1) {
     setOrder(prev => {
@@ -91,19 +135,22 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
 
   async function push() {
     const remove = Array.from(toRemove)
-    if (remove.length > 0 && !window.confirm(`This reorders the photos AND permanently removes ${remove.length} photo(s) from this listing on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
+    const swapCount = order.filter(id => useEnhanced.has(id) && enhanced[id]).length
+    if ((remove.length > 0 || swapCount > 0) && !window.confirm(`This pushes the new photo order${swapCount ? ` AND replaces ${swapCount} photo(s) with their enhanced versions` : ''}${remove.length ? ` AND permanently removes ${remove.length} photo(s)` : ''} on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
     setPushing(true); setError(null); setPushedMsg(null)
     try {
       const captions: Record<string, string> = {}
       order.forEach(id => { const c = photos[id]?.caption; if (typeof c === 'string') captions[id] = c })
+      const urls: Record<string, string> = {}
+      order.forEach(id => { if (useEnhanced.has(id) && enhanced[id]) urls[id] = enhanced[id] })
       const r = await fetch('/api/photo-order', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove), captions }),
+        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove), captions, ...(Object.keys(urls).length ? { urls } : {}) }),
       })
       const raw = await r.text()
       let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || 'Failed to push order. Please try again.')
-      const base = `${j.count} photos (order + descriptions)${j.removed ? `, ${j.removed} removed` : ''}`
+      const base = `${j.count} photos (order + descriptions)${j.swapped ? `, ${j.swapped} enhanced` : ''}${j.removed ? `, ${j.removed} removed` : ''}`
       setPushedMsg(j.verified
         ? `\u2713 Pushed to Guesty and verified live: ${base}. Now syncing to all channels (Airbnb, Vrbo, etc.).`
         : `Pushed to Guesty: ${base}. ${j.verifyNote || 'Guesty is applying it across channels \u2014 give it a moment.'}`)
@@ -120,11 +167,19 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={15} className="text-brand-600" /> Organize photos with AI</h2>
           <p className="text-[12px] text-muted mt-0.5">AI studies every photo, orders them to maximize bookings, and writes a guest-facing description for each. You pick the cover photo (#1); AI orders the rest. Edit anything, then push the order + descriptions to Guesty.</p>
         </div>
-        <button onClick={() => { setOpen(o => !o); if (!open && order.length === 0) analyze() }} disabled={busy}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex-shrink-0">
-          {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
-          {busy ? 'Analyzing…' : open ? 'Hide' : 'Analyze order'}
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => enhance(order.length > 0 ? order : undefined)} disabled={enhancing || busy || pushing}
+            title="Mirror every photo to Stay storage and create a gently enhanced version (brightness, color, sharpness) — you approve before anything goes live"
+            className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2.5 text-sm font-semibold hover:bg-brand-50 disabled:opacity-50">
+            {enhancing ? <Sparkles size={15} className="animate-pulse" /> : <Sun size={15} />}
+            {enhancing ? 'Enhancing…' : 'Enhance photos'}
+          </button>
+          <button onClick={() => { setOpen(o => !o); if (!open && order.length === 0) analyze() }} disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50">
+            {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
+            {busy ? 'Analyzing…' : open ? 'Hide' : 'Analyze order'}
+          </button>
+        </div>
       </div>
 
       {open && (
@@ -219,7 +274,14 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         {toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Removing</span>}
                       </div>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={p.url} alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                      <img src={enhanced[id] && useEnhanced.has(id) ? enhanced[id] : p.url} alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                      {enhanced[id] && (
+                        <button onClick={() => toggleEnhanced(id)}
+                          title={useEnhanced.has(id) ? 'Showing the enhanced version — click to keep the original instead' : 'Showing the original — click to use the enhanced version'}
+                          className={`absolute top-1.5 right-1.5 z-10 text-[10px] font-semibold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 ${useEnhanced.has(id) ? 'bg-emerald-500 text-white' : 'bg-white/90 text-zinc-600 border border-line'}`}>
+                          <Sun size={10} /> {useEnhanced.has(id) ? 'Enhanced' : 'Original'}
+                        </button>
+                      )}
                       <div className="p-2 space-y-1">
                         <select value={p.category || 'other'} onChange={e => setCategory(id, e.target.value)} title="Photo category — correct the AI's tag" className={`text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300 ${CAT_COLORS[p.category || 'other'] || CAT_COLORS.other}`}>
                           {CATS.map(c => <option key={c} value={c}>{c}</option>)}
