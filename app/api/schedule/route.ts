@@ -165,7 +165,7 @@ enrichedOk++
 }
 // DAY view: live-API lookup ONLY for cleans the mirror didn't cover (usually a handful, not all 30+).
 if (view === 'day' && breezewayConfigured() && cleans.length) {
-const pending = cleans.filter(c => c.syncStatus === undefined)
+const pending = cleans.filter(c => c.syncStatus === undefined && c.date === date)
 const CONC = 8
 for (let i = 0; i < pending.length; i += CONC) {
 await Promise.all(pending.slice(i, i + CONC).map(async c => {
