@@ -1,6 +1,6 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive } from 'lucide-react'
 
 type Photo = { _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string }
 type Result = {
@@ -44,6 +44,16 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [enhanced, setEnhanced] = useState<Record<string, string>>({})
   const [useEnhanced, setUseEnhanced] = useState<Set<string>>(new Set())
   const [enhancing, setEnhancing] = useState(false)
+  // UPLOADS: brand-new photos added by the host. uploads[id].orig = mirrored original URL.
+  // They live in `photos`/`order` like any other photo and are pushed via photo-order's adds map.
+  const [uploads, setUploads] = useState<Record<string, { orig: string }>>({})
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const [mirroring, setMirroring] = useState(false)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+  const uploadsRef = useRef<Record<string, { orig: string }>>({})
+  uploadsRef.current = uploads
+  const photosRef = useRef<Record<string, Photo>>({})
+  photosRef.current = photos
 
   async function analyze(hero?: string, guidanceText?: string): Promise<string[] | null> {
     setBusy(true); setError(null); setPushedMsg(null)
@@ -57,7 +67,11 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       if (!r.ok || !j) throw new Error((j && j.error) || (r.status === 504 ? 'The photo organizer timed out - this listing may have a lot of photos. Try again, or hide a few first.' : 'Failed to analyze photos. Please try again.'))
       const map: Record<string, Photo> = {}
       ;(j.photos || []).forEach((p: Photo) => { map[p._id] = p })
-      setPhotos(map); setHeroId(j.heroId); setOrder(j.proposedOrder); setProposed(j.proposedOrder)
+      // Keep any not-yet-pushed uploads: they aren't in Guesty so the AI doesn't know them.
+      const upIds = Object.keys(uploadsRef.current)
+      upIds.forEach(id => { if (photosRef.current[id]) map[id] = photosRef.current[id] })
+      const fullOrder = [...j.proposedOrder, ...upIds.filter((id: string) => !j.proposedOrder.includes(id))]
+      setPhotos(map); setHeroId(j.heroId); setOrder(fullOrder); setProposed(fullOrder)
       setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
       return j.proposedOrder as string[]
     } catch (e: any) { setError(e.message || String(e)); return null } finally { setBusy(false) }
@@ -85,6 +99,77 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
 
   function toggleEnhanced(id: string) {
     setUseEnhanced(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  // MIRROR ONLY: back up every original to Stay storage — no filter, no changes, nothing pushed.
+  async function mirror() {
+    setMirroring(true); setError(null); setPushedMsg(null)
+    try {
+      const ids = order.filter(id => !uploads[id])
+      const r = await fetch('/api/photo-enhance', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, mirrorOnly: true, ...(ids.length ? { photoIds: ids } : {}) }),
+      })
+      const raw = await r.text()
+      let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+      if (!r.ok || !j) throw new Error((j && j.error) || 'Failed to mirror photos. Please try again.')
+      setPushedMsg(`\u2713 Mirrored ${j.count} photo(s) to Stay storage \u2014 untouched originals safely backed up.${j.failedCount ? ` ${j.failedCount} failed.` : ''}`)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setMirroring(false) }
+  }
+
+  // Downscale in the browser (\u22642048px JPEG) so each upload stays small; falls back to the raw file.
+  async function resizeToJpeg(file: File): Promise<Blob> {
+    try {
+      const url = URL.createObjectURL(file)
+      const img = await new Promise<HTMLImageElement>((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url })
+      const scale = Math.min(1, 2048 / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale)); const h = Math.max(1, Math.round(img.height * scale))
+      const c = document.createElement('canvas'); c.width = w; c.height = h
+      const ctx = c.getContext('2d'); if (!ctx) throw new Error('no canvas')
+      ctx.drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      const blob = await new Promise<Blob | null>(res => c.toBlob(res, 'image/jpeg', 0.92))
+      if (!blob) throw new Error('encode failed')
+      return blob
+    } catch { return file }
+  }
+
+  // UPLOAD new photos: each file is mirrored (untouched original) + enhanced on the server, then
+  // appears in the grid like any other photo (enhanced by default). Pushed via photo-order `adds`.
+  async function addFiles(list: FileList | null) {
+    if (!list || list.length === 0) return
+    const files = Array.from(list).slice(0, 20)
+    setError(null); setPushedMsg(null); setUploadingCount(files.length); setOpen(true)
+    for (const f of files) {
+      try {
+        const blob = await resizeToJpeg(f)
+        const fd = new FormData()
+        fd.append('listingId', listingId)
+        fd.append('file', blob, (f.name || 'photo').replace(/\.[a-z0-9]+$/i, '') + '.jpg')
+        const r = await fetch('/api/photo-upload', { method: 'POST', body: fd })
+        const raw = await r.text()
+        let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+        if (!r.ok || !j || !j._id) throw new Error((j && j.error) || 'Upload failed. Please try again.')
+        const id = j._id as string
+        setPhotos(prev => ({ ...prev, [id]: { _id: id, url: j.originalUrl, caption: '', category: 'other', kind: 'upload' } }))
+        setUploads(prev => ({ ...prev, [id]: { orig: j.originalUrl } }))
+        setEnhanced(prev => ({ ...prev, [id]: j.enhancedUrl }))
+        setUseEnhanced(prev => { const n = new Set(prev); n.add(id); return n })
+        setOrder(prev => [...prev, id])
+        setProposed(prev => [...prev, id])
+      } catch (e: any) { setError(e.message || String(e)) }
+      finally { setUploadingCount(c => Math.max(0, c - 1)) }
+    }
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  // Uploads aren't in Guesty yet, so "removing" one just drops it locally.
+  function removeUpload(id: string) {
+    setOrder(prev => prev.filter(x => x !== id)); setProposed(prev => prev.filter(x => x !== id))
+    setPhotos(prev => { const n = { ...prev }; delete n[id]; return n })
+    setUploads(prev => { const n = { ...prev }; delete n[id]; return n })
+    setEnhanced(prev => { const n = { ...prev }; delete n[id]; return n })
+    setUseEnhanced(prev => { const n = new Set(prev); n.delete(id); return n })
   }
 
   // RECREATE 2.0: when the listing optimizer runs a full Recreate, it fires this event so the photo
@@ -135,26 +220,33 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
 
   async function push() {
     const remove = Array.from(toRemove)
-    const swapCount = order.filter(id => useEnhanced.has(id) && enhanced[id]).length
-    if ((remove.length > 0 || swapCount > 0) && !window.confirm(`This pushes the new photo order${swapCount ? ` AND replaces ${swapCount} photo(s) with their enhanced versions` : ''}${remove.length ? ` AND permanently removes ${remove.length} photo(s)` : ''} on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
+    const addCount = order.filter(id => uploads[id]).length
+    const swapCount = order.filter(id => !uploads[id] && useEnhanced.has(id) && enhanced[id]).length
+    if ((remove.length > 0 || swapCount > 0 || addCount > 0) && !window.confirm(`This pushes the new photo order${addCount ? ` AND adds ${addCount} new photo(s)` : ''}${swapCount ? ` AND replaces ${swapCount} photo(s) with their enhanced versions` : ''}${remove.length ? ` AND permanently removes ${remove.length} photo(s)` : ''} on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
     setPushing(true); setError(null); setPushedMsg(null)
     try {
       const captions: Record<string, string> = {}
       order.forEach(id => { const c = photos[id]?.caption; if (typeof c === 'string') captions[id] = c })
       const urls: Record<string, string> = {}
-      order.forEach(id => { if (useEnhanced.has(id) && enhanced[id]) urls[id] = enhanced[id] })
+      const adds: Record<string, { url: string; caption: string }> = {}
+      order.forEach(id => {
+        if (uploads[id]) { adds[id] = { url: (useEnhanced.has(id) && enhanced[id]) ? enhanced[id] : uploads[id].orig, caption: photos[id]?.caption || '' }; return }
+        if (useEnhanced.has(id) && enhanced[id]) urls[id] = enhanced[id]
+      })
       const r = await fetch('/api/photo-order', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove), captions, ...(Object.keys(urls).length ? { urls } : {}) }),
+        body: JSON.stringify({ listingId, order, remove: Array.from(toRemove), captions, ...(Object.keys(urls).length ? { urls } : {}), ...(Object.keys(adds).length ? { adds } : {}) }),
       })
       const raw = await r.text()
       let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || 'Failed to push order. Please try again.')
-      const base = `${j.count} photos (order + descriptions)${j.swapped ? `, ${j.swapped} enhanced` : ''}${j.removed ? `, ${j.removed} removed` : ''}`
+      const base = `${j.count} photos (order + descriptions)${j.added ? `, ${j.added} added` : ''}${j.swapped ? `, ${j.swapped} enhanced` : ''}${j.removed ? `, ${j.removed} removed` : ''}`
       setPushedMsg(j.verified
         ? `\u2713 Pushed to Guesty and verified live: ${base}. Now syncing to all channels (Airbnb, Vrbo, etc.).`
         : `Pushed to Guesty: ${base}. ${j.verifyNote || 'Guesty is applying it across channels \u2014 give it a moment.'}`)
       setToRemove(new Set())
+      // Pushed uploads are now real Guesty photos — clear temp state so a re-push can't duplicate them.
+      if (Object.keys(adds).length) setUploads({})
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
@@ -168,6 +260,19 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
           <p className="text-[12px] text-muted mt-0.5">AI studies every photo, orders them to maximize bookings, and writes a guest-facing description for each. You pick the cover photo (#1); AI orders the rest. Edit anything, then push the order + descriptions to Guesty.</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addFiles(e.target.files)} />
+          <button onClick={() => fileRef.current?.click()} disabled={uploadingCount > 0 || pushing}
+            title="Upload new photos — each is saved to Stay storage (original kept) and gently enhanced; place and push them like any other photo"
+            className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
+            {uploadingCount > 0 ? <Sparkles size={15} className="animate-pulse" /> : <ImagePlus size={15} />}
+            {uploadingCount > 0 ? `Uploading ${uploadingCount}\u2026` : 'Add photos'}
+          </button>
+          <button onClick={mirror} disabled={mirroring || pushing}
+            title="Back up every photo's untouched original to Stay storage — no changes, nothing pushed"
+            className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
+            {mirroring ? <Sparkles size={15} className="animate-pulse" /> : <Archive size={15} />}
+            {mirroring ? 'Mirroring\u2026' : 'Mirror'}
+          </button>
           <button onClick={() => enhance(order.length > 0 ? order : undefined)} disabled={enhancing || busy || pushing}
             title="Mirror every photo to Stay storage and create a gently enhanced version (brightness, color, sharpness) — you approve before anything goes live"
             className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2.5 text-sm font-semibold hover:bg-brand-50 disabled:opacity-50">
@@ -270,6 +375,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${isHero ? 'bg-amber-500 text-white' : 'bg-black/60 text-white'}`}>{idx + 1}</span>
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
                         {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
+                        {uploads[id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 inline-flex items-center gap-0.5"><ImagePlus size={10} /> New</span>}
                         {removeList.some(r => r._id === id) && !toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Trash2 size={10} /> Suggest</span>}
                         {toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Removing</span>}
                       </div>
@@ -293,7 +399,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                             <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>
                             <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="Move later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>
                             <button onClick={() => setAsHero(id)} title="Make this the cover photo" className="ml-auto p-1 rounded border border-line text-amber-600 hover:text-amber-700"><Star size={12} /></button>
-                            <button onClick={() => toggleRemove(id)} title={toRemove.has(id) ? 'Keep this photo' : 'Remove this photo from the listing'} className={`p-1 rounded border ${toRemove.has(id) ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-line text-muted hover:text-rose-600'}`}><Trash2 size={12} /></button>
+                            <button onClick={() => uploads[id] ? removeUpload(id) : toggleRemove(id)} title={uploads[id] ? 'Discard this new photo (not uploaded to Guesty yet)' : toRemove.has(id) ? 'Keep this photo' : 'Remove this photo from the listing'} className={`p-1 rounded border ${toRemove.has(id) ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-line text-muted hover:text-rose-600'}`}><Trash2 size={12} /></button>
                           </div>
                         )}
                       </div>
