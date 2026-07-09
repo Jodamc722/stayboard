@@ -16,6 +16,17 @@ export async function POST(req: NextRequest) {
   const taskId = String(body?.taskId || '').trim()
   const assigneeIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
   if (!taskId) return NextResponse.json({ error: 'taskId required' }, { status: 400 })
+  // Same-day-turn note -> Breezeway task summary (idempotent, non-destructive). Body { taskId, sdtNote }.
+  const sdtNote = String(body?.sdtNote || '').trim()
+  if (sdtNote) {
+    const cur = await retrieveBreezewayTask(taskId)
+    const existing = String((cur.data && cur.data.summary) || '')
+    if (existing.includes('SAME-DAY TURN')) return NextResponse.json({ ok: true, taskId, alreadyFlagged: true, summary: existing })
+    const next = existing ? (existing + ' | ' + sdtNote) : sdtNote
+    const w = await updateBreezewayTask(taskId, { summary: next })
+    if (!w.ok) return NextResponse.json({ error: `Breezeway ${w.status}: ${w.text.slice(0, 200)}` }, { status: 502 })
+    return NextResponse.json({ ok: true, taskId, wroteSummary: next })
+  }
   const r = await updateBreezewayTask(taskId, { assignments: assigneeIds })
   if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
   return NextResponse.json({ ok: true, taskId, assigneeIds })
