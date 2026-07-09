@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive } from 'lucide-react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw } from 'lucide-react'
 
 type Photo = { _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string }
 type Result = {
@@ -50,6 +50,11 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [uploadingCount, setUploadingCount] = useState(0)
   const [mirroring, setMirroring] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  // REPLACEMENTS: overwrite an existing photo's image with a new upload (keeps position + caption).
+  // replaced[id] = { orig: new uploaded original URL, prevUrl: the old image (for undo) }.
+  const [replaced, setReplaced] = useState<Record<string, { orig: string; prevUrl: string }>>({})
+  const replaceRef = useRef<HTMLInputElement | null>(null)
+  const replaceTargetRef = useRef<string | null>(null)
   const uploadsRef = useRef<Record<string, { orig: string }>>({})
   uploadsRef.current = uploads
   const photosRef = useRef<Record<string, Photo>>({})
@@ -163,6 +168,43 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  // REPLACE an existing photo's image: pick a file, it's mirrored + enhanced like an upload, then
+  // swaps in at this photo's position. Pushed via photo-order's urls map (Guesty re-ingests it).
+  function startReplace(id: string) { replaceTargetRef.current = id; replaceRef.current?.click() }
+
+  async function replaceFile(list: FileList | null) {
+    const f = list && list[0]; const target = replaceTargetRef.current
+    if (!f || !target) return
+    setError(null); setPushedMsg(null); setUploadingCount(1)
+    try {
+      const blob = await resizeToJpeg(f)
+      const fd = new FormData()
+      fd.append('listingId', listingId)
+      fd.append('file', blob, 'replacement.jpg')
+      const r = await fetch('/api/photo-upload', { method: 'POST', body: fd })
+      const raw = await r.text()
+      let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+      if (!r.ok || !j || !j.originalUrl) throw new Error((j && j.error) || 'Replacement upload failed. Please try again.')
+      setReplaced(prev => ({ ...prev, [target]: { orig: j.originalUrl, prevUrl: photosRef.current[target]?.url || '' } }))
+      setPhotos(prev => ({ ...prev, [target]: { ...prev[target], url: j.originalUrl } }))
+      setEnhanced(prev => ({ ...prev, [target]: j.enhancedUrl }))
+      setUseEnhanced(prev => { const n = new Set(prev); n.add(target); return n })
+    } catch (e: any) { setError(e.message || String(e)) }
+    finally {
+      setUploadingCount(0)
+      if (replaceRef.current) replaceRef.current.value = ''
+      replaceTargetRef.current = null
+    }
+  }
+
+  function undoReplace(id: string) {
+    const rep = replaced[id]; if (!rep) return
+    setPhotos(prev => ({ ...prev, [id]: { ...prev[id], url: rep.prevUrl } }))
+    setEnhanced(prev => { const n = { ...prev }; delete n[id]; return n })
+    setUseEnhanced(prev => { const n = new Set(prev); n.delete(id); return n })
+    setReplaced(prev => { const n = { ...prev }; delete n[id]; return n })
+  }
+
   // Uploads aren't in Guesty yet, so "removing" one just drops it locally.
   function removeUpload(id: string) {
     setOrder(prev => prev.filter(x => x !== id)); setProposed(prev => prev.filter(x => x !== id))
@@ -221,7 +263,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   async function push() {
     const remove = Array.from(toRemove)
     const addCount = order.filter(id => uploads[id]).length
-    const swapCount = order.filter(id => !uploads[id] && useEnhanced.has(id) && enhanced[id]).length
+    const swapCount = order.filter(id => !uploads[id] && (replaced[id] || (useEnhanced.has(id) && enhanced[id]))).length
     if ((remove.length > 0 || swapCount > 0 || addCount > 0) && !window.confirm(`This pushes the new photo order${addCount ? ` AND adds ${addCount} new photo(s)` : ''}${swapCount ? ` AND replaces ${swapCount} photo(s) with their enhanced versions` : ''}${remove.length ? ` AND permanently removes ${remove.length} photo(s)` : ''} on every channel (Airbnb, Vrbo, etc.). Continue?`)) return
     setPushing(true); setError(null); setPushedMsg(null)
     try {
@@ -231,6 +273,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       const adds: Record<string, { url: string; caption: string }> = {}
       order.forEach(id => {
         if (uploads[id]) { adds[id] = { url: (useEnhanced.has(id) && enhanced[id]) ? enhanced[id] : uploads[id].orig, caption: photos[id]?.caption || '' }; return }
+        if (replaced[id]) { urls[id] = (useEnhanced.has(id) && enhanced[id]) ? enhanced[id] : replaced[id].orig; return }
         if (useEnhanced.has(id) && enhanced[id]) urls[id] = enhanced[id]
       })
       const r = await fetch('/api/photo-order', {
@@ -247,6 +290,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setToRemove(new Set())
       // Pushed uploads are now real Guesty photos — clear temp state so a re-push can't duplicate them.
       if (Object.keys(adds).length) setUploads({})
+      if (Object.keys(urls).length) setReplaced({}) // replacements are live now
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
@@ -261,6 +305,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addFiles(e.target.files)} />
+          <input ref={replaceRef} type="file" accept="image/*" className="hidden" onChange={e => replaceFile(e.target.files)} />
           <button onClick={() => fileRef.current?.click()} disabled={uploadingCount > 0 || pushing}
             title="Upload new photos — each is saved to Stay storage (original kept) and gently enhanced; place and push them like any other photo"
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
@@ -376,6 +421,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
                         {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
                         {uploads[id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 inline-flex items-center gap-0.5"><ImagePlus size={10} /> New</span>}
+                        {replaced[id] && <button onClick={() => undoReplace(id)} title="Image replaced — click to undo and keep the old photo" className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 inline-flex items-center gap-0.5"><RefreshCw size={10} /> Replaced</button>}
                         {removeList.some(r => r._id === id) && !toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Trash2 size={10} /> Suggest</span>}
                         {toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Removing</span>}
                       </div>
@@ -394,14 +440,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         </select>
                         {p.reason && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
                         <input value={p.caption || ''} onChange={e => setCaption(id, e.target.value)} placeholder="Add a description…" title="Guest-facing photo description — pushed to Guesty" className="w-full text-[11px] rounded border border-line bg-white px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-200" />
-                        {!isHero && (
-                          <div className="flex items-center gap-1 pt-0.5">
-                            <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>
-                            <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="Move later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>
-                            <button onClick={() => setAsHero(id)} title="Make this the cover photo" className="ml-auto p-1 rounded border border-line text-amber-600 hover:text-amber-700"><Star size={12} /></button>
-                            <button onClick={() => uploads[id] ? removeUpload(id) : toggleRemove(id)} title={uploads[id] ? 'Discard this new photo (not uploaded to Guesty yet)' : toRemove.has(id) ? 'Keep this photo' : 'Remove this photo from the listing'} className={`p-1 rounded border ${toRemove.has(id) ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-line text-muted hover:text-rose-600'}`}><Trash2 size={12} /></button>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1 pt-0.5">
+                          {!isHero && <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>}
+                          {!isHero && <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="Move later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>}
+                          {!uploads[id] && <button onClick={() => startReplace(id)} disabled={uploadingCount > 0} title="Replace this photo's image with a new upload — keeps its spot and description" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><RefreshCw size={12} /></button>}
+                          {!isHero && <button onClick={() => setAsHero(id)} title="Make this the cover photo" className="ml-auto p-1 rounded border border-line text-amber-600 hover:text-amber-700"><Star size={12} /></button>}
+                          {!isHero && <button onClick={() => uploads[id] ? removeUpload(id) : toggleRemove(id)} title={uploads[id] ? 'Discard this new photo (not uploaded to Guesty yet)' : toRemove.has(id) ? 'Keep this photo' : 'Remove this photo from the listing'} className={`p-1 rounded border ${toRemove.has(id) ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-line text-muted hover:text-rose-600'}`}><Trash2 size={12} /></button>}
+                        </div>
                       </div>
                     </li>
                   )
