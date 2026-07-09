@@ -20,12 +20,12 @@ export async function POST(req: NextRequest) {
   const sdtNote = String(body?.sdtNote || '').trim()
   if (sdtNote) {
     const cur = await retrieveBreezewayTask(taskId)
-    const existing = String((cur.data && cur.data.summary) || '')
-    if (existing.includes('SAME-DAY TURN')) return NextResponse.json({ ok: true, taskId, alreadyFlagged: true, summary: existing })
-    const next = existing ? (existing + ' | ' + sdtNote) : sdtNote
-    const w = await updateBreezewayTask(taskId, { summary: next })
+    const curName = String((cur.data && cur.data.name) || 'Departure Clean')
+    if (curName.includes('SAME-DAY TURN')) return NextResponse.json({ ok: true, taskId, alreadyFlagged: true, name: curName })
+    const nextName = curName + '  ⚠ SAME-DAY TURN'
+    const w = await updateBreezewayTask(taskId, { name: nextName })
     if (!w.ok) return NextResponse.json({ error: `Breezeway ${w.status}: ${w.text.slice(0, 200)}` }, { status: 502 })
-    return NextResponse.json({ ok: true, taskId, wroteSummary: next })
+    return NextResponse.json({ ok: true, taskId, wroteName: nextName })
   }
   const r = await updateBreezewayTask(taskId, { assignments: assigneeIds })
   if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
