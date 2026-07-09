@@ -27,7 +27,7 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
   if (error && !/already exists/i.test(error.message || '')) throw new Error(`storage bucket: ${error.message}`)
 }
 
-async function processOne(sb: ReturnType<typeof supabaseAdmin>, listingId: string, pic: any) {
+async function processOne(sb: ReturnType<typeof supabaseAdmin>, listingId: string, pic: any, mirrorOnly = false) {
   const id = String(pic?._id || '')
   const src = str(pic?.original) || str(pic?.large) || str(pic?.thumbnail)
   if (!id || !src) return { _id: id, error: 'no source url' }
@@ -43,6 +43,7 @@ async function processOne(sb: ReturnType<typeof supabaseAdmin>, listingId: strin
   const up1 = await sb.storage.from(BUCKET).upload(origPath, origOut, { contentType: 'image/jpeg', upsert: true })
   if (up1.error) return { _id: id, error: `mirror upload: ${up1.error.message}` }
   const mirroredUrl = sb.storage.from(BUCKET).getPublicUrl(origPath).data.publicUrl
+  if (mirrorOnly) return { _id: id, mirroredUrl, bytesBefore: buf.length }
 
   // 2) ENHANCE — deliberately gentle: real-estate honest, never fake-looking.
   const enhOut = await sharp(buf, { failOn: 'none' })
@@ -71,6 +72,8 @@ export async function POST(req: NextRequest) {
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   const wanted: Set<string> | null = Array.isArray(body?.photoIds) && body.photoIds.length > 0
     ? new Set(body.photoIds.filter((x: any) => typeof x === 'string')) : null
+  // mirrorOnly: back up originals to Stay storage WITHOUT creating enhanced versions.
+  const mirrorOnly = body?.mirrorOnly === true
 
   const sb = supabaseAdmin()
   const { data: row, error } = await sb.from('guesty_listings').select('raw, pictures').eq('id', listingId).single()
@@ -93,19 +96,19 @@ export async function POST(req: NextRequest) {
   const results: any[] = []
   for (let i = 0; i < targets.length; i += CONCURRENCY) {
     const chunk = targets.slice(i, i + CONCURRENCY)
-    const settled = await Promise.all(chunk.map(p => processOne(sb, listingId, p).catch((e: any) => ({ _id: String(p?._id || ''), error: e?.message || String(e) }))))
+    const settled = await Promise.all(chunk.map(p => processOne(sb, listingId, p, mirrorOnly).catch((e: any) => ({ _id: String(p?._id || ''), error: e?.message || String(e) }))))
     results.push(...settled)
   }
 
-  const ok = results.filter(r => r.enhancedUrl)
-  const failed = results.filter(r => !r.enhancedUrl)
+  const ok = results.filter(r => (r as any).mirroredUrl)
+  const failed = results.filter(r => !(r as any).mirroredUrl)
 
   // Best-effort mirror bookkeeping in raw (sync preserves _-prefixed keys).
   if (ok.length > 0) {
     try {
       const mirror: any = (raw._photoMirror && typeof raw._photoMirror === 'object') ? { ...raw._photoMirror } : {}
       const at = new Date().toISOString()
-      for (const r of ok) mirror[r._id] = { orig: r.mirroredUrl, enhanced: r.enhancedUrl, at }
+      for (const r of ok) mirror[r._id] = { ...(mirror[r._id] || {}), orig: r.mirroredUrl, ...(r.enhancedUrl ? { enhanced: r.enhancedUrl } : {}), at }
       await sb.from('guesty_listings').update({ raw: { ...raw, _photoMirror: mirror } }).eq('id', listingId)
     } catch { /* bookkeeping is best-effort */ }
   }
@@ -114,7 +117,8 @@ export async function POST(req: NextRequest) {
     ok: true,
     count: ok.length,
     failedCount: failed.length,
-    photos: ok.map(r => ({ _id: r._id, enhancedUrl: r.enhancedUrl, mirroredUrl: r.mirroredUrl })),
+    mirrorOnly,
+    photos: ok.map(r => ({ _id: r._id, ...(r.enhancedUrl ? { enhancedUrl: r.enhancedUrl } : {}), mirroredUrl: r.mirroredUrl })),
     errors: failed.map(r => ({ _id: r._id, error: r.error })),
   })
 }
