@@ -18,6 +18,9 @@ export async function POST(req: NextRequest) {
   const listingId = body?.listingId
   const order: string[] = Array.isArray(body?.order) ? body.order.filter((x: any) => typeof x === 'string') : []
   const captions: Record<string, string> = (body?.captions && typeof body.captions === 'object') ? body.captions : {}
+  // Optional per-photo replacement image URLs (from /api/photo-enhance). Swapping `original`
+  // makes Guesty re-ingest the enhanced file and syncs it to every channel.
+  const urls: Record<string, string> = (body?.urls && typeof body.urls === 'object') ? body.urls : {}
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   if (order.length === 0) return NextResponse.json({ error: 'order array required' }, { status: 400 })
 
@@ -41,7 +44,17 @@ export async function POST(req: NextRequest) {
   if (ordered.length !== current.length) {
     return NextResponse.json({ error: 'reorder integrity check failed' }, { status: 500 })
   }
-  const reordered: any[] = ordered.filter(o => !removeSet.has(o.id)).map(o => (typeof captions[o.id] === 'string' ? { ...o.p, caption: captions[o.id] } : o.p))
+  let swappedCount = 0
+  const reordered: any[] = ordered.filter(o => !removeSet.has(o.id)).map(o => {
+    let p = typeof captions[o.id] === 'string' ? { ...o.p, caption: captions[o.id] } : o.p
+    const u = urls[o.id]
+    if (typeof u === 'string' && /^https:\/\//.test(u)) {
+      // Point every size at the new file; Guesty regenerates its own derivatives on ingest.
+      p = { ...p, original: u, ...(p.thumbnail ? { thumbnail: u } : {}), ...(p.large ? { large: u } : {}), ...(p.regular ? { regular: u } : {}) }
+      swappedCount++
+    }
+    return p
+  })
   const removedCount = ordered.length - reordered.length
   if (reordered.length === 0) {
     return NextResponse.json({ error: 'Refusing to remove every photo from the listing.' }, { status: 400 })
@@ -89,5 +102,5 @@ export async function POST(req: NextRequest) {
     }
   } catch { verifyNote = 'Pushed, but could not immediately re-read the listing to verify (Guesty may still be applying it).' }
 
-  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount, verified, verifyNote, guestyStatus: r.status })
+  return NextResponse.json({ ok: true, count: reordered.length, removed: removedCount, swapped: swappedCount, verified, verifyNote, guestyStatus: r.status })
 }
