@@ -86,3 +86,5 @@ stayboard-v2/
 ## Mock mode
 
 `NEXT_PUBLIC_GUESTY_MOCK_MODE=true` returns canned sample reservations + listings. Flip to `false` when Guesty creds are set. Both modes use the exact same TypeScript types so screens don't change.
+
+<!-- deploy trigger 2026-07-09: photo Replace feature -->
