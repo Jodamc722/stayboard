@@ -32,14 +32,15 @@ function descFor(c: Clean): string {
   const parts = [`${c.unit}`]
   if (c.vendor) parts.push(`VENDOR CLEAN — ${c.vendor} hotel staff`)
   if (c.doorCode) parts.push(`Door code: ${c.doorCode}`)
-  if (c.newDoorCode) parts.push(`New code to set: ${c.newDoorCode}`)
+  // Generated "new code to set" removed from pushes (Jon 2026-07-09) — it was a suggestion, not a
+  // real lock code. TODO: include the real PROGRAMMING CODE here once we know its Guesty field.
   if (c.sameDayTurn) parts.push('SAME-DAY TURN — guest arriving today, rush the turnover')
   if (c.guestOut) parts.push(`Guest out: ${c.guestOut}`)
   return parts.join(' | ')
 }
 
 export function ScheduleBoard() {
-  const [view, setView] = useState<'week' | 'day'>('week')
+  const [view, setView] = useState<'week' | 'day'>('day') // day (by building) first — the team's morning view
   const [date, setDate] = useState<string>('')
   const [opsFor, setOpsFor] = useState<{ listingId: string; unit: string; date?: string } | null>(null)
   const [data, setData] = useState<Data | null>(null)
