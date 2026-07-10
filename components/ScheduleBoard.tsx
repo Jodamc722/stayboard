@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download } from 'lucide-react'
 import ListingOpsPanel from './ListingOpsPanel'
+import { ForecastBoard } from './ForecastBoard'
 
 type Clean = { extended?: boolean; extendedFrom?: string | null; listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: string; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
@@ -14,6 +15,17 @@ type Person = { id: number; name: string; region: string | null }
 type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; units?: { id: string; name: string }[]; breezeway: boolean; syncedAt?: string; error?: string }
 
 const MARKETS = ['Miami', 'Broward', 'North'] as const
+// ---- One-pager helpers: weekly roster + forecast strip (mirrors ForecastBoard) ----
+type TeamDoc = { members: string[]; cells: Record<string, string>; rate?: number; locked?: boolean }
+type FcDay = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
+type Fc = { ok: boolean; today: string; weekStart: string; week: FcDay[]; avgByMarketDow?: Record<string, number[]> }
+const TEAM_STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
+const NON_CLEANERS: Record<string, string> = { Guillermo: 'supervisor', Roberto: 'ops', Yoslenis: 'supervisor', George: 'handyman', Ernesto: 'handyman' }
+const DEFAULT_RATE: Record<string, number> = { Miami: 5, Broward: 4, North: 4 }
+const GROWTH = 10 // % buffer on projections (matches weekly planner default)
+const shortTeamName = (n: string) => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
+const statusChip = (v: string) => { const s = String(v || '').toLowerCase(); if (/req\s*off/.test(s)) return 'bg-rose-100 text-rose-700'; if (/on\s*call/.test(s)) return 'bg-yellow-100 text-yellow-800'; if (/off/.test(s)) return 'bg-neutral-100 text-neutral-500'; if (/work/.test(s)) return 'bg-green-100 text-green-700'; return 'bg-white text-neutral-500' }
+const sunOf = (s: string) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() - d.getDay()); return d.toISOString().slice(0, 10) }
 const HUB_COLOR = (hub: string) => {
   let h = 0; for (let i = 0; i < hub.length; i++) h = (h * 31 + hub.charCodeAt(i)) >>> 0
   const palette = ['bg-sky-100 text-sky-800', 'bg-violet-100 text-violet-800', 'bg-emerald-100 text-emerald-800', 'bg-amber-100 text-amber-800', 'bg-rose-100 text-rose-800', 'bg-cyan-100 text-cyan-800', 'bg-fuchsia-100 text-fuchsia-800', 'bg-lime-100 text-lime-800', 'bg-indigo-100 text-indigo-800', 'bg-orange-100 text-orange-800']
@@ -50,58 +62,91 @@ export function ScheduleBoard() {
   const [market, setMarket] = useState<'all' | 'vendor' | typeof MARKETS[number]>('all')
   const [sortBy, setSortBy] = useState<'building' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
-  const [showWho, setShowWho] = useState(false)
-  const [workingSet, setWorkingSet] = useState<Set<string>>(new Set())
-  const [whoLoading, setWhoLoading] = useState(false)
-  const [whoRoster, setWhoRoster] = useState<{ market: string; name: string; status: string }[]>([])
+  const [tab, setTab] = useState<'board' | 'planner'>('board')
+  const [fc, setFc] = useState<Fc | null>(null)
+  const [teamDocs, setTeamDocs] = useState<Record<string, TeamDoc>>({})
+  const [teamSave, setTeamSave] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const teamDirty = useRef<Record<string, boolean>>({})
   const [moreOpen, setMoreOpen] = useState(false)
-  async function openWho() {
-    setShowWho(true); setWhoLoading(true); setWhoRoster([])
-    const todayISO = new Date().toISOString().slice(0, 10)
-    const d = date && date.length >= 10 ? date.slice(0, 10) : todayISO
-    const wd = new Date(d + 'T12:00:00'); wd.setDate(wd.getDate() - wd.getDay())
-    const ws = wd.toISOString().slice(0, 10)
-    const mkts = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
-    const rows: { market: string; name: string; status: string }[] = []
-    for (const mk of mkts) {
-      try {
-        const r = await fetch(`/api/schedule/team?weekStart=${ws}&market=${mk}`)
-        const j = await r.json()
-        const dd = j && j.doc ? j.doc : {}
-        const mem: string[] = Array.isArray(dd.members) ? dd.members : []
-        const cs = dd.cells && typeof dd.cells === 'object' ? dd.cells : {}
-        for (const m of mem) {
-          const s = String(cs[`${m}__${d}`] || '')
-          if (/work|on\s*call/i.test(s)) rows.push({ market: mk, name: m, status: /work/i.test(s) ? 'Working' : 'On Call' })
-        }
-      } catch {}
+  // ---- One-pager: forecast strip + weekly roster for the board's week ----
+  useEffect(() => {
+    const d = date && date.length >= 10 ? date.slice(0, 10) : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+    const ws = sunOf(d)
+    let dead = false
+    fetch('/api/schedule/forecast?weekStart=' + ws).then(r => r.json()).then(j => { if (!dead && j && j.ok) setFc(j) }).catch(() => {})
+    ;(async () => {
+      const next: Record<string, TeamDoc> = {}
+      for (const mk of MARKETS) {
+        try {
+          const r = await fetch('/api/schedule/team?weekStart=' + ws + '&market=' + mk)
+          const j = await r.json()
+          const dd = j && j.doc ? j.doc : {}
+          next[mk] = { members: Array.isArray(dd.members) ? dd.members : [], cells: dd.cells && typeof dd.cells === 'object' ? dd.cells : {}, rate: typeof dd.rate === 'number' ? dd.rate : undefined, locked: !!dd.locked }
+        } catch { next[mk] = { members: [], cells: {} } }
+      }
+      if (!dead) { teamDirty.current = {}; setTeamDocs(next) }
+    })()
+    return () => { dead = true }
+  }, [date])
+
+  const workingSet = useMemo(() => {
+    const set = new Set<string>()
+    const d = date && date.length >= 10 ? date.slice(0, 10) : ''
+    if (!d) return set
+    for (const mk of MARKETS) {
+      const doc = teamDocs[mk]; if (!doc) continue
+      for (const m of doc.members) { const s = String(doc.cells[m + '__' + d] || ''); if (/work|on.?call/i.test(s)) set.add(m) }
     }
-    setWhoRoster(rows); setWhoLoading(false)
+    return set
+  }, [teamDocs, date])
+
+  function mutateTeam(mk: string, fn: (doc: TeamDoc) => TeamDoc) {
+    teamDirty.current[mk] = true
+    setTeamDocs(prev => { const cur = prev[mk] || { members: [], cells: {} }; const upd: Record<string, TeamDoc> = { ...prev }; upd[mk] = fn(cur); return upd })
+  }
+  function setTeamCell(mk: string, mem: string, d: string, val: string) {
+    mutateTeam(mk, doc => { const cells: Record<string, string> = { ...doc.cells }; cells[mem + '__' + d] = val; return { ...doc, cells } })
+  }
+  function addTeamMember(mk: string, name: string) {
+    const n = String(name || '').trim(); if (!n) return
+    mutateTeam(mk, doc => doc.members.indexOf(n) >= 0 ? doc : { ...doc, members: [...doc.members, n] })
+  }
+  function removeTeamMember(mk: string, name: string) {
+    mutateTeam(mk, doc => {
+      const cells: Record<string, string> = {}
+      const ks = Object.keys(doc.cells)
+      for (let i = 0; i < ks.length; i++) { if (ks[i].indexOf(name + '__') !== 0) cells[ks[i]] = doc.cells[ks[i]] }
+      return { ...doc, members: doc.members.filter(m => m !== name), cells }
+    })
   }
   useEffect(() => {
-    let cancelled = false
-    ;(async () => {
+    const dirtyMk = Object.keys(teamDirty.current).filter(k => teamDirty.current[k])
+    if (dirtyMk.length === 0 || !date) return
+    setTeamSave('saving')
+    const ws = sunOf(date)
+    const t = setTimeout(async () => {
       try {
-        const dd0 = date && date.length >= 10 ? date.slice(0, 10) : new Date().toISOString().slice(0, 10)
-        const wd = new Date(dd0 + 'T12:00:00'); wd.setDate(wd.getDate() - wd.getDay())
-        const ws = wd.toISOString().slice(0, 10)
-        const mkts = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
-        const set = new Set<string>()
-        for (const mk of mkts) {
-          try {
-            const r = await fetch(`/api/schedule/team?weekStart=${ws}&market=${mk}`)
-            const j = await r.json()
-            const dc = j && j.doc ? j.doc : {}
-            const mem: string[] = Array.isArray(dc.members) ? dc.members : []
-            const cs = dc.cells && typeof dc.cells === 'object' ? dc.cells : {}
-            for (const m of mem) { const s = String(cs[`${m}__${dd0}`] || ''); if (/work|on.?call/i.test(s)) set.add(m) }
-          } catch {}
+        for (const mk of dirtyMk) {
+          const doc = teamDocs[mk]; if (!doc) continue
+          const r = await fetch('/api/schedule/team', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ weekStart: ws, market: mk, doc: { members: doc.members, cells: doc.cells, rate: typeof doc.rate === 'number' ? doc.rate : (DEFAULT_RATE[mk] || 4), locked: !!doc.locked } }) })
+          if (!r.ok) throw new Error('save failed')
+          teamDirty.current[mk] = false
         }
-        if (!cancelled) setWorkingSet(set)
-      } catch {}
-    })()
-    return () => { cancelled = true }
-  }, [date, market])
+        setTeamSave('saved')
+      } catch { setTeamSave('error') }
+    }, 700)
+    return () => clearTimeout(t)
+  }, [teamDocs, date])
+
+  const stripDays = fc && fc.week ? fc.week : []
+  const stripMarkets: string[] = market === 'all' || market === 'vendor' ? MARKETS.slice() : [market]
+  const rateOf = (mk: string) => { const r = teamDocs[mk] ? teamDocs[mk].rate : undefined; return typeof r === 'number' && r > 0 ? r : (DEFAULT_RATE[mk] || 4) }
+  const projFor = (d: FcDay, mk: string) => { const b = (d.actual && d.actual[mk]) || 0; if (d.isPast || d.isToday) return b; const avg = (fc && fc.avgByMarketDow && fc.avgByMarketDow[mk] && fc.avgByMarketDow[mk][d.dow]) || 0; return Math.max(b, Math.round(avg)) }
+  const bookedOn = (d: FcDay) => { let n = 0; for (const mk of stripMarkets) n += (d.actual && d.actual[mk]) || 0; return n }
+  const vendorOn = (d: FcDay) => { let n = 0; for (const mk of MARKETS) n += (d.vendor && d.vendor[mk]) || 0; return n }
+  const projOn = (d: FcDay) => { let n = 0; for (const mk of stripMarkets) n += projFor(d, mk); return n }
+  const needOn = (d: FcDay) => { if (market === 'vendor') return 0; let n = 0; for (const mk of stripMarkets) n += Math.ceil(projFor(d, mk) * (1 + GROWTH / 100) / rateOf(mk)); return n }
+  const workingOn = (d: string) => { const seen: Record<string, number> = {}; let n = 0; for (const mk of stripMarkets) { const doc = teamDocs[mk]; if (!doc) continue; for (const m of doc.members) { if (NON_CLEANERS[m] || seen[m]) continue; if (/work/i.test(String(doc.cells[m + '__' + d] || ''))) { seen[m] = 1; n++ } } } return n }
 
   const [cleared, setCleared] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
@@ -127,7 +172,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       setOverrides({}); setCleared({}); setSelected({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
-  useEffect(() => { const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); setView('day'); setDate(_d); load('day', _d) }, [])
+  useEffect(() => { const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); setView('day'); setDate(_d); load('day', _d) }, [])
 
   async function sync() {
     setSyncing(true); setError(null)
@@ -357,8 +402,22 @@ async function pushBlocks() {
   const rangeLabel = data ? (view === 'day' ? new Date(data.weekStart + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}`) : ''
   const allSelected = rows.length > 0 && rows.every(c => selected[keyOf(c)])
 
+  const tabsBar = (
+    <div className="inline-flex items-center gap-1 border border-line rounded-xl p-1 bg-white">
+      <button onClick={() => setTab('board')} className={'px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'board' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Day board</button>
+      <button onClick={() => setTab('planner')} className={'px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'planner' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Weekly planner</button>
+    </div>
+  )
+  if (tab === 'planner') return (
+    <div className="space-y-4">
+      {tabsBar}
+      <ForecastBoard mode="weekly" />
+    </div>
+  )
+
   return (
     <div className="space-y-4">
+      {tabsBar}
       {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-lg border border-line overflow-hidden">
@@ -378,42 +437,20 @@ async function pushBlocks() {
           {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2.5 py-2.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
 
 {data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV</button></div></>)}</div>)}
-          <a href="/schedule/forecast" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700" title="Go to the weekly scheduler"><CalendarRange size={14} />Weekly scheduler</a>
-          <button onClick={openWho} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="See who is working this day"><User size={13} /> Who's working</button>
+          <button onClick={() => setTab('planner')} className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700" title="Open the weekly planner"><CalendarRange size={14} />Weekly planner</button>
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
-          {showWho && (
-            <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center pt-24" onClick={() => setShowWho(false)}>
-              <div className="bg-white rounded-xl shadow-xl w-[440px] max-w-[92vw] max-h-[70vh] overflow-auto p-4 text-left" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-sm font-semibold text-ink">Who's working - {date || 'today'}</div>
-                  <button onClick={() => setShowWho(false)} className="text-[12px] text-muted hover:text-ink">Close</button>
-                </div>
-                {whoLoading ? (
-                  <div className="text-xs text-muted py-3">Loading...</div>
-                ) : whoRoster.length === 0 ? (
-                  <div className="text-xs text-muted py-3">No roster set for this day. Build it in the Schedule hub.</div>
-                ) : (
-                  <div className="space-y-1">
-                    {whoRoster.map((r, wi) => (
-                      <div key={wi} className="flex items-center justify-between text-sm border-b border-brand-100 py-1">
-                        <span className="text-ink">{r.name} <span className="text-muted text-xs">- {r.market}</span></span>
-                        <span className={`text-[11px] px-2 py-0.5 rounded-full ${/work/i.test(r.status) ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-800'}`}>{r.status}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <a href="/schedule/forecast" className="text-xs text-brand-700 hover:underline inline-block mt-3">Open the Schedule hub &rarr;</a>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      {view === 'day' && data && (
-<div className="flex items-center gap-1 flex-wrap">
-<span className="text-[10px] uppercase tracking-wide text-muted font-semibold mr-1">Jump:</span>
-{Array.from({ length: 7 }).map((_, i) => { const dd = new Date((data.today || '') + 'T12:00:00'); dd.setDate(dd.getDate() + i); const iso = dd.toISOString().slice(0, 10); const active = (data.weekStart || '') === iso; return (
-<button key={iso} onClick={() => load('day', iso)} className={'text-[11px] font-semibold px-2.5 py-1 rounded-lg border ' + (active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink hover:border-brand-200')}>{i === 0 ? 'Today' : dd.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })}</button>
+      {view === 'day' && data && stripDays.length > 0 && (
+<div className="grid grid-cols-7 gap-1.5">
+{stripDays.map(d => { const sel = d.date === ((data && data.weekStart) || date); const bk = market === 'vendor' ? vendorOn(d) : bookedOn(d); const pj = projOn(d); const nd = needOn(d); const wk = workingOn(d.date); const short = nd > 0 && wk < nd; return (
+<button key={d.date} onClick={() => load('day', d.date)} className={'rounded-xl p-2 text-left bg-white transition ' + (sel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400')}>
+<div className={'text-[10px] uppercase tracking-wide ' + (d.isToday ? 'font-bold text-neutral-900' : 'font-semibold text-muted')}>{d.day} {Number(d.date.slice(8, 10))}</div>
+<div className="text-lg font-semibold leading-tight">{market === 'vendor' ? bk : (nd || '—')}</div>
+<div className="text-[10px] text-muted">{market === 'vendor' ? 'vendor cleans' : (pj !== bk ? bk + ' bk · ' + pj + ' proj' : bk + ' cl')}</div>
+{market !== 'vendor' && (<span className={'inline-block mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ' + (short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{wk}/{nd}</span>)}
+</button>
 ) })}
 </div>
 )}
@@ -463,7 +500,9 @@ async function pushBlocks() {
       {loading && !data ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
       ) : data && view === 'day' ? (
-        <div className="space-y-2 pb-16">
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16">
+          <WorkingRail date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+          <div className="space-y-2 min-w-0">
           {rows.length > 0 && (
             <label className="inline-flex items-center gap-2 text-[12px] text-muted cursor-pointer">
               <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.length})
@@ -510,6 +549,7 @@ async function pushBlocks() {
               </table>
             </div>
           )}
+          </div>
         </div>
       ) : data ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2">
@@ -557,6 +597,49 @@ async function pushBlocks() {
         </div>
       )}
       {pushMsg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {pushMsg}</div>}
+    </div>
+  )
+}
+
+function WorkingRail({ date, dayLabel, docs, need, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; need: number; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const setD = (mk: string, val: string) => setDraft(p => { const n: Record<string, string> = { ...p }; n[mk] = val; return n })
+  const add = (mk: string) => { onAdd(mk, draft[mk] || ''); setD(mk, '') }
+  return (
+    <div className="rounded-xl border border-line bg-white p-3.5 lg:sticky lg:top-3">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-[13px] font-bold text-ink">Working — {dayLabel}</div>
+        <span className={'text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ' + (need > 0 && working < need ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{working} of {need} needed</span>
+      </div>
+      <div className="space-y-3 max-h-[540px] overflow-auto pr-1">
+        {markets.map(mk => {
+          const doc = docs[mk] || { members: [], cells: {} }
+          return (
+            <div key={mk}>
+              {markets.length > 1 && <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1">{mk}</div>}
+              {doc.members.length === 0 && <div className="text-[11px] text-muted">No roster yet — add names below or Generate in the Weekly planner.</div>}
+              {doc.members.map(mem => {
+                const val = doc.cells[mem + '__' + date] || ''
+                return (
+                  <div key={mem} className="group flex items-center gap-1.5 py-0.5">
+                    <button onClick={() => onRemove(mk, mem)} title="Remove from roster" className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-rose-600 text-xs leading-none">×</button>
+                    <span className="text-xs text-ink flex-1 truncate">{shortTeamName(mem)}{NON_CLEANERS[mem] ? <span className="text-muted"> · {NON_CLEANERS[mem]}</span> : null}</span>
+                    <select value={val} onChange={e => onSet(mk, mem, date, e.target.value)} className={'text-[11px] rounded-full px-1.5 py-0.5 border border-line ' + statusChip(val)}>
+                      <option value="">—</option>
+                      {TEAM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                )
+              })}
+              <div className="flex items-center gap-1.5 mt-1">
+                <input value={draft[mk] || ''} onChange={e => setD(mk, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(mk) }} placeholder="Add name" className="flex-1 min-w-0 text-[11px] border border-line rounded-lg px-2 py-1" />
+                <button onClick={() => add(mk)} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line hover:bg-neutral-50">Add</button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-2 text-[10px] text-muted">{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved to weekly roster' : saveState === 'error' ? 'Save failed — retry an edit' : 'Edits save to the weekly roster.'}</div>
     </div>
   )
 }
