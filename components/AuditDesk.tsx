@@ -101,10 +101,10 @@ export function AuditDesk() {
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <select value={pick} onChange={e => setPick(e.target.value)} className="text-sm border border-line rounded-lg px-2.5 py-2 bg-white max-w-[320px]">
-          <option value="">Pick a listing\u2026</option>
-          {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' \u00b7 ' + l.building : ''}</option>)}
+          <option value="">Pick a listing…</option>
+          {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
         </select>
-        <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating\u2026' : '+ New audit link'}</button>
+        <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating…' : '+ New audit link'}</button>
         <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
       </div>
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{err}</div> : null}
@@ -118,7 +118,7 @@ export function AuditDesk() {
               {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}
             </button>
             <span className="text-xs text-muted shrink-0">{a.counts.total} items · {a.counts.open} open · {a.counts.tasks} tasks</span>
-            <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied \u2713' : 'Copy link'}</button>
+            <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>
             <button onClick={() => openAudit(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{openId === a.id ? 'Close' : 'Review'}</button>
           </div>
           {openId === a.id ? (
@@ -162,7 +162,7 @@ export function AuditDesk() {
                                   <option value="">Unassigned</option>
                                   {people.map(p => <option key={String(p.id)} value={String(p.id)}>{personName(p)}</option>)}
                                 </select>
-                                <button onClick={() => createTask(it)} disabled={!!taskBusy[it.id]} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{taskBusy[it.id] ? 'Creating\u2026' : 'Create task'}</button>
+                                <button onClick={() => createTask(it)} disabled={!!taskBusy[it.id]} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{taskBusy[it.id] ? 'Creating…' : 'Create task'}</button>
                               </div>
                             )}
                           </div>
