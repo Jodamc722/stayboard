@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, Uplo
 import ListingOpsPanel from './ListingOpsPanel'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
-type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[] }
+type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[]; avgByMarketDow?: Record<string, number[]>; vendorAvgByMarketDow?: Record<string, number[]> }
 type Unit = { unit: string; movedTo?: string | null; movedFrom?: string | null; listingId?: string; bedrooms?: number | null; hub?: string; sameDay?: boolean; extended?: boolean; missing?: boolean; walkInRisk?: boolean; bzOnly?: boolean; assigned?: string[] }
 type HK = { id: string; name: string }
 type Pending = { listingId: string; date: string; id: string; name: string }
@@ -290,7 +290,17 @@ export function ForecastBoard() {
   const workingOn = (date: string) => members.filter(m => !NON_CLEANERS[m] && /work/i.test(cells[`${m}__${date}`] || '')).length
   const vendorMode = market === 'Vendor'
   const sumVendor = (d: Day) => MARKETS.reduce((s: number, m: string) => s + ((d.vendor && d.vendor[m]) || 0), 0)
-  const needOn = (d: Day) => vendorMode ? 0 : rateM > 0 ? Math.ceil(((d.actual && d.actual[market]) || 0) * (1 + growth / 100) / rateM) : 0
+  const bookedOn = (d: Day) => (d.actual && d.actual[market]) || 0
+  // PROJECTED cleans — the number we staff to. Past/today = what's actually booked. Future days =
+  // never below what's already on the books, raised to the 60-day weekday pace (bookings are still
+  // coming in for those days, so booked-now alone understaffs).
+  const projOn = (d: Day) => {
+    const booked = bookedOn(d)
+    if (vendorMode || d.isPast || d.isToday) return booked
+    const avg = (data?.avgByMarketDow && data.avgByMarketDow[market] && data.avgByMarketDow[market][d.dow]) || 0
+    return Math.max(booked, Math.round(avg))
+  }
+  const needOn = (d: Day) => vendorMode ? 0 : rateM > 0 ? Math.ceil(projOn(d) * (1 + growth / 100) / rateM) : 0
   const feeOn = (date: string) => (feeByDate[date] && feeByDate[date][market]) || 0
   const selUnits = selDate ? (units[`${selDate}__${market}`] || []) : []
   const selVendor = selDate ? (vendorUnits[`${selDate}__${market}`] || []) : []
@@ -324,7 +334,7 @@ export function ForecastBoard() {
               <button onClick={() => { setLocked((x) => !x); dirty.current = true }} title="Lock this week so Generate won't overwrite it. Manual edits still save." className={`inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border ${locked ? 'bg-amber-100 border-amber-300 text-amber-800' : 'border-neutral-200 hover:bg-neutral-50'}`}>{locked ? 'Locked · tap to unlock' : 'Lock week'}</button>
             )}
             {view === 'week' && (
-            <button onClick={generateWeek} disabled={locked} title="Draft the whole week — staff each day to the forecast. Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
+            <button onClick={generateWeek} disabled={locked} title="Draft the whole week — staffs each day to the projection (cleans already booked, raised to the 60-day weekday pace). Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
           )}
           {lastSync && <span className="text-[11px] text-neutral-400 self-center mr-0.5">Synced {new Date(lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
           <button onClick={refresh} title="Refresh cleans, forecast and fees" className="inline-flex items-center justify-center text-sm w-8 h-8 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></button>
@@ -355,7 +365,7 @@ export function ForecastBoard() {
                   return (
                     <th key={d.date} className="px-2 py-2 text-center font-medium">
                       <div className={`text-[11px] ${d.isToday ? 'text-neutral-900' : 'text-neutral-400'}`}>{d.day} {dayNum(d.date)}</div>
-                      <div className="text-[10px] text-neutral-400">{vendorMode ? sumVendor(d) : ((d.actual && d.actual[market]) || 0)} cl · need {need || 0}</div>
+                      <div className="text-[10px] text-neutral-400">{vendorMode ? `${sumVendor(d)} cl` : (projOn(d) !== bookedOn(d) ? `${bookedOn(d)} booked · ${projOn(d)} proj` : `${bookedOn(d)} cl`)} · need {need || 0}</div>
                       {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600">{money(feeOn(d.date))}</div>}
                       {need > 0 && <span className={`inline-block mt-0.5 text-[10px] px-1.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
                     </th>
@@ -413,7 +423,7 @@ export function ForecastBoard() {
                   <div className={`text-[11px] ${d.isToday ? 'text-neutral-900 font-semibold' : 'text-neutral-400'}`}>{d.day}</div>
                   <div className="text-[11px] text-neutral-400 mb-0.5">{dayNum(d.date)}</div>
                   <div className="text-lg font-semibold text-neutral-900 leading-none">{need || '—'}</div>
-                  <div className="text-[10px] text-neutral-400">{vendorMode ? sumVendor(d) : ((d.actual && d.actual[market]) || 0)} cl</div>
+                  <div className="text-[10px] text-neutral-400">{vendorMode ? `${sumVendor(d)} cl` : (projOn(d) !== bookedOn(d) ? `${bookedOn(d)} bk · ${projOn(d)} proj` : `${bookedOn(d)} cl`)}</div>
                   {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600 mb-1">{money(feeOn(d.date))}</div>}
                   {need > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
                 </button>
@@ -474,11 +484,10 @@ export function ForecastBoard() {
                     const display = pend ? shortName(pend.name) : (u.assigned || []).map(shortName).join(', ')
                     const settled = isAssigned || st === 'done'
                     return (
-                      <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${pend ? 'bg-amber-50' : settled ? '' : 'bg-rose-50'}`}>
-                        <span className="flex-1 text-neutral-800 truncate">{u.listingId ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpsFor({ listingId: String(u.listingId), unit: String(u.unit), date: selDate }) }} className="text-left hover:underline decoration-dotted underline-offset-2">{u.unit}</button> : u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · ⇄ Same-day turn' : ''}</span></span>
+                      <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 border-l-2 ${pend ? 'border-amber-400 bg-amber-50/50' : settled ? 'border-transparent' : 'border-rose-400 bg-rose-50/40'}`}>
+                        <span className="flex-1 text-neutral-800 truncate">{u.listingId ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpsFor({ listingId: String(u.listingId), unit: String(u.unit), date: selDate }) }} className="text-left hover:underline decoration-dotted underline-offset-2">{u.unit}</button> : u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null && !/\dbr\b/i.test(u.unit) ? ` · ${u.bedrooms}BR` : ''}</span>{u.sameDay && <span className="text-amber-600 text-xs font-medium"> ⇄ same-day</span>}</span>
                         {u.movedTo && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-medium px-1.5 py-0.5">Moved to {u.movedTo.slice(5)} (+{Math.max(1, Math.round((new Date(u.movedTo + 'T12:00:00').getTime() - new Date(selDate + 'T12:00:00').getTime()) / 86400000))}d)</span>}
                         {u.movedFrom && <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-medium px-1.5 py-0.5">Moved to today</span>}
-                        <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold px-1.5 py-0.5">Departure clean</span>
                         {u.walkInRisk && <span className="shrink-0 rounded bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5">⚠ Guest in-house</span>}
                         {u.extended && <span className="shrink-0 rounded bg-violet-100 text-violet-700 text-[10px] font-medium px-1.5 py-0.5">Extended</span>}
                         {u.missing && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5 py-0.5">⚠ No clean</span>}
@@ -509,8 +518,8 @@ export function ForecastBoard() {
                 <div className={`space-y-1.5 max-h-[420px] overflow-auto ${cleanTab === 'vendor' ? '' : 'hidden'}`}>
                   {selVendor.length === 0 && <div className="text-xs text-neutral-400 py-2">No vendor cleans this day.</div>}
                   {selVendor.map((u, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 bg-amber-50">
-                      <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null ? ` · ${u.bedrooms}BR` : ''}{u.sameDay ? ' · ⇄ Same-day turn' : ''}</span></span>
+                    <div key={i} className="flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 border-l-2 border-amber-300 bg-amber-50/40">
+                      <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null && !/\dbr\b/i.test(u.unit) ? ` · ${u.bedrooms}BR` : ''}</span>{u.sameDay && <span className="text-amber-600 text-xs font-medium"> ⇄ same-day</span>}</span>
                       <span className="text-[11px] text-amber-700 shrink-0">vendor</span>
                     </div>
                   ))}
