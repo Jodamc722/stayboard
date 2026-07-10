@@ -163,7 +163,10 @@ export async function listPropertyHousekeeping(refId: string, from: string, to: 
 // Pick the DEPARTURE clean from a housekeeping task list (falls back to any clean on the date).
 export function pickDepartureClean(tasks: ReturnType<typeof mapBreezewayTask>[], date: string) {
   const onDate = tasks.filter(t => String(t.scheduled_date || '').slice(0, 10) === date)
-  return onDate.find(t => /departure/i.test(String(t.name || '')) && /clean/i.test(String(t.name || '')))
-    || onDate.find(t => /clean|turnover|turn/i.test(String(t.name || '')))
-    || onDate[0] || null
+  // Never treat strip/walkthrough/inspection tasks as the departure clean. If the real
+  // departure clean was moved off this date, return null so the board can flag the move.
+  const eligible = onDate.filter(t => !/strip|walkthrough|inspect/i.test(String(t.name || '')))
+  return eligible.find(t => /departure/i.test(String(t.name || '')) && /clean/i.test(String(t.name || '')))
+    || eligible.find(t => /clean|turnover|turn/i.test(String(t.name || '')))
+    || null
 }
