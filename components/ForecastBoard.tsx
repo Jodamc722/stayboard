@@ -303,12 +303,20 @@ export function ForecastBoard() {
   const needOn = (d: Day) => vendorMode ? 0 : rateM > 0 ? Math.ceil(projOn(d) * (1 + growth / 100) / rateM) : 0
   const feeOn = (date: string) => (feeByDate[date] && feeByDate[date][market]) || 0
   const selUnits = selDate ? (units[`${selDate}__${market}`] || []) : []
-  const selVendor = selDate ? (vendorUnits[`${selDate}__${market}`] || []) : []
+  // Vendor tab aggregates ALL vendor-cleaned buildings (Botanica, PT, Amrit, Lucerne, Capri…)
+  // across markets — vendor units are keyed by their real market, not "Vendor".
+  const selVendor = selDate
+    ? (vendorMode
+        ? MARKETS.flatMap(m => vendorUnits[`${selDate}__${m}`] || [])
+        : (vendorUnits[`${selDate}__${market}`] || []))
+    : []
   const selDay = days.find(d => d.date === selDate)
   const selNeed = selDay ? needOn(selDay) : 0
   const selWorking = selDate ? workingOn(selDate) : 0
   const unassignedCount = selUnits.filter(u => !u.movedTo && !(u.assigned && u.assigned.length > 0)).length
   const pendingDay = Object.values(pending).filter(p => p.date === selDate).length
+  // On the Vendor tab there are no staffed cleans — always show the vendor list.
+  const effTab = vendorMode ? 'vendor' : cleanTab
 
   return (
     <div className="space-y-4">
@@ -465,16 +473,16 @@ export function ForecastBoard() {
               <div className="rounded-xl border border-neutral-200 bg-white p-3.5">
                 <div className="flex items-center justify-between mb-2.5 gap-2 flex-wrap">
                   <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden text-sm">
-                    <button onClick={() => setCleanTab('ours')} className={`px-3 py-1 font-medium ${cleanTab === 'ours' ? 'bg-neutral-100 text-neutral-900' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>Cleans {selUnits.length}</button>
-                    <button onClick={() => setCleanTab('vendor')} className={`px-3 py-1 font-medium ${cleanTab === 'vendor' ? 'bg-amber-100 text-amber-800' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>Vendor {selVendor.length}</button>
+                    <button onClick={() => setCleanTab('ours')} className={`px-3 py-1 font-medium ${effTab === 'ours' ? 'bg-neutral-100 text-neutral-900' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>Cleans {selUnits.length}</button>
+                    <button onClick={() => setCleanTab('vendor')} className={`px-3 py-1 font-medium ${effTab === 'vendor' ? 'bg-amber-100 text-amber-800' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>Vendor {selVendor.length}</button>
                   </div>
-                  {cleanTab === 'ours'
+                  {effTab === 'ours'
                     ? (unassignedCount > 0
                         ? <div className="text-xs text-rose-600 flex items-center gap-1"><AlertTriangle size={12} />{unassignedCount} unassigned{feeOn(selDate) > 0 && <span className="text-emerald-600 ml-1">· {money(feeOn(selDate))}</span>}</div>
                         : <div className="text-xs text-green-600">all assigned{feeOn(selDate) > 0 && <span className="text-emerald-600 ml-1">· {money(feeOn(selDate))}</span>}</div>)
                     : <div className="text-xs text-amber-600">vendor-cleaned · not staffed</div>}
                 </div>
-                <div className={`space-y-1.5 max-h-[420px] overflow-auto ${cleanTab === 'ours' ? '' : 'hidden'}`}>
+                <div className={`space-y-1.5 max-h-[420px] overflow-auto ${effTab === 'ours' ? '' : 'hidden'}`}>
                   {selUnits.length === 0 && <div className="text-xs text-neutral-400 py-2">No cleans booked this day.</div>}
                   {selUnits.map((u, i) => {
                     const key = `${u.listingId}__${selDate}`
@@ -515,7 +523,7 @@ export function ForecastBoard() {
                     )
                   })}
                 </div>
-                <div className={`space-y-1.5 max-h-[420px] overflow-auto ${cleanTab === 'vendor' ? '' : 'hidden'}`}>
+                <div className={`space-y-1.5 max-h-[420px] overflow-auto ${effTab === 'vendor' ? '' : 'hidden'}`}>
                   {selVendor.length === 0 && <div className="text-xs text-neutral-400 py-2">No vendor cleans this day.</div>}
                   {selVendor.map((u, i) => (
                     <div key={i} className="flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 border-l-2 border-amber-300 bg-amber-50/40">
@@ -524,7 +532,7 @@ export function ForecastBoard() {
                     </div>
                   ))}
                 </div>
-                <div className={`flex items-center justify-between gap-2 mt-2 pt-2 border-t border-neutral-100 ${cleanTab === 'ours' ? '' : 'hidden'}`}>
+                <div className={`flex items-center justify-between gap-2 mt-2 pt-2 border-t border-neutral-100 ${effTab === 'ours' ? '' : 'hidden'}`}>
                   <span className="text-[11px] text-amber-600">{pendingDay > 0 ? `${pendingDay} staged — not pushed yet` : selVendor.length > 0 ? `+ ${selVendor.length} vendor (not staffed)` : 'Assign, then push when ready'}</span>
                   <button onClick={() => pushDay(selDate)} disabled={pendingDay === 0} className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium ${pendingDay > 0 ? 'bg-neutral-900 text-white hover:bg-neutral-700' : 'bg-neutral-100 text-neutral-400 cursor-not-allowed'}`}><UploadCloud size={13} />Push{pendingDay > 0 ? ` ${pendingDay}` : ''} to Breezeway</button>
                 </div>
