@@ -373,11 +373,26 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
                 {days.map(d => {
                   const need = needOn(d); const working = workingOn(d.date); const short = need > 0 && working < need
                   return (
-                    <th key={d.date} className="px-2 py-2 text-center font-medium">
+                    <th key={d.date} className="px-2 py-2 text-center font-medium relative group">
                       <div className={`text-[11px] ${d.isToday ? 'text-neutral-900' : 'text-neutral-400'}`}>{d.day} {dayNum(d.date)}</div>
                       <div className="text-[10px] text-neutral-400">{vendorMode ? `${sumVendor(d)} cl` : (projOn(d) !== bookedOn(d) ? `${bookedOn(d)} booked · ${projOn(d)} proj` : `${bookedOn(d)} cl`)} · need {need || 0}</div>
                       {feeOn(d.date) > 0 && <div className="text-[10px] text-emerald-600">{money(feeOn(d.date))}</div>}
                       {need > 0 && <span className={`inline-block mt-0.5 text-[10px] px-1.5 rounded-full ${short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700'}`}>{working}/{need}</span>}
+                    {(() => { const us = vendorMode ? MARKETS.reduce((a: Unit[], m) => a.concat(vendorUnits[d.date + '__' + m] || []), [] as Unit[]) : (units[d.date + '__' + market] || []); if (us.length === 0) return null; const alignR = days.indexOf(d) >= 5; return (
+                        <div className={'hidden group-hover:block absolute z-40 top-full mt-1 w-60 max-h-80 overflow-auto rounded-lg border border-neutral-200 bg-white shadow-xl p-2 text-left font-normal ' + (alignR ? 'right-0' : 'left-1/2 -translate-x-1/2')}>
+                          <div className="text-[10px] font-semibold text-neutral-400 mb-1">{us.length} cleans · {d.day} {dayNum(d.date)}</div>
+                          {us.map((u, ui) => (
+                            <div key={ui} className="flex items-center justify-between gap-2 py-0.5 border-t border-neutral-100 first:border-0">
+                              <span className="text-[11px] text-neutral-800 truncate">{u.unit}</span>
+                              <span className="shrink-0 inline-flex items-center gap-1">
+                                {u.sameDay && <span className="text-[9px] font-bold text-rose-600">SDT</span>}
+                                {u.movedTo && <span className="text-[9px] font-bold text-amber-700">moved</span>}
+                                {u.assigned && u.assigned.length > 0 ? <span className="text-[10px] text-emerald-700">{String(u.assigned[0]).split(' ')[0]}</span> : <span className="text-[10px] text-neutral-300">—</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) })()}
                     </th>
                   )
                 })}
