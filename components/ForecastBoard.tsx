@@ -50,12 +50,12 @@ function money(n: number) {
   return '$' + Math.round(n || 0).toLocaleString()
 }
 
-export function ForecastBoard() {
+export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
   const [data, setData] = useState<FC | null>(null)
   const [err, setErr] = useState('')
   const [weekStart, setWeekStart] = useState('')
   const [market, setMarket] = useState('Miami')
-  const [view, setView] = useState<'day' | 'week'>('day')
+  const [view, setView] = useState<'day' | 'week'>(mode === 'weekly' ? 'week' : 'day')
   const [rate, setRate] = useState<Record<string, number>>({ ...DEFAULT_RATE })
   const [growth, setGrowth] = useState(10)
   const [locked, setLocked] = useState(false)
@@ -328,11 +328,13 @@ export function ForecastBoard() {
               <button key={m} onClick={() => setMarket(m)} className={`px-4 py-1.5 text-sm font-medium ${market === m ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}>{m}</button>
             ))}
           </div>
+          {mode !== 'weekly' && (
           <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden">
             {(['day', 'week'] as const).map(v => (
               <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 text-sm font-medium capitalize ${view === v ? 'bg-neutral-100 text-neutral-900' : 'bg-white text-neutral-500 hover:bg-neutral-50'}`}>{v}</button>
             ))}
           </div>
+          )}
           {view === 'week' && (
               <label title="Plan for growth — pads each day's target above the forecast" className="inline-flex items-center gap-1 text-xs text-neutral-500">+
                 <input type="number" min={0} max={100} value={growth} onChange={(e) => setGrowth(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} className="w-12 text-xs border border-neutral-200 rounded px-1 py-0.5" />% buffer
