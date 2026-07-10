@@ -37,8 +37,12 @@ export async function syncBreezewayTasks(
     .select('home_id, reference_property_id, status')
     .not('reference_property_id', 'is', null)
   const active = ((propRows || []) as any[]).filter((p) => String(p.status || '').toLowerCase() === 'active')
+  // Map EVERY property with a Guesty reference — not just 'active' ones. Some real, occupied units
+  // (e.g. Oasis) carry a stale status flag here; skipping them meant their tasks never reached the
+  // mirror, so the board showed assigned cleans as unassigned. The checkout window below already
+  // bounds how many properties we refresh, so this stays cheap.
   const propByRef = new Map<string, any>()
-  for (const p of active) propByRef.set(String(p.reference_property_id), p)
+  for (const p of ((propRows || []) as any[])) { if (p.reference_property_id != null) propByRef.set(String(p.reference_property_id), p) }
 
   // Properties with a checkout in the visible window, ordered soonest-first.
   const today = etToday()
