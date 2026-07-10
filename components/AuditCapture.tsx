@@ -52,6 +52,7 @@ export default function AuditCapture({ code }: { code: string }) {
   useEffect(() => { load() }, [])
 
   const items = data ? data.items : []
+  const done = !!(data && data.audit && data.audit.status === 'completed')
   const rooms: string[] = []
   if (data) { for (const r of defaultRooms(data.listing.bedrooms, data.listing.bathrooms)) rooms.push(r) }
   for (const r of customRooms) if (rooms.indexOf(r) < 0) rooms.push(r)
@@ -90,6 +91,15 @@ export default function AuditCapture({ code }: { code: string }) {
     setSaving(false)
   }
 
+  async function completeAudit() {
+    if (!confirm('Mark this audit complete? The office will see it as done.')) return
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'completeAudit', code }) })
+      const j = await r.json()
+      if (r.ok && j.ok) await load(); else alert(j.error || 'Failed')
+    } catch { alert('Failed - retry.') }
+  }
+
   async function removeItem(it: Item) {
     if (!confirm('Delete this item?')) return
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: it.id }) }); await load() } catch {}
@@ -118,6 +128,7 @@ export default function AuditCapture({ code }: { code: string }) {
         {data.listing.building ? <div className="text-xs text-neutral-500 mt-0.5">{data.listing.building}</div> : null}
         <div className="text-[11px] text-neutral-400 mt-2">Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.</div>
       </div>
+      {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
       {rooms.map(room => {
         const roomItems = items.filter(i => i.room === room)
         const open = openRoom === room
@@ -140,12 +151,12 @@ export default function AuditCapture({ code }: { code: string }) {
                       {it.note ? <div className="text-[11px] text-neutral-500 mt-0.5">{it.note}</div> : null}
                       <div className="text-[10px] text-neutral-400 mt-0.5">{it.status === 'task_created' ? 'Task created in Breezeway \u2713' : it.status}</div>
                     </div>
-                    {it.status === 'open' ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}
+                    {it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}
                   </div>
                 ))}
                 <div>
-                  {!sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
-                  {sug[room] && sug[room].length > 0 ? (
+                  {!done && !sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
+                  {!done && sug[room] && sug[room].length > 0 ? (
                     <div className="flex gap-1.5 flex-wrap">
                       {sug[room].map((s, i) => (
                         <button key={i} title={s.why || ''} onClick={() => startDraft(room, { kind: 'add', title: s.title, note: s.why || '' })} className="text-[11px] px-2 py-1 rounded-full border border-violet-200 bg-violet-50 text-violet-800">+ {s.title}</button>
@@ -172,7 +183,7 @@ export default function AuditCapture({ code }: { code: string }) {
                     </div>
                   </div>
                 ) : (
-                  <button onClick={() => startDraft(room)} className="w-full rounded-lg border border-neutral-200 py-2.5 text-sm font-semibold text-neutral-700">+ Add item</button>
+                  done ? null : <button onClick={() => startDraft(room)} className="w-full rounded-lg border border-neutral-200 py-2.5 text-sm font-semibold text-neutral-700">+ Add item</button>
                 )}
               </div>
             ) : null}
@@ -180,9 +191,10 @@ export default function AuditCapture({ code }: { code: string }) {
         )
       })}
       <div className="flex gap-2 mt-3">
-        <input value={newRoom} onChange={e => setNewRoom(e.target.value)} placeholder="Add a room (e.g. Hallway)" className="flex-1 text-sm border border-neutral-200 rounded-lg px-2.5 py-2 bg-white" />
+        <input value={newRoom} onChange={e => setNewRoom(e.target.value)} placeholder="Add a space (room, garage, hallway…)" className="flex-1 text-sm border border-neutral-200 rounded-lg px-2.5 py-2 bg-white" />
         <button onClick={() => { const n = newRoom.trim(); if (n && customRooms.indexOf(n) < 0) { setCustomRooms(c => [...c, n]); setOpenRoom(n) } setNewRoom('') }} className="text-sm font-semibold px-3 rounded-lg border border-neutral-200 bg-white">Add</button>
       </div>
+      {!done && items.length > 0 ? <button onClick={completeAudit} className="w-full mt-4 rounded-xl bg-emerald-600 text-white text-sm font-bold py-3">Complete audit ✓</button> : null}
       <div className="text-center text-[10px] text-neutral-300 mt-6">Stay Hospitality · items sync to the office in real time</div>
     </div>
   )
