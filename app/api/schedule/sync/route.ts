@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { syncReservations } from '@/lib/guesty'
+import { syncBreezewayTasks } from '@/lib/breezeway-sync'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -14,6 +15,9 @@ async function doSync() {
   // Pull the Guesty reservations DELTA first so altered/canceled stays don't linger as phantom
 // cleans (a reservation changed in Guesty otherwise sat stale until the 2h Guesty cron).
 try { await syncReservations() } catch { /* Guesty hiccup - still refresh from cached data */ }
+// Re-pull the Breezeway task mirror (soonest checkouts first) so assignments made in Breezeway
+// moments ago show immediately on Refresh — the board was otherwise stale until the 30-min cron.
+try { await syncBreezewayTasks(35000) } catch { /* mirror refresh is best-effort */ }
 revalidateTag('schedule')
   return NextResponse.json({ ok: true, syncedAt: new Date().toISOString() })
 }
