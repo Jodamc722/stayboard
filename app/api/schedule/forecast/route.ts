@@ -94,10 +94,29 @@ export async function GET(req: NextRequest) {
       b[date][m.market] = (b[date][m.market] || 0) + 1
     }
   }
-  // Fold in Breezeway departure cleans for the current week - next-day / moved cleans
-  // have no same-day Guesty checkout but ARE real turnovers (match the daily board).
-  const bzWeek = (await db.from('breezeway_tasks_sync').select('reference_property_id, scheduled_date, name').ilike('name', '%Departure%').gte('scheduled_date', weekStart).lte('scheduled_date', weekEnd)).data as any[] | null;
-  for (const t of (bzWeek || [])) {
+  // Fold in Breezeway departure cleans for the current week (status-filtered like the daily
+  // board) and reconcile MOVED cleans so each turnover counts once, on its actual Breezeway day.
+  const bzWeekRaw = (await db.from('breezeway_tasks_sync').select('reference_property_id, scheduled_date, name, status').ilike('name', '%Departure%').gte('scheduled_date', weekStart).lte('scheduled_date', weekEnd)).data as any[] | null;
+  const bzWeek = (bzWeekRaw || []).filter((t: any) => !/cancel|delet/i.test(String(t.status || '')));
+  const bzDates: Record<string, string[]> = {};
+  for (const t of bzWeek) {
+    const bid = String((t as any).reference_property_id || '');
+    const bdate = str((t as any).scheduled_date).slice(0, 10);
+    if (!bid || !bdate) continue;
+    if (!bzDates[bid]) bzDates[bid] = [];
+    if (bzDates[bid].indexOf(bdate) < 0) bzDates[bid].push(bdate);
+  }
+  // This week's Guesty checkout dates per listing (same filters as the counting loop above)
+  const gDates: Record<string, string[]> = {};
+  for (const r of outs) {
+    if (!LIVE.test(str(r.status))) continue;
+    const id = String(r.listing_id);
+    const date = str(r.check_out).slice(0, 10);
+    if (!date || date < weekStart || date > weekEnd) continue;
+    if (!gDates[id]) gDates[id] = [];
+    if (gDates[id].indexOf(date) < 0) gDates[id].push(date);
+  }
+  for (const t of bzWeek) {
     const bid = String((t as any).reference_property_id || '');
     const bdate = str((t as any).scheduled_date).slice(0, 10);
     if (!bid || !bdate) continue;
@@ -109,6 +128,23 @@ export async function GET(req: NextRequest) {
     const bb = bm.vendor ? wkVendorBy : wkBy;
     if (!bb[bdate]) bb[bdate] = {};
     bb[bdate][bm.market] = (bb[bdate][bm.market] || 0) + 1;
+  }
+  // MOVED dedupe: a checkout whose departure task sits on a DIFFERENT day was counted twice
+  // (checkout day + task day). Uncount the checkout day — the daily board shows the clean only
+  // on its Breezeway day. Guarded so a genuinely missing task (no bz row) still counts.
+  for (const id of Object.keys(gDates)) {
+    const bz = bzDates[id];
+    if (!bz || !bz.length) continue;
+    const spare = bz.filter(b => gDates[id].indexOf(b) < 0).length;
+    let deducted = 0;
+    for (const gd of gDates[id]) {
+      if (bz.indexOf(gd) >= 0) continue;
+      if (deducted >= spare) break;
+      const m = meta[id];
+      if (!m) continue;
+      const bb = m.vendor ? wkVendorBy : wkBy;
+      if (bb[gd] && bb[gd][m.market] > 0) { bb[gd][m.market] = bb[gd][m.market] - 1; deducted++; }
+    }
   }
 
   const dowOcc = zeros()
