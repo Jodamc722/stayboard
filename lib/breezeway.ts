@@ -145,7 +145,16 @@ export async function updateBreezewayTask(taskId: string | number, body: Record<
 // a property scope, so the schedule resolves cleans per-property on demand to find the auto-created
 // departure clean for a unit + checkout date (to assign a cleaner + write notes/door code).
 export async function listPropertyHousekeeping(refId: string, from: string, to: string) {
-  const r = await bzApi(`/task/?reference_property_id=${encodeURIComponent(refId)}&type_department=housekeeping&scheduled_date=${from},${to}&limit=100`)
+  // Prefer Breezeway's own home_id (resolved from our property map) — the reference_property_id
+  // filter on their /task endpoint misses some properties (e.g. Oasis) that home_id finds fine.
+  let q = `reference_property_id=${encodeURIComponent(refId)}`
+  try {
+    const db = supabaseAdmin()
+    const { data } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', refId).limit(1)
+    const n = Number((data || [])[0]?.home_id)
+    if (Number.isFinite(n)) q = `home_id=${n}`
+  } catch { /* fall back to reference id */ }
+  const r = await bzApi(`/task/?${q}&type_department=housekeeping&scheduled_date=${from},${to}&limit=100`)
   if (!r.ok) return [] as ReturnType<typeof mapBreezewayTask>[]
   const arr = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data?.data) ? r.data.data : []))
   return arr.map(mapBreezewayTask)
