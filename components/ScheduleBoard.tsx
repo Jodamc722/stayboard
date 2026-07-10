@@ -675,7 +675,7 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
       <button title={label || ''} onClick={() => setOpen(o => !o)} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
         <User size={11} className="shrink-0" />
         <span className="truncate flex-1 text-left min-w-0">{shortLabel || (placeholder || 'Assign cleaner…')}</span>
-        {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : (shownAsExisting ?  : null)}
+        {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : null}
       </button>
       {open && (
         <div className="absolute z-30 mt-1 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1">
