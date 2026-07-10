@@ -90,6 +90,16 @@ export async function POST(req: NextRequest) {
   const user = audit ? null : await getUser()
   if (!audit && !user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
+  if (action === 'completeAudit' || action === 'reopenAudit') {
+    const target = audit || (body.auditId ? (await db.from('property_audits').select('*').eq('id', String(body.auditId)).limit(1)).data?.[0] : null)
+    if (!target) return NextResponse.json({ error: 'audit not found' }, { status: 404 })
+    if (action === 'reopenAudit' && !user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const status = action === 'completeAudit' ? 'completed' : 'open'
+    const r = await db.from('property_audits').update({ status, updated_at: new Date().toISOString() }).eq('id', target.id)
+    if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, status })
+  }
+
   if (action === 'addItem') {
     if (!audit) return NextResponse.json({ error: 'share code required' }, { status: 400 })
     const room = String(body.room || '').slice(0, 80)
