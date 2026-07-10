@@ -229,6 +229,23 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
       }
     } catch { /* schedule_blocks not present yet — ignore */ }
 
+    // BLOCKED/MOVED rows are built AFTER the mirror pass above, so they always rendered with empty
+    // assignees even when the Breezeway task (moved to the new date) was assigned. Re-match them
+    // against the mirror on their NEW date so the clean keeps its task + cleaner.
+    if (mirror.length) {
+      for (const c of cleans) {
+        if (!c.blocked || c.breezewayTaskId) continue
+        const mt = mirror.find((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) === c.date)
+        if (!mt) continue
+        c.syncStatus = 'synced'
+        c.breezewayTaskId = String(mt.id)
+        c.breezewayReportUrl = mt.report_url ? String(mt.report_url) : null
+        c.taskStatus = mt.finished_at ? 'completed' : mt.started_at ? 'in_progress' : 'created'
+        const ppl = Array.isArray(mt.assignees) ? mt.assignees : []
+        if (ppl.length) { c.assignedIds = ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)); c.assignedNames = ppl.map((p: any) => String(p.name || '')).filter(Boolean) }
+      }
+    }
+
     // MOVED CLEANS (Jon's rule): departure cleans get moved between days (Block button or edits in
 // Breezeway), so a day's real workload = what Breezeway actually has scheduled. Reconcile BOTH ways
 // against the breezeway_tasks_sync mirror (kept live by webhooks):
