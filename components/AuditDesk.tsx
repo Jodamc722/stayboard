@@ -93,6 +93,41 @@ export function AuditDesk() {
     setTaskBusy(b => { const n = { ...b }; n[it.id] = false; return n })
   }
 
+  async function setItemStatus(it: Item, status: string) {
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', itemId: it.id, fields: { status } }) })
+      const j = await r.json()
+      if (r.ok && j.ok) setItems(list => list.map(x => x.id === it.id ? { ...x, status } : x))
+      else alert(j.error || 'Update failed')
+    } catch { alert('Update failed') }
+  }
+
+  async function setQty(it: Item, qty: number) {
+    const q = Math.max(1, Math.min(50, qty))
+    setItems(list => list.map(x => x.id === it.id ? { ...x, qty: q } : x))
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', itemId: it.id, fields: { qty: q } }) }) } catch {}
+  }
+
+  function copyOrder(a: Audit) {
+    const order = items.filter(x => (x.kind === 'replace' || x.kind === 'add') && x.status !== 'dismissed' && x.status !== 'done')
+    if (order.length === 0) { alert('No replace/add items on this audit yet.'); return }
+    const lines: string[] = ['ORDER LIST - ' + a.unit + (a.building ? ' (' + a.building + ')' : ''), '']
+    for (const it of order) {
+      lines.push('- ' + (it.qty || 1) + 'x ' + (it.title || it.item_type || 'Item') + ' [' + it.room + ']' + (it.kind === 'add' ? ' (new)' : ''))
+      if (it.note) lines.push('    note: ' + it.note)
+      if (it.photo_url) lines.push('    photo: ' + it.photo_url)
+    }
+    try { navigator.clipboard.writeText(lines.join('\n')); setCopied('order-' + a.id); setTimeout(() => setCopied(''), 2500) } catch { prompt('Copy:', lines.join('\n')) }
+  }
+
+  async function markComplete(a: Audit, reopen: boolean) {
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: reopen ? 'reopenAudit' : 'completeAudit', auditId: a.id }) })
+      const j = await r.json()
+      if (r.ok && j.ok) await load(); else alert(j.error || 'Failed')
+    } catch { alert('Failed') }
+  }
+
   const sorted = audits.slice().sort((a, b) => (a.building || '').localeCompare(b.building || '') || a.unit.localeCompare(b.unit))
   const roomNames: string[] = []
   for (const it of items) if (roomNames.indexOf(it.room) < 0) roomNames.push(it.room)
@@ -118,11 +153,39 @@ export function AuditDesk() {
               {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}
             </button>
             <span className="text-xs text-muted shrink-0">{a.counts.total} items · {a.counts.open} open · {a.counts.tasks} tasks</span>
+            <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
+            <button onClick={() => markComplete(a, a.status === 'completed')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{a.status === 'completed' ? 'Reopen' : 'Mark complete'}</button>
             <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>
             <button onClick={() => openAudit(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{openId === a.id ? 'Close' : 'Review'}</button>
           </div>
           {openId === a.id ? (
             <div className="border-t border-line px-3.5 py-3 space-y-3 bg-neutral-50/50">
+              {(() => { const order = items.filter(x => (x.kind === 'replace' || x.kind === 'add') && x.status !== 'dismissed'); if (order.length === 0) return null; return (
+                <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <div className="text-[12px] font-bold text-sky-900">Order list ({order.length})</div>
+                    <button onClick={() => copyOrder(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-sky-700 text-white">{copied === 'order-' + a.id ? 'Copied ✓' : 'Generate order'}</button>
+                  </div>
+                  <div className="space-y-1">
+                    {order.map(it => (
+                      <div key={'o' + it.id} className="flex items-center gap-2 text-xs text-sky-950">
+                        <span className="inline-flex items-center gap-1 shrink-0">
+                          <button onClick={() => setQty(it, (it.qty || 1) - 1)} className="w-5 h-5 rounded border border-sky-200 bg-white leading-none">-</button>
+                          <span className="w-6 text-center font-semibold">{it.qty || 1}</span>
+                          <button onClick={() => setQty(it, (it.qty || 1) + 1)} className="w-5 h-5 rounded border border-sky-200 bg-white leading-none">+</button>
+                        </span>
+                        <span className="flex-1 truncate">{it.title || it.item_type || 'Item'} <span className="text-sky-700/60">· {it.room}{it.kind === 'add' ? ' · new' : ''}</span></span>
+                        <select value={it.status === 'ordered' || it.status === 'done' ? it.status : 'open'} onChange={e => setItemStatus(it, e.target.value)} className="text-[11px] border border-sky-200 rounded-lg px-1.5 py-0.5 bg-white shrink-0">
+                          <option value="open">to order</option>
+                          <option value="ordered">ordered</option>
+                          <option value="done">done</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-sky-700/70 mt-1.5">Replace + Add items join this list automatically. AI product suggestions come in P2.</div>
+                </div>
+              ) })()}
               {itemsBusy ? <div className="text-sm text-muted">Loading items…</div> : null}
               {!itemsBusy && items.length === 0 ? <div className="text-sm text-muted">Nothing captured yet on this audit.</div> : null}
               {roomNames.map(room => (
