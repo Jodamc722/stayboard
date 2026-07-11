@@ -37,14 +37,26 @@ export async function GET(req: NextRequest) {
     ])
     const lrows = lr.data; const items = ir.data
     const listing = lrows && lrows[0] ? listingMeta(lrows[0]) : { id: audit.listing_id, name: 'Unit', building: '', bedrooms: null, bathrooms: null }
-    return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status, createdAt: audit.created_at }, listing, items: items || [] })
+    // Attach live Breezeway task status from the mirror so the form + desk can track completion.
+    let outItems = items || []
+    try {
+      const ids = outItems.map((x: any) => x.breezeway_task_id).filter(Boolean)
+      if (ids.length) {
+        const { data: tasks } = await db.from('breezeway_tasks_sync').select('id,status,started_at,finished_at').in('id', ids)
+        const tmap: Record<string, string> = {}
+        for (const t of tasks || []) tmap[String(t.id)] = t.finished_at ? 'completed' : (t.started_at ? 'in_progress' : String(t.status || 'created'))
+        outItems = outItems.map((x: any) => x.breezeway_task_id ? { ...x, task_status: tmap[String(x.breezeway_task_id)] || null } : x)
+      }
+    } catch { /* mirror optional */ }
+    return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status, createdAt: audit.created_at }, listing, items: outItems })
   }
   const user = await getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const [ar, lr, ir] = await Promise.all([
+  const [ar, lr, ir, rr] = await Promise.all([
     db.from('property_audits').select('*').order('created_at', { ascending: false }).limit(300),
     db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
     db.from('audit_items').select('id,audit_id,status,kind').limit(5000),
+    db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())).order('check_out', { ascending: true }).limit(6000),
   ])
   const audits = ar.data || []; const lrows = lr.data || []; const items = ir.data || []
   const lmap: Record<string, any> = {}
@@ -58,7 +70,13 @@ export async function GET(req: NextRequest) {
     if (it.status === 'task_created') counts[k].tasks++
   }
   const listings = lrows.filter((l: any) => !/inactive/i.test(String(l.status || ''))).map((l: any) => ({ id: String(l.id), name: l.nickname || l.title || 'Unit', building: l.building || '' })).sort((a: any, b: any) => a.name.localeCompare(b.name))
-  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, unit: (lmap[a.listing_id] || {}).name || a.listing_id, building: (lmap[a.listing_id] || {}).building || '', counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
+  const nextCk: Record<string, string> = {}
+  for (const r of rr.data || []) {
+    if (!/confirm|checked/i.test(String(r.status || ''))) continue
+    const id = String(r.listing_id)
+    if (!nextCk[id]) nextCk[id] = String(r.check_out).slice(0, 10)
+  }
+  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, unit: (lmap[a.listing_id] || {}).name || a.listing_id, building: (lmap[a.listing_id] || {}).building || '', nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
   return NextResponse.json({ ok: true, audits: out, listings })
 }
 
@@ -66,6 +84,26 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
   const action = String(body.action || '')
+
+  if (action === 'createAll') {
+    const user = await getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const [lr2, ar2] = await Promise.all([
+      db.from('guesty_listings').select('id,status').limit(2000),
+      db.from('property_audits').select('listing_id').eq('status', 'open').limit(2000),
+    ])
+    const have: Record<string, boolean> = {}
+    for (const a of ar2.data || []) have[String(a.listing_id)] = true
+    const targets = (lr2.data || []).filter((l: any) => !/inactive/i.test(String(l.status || '')) && !have[String(l.id)])
+    if (targets.length === 0) return NextResponse.json({ ok: true, created: 0 })
+    const rows = targets.map((l: any) => {
+      const uuid = (globalThis as any).crypto && (globalThis as any).crypto.randomUUID ? (globalThis as any).crypto.randomUUID() : String(Math.random()).slice(2) + String(Math.random()).slice(2)
+      return { listing_id: String(l.id), share_code: String(uuid).replace(/-/g, '').slice(0, 14), status: 'open', created_by: user.email || null }
+    })
+    const ins = await db.from('property_audits').insert(rows)
+    if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, created: rows.length })
+  }
 
   if (action === 'createAudit') {
     const user = await getUser()
