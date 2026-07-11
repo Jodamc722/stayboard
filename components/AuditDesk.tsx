@@ -7,7 +7,7 @@ type Counts = { total: number; open: number; tasks: number }
 type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; building: string; counts: Counts }
 type ListingOpt = { id: string; name: string; building: string }
 type Person = { id: number | string; name?: string; first_name?: string; last_name?: string; department?: string | null }
-type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; breezeway_task_id?: string | null; report_url?: string | null; ai_assessment?: any }
+type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; ai_assessment?: any }
 type Cfg = { department: string; priority: string; assignee: string }
 
 const KIND_CLS: Record<string, string> = { maintenance: 'bg-amber-100 text-amber-800 border-amber-300', replace: 'bg-rose-100 text-rose-700 border-rose-300', add: 'bg-sky-100 text-sky-800 border-sky-300' }
