@@ -4,10 +4,10 @@
 import { useEffect, useState } from 'react'
 
 type Counts = { total: number; open: number; tasks: number }
-type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; building: string; counts: Counts }
+type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts }
 type ListingOpt = { id: string; name: string; building: string }
 type Person = { id: number | string; name?: string; first_name?: string; last_name?: string; department?: string | null }
-type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; ai_assessment?: any }
+type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; task_status?: string | null; ai_assessment?: any }
 type Cfg = { department: string; priority: string; assignee: string }
 
 const KIND_CLS: Record<string, string> = { maintenance: 'bg-amber-100 text-amber-800 border-amber-300', replace: 'bg-rose-100 text-rose-700 border-rose-300', add: 'bg-sky-100 text-sky-800 border-sky-300' }
@@ -32,6 +32,18 @@ export function AuditDesk() {
   const [taskCfg, setTaskCfg] = useState<Record<string, Cfg>>({})
   const [taskBusy, setTaskBusy] = useState<Record<string, boolean>>({})
   const [copied, setCopied] = useState('')
+  const [showDone, setShowDone] = useState(false)
+
+  async function createAllAudits() {
+    if (!confirm('Create an audit link for every active listing that does not have one yet?')) return
+    setCreating(true)
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'createAll' }) })
+      const j = await r.json()
+      if (r.ok && j.ok) { await load(); alert('Created ' + j.created + ' audit links.') } else alert(j.error || 'Failed')
+    } catch { alert('Failed - retry') }
+    setCreating(false)
+  }
 
   async function load() {
     setLoading(true)
@@ -140,17 +152,23 @@ export function AuditDesk() {
           {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
         </select>
         <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating…' : '+ New audit link'}</button>
+        <button onClick={createAllAudits} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">Create all</button>
         <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
+        <label className="text-xs text-muted inline-flex items-center gap-1.5 ml-auto cursor-pointer"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Show completed</label>
       </div>
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{err}</div> : null}
       {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading audits…</div> : null}
       {!loading && sorted.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No audits yet — pick a listing above to create the first link.</div> : null}
-      {sorted.map(a => (
+      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = x.building || 'Other'; if (bldgs.indexOf(b) < 0) bldgs.push(b) } return bldgs.map(bld => (
+        <div key={bld}>
+          <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-2 mb-1.5">{bld} · {visible.filter(x => (x.building || 'Other') === bld).length}</div>
+          <div className="space-y-2">
+          {visible.filter(x => (x.building || 'Other') === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
             <button onClick={() => openAudit(a)} className="text-left flex-1 min-w-0">
               <span className="text-sm font-semibold text-ink">{a.unit}</span>
-              {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}
+              {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}{a.nextCheckout ? <span className="ml-2 text-[10px] text-amber-700">next checkout {a.nextCheckout.slice(5)}</span> : <span className="ml-2 text-[10px] text-neutral-300">no upcoming checkout</span>}
             </button>
             <span className="text-xs text-muted shrink-0">{a.counts.total} items · {a.counts.open} open · {a.counts.tasks} tasks</span>
             <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
@@ -196,7 +214,7 @@ export function AuditDesk() {
                       const cfg = taskCfg[it.id] || defCfg(it)
                       const ai = it.ai_assessment && typeof it.ai_assessment === 'object' ? it.ai_assessment : null
                       return (
-                        <div key={it.id} className="flex gap-3 rounded-lg border border-line bg-white p-2.5">
+                        <div key={it.id} className={'flex gap-3 rounded-lg border border-line bg-white p-2.5' + (it.status === 'dismissed' ? ' opacity-60' : '')}>
                           {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer"><img src={it.photo_url} alt="" className="w-16 h-16 rounded-md object-cover shrink-0" /></a> : <div className="w-16 h-16 rounded-md bg-neutral-100 shrink-0" />}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -208,9 +226,9 @@ export function AuditDesk() {
                             {ai && ai.condition ? <div className="text-[11px] text-violet-700 mt-0.5">AI: {String(ai.condition)}</div> : null}
                           </div>
                           <div className="shrink-0 flex flex-col items-end gap-1.5">
-                            {it.status === 'task_created' ? (
+                            {it.status === 'dismissed' ? <div className="text-xs text-neutral-400 font-semibold">Dismissed</div> : it.status === 'task_created' ? (
                               <div className="text-right">
-                                <div className="text-xs font-semibold text-emerald-700">Task created ✓</div>
+                                <div className={'text-xs font-semibold ' + (it.task_status === 'completed' ? 'text-emerald-700' : 'text-sky-700')}>{it.task_status === 'completed' ? 'Task done ✓' : it.task_status === 'in_progress' ? 'Task in progress' : 'Task created ✓'}</div>
                                 {it.report_url ? <a href={it.report_url} target="_blank" rel="noreferrer" className="text-[11px] text-brand-700 hover:underline">Open in Breezeway</a> : null}
                               </div>
                             ) : (
@@ -226,6 +244,7 @@ export function AuditDesk() {
                                   {people.map(p => <option key={String(p.id)} value={String(p.id)}>{personName(p)}</option>)}
                                 </select>
                                 <button onClick={() => createTask(it)} disabled={!!taskBusy[it.id]} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{taskBusy[it.id] ? 'Creating…' : 'Create task'}</button>
+                                <button onClick={() => { if (confirm('Close this item (owner declined / will not fix)?')) setItemStatus(it, 'dismissed') }} className="text-[11px] px-2 py-1.5 rounded-lg border border-line text-neutral-400 hover:text-rose-600">Dismiss</button>
                               </div>
                             )}
                           </div>
@@ -239,6 +258,9 @@ export function AuditDesk() {
           ) : null}
         </div>
       ))}
+          </div>
+        </div>
+      )) })()}
     </div>
   )
 }
