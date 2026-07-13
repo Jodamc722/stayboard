@@ -16,37 +16,15 @@ async function toB64(url: string): Promise<{ data: string; media: string } | nul
   } catch { return null }
 }
 
-async function visionOne(key: string, img: any, room: string, answers: string): Promise<{ items: any[]; questions: string[] } | null> {
-  const SYS = 'You are doing a QUICK, high-level inventory from this ONE photo of the `' + room + '` of a short-term rental. Capture ONLY the important things a team or guest needs to know - do NOT list decor, art, wall pieces, plants, trinkets, or small details (we can see those in the photos). Keep it simple. List the MAJOR furniture AND the functional inventory a guest actually uses: bed, nightstands, TV, seating, dresser, desk, and all real appliances and equipment. In a kitchen that means things like the knife set, utensils, cookware/pots, blender, toaster, coffee maker, kettle, microwave, dishwasher, oven/stove. Give a COUNT per kind (two nightstands = one entry with count:2, never two rows). If the photo is a CLOSE-UP of one item, return ONLY that item. Put the KEY attribute in the size field: bed -> King/Queen/Full/Twin (if you cannot tell, leave size empty and add a question asking the bed size); TV -> Smart or Standard (ALWAYS include the brand if a logo is visible e.g. LG/Samsung/Sony, and for ANY TV ALWAYS write a howTo covering how to power it on, switch inputs/source, and use the smart apps like Netflix); a bathroom/shower area -> Shower, Tub, or Shower + Tub; a closet -> Walk-in or Reach-in. Write a howTo for any TECH or APPLIANCE a guest might need help using (TV, thermostat, remotes, sound system, coffee maker, blender, kettle, washer/dryer, dishwasher, oven/stove, safe, smart lock) - these feed the guest FAQ; leave howTo empty for plain items like a knife set or utensils. QUESTIONS RULE: only ask about an item that is VISIBLE in THIS photo whose attribute you cannot determine (e.g. you see the bed but cannot tell the size, or see the TV but cannot tell if it is smart). NEVER ask whether an item exists or ask about anything not shown in the photo. If the brand or model of a tech item is not readable (e.g. a TV), ask a question that NAMES that item, like: What brand is the wall-mounted TV? If nothing is unclear, return an empty questions list. STRICT JSON ONLY, no markdown: {"items":[{"item":"short name","itemType":"category","count":1,"size":"key attribute else empty","brand":"if obvious else empty","tier":"luxury|high_end|standard|budget|unknown","condition":"one short note on visible wear, else empty","severity":"low|medium|high","amenity":true,"highlight":true,"howTo":"tech/confusing items only, else empty"}],"questions":["..."]}'
-  const userText = 'Itemize this photo granularly.' + (answers ? ' Inspector already answered (use, do not re-ask): ' + answers : '')
+async function visionOne(key: string, content: any[], room: string): Promise<{ items: any[]; questions: string[] } | null> {
+  const SYS = 'You are doing a QUICK, smart onboarding inventory of a short-term rental ' + room + ' from SEVERAL photos of the SAME room. Look at EVERY photo together and REASON before you speak. RULES: there is normally only ONE of each big appliance in a room (one TV, one thermostat). A close-up, a brand or logo shot, or a REMOTE is NOT a separate item - it is more evidence about that SAME device, so MERGE it in and NEVER create a second TV. A remote reveals its device: an LG remote means the TV is an LG - use it to fill the brand and model. Capture the MAJOR furniture and the functional inventory a guest uses: bed, nightstands, TV, seating, dresser, desk, and real appliances and equipment (in a kitchen the knife set, utensils, cookware, blender, toaster, coffee maker, kettle, microwave, dishwasher, oven). Do NOT list decor, art, plants, or trinkets. Give a COUNT per kind (two nightstands = count 2, not two rows). Put the KEY attribute in size: bed -> King/Queen/Full/Twin; TV -> Smart or Standard (always include brand if any photo shows it); bathroom -> Shower, Tub, or Shower + Tub; closet -> Walk-in or Reach-in. Write a howTo for anything tech or appliance a guest may need help using (this feeds the guest FAQ); leave it empty for plain items. For each item set photoIndex to the photo number that best shows it. QUESTIONS: think hard and ask ONLY what you truly cannot see or infer from ANY photo. If a close-up, logo, or remote reveals the brand, model, or size, do NOT ask about it. Never ask whether something exists that you can see, and never ask the same thing twice. Prefer ZERO questions; max 2. STRICT JSON ONLY, no markdown: {"items":[{"item":"","itemType":"","count":1,"size":"","brand":"","tier":"luxury|high_end|standard|budget|unknown","condition":"","severity":"low|medium|high","amenity":true,"highlight":true,"howTo":"","photoIndex":1}],"questions":["..."]}'
   try {
-    const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 40000)
+    const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 45000)
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       signal: ac.signal,
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: SYS, messages: [{ role: 'user', content: [img, { type: 'text', text: userText }] }] }),
-    })
-    clearTimeout(timer)
-    const j = await r.json().catch(() => null)
-    const txt = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
-    const m = txt.match(/\{[\s\S]*\}/)
-    if (!m) return { items: [], questions: [] }
-    const parsed = JSON.parse(m[0])
-    return { items: Array.isArray(parsed.items) ? parsed.items : [], questions: Array.isArray(parsed.questions) ? parsed.questions : [] }
-  } catch { return { items: [], questions: [] } }
-}
-
-async function consolidate(key: string, room: string, items: any[], questions: string[]): Promise<{ items: any[]; questions: string[] } | null> {
-  if (!items.length && !questions.length) return { items, questions }
-  const SYS = 'You are cleaning up a room inventory built from SEVERAL photos of the same ' + room + '. Each item may be a partial view from one photo, and a close-up may reveal a brand, model or size that a wide shot could not. TASKS: (1) MERGE entries that are the SAME physical object seen in different photos into ONE (for example a wide shot TV plus a close-up LG QNED TV plus a remote photo all equal ONE TV entry) and combine their details - fill in brand, model and size from the close-ups, keep the best count and any howTo, and PRESERVE the photo field (keep the photo that best shows the item). (2) Return QUESTIONS ONLY for details that are STILL genuinely unknown after merging - if ANY photo already revealed the brand, model or size, do NOT ask about it. Never ask the same thing twice. Max 2 questions, or none at all. Be smart: never ask something already answered by another photo. STRICT JSON ONLY, no markdown: {"items":[{"item":"","itemType":"","count":1,"size":"","brand":"","tier":"","condition":"","severity":"","amenity":true,"highlight":true,"howTo":"","photo":""}],"questions":["..."]}'
-  try {
-    const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 18000)
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      signal: ac.signal,
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: SYS, messages: [{ role: 'user', content: 'Consolidate this inventory. INPUT JSON: ' + JSON.stringify({ items, questions }).slice(0, 12000) }] })
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, system: SYS, messages: [{ role: 'user', content }] })
     })
     clearTimeout(timer)
     if (!r.ok) return null
@@ -76,22 +54,12 @@ export async function POST(req: NextRequest) {
   const withB = (await Promise.all(urls.map(async (u) => { const b = await toB64(u); return b ? { u, img: { type: 'image', source: { type: 'base64', media_type: b.media, data: b.data } } } : null }))).filter(Boolean) as { u: string; img: any }[]
   if (withB.length === 0) return NextResponse.json({ ok: true, items: [], questions: [], note: 'no images fetched' })
 
-  const results = await Promise.all(withB.map(async (x) => ({ url: x.u, r: await visionOne(key, x.img, room, answers) })))
-  const items: any[] = []; const seen = new Map<string, any>()
-  const questions: string[] = []; const qseen = new Set<string>()
-  for (const { url, r } of results) {
-    if (!r) continue
-    for (const it of (r.items || [])) { if (!it || typeof it !== 'object') continue; const k = String(it.item || '').toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\b(small|medium|large|left|right|partially|visible|approx|approximately)\b/g, ' ').replace(/\s+/g, ' ').trim(); if (!k || k.length <= 2) continue; const c = Math.max(1, parseInt(it.count, 10) || 1); const prev = seen.get(k); if (prev) { if (c > (prev.count || 1)) prev.count = c; if (!prev.howTo && it.howTo) prev.howTo = it.howTo; if (!prev.size && it.size) prev.size = it.size } else { it.count = c; it.photo = url; seen.set(k, it); items.push(it) } }
-    for (const q of (r.questions || [])) { const k = String(q || '').toLowerCase().trim(); if (k && !qseen.has(k)) { qseen.add(k); questions.push(q) } }
-  }
-  const con = await consolidate(key, room, items, questions)
-  let outItems: any[] = items; let outQ: string[] = questions
-  if (con && Array.isArray(con.items) && con.items.length) {
-    const validUrls: any = {}; for (const x of items) if (x && x.photo) validUrls[x.photo] = 1
-    const nrm = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-    const byName: any = {}; for (const x of items) byName[nrm(x.item)] = x
-    for (const it of con.items) { if (it && (!it.photo || !validUrls[it.photo])) { const src = byName[nrm(it.item)]; it.photo = (src && src.photo) || (items[0] && items[0].photo) || '' } }
-    outItems = con.items; outQ = Array.isArray(con.questions) ? con.questions : []
-  }
-  return NextResponse.json({ ok: true, items: outItems, questions: outQ.slice(0, 4) })
+  const content: any[] = [{ type: 'text', text: 'These are photos of the SAME ' + room + '. Study ALL of them together before answering.' }]
+  withB.forEach((x, i) => { content.push({ type: 'text', text: 'Photo ' + (i + 1) + ':' }); content.push(x.img) })
+  content.push({ type: 'text', text: 'Now give the inventory.' + (answers ? ' Inspector already told you (use this, do not re-ask): ' + answers : '') })
+  const out = await visionOne(key, content, room)
+  const items: any[] = (out && Array.isArray(out.items)) ? out.items : []
+  for (const it of items) { if (it && typeof it === 'object') { const pi = Math.max(1, Math.min(withB.length, parseInt(it.photoIndex, 10) || 1)); it.photo = withB[pi - 1] ? withB[pi - 1].u : (withB[0] ? withB[0].u : '') } }
+  const questions: string[] = (out && Array.isArray(out.questions)) ? out.questions : []
+  return NextResponse.json({ ok: true, items, questions: questions.slice(0, 3) })
 }
