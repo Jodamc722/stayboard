@@ -134,6 +134,17 @@ export function AuditDesk() {
     } catch { alert('Failed to build combined order.') }
     setCombining(false)
   }
+  async function createBuildingAudit(bld: string) {
+    if (creating) return
+    setCreating(true)
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'createBuildingAudit', building: bld, type: 'quality' }) })
+      const j = await r.json()
+      if (r.ok && j.ok) { await load(); if (j.url) { try { await navigator.clipboard.writeText(j.url); setCopied(j.audit ? j.audit.id : 'bldg'); setTimeout(() => setCopied(''), 2500) } catch {} } }
+      else alert(j.error || 'Failed to create building audit')
+    } catch { alert('Failed - retry') }
+    setCreating(false)
+  }
   async function openAudit(a: Audit) {
     if (openId === a.id) { setOpenId(''); return }
     setOpenId(a.id); setItemsBusy(true); setItems([])
@@ -247,6 +258,7 @@ export function AuditDesk() {
         <div key={bld} className="rounded-2xl border border-line bg-white overflow-hidden">
           <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-neutral-50"><span className="text-sm font-semibold text-ink">{bld} · {visible.filter(x => (rollupBuilding(x.building)) === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (rollupBuilding(x.building)) === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (rollupBuilding(x.building)) === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
           {expandedBldg[bld] ? (<div className="border-t border-line p-2.5 space-y-2 bg-neutral-50/40">
+            <button onClick={() => createBuildingAudit(bld)} disabled={creating} className="w-full text-left text-xs font-semibold px-3 py-2 rounded-xl border border-dashed border-line text-muted hover:bg-white disabled:opacity-40">+ Common areas audit</button>
           {visible.filter(x => (rollupBuilding(x.building)) === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
