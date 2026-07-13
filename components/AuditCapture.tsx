@@ -15,6 +15,7 @@ const KIND_META: Record<string, { label: string; cls: string }> = {
   maintenance: { label: 'Fix', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
   replace: { label: 'Replace', cls: 'bg-rose-100 text-rose-700 border-rose-300' },
   add: { label: 'Add', cls: 'bg-sky-100 text-sky-800 border-sky-300' },
+  faq: { label: 'FAQ', cls: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
 }
 
 function defaultRooms(bedrooms: number | null, bathrooms: number | null): string[] {
@@ -202,7 +203,7 @@ export default function AuditCapture({ code }: { code: string }) {
                 {draft && draft.room === room ? (
                   <div className="rounded-lg border border-neutral-200 p-2.5 space-y-2">
                     <div className="flex gap-1.5">
-                      {['maintenance', 'replace', 'add'].map(k => (
+                      {['maintenance', 'replace', 'add', 'faq'].map(k => (
                         <button key={k} onClick={() => setDraft(d => d ? { ...d, kind: k } : d)} className={'flex-1 text-xs font-semibold px-2 py-2 rounded-lg border ' + (draft.kind === k ? KIND_META[k].cls : 'border-neutral-200 text-neutral-500 bg-white')}>{KIND_META[k].label}</button>
                       ))}
                     </div>
