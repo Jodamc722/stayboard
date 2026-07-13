@@ -73,7 +73,7 @@ export default function AuditCapture({ code }: { code: string }) {
     setOpenRoom(room)
   }
 
-  async async function onCoverPhoto(e: any) {
+  async function onCoverPhoto(e: any) {
     const f = e.target.files && e.target.files[0]
     if (!f || !coverRoom) return
     setCoverBusy(true)
@@ -93,7 +93,7 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upsertRoom', code, room, displayName: nm }) }); await load() } catch {}
   }
 
-  function onPhoto(e: any) {
+  async function onPhoto(e: any) {
     const f = e.target.files && e.target.files[0]
     if (!f || !draft) return
     setUploading(true)
