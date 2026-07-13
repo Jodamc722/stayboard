@@ -16,6 +16,8 @@ export function FaqDesk() {
   const [a, setA] = useState('')
   const [cat, setCat] = useState('')
   const [busy, setBusy] = useState(false)
+  const [search, setSearch] = useState('')
+  const [showList, setShowList] = useState(false)
 
   useEffect(() => { (async () => { try { const r = await fetch('/api/faq'); const j = await r.json(); setListings((j && j.listings) || []) } catch {} })() }, [])
 
@@ -47,11 +49,15 @@ export function FaqDesk() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <select value={pick} onChange={e => setPick(e.target.value)} className="text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500 min-w-[300px]">
-          <option value="">Pick a listing…</option>
-          {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
-        </select>
+      <div className="relative max-w-md">
+        <input value={search} onChange={e => { setSearch(e.target.value); setShowList(true) }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 150)} placeholder={pick ? (((listings.find(l => l.id === pick) || {}) as any).name || 'Search a listing…') : 'Search a listing…'} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
+        {showList ? (
+          <div className="absolute z-20 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-line bg-white shadow-soft">
+            {listings.filter(l => (l.name + ' ' + l.building).toLowerCase().includes(search.toLowerCase())).slice(0, 60).map(l => (
+              <button key={l.id} onMouseDown={() => { setPick(l.id); setSearch(''); setShowList(false) }} className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-50">{l.name}{l.building ? <span className="text-muted"> · {l.building}</span> : null}</button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading…</div> : null}
