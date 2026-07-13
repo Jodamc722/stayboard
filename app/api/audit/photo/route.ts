@@ -69,6 +69,6 @@ export async function POST(req: NextRequest) {
   const up = await db.storage.from(BUCKET).upload(path, jpeg, { contentType: 'image/jpeg', upsert: true })
   if (up.error) return NextResponse.json({ error: 'upload: ' + up.error.message }, { status: 500 })
   const url = db.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
-  const ai = await analyze(jpeg.toString('base64'))
+  const ai = String(form.get('noai') || '') === '1' ? null : await analyze(jpeg.toString('base64'))
   return NextResponse.json({ ok: true, url, ai })
 }
