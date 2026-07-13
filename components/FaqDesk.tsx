@@ -49,6 +49,7 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   const howtos: Howto[] = (data && data.howtos) || []
   const highlights: Highlight[] = (data && data.highlights) || []
   const otaLinks: any[] = (data && data.otaLinks) || []
+  const keyDetails: any[] = (data && data.keyDetails) || []
 
 function Section({ id, title, note, children }: { id: string; title: string; note?: string; children: any }) {
     const open = !!collapsed[id]
@@ -98,6 +99,17 @@ function Section({ id, title, note, children }: { id: string; title: string; not
               </div>
             ))}
           </Section>
+
+          {keyDetails.length > 0 ? (
+            <Section id="keydetails" title="Key details" note="from audit inventory">
+              {keyDetails.map((k: any, i: number) => (
+                <div key={i} className="py-2 border-b border-line last:border-0 flex items-center justify-between gap-2">
+                  <span className="text-sm text-ink">{k.item}{k.room ? <span className="text-[11px] text-muted ml-1.5">{k.room}</span> : null}</span>
+                  <span className="text-sm font-semibold text-ink shrink-0">{k.size}</span>
+                </div>
+              ))}
+            </Section>
+          ) : null}
 
           {highlights.length > 0 ? (
             <Section id="highlights" title="Highlights" note="from onboarding">
