@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'react'
 
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number }
 type Listing = { id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null }
-type Payload = { ok: boolean; audit: { id: string; status: string }; listing: Listing; items: Item[]; error?: string }
+type Payload = { ok: boolean; audit: { id: string; status: string; auditType?: string | null }; listing: Listing; items: Item[]; rooms?: RoomCfg[]; error?: string }
+type RoomCfg = { room_key: string; display_name: string; cover_photo_url: string | null; sort: number }
 type Suggestion = { title: string; why?: string }
 type Draft = { room: string; kind: string; title: string; itemType: string; note: string; severity: string; photoUrl: string; ai: any }
 
@@ -36,10 +37,13 @@ export default function AuditCapture({ code }: { code: string }) {
   const [openRoom, setOpenRoom] = useState('')
   const [draft, setDraft] = useState<Draft | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [coverRoom, setCoverRoom] = useState('')
+  const [coverBusy, setCoverBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [sug, setSug] = useState<Record<string, Suggestion[]>>({})
   const [sugBusy, setSugBusy] = useState('')
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const coverRef = useRef<HTMLInputElement | null>(null)
 
   async function load() {
     try {
@@ -57,13 +61,39 @@ export default function AuditCapture({ code }: { code: string }) {
   if (data) { for (const r of defaultRooms(data.listing.bedrooms, data.listing.bathrooms)) rooms.push(r) }
   for (const r of customRooms) if (rooms.indexOf(r) < 0) rooms.push(r)
   for (const it of items) if (rooms.indexOf(it.room) < 0) rooms.push(it.room)
+  const roomCfg: RoomCfg[] = data && data.rooms ? data.rooms : []
+  const cfgByKey: Record<string, RoomCfg> = {}
+  for (const rc of roomCfg) cfgByKey[rc.room_key] = rc
+  function roomKey(r: string) { return String(r).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) }
+  function roomLabel(r: string) { const c = cfgByKey[roomKey(r)]; return c && c.display_name ? c.display_name : r }
+  function roomCover(r: string) { const c = cfgByKey[roomKey(r)]; return c ? c.cover_photo_url : null }
 
   function startDraft(room: string, seed?: Partial<Draft>) {
     setDraft({ room, kind: (seed && seed.kind) || 'replace', title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', ai: null })
     setOpenRoom(room)
   }
 
-  async function onPhoto(e: any) {
+  async async function onCoverPhoto(e: any) {
+    const f = e.target.files && e.target.files[0]
+    if (!f || !coverRoom) return
+    setCoverBusy(true)
+    try {
+      const fd = new FormData(); fd.append('code', code); fd.append('file', f)
+      const r = await fetch('/api/audit/photo', { method: 'POST', body: fd })
+      const j = await r.json()
+      if (r.ok && j.url) { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upsertRoom', code, room: coverRoom, photoUrl: j.url }) }); await load() }
+    } catch {}
+    setCoverBusy(false); setCoverRoom('')
+  }
+  function pickCover(room: string) { setCoverRoom(room); if (coverRef.current) { coverRef.current.value = ''; coverRef.current.click() } }
+  async function renameRoom(room: string) {
+    const name = window.prompt('Rename room', roomLabel(room))
+    if (name == null) return
+    const nm = String(name).trim(); if (!nm) return
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upsertRoom', code, room, displayName: nm }) }); await load() } catch {}
+  }
+
+  function onPhoto(e: any) {
     const f = e.target.files && e.target.files[0]
     if (!f || !draft) return
     setUploading(true)
@@ -122,6 +152,7 @@ export default function AuditCapture({ code }: { code: string }) {
   return (
     <div className="max-w-md mx-auto px-3 pb-24 pt-4">
       <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} className="hidden" />
+      <input ref={coverRef} type="file" accept="image/*" capture="environment" onChange={onCoverPhoto} className="hidden" />
       <div className="mb-4">
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
@@ -135,11 +166,15 @@ export default function AuditCapture({ code }: { code: string }) {
         return (
           <div key={room} className="mb-2 rounded-xl border border-neutral-200 bg-white overflow-hidden">
             <button onClick={() => setOpenRoom(open ? '' : room)} className="w-full flex items-center justify-between px-3.5 py-3">
-              <span className="text-sm font-semibold text-neutral-900">{room}</span>
+              <span className="text-sm font-semibold text-neutral-900">{roomLabel(room)}</span>
               <span className="text-xs text-neutral-400">{roomItems.length > 0 ? roomItems.length + ' item' + (roomItems.length > 1 ? 's' : '') : 'tap to open'}</span>
             </button>
             {open ? (
               <div className="px-3.5 pb-3.5 space-y-2">
+                <div className="mb-2">
+                  {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
+                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button></div> : null}
+                </div>
                 {roomItems.map(it => (
                   <div key={it.id} className="flex gap-2.5 rounded-lg border border-neutral-100 p-2">
                     {it.photo_url ? <img src={it.photo_url} alt="" className="w-14 h-14 rounded-md object-cover shrink-0" /> : <div className="w-14 h-14 rounded-md bg-neutral-100 shrink-0" />}
