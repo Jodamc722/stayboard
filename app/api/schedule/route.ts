@@ -59,7 +59,7 @@ const end = view === 'day' ? anchor : addDays(start, 6)
 const compute = unstable_cache(async (view: string, start: string, end: string, today: string) => {
 const db = supabaseAdmin()
 const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
-db.from('guesty_reservations').select('listing_id,listing_name,guest_name,check_out,check_in,status,nights,source').gte('check_out', start).lte('check_out', end).limit(4000),
+db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,check_out,check_in,status,nights,source').gte('check_out', start).lte('check_out', end).limit(4000),
 db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
 // PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
 // check-in/out times) instead of the full multi-MB raw blob for every listing.
@@ -103,7 +103,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -124,7 +124,7 @@ unit: m?.name || (r as any).listing_name || 'Unit',
 market: m?.market || 'Miami',
 hub: m?.hub || 'Other',
 date,
-guestOut: (r as any).guest_name || null,
+guestOut: (r as any).guest_name || null, reservationId: String((r as any).id || '') || null,
 nights: (r as any).nights ?? null,
 bedrooms: m?.bedrooms ?? null,
 checkInTime: m?.checkIn || null,
@@ -144,7 +144,7 @@ assignedNames: [],
 // with zero live API calls; the live API is only consulted for day-view rows the mirror misses.
 let mirror: any[] = []
 try {
-const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,report_url').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
+const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
 mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
 } catch { /* mirror table optional */ }
 
@@ -257,7 +257,7 @@ const extendedTaskIds = new Set<string>()
 for (const c of cleans) {
 if (c.syncStatus !== 'guesty-only') continue
 const _cands = mirror.filter((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date && !t.finished_at)
-const mv = _cands.length ? _cands.reduce((a: any, b: any) => Math.abs(+new Date(String(b.scheduled_date).slice(0, 10)) - +new Date(c.date)) < Math.abs(+new Date(String(a.scheduled_date).slice(0, 10)) - +new Date(c.date)) ? b : a) : null
+const _byRes = c.reservationId ? _cands.find((t: any) => String(t.linked_reservation_id || '') === String(c.reservationId)) : null; const mv = _byRes || (_cands.length ? _cands.reduce((a: any, b: any) => Math.abs(+new Date(String(b.scheduled_date).slice(0, 10)) - +new Date(c.date)) < Math.abs(+new Date(String(a.scheduled_date).slice(0, 10)) - +new Date(c.date)) ? b : a) : null)
 if (!mv) continue
 const mvDate = String(mv.scheduled_date).slice(0, 10)
 const ppl = Array.isArray(mv.assignees) ? mv.assignees : []
