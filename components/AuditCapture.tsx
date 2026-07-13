@@ -55,6 +55,8 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orgAnswers, setOrgAnswers] = useState('')
   const [orgPhotos, setOrgPhotos] = useState<string[]>([])
   const [orgPick, setOrgPick] = useState<Record<number, boolean>>({})
+  const [hint, setHint] = useState('')
+  const [reBusy, setReBusy] = useState(false)
 
   async function load() {
     try {
@@ -157,6 +159,19 @@ export default function AuditCapture({ code }: { code: string }) {
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  async function reanalyze() {
+    if (!draft) return
+    const urls = (draft.photos && draft.photos.length) ? draft.photos : (draft.photoUrl ? [draft.photoUrl] : [])
+    if (!urls.length) { alert('Add a photo first.'); return }
+    setReBusy(true)
+    try {
+      const r = await fetch('/api/audit/reanalyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, photoUrls: urls, hint }) })
+      const j = await r.json()
+      if (j && j.ai) { const a = j.ai; setDraft(dd => dd ? { ...dd, ai: a, title: a.item || dd.title, itemType: a.itemType || dd.itemType, severity: a.severity || dd.severity, note: a.condition ? String(a.condition) : dd.note } : dd); setHint('') }
+      else alert('Could not re-analyze - try a clearer photo or a hint.')
+    } catch { alert('Failed - retry') }
+    setReBusy(false)
+  }
   async function saveDraft() {
     if (!draft || saving) return
     if (!draft.title.trim() && !draft.photoUrl) { alert('Add a photo or a short title first.'); return }
@@ -298,6 +313,12 @@ export default function AuditCapture({ code }: { code: string }) {
                       </div>
                     ) : null}
                     {draft.ai && draft.ai.howTo ? <div className="text-[11px] text-neutral-600 bg-neutral-50 rounded-md px-2 py-1">How-to: {draft.ai.howTo}</div> : null}
+                    {draft.ai ? (
+                      <div className="flex gap-1.5">
+                        <input value={hint} onChange={e => setHint(e.target.value)} placeholder="Wrong device? e.g. Nest thermostat, not Honeywell" className="flex-1 text-[12px] rounded-md border border-neutral-200 px-2 py-1" />
+                        <button onClick={reanalyze} disabled={reBusy} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">{reBusy ? '…' : 'Re-analyze'}</button>
+                      </div>
+                    ) : null}
                     <input value={draft.title} onChange={e => setDraft(d => d ? { ...d, title: e.target.value } : d)} placeholder="What is it? e.g. Nightstand" className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
                     <textarea value={draft.note} onChange={e => setDraft(d => d ? { ...d, note: e.target.value } : d)} placeholder="What needs doing?" rows={2} className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
                     <div className="flex gap-2">
