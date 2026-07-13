@@ -8,7 +8,7 @@ type Counts = { total: number; open: number; tasks: number }
 type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts; auditType?: string | null; updatedAt?: string | null; prospect?: boolean }
 type ListingOpt = { id: string; name: string; building: string }
 type Person = { id: number | string; name?: string; first_name?: string; last_name?: string; department?: string | null }
-type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; task_status?: string | null; ai_assessment?: any }
+type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; task_status?: string | null; ai_assessment?: any; details?: any }
 type Cfg = { department: string; priority: string; assignee: string }
 
 const KIND_CLS: Record<string, string> = { maintenance: 'bg-amber-100 text-amber-800 border-amber-300', replace: 'bg-rose-100 text-rose-700 border-rose-300', add: 'bg-sky-100 text-sky-800 border-sky-300', faq: 'bg-indigo-100 text-indigo-800 border-indigo-300' }
@@ -375,6 +375,18 @@ export function AuditDesk() {
                             </div>
                             {it.note ? <div className="text-xs text-neutral-600 mt-0.5">{it.note}</div> : null}
                             {ai && ai.condition ? <div className="text-[11px] text-violet-700 mt-0.5">AI: {String(ai.condition)}</div> : null}
+                            {ai ? (
+                              <div className="mt-1 flex flex-wrap gap-1 items-center text-[10px]">
+                                {(ai.itemType || it.item_type) ? <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{ai.itemType || it.item_type}</span> : null}
+                                {ai.size ? <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">Size: {ai.size}</span> : null}
+                                {ai.brand ? <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{ai.brand}</span> : null}
+                                {ai.tier && ai.tier !== 'unknown' ? <span className={'px-1.5 py-0.5 rounded ' + ((ai.tier === 'luxury' || ai.tier === 'high_end') ? 'bg-amber-100 text-amber-800' : 'bg-neutral-100 text-neutral-500')}>{String(ai.tier).replace('_', ' ')}</span> : null}
+                                {ai.highlight ? <span className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold">HIGHLIGHT</span> : null}
+                                {Array.isArray(ai.features) ? ai.features.slice(0, 5).map((f: string, i: number) => <span key={i} className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">{f}</span>) : null}
+                              </div>
+                            ) : null}
+                            {ai && ai.howTo ? <div className="text-[11px] text-emerald-700 mt-0.5">How-to: {String(ai.howTo)}</div> : null}
+                            {it.details && Array.isArray(it.details.photos) && it.details.photos.length > 1 ? <div className="mt-1 flex gap-1 flex-wrap">{it.details.photos.slice(0, 6).map((p: string, i: number) => <a key={i} href={p} target="_blank" rel="noreferrer"><img src={p} alt="" className="w-9 h-9 rounded object-cover" /></a>)}</div> : null}
                           </div>
                           <div className="shrink-0 flex flex-col items-end gap-1.5">
                             {it.status === 'dismissed' ? <div className="text-xs text-neutral-400 font-semibold">Dismissed</div> : it.status === 'task_created' ? (
