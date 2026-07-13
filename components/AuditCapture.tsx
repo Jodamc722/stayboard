@@ -281,7 +281,7 @@ export default function AuditCapture({ code }: { code: string }) {
                   <div className="rounded-lg border border-neutral-200 p-2.5 space-y-2">
                     <div className="flex gap-1.5">
                       {['maintenance', 'replace', 'add', 'faq'].map(k => (
-                        <button key={k} onClick={() => setDraft(d => d ? { ...d, kind: k } : d)} className={'flex-1 text-xs font-semibold px-2 py-2 rounded-lg border ' + (draft.kind === k ? KIND_META[k].cls : 'border-neutral-200 text-neutral-500 bg-white')}>{KIND_META[k].label}</button>
+                        <button key={k} onClick={() => { if (k === 'replace') { const why = window.prompt('Why should this be replaced? (may not be obvious in the photos)'); setDraft(d => d ? { ...d, kind: k, note: (why != null && why.trim()) ? why.trim() : d.note } : d) } else setDraft(d => d ? { ...d, kind: k } : d) }} className={'flex-1 text-xs font-semibold px-2 py-2 rounded-lg border ' + (draft.kind === k ? KIND_META[k].cls : 'border-neutral-200 text-neutral-500 bg-white')}>{KIND_META[k].label}</button>
                       ))}
                     </div>
                     <button onClick={() => { if (fileRef.current) fileRef.current.click() }} className="w-full rounded-lg border-2 border-dashed border-neutral-300 py-3 text-sm text-neutral-500">
