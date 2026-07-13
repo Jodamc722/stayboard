@@ -53,6 +53,8 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orgRoom, setOrgRoom] = useState('')
   const [orgBusy, setOrgBusy] = useState(false)
   const [orgItems, setOrgItems] = useState<any[]>([])
+  const [orgEdit, setOrgEdit] = useState<number>(-1)
+  const [orgEditHint, setOrgEditHint] = useState('')
   const [orgQuestions, setOrgQuestions] = useState<string[]>([])
   const [orgAnswers, setOrgAnswers] = useState('')
   const [orgPhotos, setOrgPhotos] = useState<string[]>([])
@@ -168,6 +170,22 @@ export default function AuditCapture({ code }: { code: string }) {
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  function updOrg(i: number, field: string, val: string) {
+    setOrgItems(prev => prev.map((x: any, idx: number) => idx === i ? { ...x, [field]: val } : x))
+  }
+  async function reOrgItem(i: number) {
+    const it = orgItems[i]; if (!it) return
+    const urls = it.photo ? [it.photo] : (orgPhotos.length ? [orgPhotos[0]] : [])
+    if (!urls.length) { alert('No photo on this item to re-analyze.'); return }
+    setReBusy(true)
+    try {
+      const r = await fetch('/api/audit/reanalyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, photoUrls: urls, hint: orgEditHint }) })
+      const j = await r.json()
+      if (j && j.ai) { const a = j.ai; setOrgItems(prev => prev.map((x: any, idx: number) => idx === i ? { ...x, ...a, item: a.item || x.item, brand: a.brand || x.brand, size: a.size || x.size, howTo: a.howTo || x.howTo, itemType: a.itemType || x.itemType, condition: a.condition != null ? String(a.condition) : x.condition } : x)); setOrgEditHint('') }
+      else alert('Could not re-analyze - try a hint.')
+    } catch { alert('Failed - retry.') }
+    setReBusy(false)
+  }
   async function reanalyze() {
     if (!draft) return
     const urls = (draft.photos && draft.photos.length) ? draft.photos : (draft.photoUrl ? [draft.photoUrl] : [])
@@ -278,10 +296,28 @@ export default function AuditCapture({ code }: { code: string }) {
                           <div className="text-[11px] font-semibold text-indigo-800 mb-1">{orgItems.filter((_: any, i: number) => orgPick[i]).length} of {orgItems.length} items</div>
                           <div className="space-y-1">
                             {orgItems.map((it: any, i: number) => (
-                              <label key={i} className="flex gap-2 items-start text-[13px] bg-white rounded-md border border-neutral-100 p-1.5">
+                              <div key={i} className="rounded-md border border-neutral-100 bg-white"><label className="flex gap-2 items-start text-[13px] p-1.5">
                                 <input type="checkbox" checked={!!orgPick[i]} onChange={e => setOrgPick(p => ({ ...p, [i]: e.target.checked }))} className="mt-0.5" />
                                 <span className="min-w-0"><span className="font-semibold text-ink">{it.item}</span>{it.brand ? <span className="ml-1 text-[11px] font-medium text-neutral-500">{it.brand}</span> : null}{it.howTo ? <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 align-middle">How-to</span> : null}{it.count > 1 ? <span className="ml-1 text-[11px] font-semibold text-brand-600">×{it.count}</span> : null}{it.size ? ' · ' + it.size : ''}{it.tier && it.tier !== 'unknown' ? <span className="ml-1 text-[10px] text-amber-700">{it.tier}</span> : null}{it.condition ? <span className="block text-[11px] text-muted">{it.condition}</span> : null}</span>
                               </label>
+              <div className="px-2 pb-1.5">
+                {orgEdit === i ? (
+                  <div className="mt-1 space-y-1">
+                    <input value={it.item || ''} onChange={e => updOrg(i, 'item', e.target.value)} placeholder="Item name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                    <input value={it.brand || ''} onChange={e => updOrg(i, 'brand', e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                    <input value={it.size || ''} onChange={e => updOrg(i, 'size', e.target.value)} placeholder="Detail (King, Smart, Walk-in, Shower + Tub)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                    <textarea value={it.howTo || ''} onChange={e => updOrg(i, 'howTo', e.target.value)} placeholder="How-to for guests" rows={2} className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                    <div className="flex gap-1">
+                      <input value={orgEditHint} onChange={e => setOrgEditHint(e.target.value)} placeholder="Or tell AI what to fix, then re-prompt" className="flex-1 rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                      <button onClick={() => reOrgItem(i)} disabled={reBusy} className="text-[12px] font-semibold px-2 py-1 rounded bg-indigo-600 text-white disabled:opacity-50">{reBusy ? '...' : 'Re-prompt'}</button>
+                    </div>
+                    <button onClick={() => { setOrgEdit(-1); setOrgEditHint('') }} className="text-[12px] font-semibold text-neutral-600">Done</button>
+                  </div>
+                ) : (
+                  <button onClick={() => { setOrgEdit(i); setOrgEditHint('') }} className="mt-1 text-[11px] font-semibold text-indigo-600">Edit / re-prompt</button>
+                )}
+              </div>
+            </div>
                             ))}
                           </div>
                           <button onClick={addAllOrg} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">Add selected to {room}</button>
