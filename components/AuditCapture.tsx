@@ -9,7 +9,7 @@ type Listing = { id: string; name: string; building: string; bedrooms: number | 
 type Payload = { ok: boolean; audit: { id: string; status: string; auditType?: string | null }; listing: Listing; items: Item[]; rooms?: RoomCfg[]; scope?: string; error?: string }
 type RoomCfg = { room_key: string; display_name: string; cover_photo_url: string | null; sort: number }
 type Suggestion = { title: string; why?: string }
-type Draft = { room: string; kind: string; title: string; itemType: string; note: string; severity: string; photoUrl: string; ai: any }
+type Draft = { room: string; kind: string; title: string; itemType: string; note: string; severity: string; photoUrl: string; photos: string[]; ai: any }
 
 const KIND_META: Record<string, { label: string; cls: string }> = {
   maintenance: { label: 'Fix', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
@@ -80,7 +80,7 @@ export default function AuditCapture({ code }: { code: string }) {
   function roomCover(r: string) { const c = cfgByKey[roomKey(r)]; return c ? c.cover_photo_url : null }
 
   function startDraft(room: string, seed?: Partial<Draft>) {
-    setDraft({ room, kind: (seed && seed.kind) || 'replace', title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', ai: null })
+    setDraft({ room, kind: (seed && seed.kind) || 'replace', title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', photos: [], ai: null })
     setOpenRoom(room)
   }
 
@@ -150,7 +150,7 @@ export default function AuditCapture({ code }: { code: string }) {
       const r = await fetch('/api/audit/photo', { method: 'POST', body: fd })
       const j = await r.json()
       if (r.ok && j.ok) {
-        setDraft(d => d ? { ...d, photoUrl: j.url, ai: j.ai || null, title: d.title || ((j.ai && j.ai.item) || ''), itemType: d.itemType || ((j.ai && j.ai.itemType) || ''), severity: d.severity || ((j.ai && j.ai.severity) || ''), note: d.note || (j.ai && j.ai.condition ? String(j.ai.condition) : '') } : d)
+        setDraft(d => d ? { ...d, photoUrl: (d && d.photoUrl) ? d.photoUrl : j.url, photos: [ ...((d && d.photos) || []), j.url ], ai: j.ai || null, title: d.title || ((j.ai && j.ai.item) || ''), itemType: d.itemType || ((j.ai && j.ai.itemType) || ''), severity: d.severity || ((j.ai && j.ai.severity) || ''), note: d.note || (j.ai && j.ai.condition ? String(j.ai.condition) : '') } : d)
       } else alert(j.error || 'Photo upload failed')
     } catch { alert('Photo upload failed - check signal and retry.') }
     setUploading(false)
@@ -162,7 +162,7 @@ export default function AuditCapture({ code }: { code: string }) {
     if (!draft.title.trim() && !draft.photoUrl) { alert('Add a photo or a short title first.'); return }
     setSaving(true)
     try {
-      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: draft.room, kind: draft.kind, title: draft.title, itemType: draft.itemType, note: draft.note, severity: draft.severity, photoUrl: draft.photoUrl, ai: draft.ai }) })
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: draft.room, kind: draft.kind, title: draft.title, itemType: draft.itemType, note: draft.note, severity: draft.severity, photoUrl: (draft.photos && draft.photos[0]) || draft.photoUrl, photos: draft.photos, ai: draft.ai }) })
       const j = await r.json()
       if (r.ok && j.ok) { setDraft(null); await load() } else alert(j.error || 'Save failed')
     } catch { alert('Save failed - retry.') }
@@ -287,7 +287,8 @@ export default function AuditCapture({ code }: { code: string }) {
                     <button onClick={() => { if (fileRef.current) fileRef.current.click() }} className="w-full rounded-lg border-2 border-dashed border-neutral-300 py-3 text-sm text-neutral-500">
                       {uploading ? 'Uploading \u0026 analyzing\u2026' : draft.photoUrl ? 'Photo added \u2713 \u2014 tap to retake' : '\ud83d\udcf7 Take a photo (AI fills the details)'}
                     </button>
-                    {draft.photoUrl ? <img src={draft.photoUrl} alt="" className="w-full max-h-48 object-cover rounded-lg" /> : null}
+                    {((draft.photos && draft.photos.length) ? draft.photos : (draft.photoUrl ? [draft.photoUrl] : [])).length ? <div className="flex gap-1.5 flex-wrap">{((draft.photos && draft.photos.length) ? draft.photos : [draft.photoUrl]).map((p: string, i: number) => <img key={i} src={p} alt="" className="w-16 h-16 object-cover rounded-lg" />)}</div> : null}
+                    <button onClick={() => { if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click() } }} disabled={uploading} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200 self-start">{uploading ? 'Uploading…' : '+ Add photo'}</button>
                     {draft.ai ? (
                       <div className="flex flex-wrap gap-1.5 items-center">
                         {draft.ai.tier && draft.ai.tier !== 'unknown' ? <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded ' + ((draft.ai.tier === 'luxury' || draft.ai.tier === 'high_end') ? 'bg-amber-100 text-amber-800' : 'bg-neutral-100 text-neutral-600')}>{String(draft.ai.tier).replace('_', ' ')}</span> : null}
