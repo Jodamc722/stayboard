@@ -37,6 +37,29 @@ async function visionOne(key: string, img: any, room: string, answers: string): 
   } catch { return { items: [], questions: [] } }
 }
 
+async function consolidate(key: string, room: string, items: any[], questions: string[]): Promise<{ items: any[]; questions: string[] } | null> {
+  if (!items.length && !questions.length) return { items, questions }
+  const SYS = 'You are cleaning up a room inventory built from SEVERAL photos of the same ' + room + '. Each item may be a partial view from one photo, and a close-up may reveal a brand, model or size that a wide shot could not. TASKS: (1) MERGE entries that are the SAME physical object seen in different photos into ONE (for example a wide shot TV plus a close-up LG QNED TV plus a remote photo all equal ONE TV entry) and combine their details - fill in brand, model and size from the close-ups, keep the best count and any howTo, and PRESERVE the photo field (keep the photo that best shows the item). (2) Return QUESTIONS ONLY for details that are STILL genuinely unknown after merging - if ANY photo already revealed the brand, model or size, do NOT ask about it. Never ask the same thing twice. Max 2 questions, or none at all. Be smart: never ask something already answered by another photo. STRICT JSON ONLY, no markdown: {"items":[{"item":"","itemType":"","count":1,"size":"","brand":"","tier":"","condition":"","severity":"","amenity":true,"highlight":true,"howTo":"","photo":""}],"questions":["..."]}'
+  try {
+    const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 18000)
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      signal: ac.signal,
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: SYS, messages: [{ role: 'user', content: 'Consolidate this inventory. INPUT JSON: ' + JSON.stringify({ items, questions }).slice(0, 12000) }] })
+    })
+    clearTimeout(timer)
+    if (!r.ok) return null
+    const j = await r.json()
+    const txt = (j && j.content && j.content[0] && j.content[0].text) || ''
+    const m = txt.match(/\{[\s\S]*\}/)
+    if (!m) return null
+    const parsed = JSON.parse(m[0])
+    if (!parsed || !Array.isArray(parsed.items)) return null
+    return { items: parsed.items, questions: Array.isArray(parsed.questions) ? parsed.questions : [] }
+  } catch { return null }
+}
+
 export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
@@ -61,5 +84,14 @@ export async function POST(req: NextRequest) {
     for (const it of (r.items || [])) { if (!it || typeof it !== 'object') continue; const k = String(it.item || '').toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\b(small|medium|large|left|right|partially|visible|approx|approximately)\b/g, ' ').replace(/\s+/g, ' ').trim(); if (!k || k.length <= 2) continue; const c = Math.max(1, parseInt(it.count, 10) || 1); const prev = seen.get(k); if (prev) { if (c > (prev.count || 1)) prev.count = c; if (!prev.howTo && it.howTo) prev.howTo = it.howTo; if (!prev.size && it.size) prev.size = it.size } else { it.count = c; it.photo = url; seen.set(k, it); items.push(it) } }
     for (const q of (r.questions || [])) { const k = String(q || '').toLowerCase().trim(); if (k && !qseen.has(k)) { qseen.add(k); questions.push(q) } }
   }
-  return NextResponse.json({ ok: true, items, questions: questions.slice(0, 8) })
+  const con = await consolidate(key, room, items, questions)
+  let outItems: any[] = items; let outQ: string[] = questions
+  if (con && Array.isArray(con.items) && con.items.length) {
+    const validUrls: any = {}; for (const x of items) if (x && x.photo) validUrls[x.photo] = 1
+    const nrm = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+    const byName: any = {}; for (const x of items) byName[nrm(x.item)] = x
+    for (const it of con.items) { if (it && (!it.photo || !validUrls[it.photo])) { const src = byName[nrm(it.item)]; it.photo = (src && src.photo) || (items[0] && items[0].photo) || '' } }
+    outItems = con.items; outQ = Array.isArray(con.questions) ? con.questions : []
+  }
+  return NextResponse.json({ ok: true, items: outItems, questions: outQ.slice(0, 4) })
 }
