@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const KINDS = ['maintenance', 'replace', 'add']
+const KINDS = ['maintenance', 'replace', 'add', 'faq']
 function slugRoom(x: string): string { return String(x).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) }
 
 async function carryForwardItems(db: any, listingId: string, newAuditId: string) {
