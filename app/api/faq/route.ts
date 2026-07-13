@@ -9,7 +9,7 @@ async function getUser() {
   try { const supabase = createClient(); const { data } = await supabase.auth.getUser(); return data.user || null } catch { return null }
 }
 
-function facts(raw: any) {
+function facts(raw: any, cfMap?: Record<string, string>) {
   const out: { label: string; value: string }[] = []
   if (!raw || typeof raw !== 'object') return out
   const addr = raw.address
@@ -17,6 +17,19 @@ function facts(raw: any) {
   if (addrStr) out.push({ label: 'Address', value: String(addrStr) })
   if (raw.defaultCheckInTime) out.push({ label: 'Check-in', value: String(raw.defaultCheckInTime) })
   if (raw.defaultCheckOutTime) out.push({ label: 'Check-out', value: String(raw.defaultCheckOutTime) })
+  if (raw.wifiName) out.push({ label: 'Wi-Fi network', value: String(raw.wifiName) })
+  if (raw.wifiPassword) out.push({ label: 'Wi-Fi password', value: String(raw.wifiPassword) })
+  const cfs = Array.isArray(raw.customFields) ? raw.customFields : []
+  for (const it of cfs) {
+    if (!it) continue
+    const fid = String((it as any).fieldId || (it as any).field_id || ((it as any).field && ((it as any).field._id || (it as any).field.id)) || (it as any)._id || '')
+    const label = cfMap && cfMap[fid]
+    if (!label) continue
+    let val: any = (it as any).value
+    if (val == null || val === '') continue
+    if (typeof val === 'object') { try { val = JSON.stringify(val) } catch { val = String(val) } }
+    out.push({ label: String(label).slice(0, 60), value: String(val).slice(0, 800) })
+  }
   if (raw.propertyType) out.push({ label: 'Property type', value: String(raw.propertyType) })
   const bd = raw.bedrooms, ba = raw.bathrooms, acc = raw.accommodates
   const layout = [bd != null ? bd + ' BR' : '', ba != null ? ba + ' BA' : '', acc != null ? 'sleeps ' + acc : ''].filter(Boolean).join(' \u00b7 ')
@@ -38,14 +51,17 @@ export async function GET(req: NextRequest) {
     listings.sort((a: any, b: any) => (a.building || '').localeCompare(b.building || '') || a.name.localeCompare(b.name))
     return NextResponse.json({ ok: true, listings })
   }
-  const [lr, fr, ir] = await Promise.all([
+  const [lr, fr, ir, cfr] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,raw').eq('id', listingId).limit(1),
     db.from('listing_faq').select('*').eq('listing_id', listingId).order('created_at', { ascending: true }).limit(500),
     db.from('audit_items').select('id,room,title,item_type,photo_url,details').eq('listing_id', listingId).limit(1000),
+    db.from('guesty_custom_fields').select('id,name,display_name'),
   ])
   const lrow = lr.data && lr.data[0]
   const listing = lrow ? { id: String(lrow.id), name: lrow.nickname || lrow.title || 'Unit', building: lrow.building || '' } : { id: listingId, name: 'Unit', building: '' }
-  const factList = lrow ? facts(lrow.raw) : []
+  const cfMap: Record<string, string> = {}
+  for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = String((f as any).display_name || (f as any).name || '')
+  const factList = lrow ? facts(lrow.raw, cfMap) : []
   const entries = fr.data || []
   const promoted: Record<string, boolean> = {}
   for (const e of entries) if (e.source === 'audit' && e.question) promoted[String(e.question).toLowerCase()] = true
