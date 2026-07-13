@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number }
 type Listing = { id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null }
-type Payload = { ok: boolean; audit: { id: string; status: string; auditType?: string | null }; listing: Listing; items: Item[]; rooms?: RoomCfg[]; error?: string }
+type Payload = { ok: boolean; audit: { id: string; status: string; auditType?: string | null }; listing: Listing; items: Item[]; rooms?: RoomCfg[]; scope?: string; error?: string }
 type RoomCfg = { room_key: string; display_name: string; cover_photo_url: string | null; sort: number }
 type Suggestion = { title: string; why?: string }
 type Draft = { room: string; kind: string; title: string; itemType: string; note: string; severity: string; photoUrl: string; ai: any }
@@ -17,6 +17,8 @@ const KIND_META: Record<string, { label: string; cls: string }> = {
   add: { label: 'Add', cls: 'bg-sky-100 text-sky-800 border-sky-300' },
   faq: { label: 'FAQ', cls: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
 }
+
+const COMMON_AREAS = ['Lobby', 'Front desk', 'Elevators', 'Hallways', 'Stairwells', 'Gym', 'Pool', 'Pool deck', 'Parking garage', 'Mailroom', 'Trash / recycling', 'Amenity lounge', 'Rooftop', 'Exterior / grounds']
 
 function defaultRooms(bedrooms: number | null, bathrooms: number | null): string[] {
   const rooms: string[] = []
@@ -59,7 +61,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const items = data ? data.items : []
   const done = !!(data && data.audit && data.audit.status === 'completed')
   const rooms: string[] = []
-  if (data) { for (const r of defaultRooms(data.listing.bedrooms, data.listing.bathrooms)) rooms.push(r) }
+  if (data) { const base = (data as any).scope === 'building' ? COMMON_AREAS : defaultRooms(data.listing.bedrooms, data.listing.bathrooms); for (const r of base) rooms.push(r) }
   for (const r of customRooms) if (rooms.indexOf(r) < 0) rooms.push(r)
   for (const it of items) if (rooms.indexOf(it.room) < 0) rooms.push(it.room)
   const roomCfg: RoomCfg[] = data && data.rooms ? data.rooms : []
