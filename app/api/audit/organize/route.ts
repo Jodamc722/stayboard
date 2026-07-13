@@ -17,7 +17,7 @@ async function toB64(url: string): Promise<{ data: string; media: string } | nul
 }
 
 async function visionOne(key: string, img: any, room: string, answers: string): Promise<{ items: any[]; questions: string[] } | null> {
-  const SYS = 'Itemize EVERYTHING visible in this ONE photo of the "' + room + '" of a short-term-rental unit. List each individual item granularly - the bed (with size: King/Queen/Full/Twin), EACH nightstand, each lamp, seating, dresser, desk, TV (with size), rugs, decor, mirrors, curtains, electronics, and any fixtures/appliances in view. Do not lump items together. For appliances/devices include how a guest operates it. Also list any clarifying QUESTIONS to complete the inventory (e.g. exact bed size, does this room have an ensuite bathroom, is the sofa a sleeper, smart TV vs cable box). STRICT JSON ONLY, no markdown: {"items":[{"item":"short name","itemType":"category","size":"if applicable else empty","brand":"if visible else empty","tier":"luxury|high_end|standard|budget|unknown","condition":"one sentence on visible wear","severity":"low|medium|high","amenity":true,"highlight":true,"howTo":"how a guest uses it, else empty"}],"questions":["..."]}'
+  const SYS = 'Itemize EVERYTHING visible in this ONE photo of the "' + room + '" of a short-term-rental unit. List each MEANINGFUL, distinct item ONCE: the bed (with size), nightstands, lamps, seating, dressers, desk, TV (with size), major rugs, mirrors, curtains, electronics, appliances, and NOTABLE decor. Skip trivial or barely-visible clutter (stray remotes, tiny partially-hidden objects, generic small trinkets) and NEVER list the same item twice. For appliances/devices include how a guest operates it. Also list any clarifying QUESTIONS to complete the inventory (e.g. exact bed size, does this room have an ensuite bathroom, is the sofa a sleeper, smart TV vs cable box). STRICT JSON ONLY, no markdown: {"items":[{"item":"short name","itemType":"category","size":"if applicable else empty","brand":"if visible else empty","tier":"luxury|high_end|standard|budget|unknown","condition":"one sentence on visible wear","severity":"low|medium|high","amenity":true,"highlight":true,"howTo":"how a guest uses it, else empty"}],"questions":["..."]}'
   const userText = 'Itemize this photo granularly.' + (answers ? ' Inspector already answered (use, do not re-ask): ' + answers : '')
   try {
     const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 40000)
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   const questions: string[] = []; const qseen = new Set<string>()
   for (const { url, r } of results) {
     if (!r) continue
-    for (const it of (r.items || [])) { const k = String(it && it.item || '').toLowerCase().trim(); if (k && !seen.has(k)) { seen.add(k); if (it && typeof it === 'object') it.photo = url; items.push(it) } }
+    for (const it of (r.items || [])) { const k = String(it && it.item || '').toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\b(small|medium|large|left|right|partially|visible|approx|approximately)\b/g, ' ').replace(/\s+/g, ' ').trim(); if (k && k.length > 2 && !seen.has(k)) { seen.add(k); if (it && typeof it === 'object') it.photo = url; items.push(it) } }
     for (const q of (r.questions || [])) { const k = String(q || '').toLowerCase().trim(); if (k && !qseen.has(k)) { qseen.add(k); questions.push(q) } }
   }
   return NextResponse.json({ ok: true, items, questions: questions.slice(0, 8) })
