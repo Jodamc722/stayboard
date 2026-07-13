@@ -91,6 +91,7 @@ export function mapBreezewayTask(t: any) {
     total_minutes: totalMinutes,
     rate_paid: t?.rate_paid ?? null,
     scheduled_date: t?.scheduled_date ?? null,
+    linked_reservation_id: t?.linked_reservation?.external_reservation_id ? String(t.linked_reservation.external_reservation_id) : null,
     report_url: t?.report_url ?? t?.task_report_url ?? null,
     raw: t,
   }
