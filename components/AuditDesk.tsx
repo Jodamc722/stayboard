@@ -242,10 +242,10 @@ export function AuditDesk() {
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{err}</div> : null}
       {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading audits…</div> : null}
       {!loading && sorted.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No audits yet — pick a listing above to create the first link.</div> : null}
-      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = x.building || 'Other'; if (bldgs.indexOf(b) < 0) bldgs.push(b) } return bldgs.map(bld => (
-        <div key={bld}>
-          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-muted font-semibold mt-2 mb-1.5 py-1"><span>{bld} · {visible.filter(x => (x.building || 'Other') === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
-          {expandedBldg[bld] ? (<div className="space-y-2">
+      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = x.building || 'Other'; if (bldgs.indexOf(b) < 0) bldgs.push(b) } return <div className="space-y-2">{bldgs.map(bld => (
+        <div key={bld} className="rounded-2xl border border-line bg-white overflow-hidden">
+          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-neutral-50"><span className="text-sm font-semibold text-ink">{bld} · {visible.filter(x => (x.building || 'Other') === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
+          {expandedBldg[bld] ? (<div className="border-t border-line p-2.5 space-y-2 bg-neutral-50/40">
           {visible.filter(x => (x.building || 'Other') === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
@@ -361,7 +361,7 @@ export function AuditDesk() {
       ))}
           </div>) : null}
         </div>
-      )) })()}
+      ))}</div> })()}
     </div>
   )
 }
