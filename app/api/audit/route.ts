@@ -201,6 +201,15 @@ export async function POST(req: NextRequest) {
   const user = audit ? null : await getUser()
   if (!audit && !user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
+  if (action === 'deleteRoom') {
+    const listingId = String(body.listingId || (audit && audit.listing_id) || '')
+    const room = String(body.room || '').slice(0, 120)
+    if (!room) return NextResponse.json({ error: 'room required' }, { status: 400 })
+    if (audit) await db.from('audit_items').delete().eq('audit_id', audit.id).eq('room', room).eq('status', 'open')
+    if (listingId) await db.from('listing_rooms').upsert({ listing_id: listingId, room_key: slugRoom(room), display_name: room.slice(0, 120), sort: -1, updated_at: new Date().toISOString() }, { onConflict: 'listing_id,room_key' })
+    return NextResponse.json({ ok: true })
+  }
+
   if (action === 'upsertRoom') {
     const listingId = String(body.listingId || (audit && audit.listing_id) || '')
     const room = String(body.room || '').slice(0, 120)
