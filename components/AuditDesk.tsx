@@ -2,6 +2,7 @@
 // Property Audit - desktop review desk: create/share unit audit links, review captured items,
 // and create + assign ONE Breezeway task per item (approval-gated; the mobile link never does this).
 import { useEffect, useState } from 'react'
+import { rollupBuilding } from '@/lib/optimize-score'
 
 type Counts = { total: number; open: number; tasks: number }
 type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts; auditType?: string | null; updatedAt?: string | null }
@@ -216,7 +217,7 @@ export function AuditDesk() {
     } catch { alert('Failed') }
   }
 
-  const sorted = audits.slice().sort((a, b) => (a.building || '').localeCompare(b.building || '') || a.unit.localeCompare(b.unit) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+  const sorted = audits.slice().sort((a, b) => rollupBuilding(a.building).localeCompare(rollupBuilding(b.building)) || a.unit.localeCompare(b.unit) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
   const latestByListing: Record<string, any> = {}
   for (const a of audits) { const k = a.listingId; if (!latestByListing[k] || String(a.createdAt || '') > String(latestByListing[k].createdAt || '')) latestByListing[k] = a }
   function dueLabel(a: Audit): string { const latest = latestByListing[a.listingId]; if (!latest || latest.id !== a.id || a.status !== 'completed') return ''; const dd = a.updatedAt || a.createdAt; if (!dd) return ''; const days = (Date.now() - new Date(dd).getTime()) / 86400000; if (days >= 365) return 'AUDIT OVERDUE'; if (days >= 183) return 'AUDIT DUE'; return '' }
@@ -242,11 +243,11 @@ export function AuditDesk() {
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{err}</div> : null}
       {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading audits…</div> : null}
       {!loading && sorted.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No audits yet — pick a listing above to create the first link.</div> : null}
-      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = x.building || 'Other'; if (bldgs.indexOf(b) < 0) bldgs.push(b) } return <div className="space-y-2">{bldgs.map(bld => (
+      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = rollupBuilding(x.building); if (bldgs.indexOf(b) < 0) bldgs.push(b) } return <div className="space-y-2">{bldgs.map(bld => (
         <div key={bld} className="rounded-2xl border border-line bg-white overflow-hidden">
-          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-neutral-50"><span className="text-sm font-semibold text-ink">{bld} · {visible.filter(x => (x.building || 'Other') === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
+          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-neutral-50"><span className="text-sm font-semibold text-ink">{bld} · {visible.filter(x => (rollupBuilding(x.building)) === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (rollupBuilding(x.building)) === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (rollupBuilding(x.building)) === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
           {expandedBldg[bld] ? (<div className="border-t border-line p-2.5 space-y-2 bg-neutral-50/40">
-          {visible.filter(x => (x.building || 'Other') === bld).map(a => (
+          {visible.filter(x => (rollupBuilding(x.building)) === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
             <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => openAudit(a)} className="text-left flex-1 min-w-0">
