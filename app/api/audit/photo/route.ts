@@ -24,13 +24,13 @@ async function analyze(b64: string): Promise<any | null> {
   try {
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), 25000)
-    const SYS = 'You assist a short-term-rental property inspector. Identify the main furniture/fixture/appliance item in the photo and assess its visible condition. Reply with STRICT JSON only: {"item":"short name e.g. Nightstand","itemType":"category e.g. bedroom furniture","condition":"one concise sentence on visible wear or damage","severity":"low|medium|high"}. No markdown, no extra keys.'
+    const SYS = 'You assist a short-term-rental property inspector during unit ONBOARDING. Identify the main furniture/fixture/appliance/amenity in the photo, assess visible condition, AND capture marketing + how-to detail for listings and guidebooks. Reply with STRICT JSON only: {"item":"short name e.g. Espresso machine","itemType":"category e.g. kitchen appliance","condition":"one concise sentence on visible wear or damage","severity":"low|medium|high","brand":"visible brand or model, else empty","tier":"luxury|high_end|standard|budget|unknown","features":["notable feature"],"amenity":true,"highlight":true,"howTo":"one short sentence on how a guest operates it, else empty"}. amenity=true if guest-facing and worth listing; highlight=true only if high-end or notable enough to feature in marketing. No markdown, no extra keys.'
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       signal: ac.signal,
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 300,
+        model: 'claude-sonnet-4-6', max_tokens: 500,
         system: SYS,
         messages: [{ role: 'user', content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
