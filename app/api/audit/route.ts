@@ -62,7 +62,9 @@ export async function GET(req: NextRequest) {
     } catch { /* mirror optional */ }
     let roomCfg: any[] = []
     try { const rc = await db.from('listing_rooms').select('*').eq('listing_id', audit.listing_id).order('sort', { ascending: true }); roomCfg = rc.data || [] } catch {}
-    return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status, createdAt: audit.created_at, auditType: audit.audit_type || null }, listing, items: outItems, rooms: roomCfg })
+    const auditScope = audit.scope || 'unit'
+    const outListing: any = auditScope === 'building' ? { id: audit.listing_id, name: (audit.building || 'Building') + ' — Common areas', building: audit.building || '', bedrooms: null, bathrooms: null } : listing
+    return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status, createdAt: audit.created_at, auditType: audit.audit_type || null }, listing: outListing, items: outItems, rooms: roomCfg, scope: auditScope })
   }
   const user = await getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
     const id = String(r.listing_id)
     if (!nextCk[id]) nextCk[id] = String(r.check_out).slice(0, 10)
   }
-  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, updatedAt: a.updated_at || null, auditType: a.audit_type || null, unit: (lmap[a.listing_id] || {}).name || a.listing_id, building: (lmap[a.listing_id] || {}).building || '', nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
+  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, updatedAt: a.updated_at || null, auditType: a.audit_type || null, unit: a.scope === 'building' ? 'Common areas' : ((lmap[a.listing_id] || {}).name || a.listing_id), building: a.scope === 'building' ? (a.building || '') : ((lmap[a.listing_id] || {}).building || ''), scope: a.scope || 'unit', nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
   return NextResponse.json({ ok: true, audits: out, listings })
 }
 
@@ -136,6 +138,27 @@ export async function POST(req: NextRequest) {
       if (auditType === 'quality' && body.carryForward) { try { await carryForwardItems(db, listingId, audit.id) } catch {} }
     }
     try { await db.from('property_audits').update({ audit_type: auditType }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
+    const url = req.nextUrl.origin + '/audit/' + audit.share_code
+    return NextResponse.json({ ok: true, audit, url })
+  }
+
+  if (action === 'createBuildingAudit') {
+    const user = await getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const building = String(body.building || '').slice(0, 120)
+    if (!building) return NextResponse.json({ error: 'building required' }, { status: 400 })
+    const auditType = ['onboarding', 'quality'].includes(String(body.type)) ? String(body.type) : 'quality'
+    const listingId = 'BLDG:' + building
+    const { data: existing } = await db.from('property_audits').select('*').eq('listing_id', listingId).eq('status', 'open').limit(1)
+    let audit = existing && existing[0]
+    if (!audit) {
+      const uuid = (globalThis as any).crypto && (globalThis as any).crypto.randomUUID ? (globalThis as any).crypto.randomUUID() : String(Math.random()).slice(2) + String(Math.random()).slice(2)
+      const shareCode = String(uuid).replace(/-/g, '').slice(0, 14)
+      const ins = await db.from('property_audits').insert({ listing_id: listingId, share_code: shareCode, status: 'open', created_by: user.email || null, building, scope: 'building' }).select('*').limit(1)
+      if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
+      audit = ins.data && ins.data[0]
+    }
+    try { await db.from('property_audits').update({ audit_type: auditType, building, scope: 'building' }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
     const url = req.nextUrl.origin + '/audit/' + audit.share_code
     return NextResponse.json({ ok: true, audit, url })
   }
