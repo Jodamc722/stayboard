@@ -18,6 +18,18 @@ const PRIOS = ['urgent', 'high', 'normal', 'low']
 function personName(p: Person): string { return p.name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || String(p.id) }
 function defCfg(it: Item): Cfg { return { department: it.kind === 'maintenance' ? 'maintenance' : 'inspection', priority: it.severity === 'high' ? 'high' : 'normal', assignee: '' } }
 
+function defaultRooms(bedrooms: number | null, bathrooms: number | null): string[] {
+  const rooms: string[] = []
+  const br = typeof bedrooms === 'number' ? bedrooms : 1
+  if (br <= 0) rooms.push('Studio')
+  else { rooms.push('Master bedroom'); for (let i = 1; i < br; i++) rooms.push('Guest bedroom ' + i) }
+  rooms.push('Living room'); rooms.push('Kitchen')
+  const ba = typeof bathrooms === 'number' && bathrooms > 0 ? Math.ceil(bathrooms) : 1
+  for (let i = 0; i < ba; i++) rooms.push(ba > 1 ? 'Bathroom ' + (i + 1) : 'Bathroom')
+  rooms.push('Balcony')
+  return rooms
+}
+
 export function AuditDesk() {
   const [audits, setAudits] = useState<Audit[]>([])
   const [listings, setListings] = useState<ListingOpt[]>([])
@@ -34,6 +46,10 @@ export function AuditDesk() {
   const [copied, setCopied] = useState('')
   const [showDone, setShowDone] = useState(false)
   const [newType, setNewType] = useState('onboarding')
+  const [openRooms, setOpenRooms] = useState<any[]>([])
+  const [openListing, setOpenListing] = useState<any>(null)
+  const [coverCtx, setCoverCtx] = useState<any>(null)
+  const [coverBusy, setCoverBusy] = useState('')
 
   async function createAllAudits() {
     if (!confirm('Create an audit link for every active listing that does not have one yet?')) return
@@ -58,13 +74,39 @@ export function AuditDesk() {
   }
   useEffect(() => { load(); fetch('/api/audit/task').then(r => r.json()).then(j => setPeople((j && j.people) || [])).catch(() => {}) }, [])
 
+  async function deskSetCover(a: Audit, room: string) {
+    setCoverCtx({ code: a.shareCode, listingId: a.listingId, room: room, auditId: a.id })
+    const el = document.getElementById('deskCoverInput') as any
+    if (el) { el.value = ''; el.click() }
+  }
+  async function onDeskCover(e: any) {
+    const f = e.target.files && e.target.files[0]
+    if (!f || !coverCtx) return
+    setCoverBusy(coverCtx.auditId + coverCtx.room)
+    try {
+      const fd = new FormData(); fd.append('code', coverCtx.code); fd.append('file', f)
+      const r = await fetch('/api/audit/photo', { method: 'POST', body: fd })
+      const j = await r.json()
+      if (r.ok && j.url) { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upsertRoom', listingId: coverCtx.listingId, room: coverCtx.room, photoUrl: j.url }) }); await refreshRooms(coverCtx.code) }
+    } catch {}
+    setCoverBusy(''); setCoverCtx(null)
+  }
+  async function deskRename(a: Audit, room: string) {
+    const name = window.prompt('Rename room', room)
+    if (name == null) return
+    const nm = String(name).trim(); if (!nm) return
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upsertRoom', listingId: a.listingId, room: room, displayName: nm }) }); await refreshRooms(a.shareCode) } catch {}
+  }
+  async function refreshRooms(code: string) {
+    try { const r = await fetch('/api/audit?code=' + encodeURIComponent(code)); const j = await r.json(); setOpenRooms((j && j.rooms) || []) } catch {}
+  }
   async function openAudit(a: Audit) {
     if (openId === a.id) { setOpenId(''); return }
     setOpenId(a.id); setItemsBusy(true); setItems([])
     try {
       const r = await fetch('/api/audit?code=' + encodeURIComponent(a.shareCode))
       const j = await r.json()
-      setItems((j && j.items) || [])
+      setItems((j && j.items) || []); setOpenRooms((j && j.rooms) || []); setOpenListing((j && j.listing) || null)
     } catch {}
     setItemsBusy(false)
   }
@@ -161,6 +203,8 @@ export function AuditDesk() {
         <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
         <label className="text-xs text-muted inline-flex items-center gap-1.5 ml-auto cursor-pointer"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Show completed</label>
       </div>
+      {/* desk cover upload */}
+      <input id="deskCoverInput" type="file" accept="image/*" onChange={onDeskCover} className="hidden" />
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{err}</div> : null}
       {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading audits…</div> : null}
       {!loading && sorted.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No audits yet — pick a listing above to create the first link.</div> : null}
@@ -186,6 +230,21 @@ export function AuditDesk() {
           </div>
           {openId === a.id ? (
             <div className="border-t border-line px-3.5 py-3 space-y-3 bg-neutral-50/50">
+              {(() => { const cfg: Record<string, any> = {}; for (const rc of openRooms) cfg[rc.room_key] = rc; const rk = (r: string) => String(r).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80); const canon: string[] = []; if (openListing) for (const rr of defaultRooms(openListing.bedrooms, openListing.bathrooms)) if (canon.indexOf(rr) < 0) canon.push(rr); for (const it of items) if (canon.indexOf(it.room) < 0) canon.push(it.room); return (
+                <div className="rounded-lg border border-line bg-white p-2.5">
+                  <div className="text-[11px] font-semibold text-muted mb-1.5">Rooms &amp; cover photos</div>
+                  <div className="space-y-1.5">
+                    {canon.map(room => { const c = cfg[rk(room)]; const label = c && c.display_name ? c.display_name : room; const cover = c ? c.cover_photo_url : null; return (
+                      <div key={room} className="flex items-center gap-2">
+                        {cover ? <img src={cover} alt="" className="w-10 h-10 rounded object-cover shrink-0" /> : <div className="w-10 h-10 rounded bg-neutral-100 shrink-0" />}
+                        <span className="text-xs text-ink flex-1 min-w-0 truncate">{label}</span>
+                        <button onClick={() => deskSetCover(a, room)} disabled={coverBusy === a.id + room} className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-line">{coverBusy === a.id + room ? '…' : (cover ? 'Replace' : 'Cover')}</button>
+                        <button onClick={() => deskRename(a, room)} className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-line">Rename</button>
+                      </div>
+                    )})}
+                  </div>
+                </div>
+              ) })()}
               {(() => { const order = items.filter(x => (x.kind === 'replace' || x.kind === 'add') && x.status !== 'dismissed'); if (order.length === 0) return null; return (
                 <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3">
                   <div className="flex items-center justify-between gap-2 mb-1.5">
