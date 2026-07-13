@@ -210,7 +210,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
 
   const selectedKeys = Object.keys(selected).filter(k => selected[k])
   const visibleMarkets = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
-  const dayCleans = useMemo(() => { const all: Clean[] = []; visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => all.push(c))); return market === 'vendor' ? all.filter((c) => c.vendor) : all }, [data, market])
+  const dayCleans = useMemo(() => { const all: Clean[] = []; visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => all.push(c))); return market === 'vendor' ? all.filter((c) => c.vendor) : (market === 'all' ? all : all.filter((c) => !c.vendor)) }, [data, market])
 
   const rows = useMemo(() => {
     const a = [...dayCleans]
