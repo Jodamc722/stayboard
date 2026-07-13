@@ -341,7 +341,7 @@ return {
 ok: true, view, today, weekStart: start, weekEnd: end,
 prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
 next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
-totals: { cleans: cleans.filter((c) => !c.movedTo).length, byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m && !c.movedTo).length })) },
+totals: { cleans: cleans.filter((c) => !c.movedTo).length, byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).length })) },
 days, housekeepers, units, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
