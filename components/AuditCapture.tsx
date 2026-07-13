@@ -48,6 +48,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const coverRef = useRef<HTMLInputElement | null>(null)
   const bulkRef = useRef<HTMLInputElement | null>(null)
+  const camRef = useRef<HTMLInputElement | null>(null)
   const [orgRoom, setOrgRoom] = useState('')
   const [orgBusy, setOrgBusy] = useState(false)
   const [orgItems, setOrgItems] = useState<any[]>([])
@@ -86,7 +87,8 @@ export default function AuditCapture({ code }: { code: string }) {
     setOpenRoom(room)
   }
 
-  function pickBulk(room: string) { setOrgRoom(room); setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
+  function stageGallery(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]) } setOrgRoom(room); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
+  function stageCamera(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]) } setOrgRoom(room); if (camRef.current) { camRef.current.value = ''; camRef.current.click() } }
   async function runOrganize(urls: string[], answers: string) {
     if (!urls.length) return
     setOrgBusy(true)
@@ -99,21 +101,21 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch {}
     setOrgBusy(false)
   }
-  async function onBulkPhotos(e: any) {
+  async function onStage(e: any) {
     const files = e.target.files ? Array.from(e.target.files) : []
     if (!files.length || !orgRoom) return
     setOrgBusy(true)
-    const urls: string[] = []
     try {
-      for (const f of files.slice(0, 8)) {
-        const fd = new FormData(); fd.append('code', code); fd.append('file', f as any); fd.append('noai', '1')
-        const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json(); if (j && j.url) urls.push(j.url)
-      }
-      setOrgPhotos(urls)
-      await runOrganize(urls, '')
+      const uploaded = await Promise.all(files.slice(0, 10).map(async (f: any) => {
+        const fd = new FormData(); fd.append('code', code); fd.append('file', f); fd.append('noai', '1')
+        try { const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json(); return (j && j.url) ? j.url : null } catch { return null }
+      }))
+      const newUrls = uploaded.filter(Boolean) as string[]
+      setOrgPhotos(prev => [...prev, ...newUrls])
     } catch {}
     setOrgBusy(false)
   }
+  async function buildFromStaged() { if (!orgPhotos.length) return; await runOrganize(orgPhotos, orgAnswers) }
   async function addAllOrg() {
     const chosen = orgItems.filter((_: any, i: number) => orgPick[i])
     for (const it of chosen) {
@@ -216,7 +218,7 @@ export default function AuditCapture({ code }: { code: string }) {
     <div className="max-w-md mx-auto px-3 pb-24 pt-4">
       <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} className="hidden" />
       <input ref={coverRef} type="file" accept="image/*" capture="environment" onChange={onCoverPhoto} className="hidden" />
-      <input ref={bulkRef} type="file" accept="image/*" multiple onChange={onBulkPhotos} className="hidden" />
+      <input ref={bulkRef} type="file" accept="image/*" multiple onChange={onStage} className="hidden" /><input ref={camRef} type="file" accept="image/*" capture="environment" onChange={onStage} className="hidden" />
       <div className="mb-4">
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
@@ -236,7 +238,12 @@ export default function AuditCapture({ code }: { code: string }) {
             {open ? (
               <div className="px-3.5 pb-3.5 space-y-2">
                 <div className="mb-2">
-                  <button onClick={() => pickBulk(room)} disabled={orgBusy && orgRoom === room} className="w-full text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Analyzing photos…' : '✨ Build room from photos'}</button>
+                  {orgRoom === room && orgPhotos.length ? <div className="flex gap-1 flex-wrap mb-1.5">{orgPhotos.map((p, i) => <img key={i} src={p} alt="" className="w-11 h-11 rounded object-cover" />)}</div> : null}
+                  <div className="flex gap-1.5">
+                    <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
+                    <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
+                  </div>
+                  {orgRoom === room && orgPhotos.length ? <button onClick={buildFromStaged} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{orgBusy ? 'Analyzing ' + orgPhotos.length + ' photos…' : '✨ Build inventory from ' + orgPhotos.length + ' photos'}</button> : null}
                   {orgRoom === room && (orgItems.length > 0 || orgQuestions.length > 0) ? (
                     <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 space-y-2">
                       {orgQuestions.length > 0 ? (
