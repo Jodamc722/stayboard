@@ -256,7 +256,8 @@ const extendedTaskIds = new Set<string>()
       const movedIns: Clean[] = []
 for (const c of cleans) {
 if (c.syncStatus !== 'guesty-only') continue
-const mv = mirror.find((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date && !t.finished_at)
+const _cands = mirror.filter((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date && !t.finished_at)
+const mv = _cands.length ? _cands.reduce((a: any, b: any) => Math.abs(+new Date(String(b.scheduled_date).slice(0, 10)) - +new Date(c.date)) < Math.abs(+new Date(String(a.scheduled_date).slice(0, 10)) - +new Date(c.date)) ? b : a) : null
 if (!mv) continue
 const mvDate = String(mv.scheduled_date).slice(0, 10)
 const ppl = Array.isArray(mv.assignees) ? mv.assignees : []
