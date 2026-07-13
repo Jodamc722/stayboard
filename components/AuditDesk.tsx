@@ -11,8 +11,8 @@ type Person = { id: number | string; name?: string; first_name?: string; last_na
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; task_status?: string | null; ai_assessment?: any }
 type Cfg = { department: string; priority: string; assignee: string }
 
-const KIND_CLS: Record<string, string> = { maintenance: 'bg-amber-100 text-amber-800 border-amber-300', replace: 'bg-rose-100 text-rose-700 border-rose-300', add: 'bg-sky-100 text-sky-800 border-sky-300' }
-const KIND_LABEL: Record<string, string> = { maintenance: 'Fix', replace: 'Replace', add: 'Add' }
+const KIND_CLS: Record<string, string> = { maintenance: 'bg-amber-100 text-amber-800 border-amber-300', replace: 'bg-rose-100 text-rose-700 border-rose-300', add: 'bg-sky-100 text-sky-800 border-sky-300', faq: 'bg-indigo-100 text-indigo-800 border-indigo-300' }
+const KIND_LABEL: Record<string, string> = { maintenance: 'Fix', replace: 'Replace', add: 'Add', faq: 'FAQ' }
 const DEPTS = ['maintenance', 'inspection', 'housekeeping', 'safety']
 const PRIOS = ['urgent', 'high', 'normal', 'low']
 
