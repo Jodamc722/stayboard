@@ -59,6 +59,13 @@ export async function GET(req: NextRequest) {
   ])
   const lrow = lr.data && lr.data[0]
   const listing = lrow ? { id: String(lrow.id), name: lrow.nickname || lrow.title || 'Unit', building: lrow.building || '' } : { id: listingId, name: 'Unit', building: '' }
+  const rawL: any = lrow ? lrow.raw : null
+  const ints = rawL && Array.isArray(rawL.integrations) ? rawL.integrations : []
+  const chan = (n: string) => { for (const it of ints) if (it && it[n]) return it[n]; return null }
+  const otaLinks: { name: string; url: string }[] = []
+  const ab = chan('airbnb2') || chan('airbnb'); if (ab && ab.id) otaLinks.push({ name: 'Airbnb', url: 'https://www.airbnb.com/rooms/' + ab.id })
+  const vr = chan('homeaway') || chan('vrbo'); if (vr && vr.id) otaLinks.push({ name: 'Vrbo', url: 'https://www.vrbo.com/' + vr.id })
+  const bk = chan('bookingCom') || chan('booking'); if (bk && bk.id) otaLinks.push({ name: 'Booking.com', url: 'https://www.booking.com/hotel/' + bk.id })
   const cfMap: Record<string, string> = {}
   for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = String((f as any).display_name || (f as any).name || '')
   const factList = lrow ? facts(lrow.raw, cfMap) : []
@@ -74,7 +81,7 @@ export async function GET(req: NextRequest) {
     if ((it as any).kind === 'faq' && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: (it as any).note || d.howTo || '', photo_url: it.photo_url })
     if (d.highlight) highlights.push({ id: it.id, room: it.room, title: it.title || it.item_type || 'Item', brand: d.brand || '', tier: d.tier || '', features: Array.isArray(d.features) ? d.features : [] })
   }
-  return NextResponse.json({ ok: true, listing, facts: factList, entries, howtos, highlights })
+  return NextResponse.json({ ok: true, listing, facts: factList, entries, howtos, highlights, otaLinks })
 }
 
 export async function POST(req: NextRequest) {
