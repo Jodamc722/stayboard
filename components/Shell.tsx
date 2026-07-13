@@ -32,6 +32,7 @@ const SECTIONS: {
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
       { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
+      { to: '/faq',          label: 'FAQ & How-To', Icon: Sparkles },
     ],
   },
   {
