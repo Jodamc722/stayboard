@@ -55,6 +55,11 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orgItems, setOrgItems] = useState<any[]>([])
   const [orgEdit, setOrgEdit] = useState<number>(-1)
   const [orgEditHint, setOrgEditHint] = useState('')
+  const [faqOpen, setFaqOpen] = useState(false)
+  const [faqTitle, setFaqTitle] = useState('')
+  const [faqHowto, setFaqHowto] = useState('')
+  const [faqPhoto, setFaqPhoto] = useState('')
+  const [faqBusy, setFaqBusy] = useState(false)
   const [orgQuestions, setOrgQuestions] = useState<string[]>([])
   const [orgAnswers, setOrgAnswers] = useState('')
   const [orgPhotos, setOrgPhotos] = useState<string[]>([])
@@ -185,6 +190,24 @@ export default function AuditCapture({ code }: { code: string }) {
       else alert('Could not re-analyze - try a hint.')
     } catch { alert('Failed - retry.') }
     setReBusy(false)
+  }
+  async function faqUpload(e: any) {
+    const f = e.target.files && e.target.files[0]; if (!f) return
+    const fd = new FormData(); fd.append('file', f); fd.append('code', code); fd.append('noai', '1')
+    try { const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json(); if (j && j.url) setFaqPhoto(j.url) } catch {}
+    e.target.value = ''
+  }
+  async function faqDraft() {
+    if (!faqPhoto) { alert('Add a photo first, or just type the steps.'); return }
+    setFaqBusy(true)
+    try { const r = await fetch('/api/audit/reanalyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, photoUrls: [faqPhoto], hint: 'Write a short step-by-step how-to for guests about: ' + (faqTitle || 'this') }) }); const j = await r.json(); if (j && j.ai && j.ai.howTo) setFaqHowto(j.ai.howTo); else alert('Could not draft - type the steps.') } catch { alert('Failed - retry.') }
+    setFaqBusy(false)
+  }
+  async function saveFaq(room: string) {
+    if (!faqTitle.trim()) { alert('Add a title.'); return }
+    setFaqBusy(true)
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'faq', title: faqTitle, note: faqHowto, photoUrl: faqPhoto, photos: faqPhoto ? [faqPhoto] : [], ai: { item: faqTitle, howTo: faqHowto } }) }); setFaqOpen(false); setFaqTitle(''); setFaqHowto(''); setFaqPhoto(''); await load() } catch { alert('Failed - retry.') }
+    setFaqBusy(false)
   }
   async function reanalyze() {
     if (!draft) return
@@ -328,7 +351,19 @@ export default function AuditCapture({ code }: { code: string }) {
                 </div>
                 <div className="mb-2">
                   {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
-                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button></div> : null}
+                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button><button onClick={() => { setFaqOpen(o => !o); setFaqTitle(''); setFaqHowto(''); setFaqPhoto('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-indigo-300 text-indigo-600">+ Add to FAQ</button>{faqOpen && openRoom === room ? (
+                    <div className="w-full mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2 space-y-1.5">
+                      <div className="text-[11px] font-semibold text-indigo-700">Add to FAQ / how-to</div>
+                      <input value={faqTitle} onChange={e => setFaqTitle(e.target.value)} placeholder="Title (e.g. How to turn on hot water)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                      <label className="block text-[11px] font-semibold text-indigo-600">{faqPhoto ? 'Change photo' : '+ Add photo'}<input type="file" accept="image/*" onChange={faqUpload} className="hidden" /></label>
+                      {faqPhoto ? <img src={faqPhoto} alt="" className="w-16 h-16 object-cover rounded" /> : null}
+                      <textarea value={faqHowto} onChange={e => setFaqHowto(e.target.value)} placeholder="Steps for the guest…" rows={3} className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                      <div className="flex gap-1">
+                        <button onClick={faqDraft} disabled={faqBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300 disabled:opacity-50">{faqBusy ? '…' : '✨ Draft from photo'}</button>
+                        <button onClick={() => saveFaq(room)} disabled={faqBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save to FAQ</button>
+                      </div>
+                    </div>
+                  ) : null}</div> : null}
                 </div>
                 {roomItems.map(it => (
                   <div key={it.id} className="flex gap-2.5 rounded-lg border border-neutral-100 p-2">
