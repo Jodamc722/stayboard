@@ -210,6 +210,15 @@ export default function AuditCapture({ code }: { code: string }) {
                       {uploading ? 'Uploading \u0026 analyzing\u2026' : draft.photoUrl ? 'Photo added \u2713 \u2014 tap to retake' : '\ud83d\udcf7 Take a photo (AI fills the details)'}
                     </button>
                     {draft.photoUrl ? <img src={draft.photoUrl} alt="" className="w-full max-h-48 object-cover rounded-lg" /> : null}
+                    {draft.ai ? (
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {draft.ai.tier && draft.ai.tier !== 'unknown' ? <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded ' + ((draft.ai.tier === 'luxury' || draft.ai.tier === 'high_end') ? 'bg-amber-100 text-amber-800' : 'bg-neutral-100 text-neutral-600')}>{String(draft.ai.tier).replace('_', ' ')}</span> : null}
+                        {draft.ai.highlight ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">HIGHLIGHT</span> : null}
+                        {draft.ai.brand ? <span className="text-[10px] text-neutral-500">{draft.ai.brand}</span> : null}
+                        {Array.isArray(draft.ai.features) ? draft.ai.features.slice(0, 4).map((f: string, i: number) => <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">{f}</span>) : null}
+                      </div>
+                    ) : null}
+                    {draft.ai && draft.ai.howTo ? <div className="text-[11px] text-neutral-600 bg-neutral-50 rounded-md px-2 py-1">How-to: {draft.ai.howTo}</div> : null}
                     <input value={draft.title} onChange={e => setDraft(d => d ? { ...d, title: e.target.value } : d)} placeholder="What is it? e.g. Nightstand" className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
                     <textarea value={draft.note} onChange={e => setDraft(d => d ? { ...d, note: e.target.value } : d)} placeholder="What needs doing?" rows={2} className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
                     <div className="flex gap-2">
