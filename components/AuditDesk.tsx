@@ -46,6 +46,8 @@ export function AuditDesk() {
   const [copied, setCopied] = useState('')
   const [showDone, setShowDone] = useState(false)
   const [newType, setNewType] = useState('onboarding')
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const [combining, setCombining] = useState(false)
   const [openRooms, setOpenRooms] = useState<any[]>([])
   const [openListing, setOpenListing] = useState<any>(null)
   const [coverCtx, setCoverCtx] = useState<any>(null)
@@ -99,6 +101,36 @@ export function AuditDesk() {
   }
   async function refreshRooms(code: string) {
     try { const r = await fetch('/api/audit?code=' + encodeURIComponent(code)); const j = await r.json(); setOpenRooms((j && j.rooms) || []) } catch {}
+  }
+  async function combineOrder() {
+    const ids = Object.keys(selected).filter(k => selected[k])
+    const chosen = audits.filter(a => ids.indexOf(a.id) >= 0)
+    if (chosen.length === 0) return
+    setCombining(true)
+    try {
+      const blocks: string[] = ['COMBINED ORDER LIST', 'Units: ' + chosen.length, '']
+      const agg: Record<string, number> = {}
+      for (const a of chosen) {
+        const r = await fetch('/api/audit?code=' + encodeURIComponent(a.shareCode))
+        const j = await r.json()
+        const its = (((j && j.items) || []) as any[]).filter((x: any) => (x.kind === 'replace' || x.kind === 'add') && x.status !== 'dismissed' && x.status !== 'done')
+        if (its.length === 0) continue
+        blocks.push(a.unit + (a.building ? ' (' + a.building + ')' : '') + ':')
+        for (const it of its) {
+          const name = it.title || it.item_type || 'Item'
+          blocks.push('  - ' + (it.qty || 1) + 'x ' + name + (it.room ? ' [' + it.room + ']' : ''))
+          const key = String(name).toLowerCase()
+          agg[key] = (agg[key] || 0) + (it.qty || 1)
+        }
+        blocks.push('')
+      }
+      blocks.push('--- TOTALS BY ITEM ---')
+      for (const k of Object.keys(agg).sort()) blocks.push('  ' + agg[k] + 'x ' + k)
+      const text = blocks.join('\n')
+      try { await navigator.clipboard.writeText(text) } catch {}
+      alert('Combined order for ' + chosen.length + ' units copied to clipboard.')
+    } catch { alert('Failed to build combined order.') }
+    setCombining(false)
   }
   async function openAudit(a: Audit) {
     if (openId === a.id) { setOpenId(''); return }
@@ -201,6 +233,7 @@ export function AuditDesk() {
         <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating…' : '+ New audit link'}</button>
         <button onClick={createAllAudits} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">Create all</button>
         <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
+        <button onClick={combineOrder} disabled={combining || Object.keys(selected).filter(k => selected[k]).length === 0} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line disabled:opacity-40">{combining ? 'Building…' : ('Combine order (' + Object.keys(selected).filter(k => selected[k]).length + ')')}</button>
         <label className="text-xs text-muted inline-flex items-center gap-1.5 ml-auto cursor-pointer"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Show completed</label>
       </div>
       {/* desk cover upload */}
@@ -215,7 +248,7 @@ export function AuditDesk() {
           {visible.filter(x => (x.building || 'Other') === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
-            <button onClick={() => openAudit(a)} className="text-left flex-1 min-w-0">
+            <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => openAudit(a)} className="text-left flex-1 min-w-0">
               <span className="text-sm font-semibold text-ink">{a.unit}</span>
               {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}{a.nextCheckout ? <span className="ml-2 text-[10px] text-amber-700">next checkout {a.nextCheckout.slice(5)}</span> : <span className="ml-2 text-[10px] text-neutral-300">no upcoming checkout</span>}
             </button>
