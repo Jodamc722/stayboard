@@ -9,6 +9,15 @@ export const maxDuration = 30
 
 const KINDS = ['maintenance', 'replace', 'add']
 
+async function carryForwardItems(db: any, listingId: string, newAuditId: string) {
+  const prev = await db.from('property_audits').select('id').eq('listing_id', listingId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1)
+  const prevId = prev.data && prev.data[0] && prev.data[0].id
+  if (!prevId) return
+  const src = await db.from('audit_items').select('room,kind,item_type,title,qty').eq('audit_id', prevId).neq('status', 'dismissed').limit(500)
+  const rows = (src.data || []).map((x: any) => ({ audit_id: newAuditId, listing_id: listingId, room: x.room || null, kind: x.kind || 'replace', item_type: x.item_type || null, title: x.title || null, qty: x.qty || 1, status: 'open' }))
+  if (rows.length) await db.from('audit_items').insert(rows)
+}
+
 async function getUser() {
   try { const supabase = createClient(); const { data } = await supabase.auth.getUser(); return data.user || null } catch { return null }
 }
@@ -76,7 +85,7 @@ export async function GET(req: NextRequest) {
     const id = String(r.listing_id)
     if (!nextCk[id]) nextCk[id] = String(r.check_out).slice(0, 10)
   }
-  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, unit: (lmap[a.listing_id] || {}).name || a.listing_id, building: (lmap[a.listing_id] || {}).building || '', nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
+  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, updatedAt: a.updated_at || null, auditType: a.audit_type || null, unit: (lmap[a.listing_id] || {}).name || a.listing_id, building: (lmap[a.listing_id] || {}).building || '', nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
   return NextResponse.json({ ok: true, audits: out, listings })
 }
 
@@ -110,6 +119,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const listingId = String(body.listingId || '')
     if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
+    const auditType = ['onboarding', 'quality'].includes(String(body.type)) ? String(body.type) : 'onboarding'
     const { data: existing } = await db.from('property_audits').select('*').eq('listing_id', listingId).eq('status', 'open').limit(1)
     let audit = existing && existing[0]
     if (!audit) {
@@ -118,7 +128,9 @@ export async function POST(req: NextRequest) {
       const ins = await db.from('property_audits').insert({ listing_id: listingId, share_code: shareCode, status: 'open', created_by: user.email || null }).select('*').limit(1)
       if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
       audit = ins.data && ins.data[0]
+      if (auditType === 'quality' && body.carryForward) { try { await carryForwardItems(db, listingId, audit.id) } catch {} }
     }
+    try { await db.from('property_audits').update({ audit_type: auditType }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
     const url = req.nextUrl.origin + '/audit/' + audit.share_code
     return NextResponse.json({ ok: true, audit, url })
   }
