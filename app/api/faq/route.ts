@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
   const [lr, fr, ir, cfr] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,raw').eq('id', listingId).limit(1),
     db.from('listing_faq').select('*').eq('listing_id', listingId).order('created_at', { ascending: true }).limit(500),
-    db.from('audit_items').select('id,room,title,item_type,photo_url,details').eq('listing_id', listingId).limit(1000),
+    db.from('audit_items').select('id,room,title,item_type,photo_url,details,kind,note').eq('listing_id', listingId).limit(1000),
     db.from('guesty_custom_fields').select('id,name,display_name'),
   ])
   const lrow = lr.data && lr.data[0]
@@ -71,6 +71,7 @@ export async function GET(req: NextRequest) {
     const d = (it as any).details || {}
     const q = it.title || it.item_type || 'How-to'
     if (d.howTo && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: d.howTo, photo_url: it.photo_url })
+    if ((it as any).kind === 'faq' && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: (it as any).note || d.howTo || '', photo_url: it.photo_url })
     if (d.highlight) highlights.push({ id: it.id, room: it.room, title: it.title || it.item_type || 'Item', brand: d.brand || '', tier: d.tier || '', features: Array.isArray(d.features) ? d.features : [] })
   }
   return NextResponse.json({ ok: true, listing, facts: factList, entries, howtos, highlights })
