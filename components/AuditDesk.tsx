@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { rollupBuilding } from '@/lib/optimize-score'
 
 type Counts = { total: number; open: number; tasks: number }
-type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts; auditType?: string | null; updatedAt?: string | null }
+type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts; auditType?: string | null; updatedAt?: string | null; prospect?: boolean }
 type ListingOpt = { id: string; name: string; building: string }
 type Person = { id: number | string; name?: string; first_name?: string; last_name?: string; department?: string | null }
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; task_status?: string | null; ai_assessment?: any }
@@ -49,6 +49,8 @@ export function AuditDesk() {
   const [newType, setNewType] = useState('quality')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [combining, setCombining] = useState(false)
+  const [assignFor, setAssignFor] = useState('')
+  const [assignPick, setAssignPick] = useState('')
   const [expandedBldg, setExpandedBldg] = useState<Record<string, boolean>>({})
   const [openRooms, setOpenRooms] = useState<any[]>([])
   const [openListing, setOpenListing] = useState<any>(null)
@@ -144,6 +146,29 @@ export function AuditDesk() {
       else alert(j.error || 'Failed to create building audit')
     } catch { alert('Failed - retry') }
     setCreating(false)
+  }
+  async function createProspect() {
+    const name = window.prompt('New unit name (not yet live in Guesty), e.g. Salado 304')
+    if (name == null) return
+    const nm = String(name).trim(); if (!nm) return
+    if (creating) return
+    setCreating(true)
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'createProspectAudit', name: nm, type: 'onboarding' }) })
+      const j = await r.json()
+      if (r.ok && j.ok) { await load(); if (j.url) { try { await navigator.clipboard.writeText(j.url); setCopied(j.audit ? j.audit.id : 'new'); setTimeout(() => setCopied(''), 2500) } catch {} } }
+      else alert(j.error || 'Failed to create audit')
+    } catch { alert('Failed - retry') }
+    setCreating(false)
+  }
+  async function assignProspect(a: Audit) {
+    if (!assignPick) { alert('Pick a live listing to assign to.'); return }
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'mergeProspect', auditId: a.id, listingId: assignPick }) })
+      const j = await r.json()
+      if (r.ok && j.ok) { setAssignFor(''); setAssignPick(''); await load() }
+      else alert(j.error || 'Failed to assign')
+    } catch { alert('Failed - retry') }
   }
   async function openAudit(a: Audit) {
     if (openId === a.id) { setOpenId(''); return }
@@ -244,7 +269,7 @@ export function AuditDesk() {
         </select>
         <select value={newType} onChange={e => setNewType(e.target.value)} className="text-sm rounded-lg border border-line px-2 py-2 bg-white"><option value="onboarding">Onboarding</option><option value="quality">Quality</option></select>
         <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating…' : '+ New audit link'}</button>
-        <button onClick={createAllAudits} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">Create all</button>
+        <button onClick={createAllAudits} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">Create all</button> <button onClick={createProspect} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">+ New unit</button>
         <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
         <button onClick={combineOrder} disabled={combining || Object.keys(selected).filter(k => selected[k]).length === 0} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line disabled:opacity-40">{combining ? 'Building…' : ('Combine order (' + Object.keys(selected).filter(k => selected[k]).length + ')')}</button>
         <label className="text-xs text-muted inline-flex items-center gap-1.5 ml-auto cursor-pointer"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Show completed</label>
@@ -277,6 +302,18 @@ export function AuditDesk() {
           </div>
           {openId === a.id ? (
             <div className="border-t border-line px-3.5 py-3 space-y-3 bg-neutral-50/50">
+              {a.prospect ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+                  <div className="text-[11px] font-semibold text-amber-800 mb-1.5">Pre-launch unit — assign to the live listing once it is created</div>
+                  <div className="flex items-center gap-2">
+                    <select value={assignFor === a.id ? assignPick : ''} onChange={e => { setAssignFor(a.id); setAssignPick(e.target.value) }} className="text-xs rounded-lg border border-line bg-white px-2 py-1.5 flex-1">
+                      <option value="">Pick live listing…</option>
+                      {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
+                    </select>
+                    <button onClick={() => assignProspect(a)} disabled={assignFor !== a.id || !assignPick} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-40">Assign</button>
+                  </div>
+                </div>
+              ) : null}
               {(() => { const cfg: Record<string, any> = {}; for (const rc of openRooms) cfg[rc.room_key] = rc; const rk = (r: string) => String(r).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80); const canon: string[] = []; if (openListing) for (const rr of defaultRooms(openListing.bedrooms, openListing.bathrooms)) if (canon.indexOf(rr) < 0) canon.push(rr); for (const it of items) if (canon.indexOf(it.room) < 0) canon.push(it.room); return (
                 <div className="rounded-lg border border-line bg-white p-2.5">
                   <div className="text-[11px] font-semibold text-muted mb-1.5">Rooms &amp; cover photos</div>
