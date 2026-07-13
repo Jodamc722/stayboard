@@ -45,9 +45,10 @@ export function AuditDesk() {
   const [taskBusy, setTaskBusy] = useState<Record<string, boolean>>({})
   const [copied, setCopied] = useState('')
   const [showDone, setShowDone] = useState(false)
-  const [newType, setNewType] = useState('onboarding')
+  const [newType, setNewType] = useState('quality')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [combining, setCombining] = useState(false)
+  const [expandedBldg, setExpandedBldg] = useState<Record<string, boolean>>({})
   const [openRooms, setOpenRooms] = useState<any[]>([])
   const [openListing, setOpenListing] = useState<any>(null)
   const [coverCtx, setCoverCtx] = useState<any>(null)
@@ -243,8 +244,8 @@ export function AuditDesk() {
       {!loading && sorted.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No audits yet — pick a listing above to create the first link.</div> : null}
       {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = x.building || 'Other'; if (bldgs.indexOf(b) < 0) bldgs.push(b) } return bldgs.map(bld => (
         <div key={bld}>
-          <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-2 mb-1.5">{bld} · {visible.filter(x => (x.building || 'Other') === bld).length}</div>
-          <div className="space-y-2">
+          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-muted font-semibold mt-2 mb-1.5 py-1"><span>{bld} · {visible.filter(x => (x.building || 'Other') === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (x.building || 'Other') === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
+          {expandedBldg[bld] ? (<div className="space-y-2">
           {visible.filter(x => (x.building || 'Other') === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
@@ -358,7 +359,7 @@ export function AuditDesk() {
           ) : null}
         </div>
       ))}
-          </div>
+          </div>) : null}
         </div>
       )) })()}
     </div>
