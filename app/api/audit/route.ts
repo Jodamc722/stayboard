@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const KINDS = ['maintenance', 'replace', 'add']
+function slugRoom(x: string): string { return String(x).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) }
 
 async function carryForwardItems(db: any, listingId: string, newAuditId: string) {
   const prev = await db.from('property_audits').select('id').eq('listing_id', listingId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1)
@@ -37,6 +38,8 @@ async function auditByCode(db: any, code: string) {
 export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const code = req.nextUrl.searchParams.get('code') || ''
+  const roomsFor = req.nextUrl.searchParams.get('roomsFor') || ''
+  if (roomsFor) { const rr = await db.from('listing_rooms').select('*').eq('listing_id', roomsFor).order('sort', { ascending: true }); return NextResponse.json({ ok: true, rooms: rr.data || [] }) }
   if (code) {
     const audit = await auditByCode(db, code)
     if (!audit) return NextResponse.json({ error: 'Audit link not found.' }, { status: 404 })
@@ -57,7 +60,9 @@ export async function GET(req: NextRequest) {
         outItems = outItems.map((x: any) => x.breezeway_task_id ? { ...x, task_status: tmap[String(x.breezeway_task_id)] || null } : x)
       }
     } catch { /* mirror optional */ }
-    return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status, createdAt: audit.created_at }, listing, items: outItems })
+    let roomCfg: any[] = []
+    try { const rc = await db.from('listing_rooms').select('*').eq('listing_id', audit.listing_id).order('sort', { ascending: true }); roomCfg = rc.data || [] } catch {}
+    return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status, createdAt: audit.created_at, auditType: audit.audit_type || null }, listing, items: outItems, rooms: roomCfg })
   }
   const user = await getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -139,6 +144,19 @@ export async function POST(req: NextRequest) {
   const audit = code ? await auditByCode(db, code) : null
   const user = audit ? null : await getUser()
   if (!audit && !user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  if (action === 'upsertRoom') {
+    const listingId = String(body.listingId || (audit && audit.listing_id) || '')
+    const room = String(body.room || '').slice(0, 120)
+    if (!listingId || !room) return NextResponse.json({ error: 'listingId and room required' }, { status: 400 })
+    const key = slugRoom(room)
+    const cur = await db.from('listing_rooms').select('*').eq('listing_id', listingId).eq('room_key', key).limit(1)
+    const ex = cur.data && cur.data[0]
+    const patch: any = { listing_id: listingId, room_key: key, display_name: body.displayName != null ? String(body.displayName).slice(0, 120) : (ex ? ex.display_name : room), cover_photo_url: body.photoUrl != null ? (String(body.photoUrl).slice(0, 500) || null) : (ex ? ex.cover_photo_url : null), sort: body.sort != null ? (Number(body.sort) || 0) : (ex ? ex.sort : 0), updated_at: new Date().toISOString() }
+    const up = await db.from('listing_rooms').upsert(patch, { onConflict: 'listing_id,room_key' })
+    if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, room: patch })
+  }
 
   if (action === 'completeAudit' || action === 'reopenAudit') {
     const target = audit || (body.auditId ? (await db.from('property_audits').select('*').eq('id', String(body.auditId)).limit(1)).data?.[0] : null)
