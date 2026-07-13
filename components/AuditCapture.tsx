@@ -75,6 +75,12 @@ export default function AuditCapture({ code }: { code: string }) {
   if (data) { const base = (data as any).scope === 'building' ? COMMON_AREAS : defaultRooms(data.listing.bedrooms, data.listing.bathrooms); for (const r of base) rooms.push(r) }
   for (const r of customRooms) if (rooms.indexOf(r) < 0) rooms.push(r)
   for (const it of items) if (rooms.indexOf(it.room) < 0) rooms.push(it.room)
+  const roomDepth = (r: string): number => r.split(' — ').length - 1
+  const parentOf = (r: string): string => { const p = r.split(' — '); p.pop(); return p.join(' — ') }
+  const ordered: string[] = []
+  const addKids = (parent: string): void => { for (const r of rooms) if (roomDepth(r) > 0 && parentOf(r) === parent && ordered.indexOf(r) < 0) { ordered.push(r); addKids(r) } }
+  for (const r of rooms) if (roomDepth(r) === 0) { ordered.push(r); addKids(r) }
+  for (const r of rooms) if (ordered.indexOf(r) < 0) ordered.push(r)
   const roomCfg: RoomCfg[] = data && data.rooms ? data.rooms : []
   const cfgByKey: Record<string, RoomCfg> = {}
   for (const rc of roomCfg) cfgByKey[rc.room_key] = rc
@@ -121,7 +127,7 @@ export default function AuditCapture({ code }: { code: string }) {
     for (const it of chosen) {
       const kind = (it.severity === 'high' || it.severity === 'medium') ? 'maintenance' : 'add'
       const note = [it.condition, it.size ? 'Size: ' + it.size : ''].filter(Boolean).join(' - ')
-      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, photoUrl: it.photo || orgPhotos[0] || '', photos: it.photo ? [it.photo] : [], ai: it }) })
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, qty: Math.max(1, it.count || 1), photoUrl: it.photo || orgPhotos[0] || '', photos: it.photo ? [it.photo] : [], ai: it }) })
     }
     setOrgRoom(''); setOrgItems([]); setOrgQuestions([]); setOrgPhotos([]); await load()
   }
@@ -226,13 +232,15 @@ export default function AuditCapture({ code }: { code: string }) {
         <div className="text-[11px] text-neutral-400 mt-2">Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
-      {rooms.map(room => {
+      {ordered.map(room => {
         const roomItems = items.filter(i => i.room === room)
         const open = openRoom === room
+        const depth = roomDepth(room)
+        const leaf = depth > 0 ? (room.split(' — ').pop() || room) : roomLabel(room)
         return (
-          <div key={room} className="mb-2 rounded-xl border border-neutral-200 bg-white overflow-hidden">
+          <div key={room} style={{ marginLeft: depth * 14 }} className={"mb-2 rounded-xl border border-neutral-200 overflow-hidden " + (depth > 0 ? "bg-neutral-50" : "bg-white")}>
             <button onClick={() => setOpenRoom(open ? '' : room)} className="w-full flex items-center justify-between px-3.5 py-3">
-              <span className="text-sm font-semibold text-neutral-900">{roomLabel(room)}</span>
+              <span className="text-sm font-semibold text-neutral-900">{depth > 0 ? '↳ ' + leaf : roomLabel(room)}</span>
               <span className="text-xs text-neutral-400">{roomItems.length > 0 ? roomItems.length + ' item' + (roomItems.length > 1 ? 's' : '') : 'tap to open'}</span>
             </button>
             {open ? (
@@ -261,7 +269,7 @@ export default function AuditCapture({ code }: { code: string }) {
                             {orgItems.map((it: any, i: number) => (
                               <label key={i} className="flex gap-2 items-start text-[13px] bg-white rounded-md border border-neutral-100 p-1.5">
                                 <input type="checkbox" checked={!!orgPick[i]} onChange={e => setOrgPick(p => ({ ...p, [i]: e.target.checked }))} className="mt-0.5" />
-                                <span className="min-w-0"><span className="font-semibold text-ink">{it.item}</span>{it.size ? ' · ' + it.size : ''}{it.tier && it.tier !== 'unknown' ? <span className="ml-1 text-[10px] text-amber-700">{it.tier}</span> : null}{it.condition ? <span className="block text-[11px] text-muted">{it.condition}</span> : null}</span>
+                                <span className="min-w-0"><span className="font-semibold text-ink">{it.item}</span>{it.count > 1 ? <span className="ml-1 text-[11px] font-semibold text-brand-600">×{it.count}</span> : null}{it.size ? ' · ' + it.size : ''}{it.tier && it.tier !== 'unknown' ? <span className="ml-1 text-[10px] text-amber-700">{it.tier}</span> : null}{it.condition ? <span className="block text-[11px] text-muted">{it.condition}</span> : null}</span>
                               </label>
                             ))}
                           </div>
