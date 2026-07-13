@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
       db.from('audit_items').select('*').eq('audit_id', audit.id).order('created_at', { ascending: true }).limit(500),
     ])
     const lrows = lr.data; const items = ir.data
-    const listing = lrows && lrows[0] ? listingMeta(lrows[0]) : { id: audit.listing_id, name: 'Unit', building: '', bedrooms: null, bathrooms: null }
+    const listing = lrows && lrows[0] ? listingMeta(lrows[0]) : { id: audit.listing_id, name: audit.building || 'Unit', building: audit.building || '', bedrooms: null, bathrooms: null }
     // Attach live Breezeway task status from the mirror so the form + desk can track completion.
     let outItems = items || []
     try {
@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
     const id = String(r.listing_id)
     if (!nextCk[id]) nextCk[id] = String(r.check_out).slice(0, 10)
   }
-  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, updatedAt: a.updated_at || null, auditType: a.audit_type || null, unit: a.scope === 'building' ? 'Common areas' : ((lmap[a.listing_id] || {}).name || a.listing_id), building: a.scope === 'building' ? (a.building || '') : ((lmap[a.listing_id] || {}).building || ''), scope: a.scope || 'unit', nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
+  const out = audits.map((a: any) => ({ id: a.id, listingId: a.listing_id, shareCode: a.share_code, status: a.status, createdAt: a.created_at, updatedAt: a.updated_at || null, auditType: a.audit_type || null, unit: a.scope === 'building' ? 'Common areas' : (String(a.listing_id || '').startsWith('NEW:') ? (a.building || a.listing_id) : ((lmap[a.listing_id] || {}).name || a.listing_id)), building: a.scope === 'building' ? (a.building || '') : (String(a.listing_id || '').startsWith('NEW:') ? (a.building || '') : ((lmap[a.listing_id] || {}).building || '')), scope: a.scope || 'unit', prospect: String(a.listing_id || '').startsWith('NEW:'), nextCheckout: nextCk[a.listing_id] || null, counts: counts[String(a.id)] || { total: 0, open: 0, tasks: 0 } }))
   return NextResponse.json({ ok: true, audits: out, listings })
 }
 
@@ -140,6 +140,39 @@ export async function POST(req: NextRequest) {
     try { await db.from('property_audits').update({ audit_type: auditType }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
     const url = req.nextUrl.origin + '/audit/' + audit.share_code
     return NextResponse.json({ ok: true, audit, url })
+  }
+
+  if (action === 'createProspectAudit') {
+    const user = await getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const name = String(body.name || '').slice(0, 120)
+    if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
+    const auditType = ['onboarding', 'quality'].includes(String(body.type)) ? String(body.type) : 'onboarding'
+    const listingId = 'NEW:' + name
+    const { data: existing } = await db.from('property_audits').select('*').eq('listing_id', listingId).eq('status', 'open').limit(1)
+    let audit = existing && existing[0]
+    if (!audit) {
+      const uuid = (globalThis as any).crypto && (globalThis as any).crypto.randomUUID ? (globalThis as any).crypto.randomUUID() : String(Math.random()).slice(2) + String(Math.random()).slice(2)
+      const shareCode = String(uuid).replace(/-/g, '').slice(0, 14)
+      const ins = await db.from('property_audits').insert({ listing_id: listingId, share_code: shareCode, status: 'open', created_by: user.email || null, building: name, scope: 'unit' }).select('*').limit(1)
+      if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
+      audit = ins.data && ins.data[0]
+    }
+    try { await db.from('property_audits').update({ audit_type: auditType, building: name, scope: 'unit' }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
+    const url = req.nextUrl.origin + '/audit/' + audit.share_code
+    return NextResponse.json({ ok: true, audit, url })
+  }
+
+  if (action === 'mergeProspect') {
+    const user = await getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const target = body.code ? await auditByCode(db, String(body.code)) : (body.auditId ? ((await db.from('property_audits').select('*').eq('id', String(body.auditId)).limit(1)).data || [])[0] : null)
+    if (!target) return NextResponse.json({ error: 'audit not found' }, { status: 404 })
+    const realId = String(body.listingId || '')
+    if (!realId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
+    await db.from('property_audits').update({ listing_id: realId, scope: 'unit', building: null }).eq('id', target.id)
+    await db.from('audit_items').update({ listing_id: realId }).eq('audit_id', target.id)
+    return NextResponse.json({ ok: true })
   }
 
   if (action === 'createBuildingAudit') {
