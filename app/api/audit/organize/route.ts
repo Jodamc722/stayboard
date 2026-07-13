@@ -50,16 +50,15 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ ok: true, items: [], questions: [], note: 'no ai key' })
 
-  const b64s = (await Promise.all(urls.map(toB64))).filter(Boolean) as { data: string; media: string }[]
-  if (b64s.length === 0) return NextResponse.json({ ok: true, items: [], questions: [], note: 'no images fetched' })
-  const imgs = b64s.map(b => ({ type: 'image', source: { type: 'base64', media_type: b.media, data: b.data } }))
+  const withB = (await Promise.all(urls.map(async (u) => { const b = await toB64(u); return b ? { u, img: { type: 'image', source: { type: 'base64', media_type: b.media, data: b.data } } } : null }))).filter(Boolean) as { u: string; img: any }[]
+  if (withB.length === 0) return NextResponse.json({ ok: true, items: [], questions: [], note: 'no images fetched' })
 
-  const results = await Promise.all(imgs.map(img => visionOne(key, img, room, answers)))
+  const results = await Promise.all(withB.map(async (x) => ({ url: x.u, r: await visionOne(key, x.img, room, answers) })))
   const items: any[] = []; const seen = new Set<string>()
   const questions: string[] = []; const qseen = new Set<string>()
-  for (const r of results) {
+  for (const { url, r } of results) {
     if (!r) continue
-    for (const it of (r.items || [])) { const k = String(it && it.item || '').toLowerCase().trim(); if (k && !seen.has(k)) { seen.add(k); items.push(it) } }
+    for (const it of (r.items || [])) { const k = String(it && it.item || '').toLowerCase().trim(); if (k && !seen.has(k)) { seen.add(k); if (it && typeof it === 'object') it.photo = url; items.push(it) } }
     for (const q of (r.questions || [])) { const k = String(q || '').toLowerCase().trim(); if (k && !qseen.has(k)) { qseen.add(k); questions.push(q) } }
   }
   return NextResponse.json({ ok: true, items, questions: questions.slice(0, 8) })
