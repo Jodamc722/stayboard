@@ -51,7 +51,7 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   const otaLinks: any[] = (data && data.otaLinks) || []
 
 function Section({ id, title, note, children }: { id: string; title: string; note?: string; children: any }) {
-    const open = !collapsed[id]
+    const open = !!collapsed[id]
     return (
       <section className="rounded-2xl border border-line bg-white overflow-hidden">
         <button onClick={() => setCollapsed(c => ({ ...c, [id]: !c[id] }))} className="w-full px-4 py-3 border-b border-line flex items-center justify-between">
