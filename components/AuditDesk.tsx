@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 
 type Counts = { total: number; open: number; tasks: number }
-type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts }
+type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts; auditType?: string | null; updatedAt?: string | null }
 type ListingOpt = { id: string; name: string; building: string }
 type Person = { id: number | string; name?: string; first_name?: string; last_name?: string; department?: string | null }
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; breezeway_task_id?: string | null; report_url?: string | null; task_status?: string | null; ai_assessment?: any }
@@ -33,6 +33,7 @@ export function AuditDesk() {
   const [taskBusy, setTaskBusy] = useState<Record<string, boolean>>({})
   const [copied, setCopied] = useState('')
   const [showDone, setShowDone] = useState(false)
+  const [newType, setNewType] = useState('onboarding')
 
   async function createAllAudits() {
     if (!confirm('Create an audit link for every active listing that does not have one yet?')) return
@@ -72,7 +73,7 @@ export function AuditDesk() {
     if (!pick || creating) return
     setCreating(true)
     try {
-      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'createAudit', listingId: pick }) })
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'createAudit', listingId: pick, type: newType, carryForward: newType === 'quality' }) })
       const j = await r.json()
       if (r.ok && j.ok) { await load(); if (j.url && j.audit) { try { await navigator.clipboard.writeText(j.url); setCopied(j.audit.id); setTimeout(() => setCopied(''), 2500) } catch {} } }
       else alert(j.error || 'Failed to create the audit link')
@@ -140,7 +141,10 @@ export function AuditDesk() {
     } catch { alert('Failed') }
   }
 
-  const sorted = audits.slice().sort((a, b) => (a.building || '').localeCompare(b.building || '') || a.unit.localeCompare(b.unit))
+  const sorted = audits.slice().sort((a, b) => (a.building || '').localeCompare(b.building || '') || a.unit.localeCompare(b.unit) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+  const latestByListing: Record<string, any> = {}
+  for (const a of audits) { const k = a.listingId; if (!latestByListing[k] || String(a.createdAt || '') > String(latestByListing[k].createdAt || '')) latestByListing[k] = a }
+  function dueLabel(a: Audit): string { const latest = latestByListing[a.listingId]; if (!latest || latest.id !== a.id || a.status !== 'completed') return ''; const dd = a.updatedAt || a.createdAt; if (!dd) return ''; const days = (Date.now() - new Date(dd).getTime()) / 86400000; if (days >= 365) return 'AUDIT OVERDUE'; if (days >= 183) return 'AUDIT DUE'; return '' }
   const roomNames: string[] = []
   for (const it of items) if (roomNames.indexOf(it.room) < 0) roomNames.push(it.room)
 
@@ -151,6 +155,7 @@ export function AuditDesk() {
           <option value="">Pick a listing…</option>
           {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
         </select>
+        <select value={newType} onChange={e => setNewType(e.target.value)} className="text-sm rounded-lg border border-line px-2 py-2 bg-white"><option value="onboarding">Onboarding</option><option value="quality">Quality</option></select>
         <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating…' : '+ New audit link'}</button>
         <button onClick={createAllAudits} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">Create all</button>
         <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
@@ -171,6 +176,9 @@ export function AuditDesk() {
               {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}{a.nextCheckout ? <span className="ml-2 text-[10px] text-amber-700">next checkout {a.nextCheckout.slice(5)}</span> : <span className="ml-2 text-[10px] text-neutral-300">no upcoming checkout</span>}
             </button>
             <span className="text-xs text-muted shrink-0">{a.counts.total} items · {a.counts.open} open · {a.counts.tasks} tasks</span>
+            <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ' + (a.auditType === 'quality' ? 'bg-indigo-100 text-indigo-700' : 'bg-sky-100 text-sky-700')}>{a.auditType === 'quality' ? 'QUALITY' : 'ONBOARDING'}</span>
+            <span className="text-[10px] text-neutral-400 shrink-0">{String((a.status === 'completed' ? (a.updatedAt || a.createdAt) : a.createdAt) || '').slice(0, 10)}</span>
+            {dueLabel(a) ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-rose-100 text-rose-700">{dueLabel(a)}</span> : null}
             <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
             <button onClick={() => markComplete(a, a.status === 'completed')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{a.status === 'completed' ? 'Reopen' : 'Mark complete'}</button>
             <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>
