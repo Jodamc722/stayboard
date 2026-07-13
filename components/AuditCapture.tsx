@@ -121,7 +121,7 @@ export default function AuditCapture({ code }: { code: string }) {
     for (const it of chosen) {
       const kind = (it.severity === 'high' || it.severity === 'medium') ? 'maintenance' : 'add'
       const note = [it.condition, it.size ? 'Size: ' + it.size : ''].filter(Boolean).join(' - ')
-      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, photoUrl: orgPhotos[0] || '', ai: it }) })
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, photoUrl: it.photo || orgPhotos[0] || '', photos: it.photo ? [it.photo] : [], ai: it }) })
     }
     setOrgRoom(''); setOrgItems([]); setOrgQuestions([]); setOrgPhotos([]); await load()
   }
@@ -273,7 +273,7 @@ export default function AuditCapture({ code }: { code: string }) {
                 </div>
                 <div className="mb-2">
                   {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
-                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => setCustomRooms(prev => prev.indexOf(room + ' — Closet') < 0 ? [...prev, room + ' — Closet'] : prev)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => setCustomRooms(prev => prev.indexOf(room + ' — Bathroom') < 0 ? [...prev, room + ' — Bathroom'] : prev)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button></div> : null}
+                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button></div> : null}
                 </div>
                 {roomItems.map(it => (
                   <div key={it.id} className="flex gap-2.5 rounded-lg border border-neutral-100 p-2">
