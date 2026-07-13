@@ -168,7 +168,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       const r = await fetch(`/api/schedule?${qs.toString()}`)
       const raw = await r.text(); let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || 'Could not load the schedule.')
-      setData(j); if (!d) setDate(j.weekStart)
+      setData(j); setDate(d || j.weekStart)
       setOverrides({}); setCleared({}); setSelected({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
