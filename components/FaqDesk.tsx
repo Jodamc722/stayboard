@@ -7,7 +7,7 @@ type Howto = { id: string; room?: string; title: string; howTo: string; photo_ur
 type Highlight = { id: string; room?: string; title: string; brand?: string; tier?: string; features?: string[] }
 type Opt = { id: string; name: string; building: string }
 
-export function FaqDesk() {
+export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   const [listings, setListings] = useState<Opt[]>([])
   const [pick, setPick] = useState('')
   const [loading, setLoading] = useState(false)
@@ -18,6 +18,7 @@ export function FaqDesk() {
   const [busy, setBusy] = useState(false)
   const [search, setSearch] = useState('')
   const [showList, setShowList] = useState(false)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
   useEffect(() => { (async () => { try { const r = await fetch('/api/faq'); const j = await r.json(); setListings((j && j.listings) || []) } catch {} })() }, [])
 
@@ -28,6 +29,7 @@ export function FaqDesk() {
     setLoading(false)
   }
   useEffect(() => { load(pick) }, [pick])
+  useEffect(() => { if (listingId) setPick(listingId) }, [listingId])
 
   async function post(body: any) {
     setBusy(true)
@@ -46,59 +48,68 @@ export function FaqDesk() {
   const entries: Entry[] = (data && data.entries) || []
   const howtos: Howto[] = (data && data.howtos) || []
   const highlights: Highlight[] = (data && data.highlights) || []
+  const otaLinks: any[] = (data && data.otaLinks) || []
+
+function Section({ id, title, note, children }: { id: string; title: string; note?: string; children: any }) {
+    const open = !collapsed[id]
+    return (
+      <section className="rounded-2xl border border-line bg-white overflow-hidden">
+        <button onClick={() => setCollapsed(c => ({ ...c, [id]: !c[id] }))} className="w-full px-4 py-3 border-b border-line flex items-center justify-between">
+          <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold">{title}</h2>
+          <span className="flex items-center gap-2">{note ? <span className="text-[11px] text-muted">{note}</span> : null}<span className="text-muted">{open ? '▾' : '▸'}</span></span>
+        </button>
+        {open ? <div className="px-4">{children}</div> : null}
+      </section>
+    )
+  }
 
   return (
     <div className="space-y-4">
-      <div className="relative max-w-md">
-        <input value={search} onChange={e => { setSearch(e.target.value); setShowList(true) }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 150)} placeholder={pick ? (((listings.find(l => l.id === pick) || {}) as any).name || 'Search a listing…') : 'Search a listing…'} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-        {showList ? (
-          <div className="absolute z-20 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-line bg-white shadow-soft">
-            {listings.filter(l => (l.name + ' ' + l.building).toLowerCase().includes(search.toLowerCase())).slice(0, 60).map(l => (
-              <button key={l.id} onMouseDown={() => { setPick(l.id); setSearch(''); setShowList(false) }} className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-50">{l.name}{l.building ? <span className="text-muted"> · {l.building}</span> : null}</button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      {!listingId ? (
+        <div className="relative max-w-md">
+          <input value={search} onChange={e => { setSearch(e.target.value); setShowList(true) }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 150)} placeholder={pick ? (((listings.find(l => l.id === pick) || {}) as any).name || 'Search a listing…') : 'Search a listing…'} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
+          {showList ? (
+            <div className="absolute z-20 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-line bg-white shadow-soft">
+              {listings.filter(l => (l.name + ' ' + l.building).toLowerCase().includes(search.toLowerCase())).slice(0, 60).map(l => (
+                <button key={l.id} onMouseDown={() => { setPick(l.id); setSearch(''); setShowList(false) }} className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-50">{l.name}{l.building ? <span className="text-muted"> · {l.building}</span> : null}</button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading…</div> : null}
-      {!pick && !loading ? <div className="rounded-2xl border border-line bg-white px-6 py-20 text-center text-sm text-muted">Pick a listing to see its facts, how-tos, and FAQ.</div> : null}
+      {!pick && !loading && !listingId ? <div className="rounded-2xl border border-line bg-white px-6 py-20 text-center text-sm text-muted">Pick a listing to see its facts, how-tos, and FAQ.</div> : null}
 
       {pick && data ? (
         <div className="space-y-4">
-          <section className="rounded-2xl border border-line bg-white overflow-hidden">
-            <div className="px-4 py-3 border-b border-line flex items-center justify-between">
-              <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold">Unit facts</h2>
-              <span className="text-[11px] text-muted">auto from Guesty</span>
+          {(otaLinks.length > 0 || !listingId) ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {!listingId ? <a href={'/listings/' + pick} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50">Open unit in app →</a> : null}
+              {otaLinks.map((o: any) => <a key={o.name} href={o.url} target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50">{o.name} ↗</a>)}
             </div>
-            <div className="px-4">
-              {facts.length === 0 ? <div className="py-6 text-sm text-muted text-center">No facts found for this unit.</div> : facts.map((f, i) => (
-                <div key={i} className="py-2.5 border-b border-line last:border-0">
-                  <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{f.label}</div>
-                  <div className="text-sm text-ink mt-0.5 whitespace-pre-wrap">{f.value}</div>
-                </div>
-              ))}
-            </div>
-          </section>
+          ) : null}
+
+          <Section id="facts" title="Unit facts" note="auto from Guesty">
+            {facts.length === 0 ? <div className="py-6 text-sm text-muted text-center">No facts found for this unit.</div> : facts.map((f, i) => (
+              <div key={i} className="py-2.5 border-b border-line last:border-0">
+                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{f.label}</div>
+                <div className="text-sm text-ink mt-0.5 whitespace-pre-wrap">{f.value}</div>
+              </div>
+            ))}
+          </Section>
 
           {highlights.length > 0 ? (
-            <section className="rounded-2xl border border-line bg-white overflow-hidden">
-              <div className="px-4 py-3 border-b border-line flex items-center justify-between">
-                <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold">Highlights</h2>
-                <span className="text-[11px] text-muted">from onboarding</span>
-              </div>
-              <div className="px-4 py-3 flex flex-wrap gap-1.5">
+            <Section id="highlights" title="Highlights" note="from onboarding">
+              <div className="py-3 flex flex-wrap gap-1.5">
                 {highlights.map(h => <span key={h.id} className="text-[12px] px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">{h.title}{h.brand ? ' · ' + h.brand : ''}</span>)}
               </div>
-            </section>
+            </Section>
           ) : null}
 
           {howtos.length > 0 ? (
-            <section className="rounded-2xl border border-line bg-white overflow-hidden">
-              <div className="px-4 py-3 border-b border-line flex items-center justify-between">
-                <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold">How-Tos to review</h2>
-                <span className="text-[11px] text-muted">captured in audits</span>
-              </div>
-              <div className="p-3 space-y-2">
+            <Section id="howtos" title="How-Tos to review" note="captured in audits">
+              <div className="py-2 space-y-2">
                 {howtos.map(h => (
                   <div key={h.id} className="flex gap-3 rounded-xl border border-line p-2.5">
                     {h.photo_url ? <img src={h.photo_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" /> : null}
@@ -110,38 +121,33 @@ export function FaqDesk() {
                   </div>
                 ))}
               </div>
-            </section>
+            </Section>
           ) : null}
 
-          <section className="rounded-2xl border border-line bg-white overflow-hidden">
-            <div className="px-4 py-3 border-b border-line">
-              <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold">FAQ &amp; How-To</h2>
-            </div>
-            <div className="p-4 space-y-3">
-              {entries.length === 0 ? <div className="text-sm text-muted">No entries yet.</div> : (
-                <div className="space-y-2">
-                  {entries.map(e => (
-                    <div key={e.id} className="rounded-xl border border-line p-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          {e.category ? <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{e.category}</div> : null}
-                          <div className="text-sm font-semibold text-ink mt-0.5">{e.question}</div>
-                          <div className="text-[13px] text-muted mt-0.5 whitespace-pre-wrap">{e.answer}</div>
-                        </div>
-                        <button onClick={() => del(e.id)} disabled={busy} className="text-[11px] text-rose-600 shrink-0">Delete</button>
+          <Section id="faq" title="FAQ and How-To">
+            {entries.length === 0 ? <div className="py-3 text-sm text-muted">No entries yet.</div> : (
+              <div className="py-3 space-y-2">
+                {entries.map(e => (
+                  <div key={e.id} className="rounded-xl border border-line p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        {e.category ? <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{e.category}</div> : null}
+                        <div className="text-sm font-semibold text-ink mt-0.5">{e.question}</div>
+                        <div className="text-[13px] text-muted mt-0.5 whitespace-pre-wrap">{e.answer}</div>
                       </div>
+                      <button onClick={() => del(e.id)} disabled={busy} className="text-[11px] text-rose-600 shrink-0">Delete</button>
                     </div>
-                  ))}
-                </div>
-              )}
-              <div className="space-y-2 border-t border-line pt-3">
-                <input value={cat} onChange={e => setCat(e.target.value)} placeholder="Category (optional) e.g. Parking" className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-                <input value={q} onChange={e => setQ(e.target.value)} placeholder="Question / title" className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-                <textarea value={a} onChange={e => setA(e.target.value)} placeholder="Answer" rows={3} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-                <button onClick={addEntry} disabled={busy || !q.trim()} className="text-sm font-semibold px-3.5 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">Add FAQ entry</button>
+                  </div>
+                ))}
               </div>
+            )}
+            <div className="space-y-2 border-t border-line pt-3 pb-3">
+              <input value={cat} onChange={e => setCat(e.target.value)} placeholder="Category (optional) e.g. Parking" className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Question / title" className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
+              <textarea value={a} onChange={e => setA(e.target.value)} placeholder="Answer" rows={3} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
+              <button onClick={addEntry} disabled={busy || !q.trim()} className="text-sm font-semibold px-3.5 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">Add FAQ entry</button>
             </div>
-          </section>
+          </Section>
         </div>
       ) : null}
     </div>
