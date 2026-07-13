@@ -47,6 +47,14 @@ export default function AuditCapture({ code }: { code: string }) {
   const [sugBusy, setSugBusy] = useState('')
   const fileRef = useRef<HTMLInputElement | null>(null)
   const coverRef = useRef<HTMLInputElement | null>(null)
+  const bulkRef = useRef<HTMLInputElement | null>(null)
+  const [orgRoom, setOrgRoom] = useState('')
+  const [orgBusy, setOrgBusy] = useState(false)
+  const [orgItems, setOrgItems] = useState<any[]>([])
+  const [orgQuestions, setOrgQuestions] = useState<string[]>([])
+  const [orgAnswers, setOrgAnswers] = useState('')
+  const [orgPhotos, setOrgPhotos] = useState<string[]>([])
+  const [orgPick, setOrgPick] = useState<Record<number, boolean>>({})
 
   async function load() {
     try {
@@ -76,6 +84,43 @@ export default function AuditCapture({ code }: { code: string }) {
     setOpenRoom(room)
   }
 
+  function pickBulk(room: string) { setOrgRoom(room); setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
+  async function runOrganize(urls: string[], answers: string) {
+    if (!urls.length) return
+    setOrgBusy(true)
+    try {
+      const r = await fetch('/api/audit/organize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, room: orgRoom, photoUrls: urls, answers }) })
+      const j = await r.json()
+      const its = (j && j.items) || []
+      setOrgItems(its); setOrgQuestions((j && j.questions) || [])
+      const pick: Record<number, boolean> = {}; its.forEach((_: any, i: number) => { pick[i] = true }); setOrgPick(pick)
+    } catch {}
+    setOrgBusy(false)
+  }
+  async function onBulkPhotos(e: any) {
+    const files = e.target.files ? Array.from(e.target.files) : []
+    if (!files.length || !orgRoom) return
+    setOrgBusy(true)
+    const urls: string[] = []
+    try {
+      for (const f of files.slice(0, 8)) {
+        const fd = new FormData(); fd.append('code', code); fd.append('file', f as any); fd.append('noai', '1')
+        const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json(); if (j && j.url) urls.push(j.url)
+      }
+      setOrgPhotos(urls)
+      await runOrganize(urls, '')
+    } catch {}
+    setOrgBusy(false)
+  }
+  async function addAllOrg() {
+    const chosen = orgItems.filter((_: any, i: number) => orgPick[i])
+    for (const it of chosen) {
+      const kind = (it.severity === 'high' || it.severity === 'medium') ? 'maintenance' : 'add'
+      const note = [it.condition, it.size ? 'Size: ' + it.size : ''].filter(Boolean).join(' - ')
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, photoUrl: orgPhotos[0] || '', ai: it }) })
+    }
+    setOrgRoom(''); setOrgItems([]); setOrgQuestions([]); setOrgPhotos([]); await load()
+  }
   async function onCoverPhoto(e: any) {
     const f = e.target.files && e.target.files[0]
     if (!f || !coverRoom) return
@@ -156,6 +201,7 @@ export default function AuditCapture({ code }: { code: string }) {
     <div className="max-w-md mx-auto px-3 pb-24 pt-4">
       <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} className="hidden" />
       <input ref={coverRef} type="file" accept="image/*" capture="environment" onChange={onCoverPhoto} className="hidden" />
+      <input ref={bulkRef} type="file" accept="image/*" multiple onChange={onBulkPhotos} className="hidden" />
       <div className="mb-4">
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
@@ -174,6 +220,35 @@ export default function AuditCapture({ code }: { code: string }) {
             </button>
             {open ? (
               <div className="px-3.5 pb-3.5 space-y-2">
+                <div className="mb-2">
+                  <button onClick={() => pickBulk(room)} disabled={orgBusy && orgRoom === room} className="w-full text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Analyzing photos…' : '✨ Build room from photos'}</button>
+                  {orgRoom === room && (orgItems.length > 0 || orgQuestions.length > 0) ? (
+                    <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 space-y-2">
+                      {orgQuestions.length > 0 ? (
+                        <div>
+                          <div className="text-[11px] font-semibold text-indigo-800 mb-1">A few questions to complete it:</div>
+                          <ul className="text-[12px] text-neutral-700 list-disc pl-4 space-y-0.5">{orgQuestions.map((q, i) => <li key={i}>{q}</li>)}</ul>
+                          <textarea value={orgAnswers} onChange={e => setOrgAnswers(e.target.value)} placeholder="Answer here (e.g. yes ensuite, King bed)…" rows={2} className="mt-1.5 w-full text-sm rounded-lg border border-line px-2 py-1.5" />
+                          <button onClick={() => runOrganize(orgPhotos, orgAnswers)} disabled={orgBusy} className="mt-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">Re-analyze with answers</button>
+                        </div>
+                      ) : null}
+                      {orgItems.length > 0 ? (
+                        <div>
+                          <div className="text-[11px] font-semibold text-indigo-800 mb-1">{orgItems.filter((_: any, i: number) => orgPick[i]).length} of {orgItems.length} items</div>
+                          <div className="space-y-1">
+                            {orgItems.map((it: any, i: number) => (
+                              <label key={i} className="flex gap-2 items-start text-[13px] bg-white rounded-md border border-neutral-100 p-1.5">
+                                <input type="checkbox" checked={!!orgPick[i]} onChange={e => setOrgPick(p => ({ ...p, [i]: e.target.checked }))} className="mt-0.5" />
+                                <span className="min-w-0"><span className="font-semibold text-ink">{it.item}</span>{it.size ? ' · ' + it.size : ''}{it.tier && it.tier !== 'unknown' ? <span className="ml-1 text-[10px] text-amber-700">{it.tier}</span> : null}{it.condition ? <span className="block text-[11px] text-muted">{it.condition}</span> : null}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <button onClick={addAllOrg} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">Add selected to {room}</button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
                 <div className="mb-2">
                   {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
                   {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button></div> : null}
