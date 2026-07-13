@@ -74,14 +74,16 @@ export async function GET(req: NextRequest) {
   for (const e of entries) if (e.source === 'audit' && e.question) promoted[String(e.question).toLowerCase()] = true
   const howtos: any[] = []
   const highlights: any[] = []
+  const keyDetails: any[] = []
   for (const it of (ir.data || [])) {
     const d = (it as any).details || {}
     const q = it.title || it.item_type || 'How-to'
     if (d.howTo && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: d.howTo, photo_url: it.photo_url })
     if ((it as any).kind === 'faq' && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: (it as any).note || d.howTo || '', photo_url: it.photo_url })
     if (d.highlight) highlights.push({ id: it.id, room: it.room, title: it.title || it.item_type || 'Item', brand: d.brand || '', tier: d.tier || '', features: Array.isArray(d.features) ? d.features : [] })
+    if (d.size) keyDetails.push({ item: it.title || it.item_type || 'Item', size: d.size, room: it.room })
   }
-  return NextResponse.json({ ok: true, listing, facts: factList, entries, howtos, highlights, otaLinks })
+  return NextResponse.json({ ok: true, listing, facts: factList, entries, howtos, highlights, otaLinks, keyDetails })
 }
 
 export async function POST(req: NextRequest) {
