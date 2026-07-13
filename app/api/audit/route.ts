@@ -182,6 +182,7 @@ export async function POST(req: NextRequest) {
       ai_assessment: body.ai && typeof body.ai === 'object' ? body.ai : null,
       severity: ['low', 'medium', 'high'].includes(String(body.severity)) ? String(body.severity) : null,
       qty: Math.max(1, Math.min(50, Number(body.qty) || 1)),
+      details: body.ai && typeof body.ai === 'object' ? { brand: body.ai.brand || null, tier: body.ai.tier || null, features: Array.isArray(body.ai.features) ? body.ai.features : null, amenity: !!body.ai.amenity, highlight: !!body.ai.highlight, howTo: body.ai.howTo || null } : null,
       status: 'open',
     }
     const ins = await db.from('audit_items').insert(row).select('*').limit(1)
