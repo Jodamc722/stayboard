@@ -36,6 +36,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const [data, setData] = useState<Payload | null>(null)
   const [err, setErr] = useState('')
   const [customRooms, setCustomRooms] = useState<string[]>([])
+  const [hiddenRooms, setHiddenRooms] = useState<string[]>([])
   const [newRoom, setNewRoom] = useState('')
   const [openRoom, setOpenRoom] = useState('')
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -201,6 +202,16 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch { alert('Failed - retry.') }
   }
 
+  async function removeRoom(room: string) {
+    const n = items.filter(i => i.room === room).length
+    if (!confirm(n > 0 ? ('Remove ' + room + ' and its ' + n + ' open item(s)?') : ('Remove ' + room + '?'))) return
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteRoom', code, room }) }) } catch {}
+    setHiddenRooms(prev => prev.indexOf(room) < 0 ? [...prev, room] : prev)
+    setCustomRooms(prev => prev.filter(r => r !== room))
+    if (openRoom === room) setOpenRoom('')
+    await load()
+  }
+
   async function removeItem(it: Item) {
     if (!confirm('Delete this item?')) return
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: it.id }) }); await load() } catch {}
@@ -232,7 +243,7 @@ export default function AuditCapture({ code }: { code: string }) {
         <div className="text-[11px] text-neutral-400 mt-2">Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
-      {ordered.map(room => {
+      {ordered.filter(room => !hiddenRooms.includes(room) && !(cfgByKey[roomKey(room)] && cfgByKey[roomKey(room)].sort === -1)).map(room => {
         const roomItems = items.filter(i => i.room === room)
         const open = openRoom === room
         const depth = roomDepth(room)
@@ -281,7 +292,7 @@ export default function AuditCapture({ code }: { code: string }) {
                 </div>
                 <div className="mb-2">
                   {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
-                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button></div> : null}
+                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button></div> : null}
                 </div>
                 {roomItems.map(it => (
                   <div key={it.id} className="flex gap-2.5 rounded-lg border border-neutral-100 p-2">
