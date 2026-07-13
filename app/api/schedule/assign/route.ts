@@ -4,7 +4,8 @@
 // description so the cleaner sees them. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
+import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -38,6 +39,15 @@ export async function POST(req: NextRequest) {
       if (description) payload.description = description
       const r = await updateBreezewayTask(clean.id, payload)
       if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: `Breezeway ${r.status}: ${r.text.slice(0, 140)}` }); continue }
+            try {
+        const _fresh = await retrieveBreezewayTask(clean.id)
+        const _ft: any = _fresh && (_fresh as any).data
+        if (_ft && _ft.id) {
+          const _mapped: any = mapBreezewayTask(_ft)
+          const _rp = parseFloat(String(_mapped.rate_paid ?? '').replace(/[^0-9.]/g, ''))
+          await supabaseAdmin().from('breezeway_tasks_sync').upsert({ ..._mapped, rate_paid: Number.isFinite(_rp) ? _rp : null, reference_property_id: _mapped.reference_property_id || listingId, synced_at: new Date().toISOString() }, { onConflict: 'id' })
+        }
+      } catch {}
       let descriptionSaved: boolean | null = null
       if (description) { try { const chk = await retrieveBreezewayTask(clean.id); const live = String(chk?.data?.description || ''); descriptionSaved = live.includes(description.slice(0, 24)) } catch { descriptionSaved = null } }
       results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved } as any)
