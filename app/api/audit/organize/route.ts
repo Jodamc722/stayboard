@@ -23,9 +23,8 @@ async function visionOne(key: string, content: any[], room: string): Promise<{ i
     const doCall = (model: string) => fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, signal: ac.signal, body: JSON.stringify({ model, max_tokens: 2000, system: SYS, messages: [{ role: 'user', content }] }) })
     let r: any = null
     for (const model of ['claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-4-6']) {
-      try { r = await doCall(model) } catch (e) { try { (globalThis as any).__vdiag = 'exc ' + model + ' ' + String(e).slice(0, 100) } catch {} ; r = null; continue }
+      try { r = await doCall(model) } catch (e) { r = null; continue }
       if (r && r.ok) break
-      try { (globalThis as any).__vdiag = model + ' status=' + r.status + ' body=' + (await r.text()).slice(0, 160) } catch {}
     }
     clearTimeout(timer)
     if (!r || !r.ok) return null
@@ -97,5 +96,5 @@ export async function POST(req: NextRequest) {
       items = con.items; questions = Array.isArray(con.questions) ? con.questions : []
     }
   }
-  return NextResponse.json({ ok: true, items, questions: questions.slice(0, 3), diag: (globalThis as any).__vdiag || null })
+  return NextResponse.json({ ok: true, items, questions: questions.slice(0, 3) })
 }
