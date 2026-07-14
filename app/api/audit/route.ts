@@ -270,6 +270,7 @@ export async function POST(req: NextRequest) {
     }
     const f = body.fields && typeof body.fields === 'object' ? body.fields : {}
     const upd: Record<string, any> = { updated_at: new Date().toISOString() }
+    if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
