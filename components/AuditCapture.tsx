@@ -66,6 +66,10 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orderQty, setOrderQty] = useState('1')
   const [orderNote, setOrderNote] = useState('')
   const [orderBusy, setOrderBusy] = useState(false)
+  const [sugList, setSugList] = useState<any[]>([])
+  const [sugBusy, setSugBusy] = useState(false)
+  const [sugOpen, setSugOpen] = useState(false)
+  const [sugAdded, setSugAdded] = useState<Record<number, boolean>>({})
   const [orgQuestions, setOrgQuestions] = useState<string[]>([])
   const [orgAnswers, setOrgAnswers] = useState('')
   const [orgPhotos, setOrgPhotos] = useState<string[]>([])
@@ -208,6 +212,14 @@ export default function AuditCapture({ code }: { code: string }) {
     setFaqBusy(true)
     try { const r = await fetch('/api/audit/reanalyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, photoUrls: [faqPhoto], hint: 'Write a short step-by-step how-to for guests about: ' + (faqTitle || 'this') }) }); const j = await r.json(); if (j && j.ai && j.ai.howTo) setFaqHowto(j.ai.howTo); else alert('Could not draft - type the steps.') } catch { alert('Failed - retry.') }
     setFaqBusy(false)
+  }
+  async function loadSuggest() {
+    setSugBusy(true); setSugOpen(true)
+    try { const r = await fetch('/api/audit/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) }); const j = await r.json(); setSugList((j && j.suggestions) || []); setSugAdded({}) } catch { alert('Failed - retry.') }
+    setSugBusy(false)
+  }
+  async function addSug(s: any, i: number) {
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: s.room || 'General', kind: 'add', title: s.title, qty: s.qty || 1, note: s.reason || '' }) }); setSugAdded(prev => ({ ...prev, [i]: true })); await load() } catch { alert('Failed - retry.') }
   }
   async function saveOrder(room: string) {
     if (!orderName.trim()) { alert('Add an item name.'); return }
@@ -454,6 +466,22 @@ export default function AuditCapture({ code }: { code: string }) {
           </div>
         )
       })}
+      <div className="mt-4 rounded-xl border border-neutral-200 bg-white overflow-hidden">
+        <button onClick={loadSuggest} disabled={sugBusy} className="w-full text-left px-3.5 py-2.5 text-sm font-semibold text-neutral-800 flex items-center justify-between">
+          <span>✨ Suggest missing items</span>
+          <span className="text-xs text-neutral-400">{sugBusy ? 'Thinking…' : (sugOpen ? 'Refresh' : 'Tap')}</span>
+        </button>
+        {sugOpen && sugList.length ? (
+          <div className="px-3.5 pb-3 space-y-1.5">
+            {sugList.map((s: any, i: number) => (
+              <div key={i} className="flex gap-2 items-start text-[13px] rounded-md border border-neutral-200 p-2">
+                <span className="min-w-0 flex-1"><span className="font-semibold text-ink">{s.qty > 1 ? s.qty + '× ' : ''}{s.title}</span>{s.room ? <span className="ml-1 text-[11px] text-neutral-500">{s.room}</span> : null}<span className="block text-[11px] text-muted">{s.reason}</span></span>
+                {sugAdded[i] ? <span className="text-[11px] font-semibold text-emerald-600 mt-0.5 whitespace-nowrap">Added ✓</span> : <button onClick={() => addSug(s, i)} className="text-[11px] font-semibold px-2 py-1 rounded border border-amber-300 text-amber-700 whitespace-nowrap">Add to order</button>}
+              </div>
+            ))}
+          </div>
+        ) : (sugOpen && !sugBusy ? <div className="px-3.5 pb-3 text-xs text-muted">Nothing obvious missing.</div> : null)}
+      </div>
       <div className="flex gap-2 mt-3">
         <input value={newRoom} onChange={e => setNewRoom(e.target.value)} placeholder="Add a space (room, garage, hallway…)" className="flex-1 text-sm border border-neutral-200 rounded-lg px-2.5 py-2 bg-white" />
         <button onClick={() => { const n = newRoom.trim(); if (n && customRooms.indexOf(n) < 0) { setCustomRooms(c => [...c, n]); setOpenRoom(n) } setNewRoom('') }} className="text-sm font-semibold px-3 rounded-lg border border-neutral-200 bg-white">Add</button>
