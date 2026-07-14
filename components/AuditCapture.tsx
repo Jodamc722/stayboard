@@ -352,7 +352,7 @@ export default function AuditCapture({ code }: { code: string }) {
         <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Building amenities</div>
         <div className="flex flex-wrap gap-1.5">
           {items.filter(it => it.kind === 'tag' && it.room === 'Building').map(it => (
-            <span key={it.id} className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-full bg-teal-100 text-teal-700">{it.title}{it.qty > 1 ? ' ×' + it.qty : ''}<button onClick={() => addTag(it.room, it.title)} className="leading-none px-0.5 font-bold">+</button><button onClick={() => removeTag(it)} className="text-teal-400 leading-none px-0.5">×</button></span>
+            <span key={it.id} className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-full bg-teal-100 text-teal-700">{it.title}{(it.qty || 0) > 1 ? ' ×' + it.qty : ''}<button onClick={() => addTag(it.room, it.title || '')} className="leading-none px-0.5 font-bold">+</button><button onClick={() => removeTag(it)} className="text-teal-400 leading-none px-0.5">×</button></span>
           ))}
           {['Pool', 'Hot tub', 'Gym / fitness', 'Sauna', 'Steam room', 'Elevator', 'Garage parking', 'Valet', 'Doorman / Concierge', 'Rooftop deck', 'BBQ area', 'Business center', 'Shared laundry', 'EV charging', 'Bike storage', 'Package room', 'Beach access', 'Pet-friendly'].filter(q => !items.some(it => it.kind === 'tag' && it.room === 'Building' && it.title === q)).map(q => (
             <button key={q} onClick={() => addTag('Building', q)} disabled={tagBusy} className="text-[12px] px-2 py-1 rounded-full border border-neutral-300 text-neutral-600 disabled:opacity-50">+ {q}</button>
@@ -382,7 +382,7 @@ export default function AuditCapture({ code }: { code: string }) {
                   <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Room features</div>
                   <div className="flex flex-wrap gap-1.5">
                     {roomItems.filter(it => it.kind === 'tag').map(it => (
-                      <span key={it.id} className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-full bg-violet-100 text-violet-700">{it.title}{it.qty > 1 ? ' ×' + it.qty : ''}<button onClick={() => addTag(it.room, it.title)} className="leading-none px-0.5 font-bold">+</button><button onClick={() => removeTag(it)} className="text-violet-400 leading-none px-0.5">×</button></span>
+                      <span key={it.id} className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-full bg-violet-100 text-violet-700">{it.title}{(it.qty || 0) > 1 ? ' ×' + it.qty : ''}<button onClick={() => addTag(it.room, it.title || '')} className="leading-none px-0.5 font-bold">+</button><button onClick={() => removeTag(it)} className="text-violet-400 leading-none px-0.5">×</button></span>
                     ))}
                     {quickTags(room).filter(q => !roomItems.some(it => it.kind === 'tag' && it.title === q)).map(q => (
                       <button key={q} onClick={() => addTag(room, q)} disabled={tagBusy} className="text-[12px] px-2 py-1 rounded-full border border-neutral-300 text-neutral-600 disabled:opacity-50">+ {q}</button>
