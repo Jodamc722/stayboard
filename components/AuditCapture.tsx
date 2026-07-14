@@ -374,6 +374,13 @@ export default function AuditCapture({ code }: { code: string }) {
               <span className="text-sm font-semibold text-neutral-900">{depth > 0 ? '↳ ' + leaf : roomLabel(room)}</span>
               <span className="text-xs text-neutral-400">{roomItems.length > 0 ? roomItems.length + ' item' + (roomItems.length > 1 ? 's' : '') : 'tap to open'}</span>
             </button>
+            {!open && roomItems.filter(it => it.kind === 'tag').length ? (
+              <div className="px-3.5 pb-2 -mt-1 flex flex-wrap gap-1">
+                {roomItems.filter(it => it.kind === 'tag').map(it => (
+                  <span key={it.id} className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-600">{it.title}{(it.qty || 0) > 1 ? ' ×' + it.qty : ''}</span>
+                ))}
+              </div>
+            ) : null}
             {open ? (
               <div className="px-3.5 pb-3.5 space-y-2">
                 <div className="mb-2">
