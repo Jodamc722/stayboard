@@ -258,7 +258,7 @@ export async function POST(req: NextRequest) {
   if (action === 'updateItem' || action === 'deleteItem') {
     const itemId = String(body.itemId || '')
     if (!itemId) return NextResponse.json({ error: 'itemId required' }, { status: 400 })
-    const { data: rows } = await db.from('audit_items').select('id,audit_id,status').eq('id', itemId).limit(1)
+    const { data: rows } = await db.from('audit_items').select('id,audit_id,status,details').eq('id', itemId).limit(1)
     const item = rows && rows[0]
     if (!item) return NextResponse.json({ error: 'item not found' }, { status: 404 })
     if (audit && String(item.audit_id) !== String(audit.id)) return NextResponse.json({ error: 'wrong audit' }, { status: 403 })
@@ -271,6 +271,7 @@ export async function POST(req: NextRequest) {
     const f = body.fields && typeof body.fields === 'object' ? body.fields : {}
     const upd: Record<string, any> = { updated_at: new Date().toISOString() }
     if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
+    if (typeof f.brand === 'string' || typeof f.size === 'string' || typeof f.howTo === 'string') { const d: any = (item.details && typeof item.details === 'object') ? { ...item.details } : {}; if (typeof f.brand === 'string') d.brand = f.brand.slice(0, 120); if (typeof f.size === 'string') d.size = f.size.slice(0, 120); if (typeof f.howTo === 'string') d.howTo = f.howTo.slice(0, 2000); upd.details = d }
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
