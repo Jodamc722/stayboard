@@ -61,6 +61,11 @@ export default function AuditCapture({ code }: { code: string }) {
   const [faqHowto, setFaqHowto] = useState('')
   const [faqPhoto, setFaqPhoto] = useState('')
   const [faqBusy, setFaqBusy] = useState(false)
+  const [orderOpen, setOrderOpen] = useState(false)
+  const [orderName, setOrderName] = useState('')
+  const [orderQty, setOrderQty] = useState('1')
+  const [orderNote, setOrderNote] = useState('')
+  const [orderBusy, setOrderBusy] = useState(false)
   const [orgQuestions, setOrgQuestions] = useState<string[]>([])
   const [orgAnswers, setOrgAnswers] = useState('')
   const [orgPhotos, setOrgPhotos] = useState<string[]>([])
@@ -203,6 +208,12 @@ export default function AuditCapture({ code }: { code: string }) {
     setFaqBusy(true)
     try { const r = await fetch('/api/audit/reanalyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, photoUrls: [faqPhoto], hint: 'Write a short step-by-step how-to for guests about: ' + (faqTitle || 'this') }) }); const j = await r.json(); if (j && j.ai && j.ai.howTo) setFaqHowto(j.ai.howTo); else alert('Could not draft - type the steps.') } catch { alert('Failed - retry.') }
     setFaqBusy(false)
+  }
+  async function saveOrder(room: string) {
+    if (!orderName.trim()) { alert('Add an item name.'); return }
+    setOrderBusy(true)
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'add', title: orderName, qty: Math.max(1, parseInt(orderQty, 10) || 1), note: orderNote }) }); setOrderOpen(false); setOrderName(''); setOrderQty('1'); setOrderNote(''); await load() } catch { alert('Failed - retry.') }
+    setOrderBusy(false)
   }
   async function saveFaq(room: string) {
     if (!faqTitle.trim()) { alert('Add a title.'); return }
@@ -352,7 +363,18 @@ export default function AuditCapture({ code }: { code: string }) {
                 </div>
                 <div className="mb-2">
                   {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
-                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button><button onClick={() => { setFaqOpen(o => !o); setFaqTitle(''); setFaqHowto(''); setFaqPhoto('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-indigo-300 text-indigo-600">+ Add to FAQ</button>{faqOpen && openRoom === room ? (
+                  {!done ? <div className="flex gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { const nm = room + ' — Closet'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Closet</button><button onClick={() => { const nm = room + ' — Bathroom'; setCustomRooms(prev => prev.indexOf(nm) < 0 ? [...prev, nm] : prev); setOpenRoom(nm) }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">+ Bathroom</button><button onClick={() => { setFaqOpen(o => !o); setFaqTitle(''); setFaqHowto(''); setFaqPhoto('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-indigo-300 text-indigo-600">+ Add to FAQ</button><button onClick={() => { setOrderOpen(o => !o); setOrderName(''); setOrderQty('1'); setOrderNote('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-amber-300 text-amber-700">+ Order</button>{orderOpen && openRoom === room ? (
+                    <div className="w-full mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 space-y-1.5">
+                      <div className="text-[11px] font-semibold text-amber-800">Order — add an item this unit needs</div>
+                      <input value={orderName} onChange={e => setOrderName(e.target.value)} placeholder="Item to order (e.g. Nightstand)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                      <div className="flex gap-1 items-center">
+                        <span className="text-[11px] text-neutral-600">Qty</span>
+                        <input value={orderQty} onChange={e => setOrderQty(e.target.value)} type="number" min="1" className="w-16 rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                      </div>
+                      <input value={orderNote} onChange={e => setOrderNote(e.target.value)} placeholder="Note (optional)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                      <button onClick={() => saveOrder(room)} disabled={orderBusy} className="w-full text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Add to order</button>
+                    </div>
+                  ) : null}{faqOpen && openRoom === room ? (
                     <div className="w-full mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2 space-y-1.5">
                       <div className="text-[11px] font-semibold text-indigo-700">Add to FAQ / how-to</div>
                       <input value={faqTitle} onChange={e => setFaqTitle(e.target.value)} placeholder="Title (e.g. How to turn on hot water)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
