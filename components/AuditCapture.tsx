@@ -66,6 +66,8 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orderQty, setOrderQty] = useState('1')
   const [orderNote, setOrderNote] = useState('')
   const [orderBusy, setOrderBusy] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+  const [tagBusy, setTagBusy] = useState(false)
   const [sugList, setSugList] = useState<any[]>([])
   const [gapBusy, setGapBusy] = useState(false)
   const [sugOpen, setSugOpen] = useState(false)
@@ -234,6 +236,15 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
     setIedBusy(false)
   }
+  async function addTag(room: string, name: string) {
+    if (!name.trim()) return
+    setTagBusy(true)
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'tag', title: name.trim() }) }); await load() } catch { alert('Failed - retry.') }
+    setTagBusy(false)
+  }
+  async function removeTag(it: any) {
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: it.id }) }); await load() } catch {}
+  }
   async function saveOrder(room: string) {
     if (!orderName.trim()) { alert('Add an item name.'); return }
     setOrderBusy(true)
@@ -336,7 +347,22 @@ export default function AuditCapture({ code }: { code: string }) {
               <div className="px-3.5 pb-3.5 space-y-2">
                 <div className="mb-2">
                   {orgRoom === room && orgPhotos.length ? <div className="flex gap-1 flex-wrap mb-1.5">{orgPhotos.map((p, i) => <img key={i} src={p} alt="" className="w-11 h-11 rounded object-cover" />)}</div> : null}
-                  <div className="flex gap-1.5">
+                  <div className="mb-2">
+                  <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Room features</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {roomItems.filter(it => it.kind === 'tag').map(it => (
+                      <span key={it.id} className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-full bg-violet-100 text-violet-700">{it.title}<button onClick={() => removeTag(it)} className="text-violet-400 leading-none px-0.5">×</button></span>
+                    ))}
+                    {['King bed', 'Queen bed', 'Walk-in closet', 'Reach-in closet', 'Ensuite bath', 'Shower', 'Tub', 'Balcony', 'Desk', 'Smart TV'].filter(q => !roomItems.some(it => it.kind === 'tag' && it.title === q)).map(q => (
+                      <button key={q} onClick={() => addTag(room, q)} disabled={tagBusy} className="text-[12px] px-2 py-1 rounded-full border border-neutral-300 text-neutral-600 disabled:opacity-50">+ {q}</button>
+                    ))}
+                  </div>
+                  <div className="flex gap-1 mt-1.5">
+                    <input value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Add a feature" className="flex-1 rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                    <button onClick={() => { if (tagInput.trim()) { addTag(room, tagInput.trim()); setTagInput('') } }} disabled={tagBusy} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300 disabled:opacity-50">Add</button>
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
                     <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
                     <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
                   </div>
@@ -413,7 +439,7 @@ export default function AuditCapture({ code }: { code: string }) {
                     </div>
                   ) : null}</div> : null}
                 </div>
-                {roomItems.map(it => (
+                {roomItems.filter(it => it.kind !== 'tag').map(it => (
                   <div key={it.id} className="flex flex-wrap gap-2.5 rounded-lg border border-neutral-100 p-2">
                     {it.photo_url ? <img src={it.photo_url} alt="" className="w-14 h-14 rounded-md object-cover shrink-0" /> : <div className="w-14 h-14 rounded-md bg-neutral-100 shrink-0" />}
                     <div className="flex-1 min-w-0">
