@@ -2,7 +2,7 @@
 // Guidebook builder v2 launcher. Interview + UPLOADS (high-quality photos used ahead of Guesty's,
 // plus PDF context docs the AI reads before writing) + tone/audience/highlights direction.
 // POSTs /api/guidebook and routes to the finished guidebook.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { BookOpen, Loader2, X, ImagePlus, FileUp, Trash2 } from 'lucide-react'
 
@@ -74,7 +74,20 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
     if (!n) return
     setExtraRecs((x) => [...x, n]); setNewRec('')
   }
-  async function generate(force = false) {
+  async const [auditCands, setAuditCands] = useState<any[]>([])
+  const [auditPick, setAuditPick] = useState<Record<number, boolean>>({})
+  useEffect(() => {
+    if (!listingId) return
+    fetch('/api/guidebook/audit-howtos?listingId=' + encodeURIComponent(listingId)).then(r => r.json()).then(j => {
+      const cs = (j && j.candidates) || []
+      setAuditCands(cs)
+      const pick: Record<number, boolean> = {}
+      cs.forEach((c: any, i: number) => { pick[i] = !c.already })
+      setAuditPick(pick)
+    }).catch(() => {})
+  }, [listingId])
+
+  function generate(force = false) {
     if (missing.length) { setErr('Please answer: ' + missing.join(', ')); return }
     setBusy(true); setErr('')
     const selectedRecs = [...recs.filter((_, i) => recPick[i]).map((r) => (r.blurb ? (r.name + ' — ' + r.blurb) : r.name)), ...extraRecs]
@@ -82,7 +95,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
       const p = fetch('/api/guidebook', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          listingId, answers, theme, tone, audience, highlights, selectedRecs, force,
+          listingId, answers, theme, tone, audience, highlights, selectedRecs, force, selectedAuditHowTos: auditCands.filter((_: any, i: number) => auditPick[i]).map((c: any) => ({ title: c.title, body: c.body })),
           uploadedPhotos: ups.filter(u => u.kind === 'photo').map(u => u.url),
           docUrls: ups.filter(u => u.kind === 'doc').map(u => u.url),
         }),
@@ -221,6 +234,19 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
               ))}
             </div>
 
+            {auditCands.length ? (
+              <div className="border-t border-line px-5 py-4">
+                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">From the property audit</div>
+                <div className="space-y-1.5 max-h-48 overflow-auto">
+                  {auditCands.map((c: any, i: number) => (
+                    <label key={i} className={"flex gap-2 items-start text-xs rounded-md border border-line p-2 " + (c.already ? "opacity-60" : "")}>
+                      <input type="checkbox" checked={!!auditPick[i]} onChange={(e) => setAuditPick((p: any) => ({ ...p, [i]: e.target.checked }))} className="mt-0.5" />
+                      <span className="min-w-0"><span className="font-semibold text-ink">{c.title}</span>{c.already ? <span className="ml-1 text-[10px] px-1 rounded bg-neutral-100 text-neutral-500">in guidebook</span> : <span className="ml-1 text-[10px] px-1 rounded bg-emerald-100 text-emerald-700">new</span>}<span className="block text-[11px] text-muted">{String(c.body || '').slice(0, 90)}</span></span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between border-t border-line px-5 py-4">
               <p className="text-xs text-red-600 max-w-[55%]">{err}</p>
               <button onClick={() => generate()} disabled={busy || uploading}
