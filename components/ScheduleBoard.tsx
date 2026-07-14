@@ -658,6 +658,7 @@ function WorkingRail({ date, dayLabel, docs, need, working, markets, saveState, 
 function CleanerPicker({ people, value, existing, onChange, disabled, placeholder }: { people: Person[]; value: Person | null; existing?: string; onChange: (p: Person | null) => void; disabled?: boolean; placeholder?: string }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     function onDoc(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
@@ -672,13 +673,13 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   const shownAsExisting = !value && !!existing
   return (
     <div className="relative max-w-[240px]" ref={ref}>
-      <button title={label || ''} onClick={() => setOpen(o => !o)} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
+      <button title={label || ''} onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPos({ top: r.bottom + 4, left: r.left }); setOpen(o => !o) }} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
         <User size={11} className="shrink-0" />
         <span className="truncate flex-1 text-left min-w-0">{shortLabel || (placeholder || 'Assign cleaner…')}</span>
         {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : null}
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1">
+        <div className="fixed z-50 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1" style={{ top: pos ? pos.top : 0, left: pos ? pos.left : 0 }}>
           <div className="flex items-center gap-1 px-1.5 py-1 border-b border-line">
             <Search size={12} className="text-muted" />
             <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search cleaners…" className="w-full text-[12px] outline-none bg-transparent" />
