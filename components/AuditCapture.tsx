@@ -442,7 +442,7 @@ export default function AuditCapture({ code }: { code: string }) {
                         </div>
                       </div>
                     ) : null}
-                  </div>
+                  
                 </div>
               ))}
                 <div>
