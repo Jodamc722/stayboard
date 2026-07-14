@@ -442,7 +442,9 @@ export default function AuditCapture({ code }: { code: string }) {
                         </div>
                       </div>
                     ) : null}
-                ))}
+                  </div>
+                </div>
+              ))}
                 <div>
                   {!done && !sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
                   {!done && sug[room] && sug[room].length > 0 ? (
