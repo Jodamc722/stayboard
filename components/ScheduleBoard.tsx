@@ -5,6 +5,7 @@
 // Breezeway task. Botanica is hotel-staff (vendor) so its rows are tagged. NOTHING writes to Breezeway until
 // you click Push. The schedule is cached and only re-pulls on the morning/noon cron or when you hit Sync.
 import { useEffect, useMemo, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download } from 'lucide-react'
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
@@ -660,8 +661,12 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   const [q, setQ] = useState('')
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  function place() { const b = btnRef.current; if (!b) return; const r = b.getBoundingClientRect(); const PH = 260; const top = (r.bottom + PH > window.innerHeight && r.top > PH) ? Math.max(4, r.top - PH - 4) : r.bottom + 4; const left = Math.max(4, Math.min(r.left, window.innerWidth - 232)); setPos({ top, left }) }
+  useEffect(() => { if (!open) return; const h = () => place(); window.addEventListener('scroll', h, true); window.addEventListener('resize', h); return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', h) } }, [open])
   useEffect(() => {
-    function onDoc(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    function onDoc(e: MouseEvent) { const t = e.target as Node; if ((ref.current && ref.current.contains(t)) || (panelRef.current && panelRef.current.contains(t))) return; setOpen(false) }
     document.addEventListener('mousedown', onDoc); return () => document.removeEventListener('mousedown', onDoc)
   }, [])
   const filtered = useMemo(() => { const s = q.trim().toLowerCase(); const base = s ? people.filter(p => p.name.toLowerCase().includes(s) || String(p.region || '').toLowerCase().includes(s)) : people; return base.slice(0, 50) }, [people, q])
@@ -673,13 +678,13 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   const shownAsExisting = !value && !!existing
   return (
     <div className="relative max-w-[240px]" ref={ref}>
-      <button title={label || ''} onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPos({ top: r.bottom + 4, left: r.left }); setOpen(o => !o) }} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
+      <button title={label || ''} ref={btnRef} onClick={() => { if (!open) place(); setOpen(o => !o) }} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
         <User size={11} className="shrink-0" />
         <span className="truncate flex-1 text-left min-w-0">{shortLabel || (placeholder || 'Assign cleaner…')}</span>
         {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : null}
       </button>
-      {open && (
-        <div className="fixed z-50 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1" style={{ top: pos ? pos.top : 0, left: pos ? pos.left : 0 }}>
+      {open && pos && createPortal((
+        <div ref={panelRef} className="fixed z-50 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1" style={{ top: pos.top, left: pos.left }}>
           <div className="flex items-center gap-1 px-1.5 py-1 border-b border-line">
             <Search size={12} className="text-muted" />
             <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search cleaners…" className="w-full text-[12px] outline-none bg-transparent" />
@@ -692,7 +697,7 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
             ))}
           </div>
         </div>
-      )}
+      ), document.body)}
     </div>
   )
 }
