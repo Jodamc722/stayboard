@@ -125,7 +125,7 @@ export default function AuditCapture({ code }: { code: string }) {
     if (!urls.length) return
     setOrgBusy(true)
     try {
-      const r = await fetch('/api/audit/organize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, room: orgRoom, photoUrls: urls, answers }) })
+      const r = await fetch('/api/audit/organize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, room: orgRoom, photoUrls: urls, answers, tags: items.filter((x: any) => x.room === orgRoom && x.kind === 'tag').map((x: any) => x.title) }) })
       const j = await r.json()
       const its = (j && j.items) || []
       setOrgItems(its); setOrgQuestions((j && j.questions) || [])
