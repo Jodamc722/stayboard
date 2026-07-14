@@ -52,7 +52,7 @@ export default function AuditReviewPage() {
         <a href="/audits" className="text-xs text-neutral-400 hover:text-neutral-600">&larr; All audits</a>
         <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mt-2">{isOnboarding ? 'Onboarding audit' : 'Quality audit'}</div>
         <h1 className="text-2xl font-bold text-neutral-900">{listing.title || listing.name || 'Unit'}</h1>
-        <div className="text-sm text-neutral-500 mt-0.5">{realCount} items {M} {audit.status === 'completed' ? 'Completed' : 'Open'}</div>
+        <div className="text-sm text-neutral-500 mt-0.5">{realCount} items · {audit.status === 'completed' ? 'Completed' : 'Open'}</div>
       </div>
 
       {dupes.length ? (
@@ -60,7 +60,7 @@ export default function AuditReviewPage() {
           <div className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-2">Possible duplicates ({dupes.length})</div>
           {dupes.map((g, gi) => (
             <div key={gi} className="flex items-center justify-between gap-3 py-1.5 border-t border-amber-200 first:border-t-0">
-              <div className="text-sm text-neutral-800 min-w-0"><span className="font-semibold">{g[0].title}</span> <span className="text-xs text-neutral-500">{g.length} copies {M} {g[0].room}</span></div>
+              <div className="text-sm text-neutral-800 min-w-0"><span className="font-semibold">{g[0].title}</span> <span className="text-xs text-neutral-500">{g.length} copies · {g[0].room}</span></div>
               <button onClick={() => mergeGroup(g)} disabled={busy} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-neutral-900 text-white disabled:opacity-50 shrink-0">Merge into 1</button>
             </div>
           ))}
