@@ -74,7 +74,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
     if (!n) return
     setExtraRecs((x) => [...x, n]); setNewRec('')
   }
-  async const [auditCands, setAuditCands] = useState<any[]>([])
+  const [auditCands, setAuditCands] = useState<any[]>([])
   const [auditPick, setAuditPick] = useState<Record<number, boolean>>({})
   useEffect(() => {
     if (!listingId) return
@@ -87,7 +87,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
     }).catch(() => {})
   }, [listingId])
 
-  function generate(force = false) {
+  async function generate(force = false) {
     if (missing.length) { setErr('Please answer: ' + missing.join(', ')); return }
     setBusy(true); setErr('')
     const selectedRecs = [...recs.filter((_, i) => recPick[i]).map((r) => (r.blurb ? (r.name + ' — ' + r.blurb) : r.name)), ...extraRecs]
