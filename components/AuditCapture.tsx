@@ -12,6 +12,7 @@ type Suggestion = { title: string; why?: string }
 type Draft = { room: string; kind: string; title: string; itemType: string; note: string; severity: string; photoUrl: string; photos: string[]; ai: any }
 
 const KIND_META: Record<string, { label: string; cls: string }> = {
+  inventory: { label: 'Inventory', cls: 'bg-neutral-100 text-neutral-700 border-neutral-300' },
   maintenance: { label: 'Fix', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
   replace: { label: 'Replace', cls: 'bg-rose-100 text-rose-700 border-rose-300' },
   add: { label: 'Add', cls: 'bg-sky-100 text-sky-800 border-sky-300' },
@@ -133,7 +134,7 @@ export default function AuditCapture({ code }: { code: string }) {
   async function addAllOrg() {
     const chosen = orgItems.filter((_: any, i: number) => orgPick[i])
     for (const it of chosen) {
-      const kind = (it.severity === 'high' || it.severity === 'medium') ? 'maintenance' : 'add'
+      const kind = 'inventory'
       const note = [it.condition, it.size ? 'Size: ' + it.size : ''].filter(Boolean).join(' - ')
       await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, qty: Math.max(1, it.count || 1), photoUrl: it.photo || orgPhotos[0] || '', photos: it.photo ? [it.photo] : [], ai: it }) })
     }
