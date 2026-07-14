@@ -287,7 +287,7 @@ export function AuditDesk() {
           {visible.filter(x => (rollupBuilding(x.building)) === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
           <div className="flex items-center gap-3 px-3.5 py-2.5">
-            <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => openAudit(a)} className="text-left flex-1 min-w-0">
+            <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-left flex-1 min-w-0">
               <span className="text-sm font-semibold text-ink">{a.unit}</span>
               {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}{a.nextCheckout ? <span className="ml-2 text-[10px] text-amber-700">next checkout {a.nextCheckout.slice(5)}</span> : <span className="ml-2 text-[10px] text-neutral-300">no upcoming checkout</span>}
             </button>
@@ -298,7 +298,7 @@ export function AuditDesk() {
             <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
             <button onClick={() => markComplete(a, a.status === 'completed')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{a.status === 'completed' ? 'Reopen' : 'Mark complete'}</button>
             <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>
-            <button onClick={() => openAudit(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{openId === a.id ? 'Close' : 'Review'}</button>
+            <button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{openId === a.id ? 'Close' : 'Review'}</button>
           </div>
           {openId === a.id ? (
             <div className="border-t border-line px-3.5 py-3 space-y-3 bg-neutral-50/50">
