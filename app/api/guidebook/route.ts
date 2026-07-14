@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const listingId = str(body?.listingId)
   const selectedRecs = Array.isArray(body?.selectedRecs) ? body.selectedRecs.map((x: any) => String(x).trim()).filter(Boolean) : []
+  const selectedAuditHowTos: any[] = Array.isArray(body?.selectedAuditHowTos) ? body.selectedAuditHowTos.slice(0, 10).map((x: any) => ({ title: String(x && x.title || '').slice(0, 120), body: String(x && x.body || '').slice(0, 600) })).filter((x: any) => x.title && x.body) : []
   const force = body?.force === true
   const answers = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
   const theme = str(body?.theme) || 'editorial'
@@ -222,6 +223,7 @@ address: ${str(l.address_full)}
 check-in ${fmtTime(l.ci) || '4 PM'} / check-out ${fmtTime(l.co) || '10 AM'} (always show times in this friendly local format, never 24-hour)
 amenities: ${(Array.isArray(l.amenities) ? l.amenities : []).slice(0, 40).join(', ')}
 ${photoMeta.some(p => p.category === 'appliance' && p.label) ? 'APPLIANCES PHOTOGRAPHED BY THE OPERATOR (write a houseGuide how-to item for EACH): ' + photoMeta.filter(p => p.category === 'appliance' && p.label).map(p => p.label).join(', ') : ''}
+${selectedAuditHowTos.length ? 'FAQ / HOW-TOS FROM THE PROPERTY AUDIT (authoritative - include EACH as its own houseGuide item; title = the item, body = the steps): ' + selectedAuditHowTos.map((h: any) => h.title + ' :: ' + h.body).join(' | ') : ''}
 LISTING DESCRIPTION (context, do not copy):
 ${summary}
 ${praise.length ? 'WHAT GUESTS LOVED (weave the themes in naturally, never quote):\n' + praise.map(p => '- ' + p).join('\n') : ''}
@@ -234,6 +236,15 @@ ${JSON.stringify(fallback)}`
     const text = await anthropic(key, { model: MODEL, max_tokens: 4500, system: SYSTEM, messages: [{ role: 'user', content }] })
     const parsed = parseJson(text || '')
     if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
+  }
+
+  if (selectedAuditHowTos.length) {
+    const hg: any = (sections && sections.houseGuide && typeof sections.houseGuide === 'object') ? sections.houseGuide : { items: [] }
+    const hitems: any[] = Array.isArray(hg.items) ? hg.items.slice() : []
+    const nrm = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+    const have = hitems.map((x: any) => nrm(x && x.title))
+    for (const h of selectedAuditHowTos) { const k = nrm(h.title); if (k && !have.some((e: string) => e === k || e.indexOf(k) >= 0 || k.indexOf(e) >= 0)) { hitems.unshift({ title: h.title, body: h.body }); have.push(k) } }
+    sections.houseGuide = { ...hg, items: hitems.slice(0, 8) }
   }
 
   // LOCAL PAGES ARE MANDATORY: refill from the building guide if the AI came back empty.
