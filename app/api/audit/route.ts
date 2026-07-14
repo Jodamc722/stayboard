@@ -271,6 +271,7 @@ export async function POST(req: NextRequest) {
     const f = body.fields && typeof body.fields === 'object' ? body.fields : {}
     const upd: Record<string, any> = { updated_at: new Date().toISOString() }
     if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
+    if (f.qty !== undefined && Number.isFinite(Number(f.qty))) upd.qty = Math.max(1, Math.min(99, Number(f.qty)))
     if (typeof f.brand === 'string' || typeof f.size === 'string' || typeof f.howTo === 'string') { const d: any = (item.details && typeof item.details === 'object') ? { ...item.details } : {}; if (typeof f.brand === 'string') d.brand = f.brand.slice(0, 120); if (typeof f.size === 'string') d.size = f.size.slice(0, 120); if (typeof f.howTo === 'string') d.howTo = f.howTo.slice(0, 2000); upd.details = d }
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
