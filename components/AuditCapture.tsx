@@ -236,6 +236,16 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
     setIedBusy(false)
   }
+  function quickTags(r: string): string[] {
+    const s = (r || '').toLowerCase()
+    if (/bath|shower|ensuite|powder| wc|toilet/.test(s)) return ['His & Hers sinks', 'Single sink', 'Double vanity', 'Walk-in shower', 'Tub/shower combo', 'Soaking tub', 'Bidet', 'Hair dryer', 'Heated floor']
+    if (/closet|wardrobe|dressing/.test(s)) return ['Walk-in', 'Reach-in', 'Hanging rods', 'Shelving', 'Safe', 'Full-length mirror']
+    if (/kitchen|kitchenette/.test(s)) return ['Island', 'Dishwasher', 'Coffee maker', 'Microwave', 'Full-size fridge', 'Oven/range', 'Wine fridge', 'Bar seating']
+    if (/living|lounge|family|den|great room/.test(s)) return ['Smart TV', 'Sofa bed', 'Fireplace', 'Dining table', 'Balcony access']
+    if (/balcony|patio|terrace|deck|outdoor|yard|pool/.test(s)) return ['Seating', 'Grill / BBQ', 'Ocean view', 'City view', 'Dining set', 'Lounge chairs']
+    if (/bed|bedroom|studio|primary|master/.test(s)) return ['King bed', 'Queen bed', 'Full bed', 'Twin beds', 'Bunk beds', 'Smart TV', 'Walk-in closet', 'Reach-in closet', 'Ensuite bath', 'Balcony access', 'Desk', 'Ceiling fan']
+    return ['Smart TV', 'Ceiling fan', 'Closet', 'Window A/C', 'Balcony access']
+  }
   async function addTag(room: string, name: string) {
     if (!name.trim()) return
     setTagBusy(true)
@@ -353,7 +363,7 @@ export default function AuditCapture({ code }: { code: string }) {
                     {roomItems.filter(it => it.kind === 'tag').map(it => (
                       <span key={it.id} className="inline-flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-full bg-violet-100 text-violet-700">{it.title}<button onClick={() => removeTag(it)} className="text-violet-400 leading-none px-0.5">×</button></span>
                     ))}
-                    {['King bed', 'Queen bed', 'Walk-in closet', 'Reach-in closet', 'Ensuite bath', 'Shower', 'Tub', 'Balcony', 'Desk', 'Smart TV'].filter(q => !roomItems.some(it => it.kind === 'tag' && it.title === q)).map(q => (
+                    {quickTags(room).filter(q => !roomItems.some(it => it.kind === 'tag' && it.title === q)).map(q => (
                       <button key={q} onClick={() => addTag(room, q)} disabled={tagBusy} className="text-[12px] px-2 py-1 rounded-full border border-neutral-300 text-neutral-600 disabled:opacity-50">+ {q}</button>
                     ))}
                   </div>
