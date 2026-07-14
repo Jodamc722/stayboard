@@ -228,10 +228,7 @@ export default function AuditCapture({ code }: { code: string }) {
   async function addSug(s: any, i: number) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: s.room || 'General', kind: 'add', title: s.title, qty: s.qty || 1, note: s.reason || '' }) }); setSugAdded(prev => ({ ...prev, [i]: true })); await load() } catch { alert('Failed - retry.') }
   }
-  function openIed(it: any) {
-    const d = (it && it.details) || {}
-    setIedId(it.id); setIedT(it.title || ''); setIedB(d.brand || ''); setIedSz(d.size || ''); setIedN(it.note || '')
-  }
+  function openIed(it: any) { const d = (it && it.details) || {}; setIedId(it.id); setIedT(it.title || ''); setIedB(d.brand || ''); setIedSz(d.size || ''); setIedN(it.note || '') }
   async function saveIed(it: any) {
     setIedBusy(true)
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
@@ -354,7 +351,6 @@ export default function AuditCapture({ code }: { code: string }) {
                           <button onClick={() => runOrganize(orgPhotos, orgAnswers)} disabled={orgBusy} className="mt-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">Re-analyze with answers</button>
                         </div>
                       ) : null}
-                  </div>
                       {orgItems.length > 0 ? (
                         <div>
                           <div className="text-[11px] font-semibold text-indigo-800 mb-1">{orgItems.filter((_: any, i: number) => orgPick[i]).length} of {orgItems.length} items</div>
@@ -418,7 +414,7 @@ export default function AuditCapture({ code }: { code: string }) {
                   ) : null}</div> : null}
                 </div>
                 {roomItems.map(it => (
-                  <div key={it.id} className="rounded-lg border border-neutral-100"><div className="flex gap-2.5 p-2">
+                  <div key={it.id} className="flex flex-wrap gap-2.5 rounded-lg border border-neutral-100 p-2">
                     {it.photo_url ? <img src={it.photo_url} alt="" className="w-14 h-14 rounded-md object-cover shrink-0" /> : <div className="w-14 h-14 rounded-md bg-neutral-100 shrink-0" />}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -428,23 +424,9 @@ export default function AuditCapture({ code }: { code: string }) {
                       {it.note ? <div className="text-[11px] text-neutral-500 mt-0.5">{it.note}</div> : null}
                       <div className="text-[10px] text-neutral-400 mt-0.5">{it.status === 'task_created' ? 'Task created in Breezeway \u2713' : it.status}</div>
                     </div>
-                    {!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}
+                    {!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}{iedId === it.id ? (<div className="w-full mt-1 space-y-1"><input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><div className="flex gap-1"><button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button><button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button></div></div>) : null}
                   </div>
-                    {iedId === it.id ? (
-                      <div className="px-2 pb-2 space-y-1">
-                        <input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
-                        <input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
-                        <input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
-                        <input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
-                        <div className="flex gap-1">
-                          <button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button>
-                          <button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button>
-                        </div>
-                      </div>
-                    ) : null}
-                  
-                </div>
-              ))}
+                ))}
                 <div>
                   {!done && !sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
                   {!done && sug[room] && sug[room].length > 0 ? (
