@@ -70,6 +70,12 @@ export default function AuditCapture({ code }: { code: string }) {
   const [gapBusy, setGapBusy] = useState(false)
   const [sugOpen, setSugOpen] = useState(false)
   const [sugAdded, setSugAdded] = useState<Record<number, boolean>>({})
+  const [iedId, setIedId] = useState('')
+  const [iedT, setIedT] = useState('')
+  const [iedB, setIedB] = useState('')
+  const [iedSz, setIedSz] = useState('')
+  const [iedN, setIedN] = useState('')
+  const [iedBusy, setIedBusy] = useState(false)
   const [orgQuestions, setOrgQuestions] = useState<string[]>([])
   const [orgAnswers, setOrgAnswers] = useState('')
   const [orgPhotos, setOrgPhotos] = useState<string[]>([])
@@ -128,6 +134,7 @@ export default function AuditCapture({ code }: { code: string }) {
   async function onStage(e: any) {
     const files = e.target.files ? Array.from(e.target.files) : []
     if (!files.length || !orgRoom) return
+    if (orgPhotos.length >= 10) { alert('Max 10 photos reached - tap Analyze.'); return }
     setOrgBusy(true)
     try {
       const uploaded = await Promise.all(files.slice(0, 10).map(async (f: any) => {
@@ -135,7 +142,7 @@ export default function AuditCapture({ code }: { code: string }) {
         try { const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json(); return (j && j.url) ? j.url : null } catch { return null }
       }))
       const newUrls = uploaded.filter(Boolean) as string[]
-      setOrgPhotos(prev => [...prev, ...newUrls])
+      setOrgPhotos(prev => [...prev, ...newUrls].slice(0, 10))
     } catch {}
     setOrgBusy(false)
   }
@@ -220,6 +227,15 @@ export default function AuditCapture({ code }: { code: string }) {
   }
   async function addSug(s: any, i: number) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: s.room || 'General', kind: 'add', title: s.title, qty: s.qty || 1, note: s.reason || '' }) }); setSugAdded(prev => ({ ...prev, [i]: true })); await load() } catch { alert('Failed - retry.') }
+  }
+  function openIed(it: any) {
+    const d = (it && it.details) || {}
+    setIedId(it.id); setIedT(it.title || ''); setIedB(d.brand || ''); setIedSz(d.size || ''); setIedN(it.note || '')
+  }
+  async function saveIed(it: any) {
+    setIedBusy(true)
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
+    setIedBusy(false)
   }
   async function saveOrder(room: string) {
     if (!orderName.trim()) { alert('Add an item name.'); return }
@@ -327,7 +343,7 @@ export default function AuditCapture({ code }: { code: string }) {
                     <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
                     <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
                   </div>
-                  {orgRoom === room && orgPhotos.length ? <button onClick={buildFromStaged} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{orgBusy ? 'Analyzing ' + orgPhotos.length + ' photos…' : '✨ Build inventory from ' + orgPhotos.length + ' photos'}</button> : null}
+                  {orgRoom === room && orgPhotos.length ? <button onClick={buildFromStaged} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{orgBusy ? 'Analyzing ' + orgPhotos.length + ' photos…' : (orgPhotos.length >= 10 ? '✨ Analyze' : ('✨ Build inventory from ' + orgPhotos.length + ' photos'))}</button> : null}
                   {orgRoom === room && (orgItems.length > 0 || orgQuestions.length > 0) ? (
                     <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 space-y-2">
                       {orgQuestions.length > 0 ? (
@@ -338,6 +354,7 @@ export default function AuditCapture({ code }: { code: string }) {
                           <button onClick={() => runOrganize(orgPhotos, orgAnswers)} disabled={orgBusy} className="mt-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">Re-analyze with answers</button>
                         </div>
                       ) : null}
+                  </div>
                       {orgItems.length > 0 ? (
                         <div>
                           <div className="text-[11px] font-semibold text-indigo-800 mb-1">{orgItems.filter((_: any, i: number) => orgPick[i]).length} of {orgItems.length} items</div>
@@ -401,7 +418,7 @@ export default function AuditCapture({ code }: { code: string }) {
                   ) : null}</div> : null}
                 </div>
                 {roomItems.map(it => (
-                  <div key={it.id} className="flex gap-2.5 rounded-lg border border-neutral-100 p-2">
+                  <div key={it.id} className="rounded-lg border border-neutral-100"><div className="flex gap-2.5 p-2">
                     {it.photo_url ? <img src={it.photo_url} alt="" className="w-14 h-14 rounded-md object-cover shrink-0" /> : <div className="w-14 h-14 rounded-md bg-neutral-100 shrink-0" />}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -411,8 +428,20 @@ export default function AuditCapture({ code }: { code: string }) {
                       {it.note ? <div className="text-[11px] text-neutral-500 mt-0.5">{it.note}</div> : null}
                       <div className="text-[10px] text-neutral-400 mt-0.5">{it.status === 'task_created' ? 'Task created in Breezeway \u2713' : it.status}</div>
                     </div>
-                    {it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}
+                    {!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}
                   </div>
+                    {iedId === it.id ? (
+                      <div className="px-2 pb-2 space-y-1">
+                        <input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                        <input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                        <input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                        <input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
+                        <div className="flex gap-1">
+                          <button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button>
+                          <button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button>
+                        </div>
+                      </div>
+                    ) : null}
                 ))}
                 <div>
                   {!done && !sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
