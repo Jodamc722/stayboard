@@ -67,7 +67,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orderNote, setOrderNote] = useState('')
   const [orderBusy, setOrderBusy] = useState(false)
   const [sugList, setSugList] = useState<any[]>([])
-  const [sugBusy, setSugBusy] = useState(false)
+  const [gapBusy, setGapBusy] = useState(false)
   const [sugOpen, setSugOpen] = useState(false)
   const [sugAdded, setSugAdded] = useState<Record<number, boolean>>({})
   const [orgQuestions, setOrgQuestions] = useState<string[]>([])
@@ -214,9 +214,9 @@ export default function AuditCapture({ code }: { code: string }) {
     setFaqBusy(false)
   }
   async function loadSuggest() {
-    setSugBusy(true); setSugOpen(true)
+    setGapBusy(true); setSugOpen(true)
     try { const r = await fetch('/api/audit/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) }); const j = await r.json(); setSugList((j && j.suggestions) || []); setSugAdded({}) } catch { alert('Failed - retry.') }
-    setSugBusy(false)
+    setGapBusy(false)
   }
   async function addSug(s: any, i: number) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: s.room || 'General', kind: 'add', title: s.title, qty: s.qty || 1, note: s.reason || '' }) }); setSugAdded(prev => ({ ...prev, [i]: true })); await load() } catch { alert('Failed - retry.') }
@@ -467,9 +467,9 @@ export default function AuditCapture({ code }: { code: string }) {
         )
       })}
       <div className="mt-4 rounded-xl border border-neutral-200 bg-white overflow-hidden">
-        <button onClick={loadSuggest} disabled={sugBusy} className="w-full text-left px-3.5 py-2.5 text-sm font-semibold text-neutral-800 flex items-center justify-between">
+        <button onClick={loadSuggest} disabled={gapBusy} className="w-full text-left px-3.5 py-2.5 text-sm font-semibold text-neutral-800 flex items-center justify-between">
           <span>✨ Suggest missing items</span>
-          <span className="text-xs text-neutral-400">{sugBusy ? 'Thinking…' : (sugOpen ? 'Refresh' : 'Tap')}</span>
+          <span className="text-xs text-neutral-400">{gapBusy ? 'Thinking…' : (sugOpen ? 'Refresh' : 'Tap')}</span>
         </button>
         {sugOpen && sugList.length ? (
           <div className="px-3.5 pb-3 space-y-1.5">
