@@ -266,6 +266,7 @@ if (mvDate < c.date) {
           c.syncStatus = 'synced'
           c.breezewayTaskId = String(mv.id)
           c.breezewayReportUrl = mv.report_url ? String(mv.report_url) : null
+          c.cleanMinutes = (mv.total_minutes != null && Number(mv.total_minutes) > 0) ? Number(mv.total_minutes) : null
           if (mvIds.length) c.assignedIds = mvIds
           if (mvNames.length) c.assignedNames = mvNames
           extendedTaskIds.add(String(mv.id))
@@ -280,6 +281,7 @@ c.breezewayTaskId = mvTaskId
 c.taskStatus = mvStatus
 c.breezewayReportUrl = mvReport
 c.movedTo = mvDate
+c.cleanMinutes = (mv.total_minutes != null && Number(mv.total_minutes) > 0) ? Number(mv.total_minutes) : null
 movedIns.push({ ...c, date: mvDate, movedTo: null, movedFrom: c.date, ghost: false, syncStatus: 'synced', breezewayTaskId: mvTaskId, taskStatus: mvStatus, breezewayReportUrl: mvReport, assignedIds: mvIds.length ? mvIds : c.assignedIds, assignedNames: mvNames.length ? mvNames : c.assignedNames })
 }
 cleans.push(...movedIns)
