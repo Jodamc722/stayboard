@@ -21,11 +21,12 @@ const getPortfolioData = unstable_cache(async () => {
   const sb = supabaseAdmin()
   // SLIM raw: full `raw` for 285 listings is tens of MB — cold hits (every deploy resets the
   // cache) took 10s+ and the page looked dead. Pull only the sub-fields computeScore reads.
-  const [{ data: listings }, { data: work }] = await Promise.all([
+  const [{ data: listings }, { data: work }, { data: revs }] = await Promise.all([
     sb.from('guesty_listings')
       .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
       .limit(1000),
     sb.from('field_requests').select('building').in('status', ['open', 'in_progress']).limit(1000),
+    sb.from('guesty_reviews').select('listing_id, rating, excluded_from_score').limit(20000),
   ])
   // Rebuild the slim raw object computeScore expects.
   const slimRaw = (l: any) => ({
@@ -36,6 +37,11 @@ const getPortfolioData = unstable_cache(async () => {
     airbnb: { cancellationPolicy: l.airbnbCancel }, bookingcom: { cancellationPolicy: l.bookingCancel },
   })
 
+  const _cnt: Record<string, number> = {}
+  const _sum: Record<string, number> = {}
+  ;(revs ?? []).forEach((r: any) => { if (r.excluded_from_score) return; if (r.rating == null) return; const id = String(r.listing_id); _sum[id] = (_sum[id] || 0) + Number(r.rating); _cnt[id] = (_cnt[id] || 0) + 1 })
+  const _sib: Record<string, string[]> = {}
+  ;(listings ?? []).forEach((l: any) => { const bb = rollupBuilding(l.building); if (!bb) return; const arr = _sib[bb] || (_sib[bb] = []); const am = Array.isArray(l.amenities) ? l.amenities : []; for (const a of am) if (!arr.includes(a)) arr.push(a) })
   const workByBuilding: Record<string, number> = {}
   ;(work ?? []).forEach((w: any) => {
     const b = rollupBuilding(w.building)
@@ -55,7 +61,7 @@ const getPortfolioData = unstable_cache(async () => {
     if (!dead) {
       b.active += 1
       const isBeach = /beach/i.test(String(l.address_city || ''))
-      b.scores.push(computeScore({ ...l, raw: slimRaw(l) }, { isBeach }).overall)
+      b.scores.push(computeScore({ ...l, raw: slimRaw(l) }, { isBeach, siblingAmenities: _sib[rollupBuilding(l.building)] || [], avgRating: _cnt[String(l.id)] ? Math.round((_sum[String(l.id)] / _cnt[String(l.id)]) * 100) / 100 : null, reviewCount: _cnt[String(l.id)] || 0 }).overall)
     }
     if (!b.city && l.address_city) b.city = l.address_city
   })
