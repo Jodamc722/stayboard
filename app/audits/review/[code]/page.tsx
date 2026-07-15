@@ -97,7 +97,7 @@ export default function AuditReviewPage({ params }: { params: { code: string } }
           <h1 className="text-xl font-bold text-neutral-900">{data.listing.name}</h1>
           <span className={'text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ' + (isOnboarding ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700')}>{isOnboarding ? 'Onboarding' : 'Quality'}</span>
         </div>
-        <div className="text-xs text-neutral-400 mt-0.5">{data.listing.building || ''}{data.listing.building ? ' · ' : ''}{inv.length} items · {data.audit.status}</div>
+        <div className="text-xs text-neutral-400 mt-0.5">{data.listing.building && data.listing.building !== data.listing.name ? data.listing.building + ' · ' : ''}{inv.length} items · {data.audit.status}</div>
       </div>
       {dupes.length ? (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
