@@ -27,10 +27,13 @@ const GROWTH = 10 // % buffer on projections (matches weekly planner default)
 const shortTeamName = (n: string) => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
 const statusChip = (v: string) => { const s = String(v || '').toLowerCase(); if (/req\s*off/.test(s)) return 'bg-rose-100 text-rose-700'; if (/on\s*call/.test(s)) return 'bg-yellow-100 text-yellow-800'; if (/off/.test(s)) return 'bg-neutral-100 text-neutral-500'; if (/work/.test(s)) return 'bg-green-100 text-green-700'; return 'bg-white text-neutral-500' }
 const sunOf = (s: string) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() - d.getDay()); return d.toISOString().slice(0, 10) }
+const ET_HOUR_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }) // hoisted: constructing per row was expensive
+const _hubColorCache = new Map<string, string>()
 const HUB_COLOR = (hub: string) => {
+  const _c = _hubColorCache.get(hub); if (_c) return _c
   let h = 0; for (let i = 0; i < hub.length; i++) h = (h * 31 + hub.charCodeAt(i)) >>> 0
   const palette = ['bg-sky-100 text-sky-800', 'bg-violet-100 text-violet-800', 'bg-emerald-100 text-emerald-800', 'bg-amber-100 text-amber-800', 'bg-rose-100 text-rose-800', 'bg-cyan-100 text-cyan-800', 'bg-fuchsia-100 text-fuchsia-800', 'bg-lime-100 text-lime-800', 'bg-indigo-100 text-indigo-800', 'bg-orange-100 text-orange-800']
-  return palette[h % palette.length]
+  const _cls = palette[h % palette.length]; _hubColorCache.set(hub, _cls); return _cls
 }
 function fmtMins(m: number): string { const h = Math.floor(m / 60); const mm = m % 60; return h > 0 ? h + 'h' + (mm ? ' ' + mm + 'm' : '') : mm + 'm' }
 // Benchmark clean minutes by bedroom count (studio 45-90, 1BR 60-90, 2BR 90-120, 3BR+ 120-180).
@@ -252,7 +255,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       let col = '#cbd5e1'
       const isToday = !!data && data.today === c.date
       if (isToday && !c.vendor) {
-        const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(new Date()))
+        const h = Number(ET_HOUR_FMT.format(new Date()))
         if (h >= 15) { col = '#ef4444'; tip = 'Not started - running late' }
         else if (h >= 14) { col = '#f59e0b'; tip = 'Not started - due soon' }
       }
@@ -413,6 +416,7 @@ async function pushBlocks() {
 
   const rangeLabel = data ? (view === 'day' ? new Date(data.weekStart + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}`) : ''
   const allSelected = rows.length > 0 && rows.every(c => selected[keyOf(c)])
+  const guestyOnlyCount = rows.filter(r => r.syncStatus === 'guesty-only').length
 
   const tabsBar = (
     <div className="inline-flex items-center gap-1 border border-line rounded-xl p-1 bg-white">
@@ -523,8 +527,8 @@ async function pushBlocks() {
             </label>
           )}
 {rows.length > 0 && <span className="ml-3 text-[10px] text-muted"><span className="text-emerald-500 mr-1">●</span>in progress <span className="text-emerald-600 ml-2 mr-1">✓</span>finished <span className="text-neutral-300 ml-2 mr-1">○</span>not started</span>}
-          {rows.filter(r => r.syncStatus === 'guesty-only').length > 0 && (
-            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {rows.filter(r => r.syncStatus === 'guesty-only').length} clean{rows.filter(r => r.syncStatus === 'guesty-only').length === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
+          {guestyOnlyCount > 0 && (
+            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {guestyOnlyCount} clean{guestyOnlyCount === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
           )}
           {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">No checkouts for this day.</div> : (
             <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-sm">
