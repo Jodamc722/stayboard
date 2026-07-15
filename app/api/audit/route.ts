@@ -14,8 +14,8 @@ async function carryForwardItems(db: any, listingId: string, newAuditId: string)
   const prev = await db.from('property_audits').select('id').eq('listing_id', listingId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1)
   const prevId = prev.data && prev.data[0] && prev.data[0].id
   if (!prevId) return
-  const src = await db.from('audit_items').select('room,kind,item_type,title,qty').eq('audit_id', prevId).neq('status', 'dismissed').limit(500)
-  const rows = (src.data || []).map((x: any) => ({ audit_id: newAuditId, listing_id: listingId, room: x.room || null, kind: x.kind || 'replace', item_type: x.item_type || null, title: x.title || null, qty: x.qty || 1, status: 'open' }))
+  const src = await db.from('audit_items').select('room,kind,item_type,title,qty,note,photo_url,severity,details').eq('audit_id', prevId).neq('status', 'dismissed').limit(500)
+  const rows = (src.data || []).map((x: any) => ({ audit_id: newAuditId, listing_id: listingId, room: x.room || null, kind: x.kind || 'replace', item_type: x.item_type || null, title: x.title || null, qty: x.qty || 1, note: x.note || null, photo_url: x.photo_url || null, severity: x.severity || null, details: x.details || null, status: 'open' }))
   if (rows.length) await db.from('audit_items').insert(rows)
 }
 
@@ -288,9 +288,7 @@ export async function POST(req: NextRequest) {
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
     if (typeof f.room === 'string' && f.room) upd.room = f.room.slice(0, 80)
-    if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
     if (['low', 'medium', 'high'].includes(String(f.severity))) upd.severity = String(f.severity)
-    if (f.qty !== undefined) upd.qty = Math.max(1, Math.min(50, Number(f.qty) || 1))
     if (!audit && ['open', 'ordered', 'done', 'dismissed'].includes(String(f.status))) upd.status = String(f.status)
     const r = await db.from('audit_items').update(upd).eq('id', itemId).select('*').limit(1)
     if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
