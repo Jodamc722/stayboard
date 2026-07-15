@@ -561,7 +561,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* LOCAL — places / eats. Photo cards when imagery exists; big editorial cards when few items. */}
         {localSecs.map((sec: any) => {
           const items = (s[sec.key].items || []).slice(0, 6)
-          const anyPhoto = false
+          const anyPhoto = items.some((p: any) => p.photo)
           const few = items.length <= 3
           return (
             <Page key={sec.key} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
