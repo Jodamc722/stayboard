@@ -193,17 +193,21 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
     try {
       const { data: blocks } = await db.from('schedule_blocks').select('listing_id,orig_date,blocked_until').lte('orig_date', end).gte('blocked_until', start)
       const blk = (blocks || []) as any[]
-      if (blk.length) {
+      // BREEZEWAY IS SOURCE OF TRUTH: if the actual task is back on the ORIGINAL day (moved back in
+      // Breezeway, cleaned there, or the app-move was reversed), the local block is STALE — drop it so
+      // the clean follows Breezeway instead of showing a phantom on the moved-to day.
+      const _blk = blk.filter((b: any) => !mirror.some((t: any) => String(t.reference_property_id) === String(b.listing_id) && String(t.scheduled_date).slice(0, 10) === String(b.orig_date)))
+      if (_blk.length) {
         for (let i = cleans.length - 1; i >= 0; i--) {
           const c = cleans[i]
-          const b = blk.find(x => String(x.listing_id) === c.listingId && String(x.orig_date) === c.date)
+          const b = _blk.find(x => String(x.listing_id) === c.listingId && String(x.orig_date) === c.date)
           if (b) {
             const bu = String(b.blocked_until)
             if (bu >= start && bu <= end) { c.blockedFrom = c.date; c.date = bu; c.blocked = true; c.sameDayTurn = false }
             else { cleans.splice(i, 1) }
           }
         }
-        const incoming = blk.filter(b => { const bu = String(b.blocked_until); return bu >= start && bu <= end && !cleans.some(c => c.blocked && c.listingId === String(b.listing_id) && c.date === bu) })
+        const incoming = _blk.filter(b => { const bu = String(b.blocked_until); return bu >= start && bu <= end && !cleans.some(c => c.blocked && c.listingId === String(b.listing_id) && c.date === bu) })
         if (incoming.length) {
           const ids = Array.from(new Set(incoming.map(b => String(b.listing_id))))
           let minD = incoming[0].orig_date, maxD = incoming[0].orig_date
@@ -304,7 +308,9 @@ const m2 = meta[id]
 if (!m2) continue
 const ppl = Array.isArray(t.assignees) ? t.assignees : []
 const _lr: any = t.linked_reservation_id ? _resById[String(t.linked_reservation_id)] : null
-cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: _lr ? _lr.guest : null, movedFrom: (_lr && _lr.checkout && _lr.checkout !== d) ? _lr.checkout : null, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', cleanMinutes: (t.total_minutes != null && Number(t.total_minutes) > 0) ? Number(t.total_minutes) : null, bzOnly: !_lr })
+const _co = (_lr && _lr.checkout) ? String(_lr.checkout) : null
+const _extTo = (_co && _co > d) ? _co : null // guest's CURRENT checkout is AFTER this clean's day = they EXTENDED past it (tag Extended, not Moved-to-today)
+cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: _lr ? _lr.guest : null, movedFrom: (_co && _co < d) ? _co : null, extended: !!_extTo, extendedFrom: _extTo, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', cleanMinutes: (t.total_minutes != null && Number(t.total_minutes) > 0) ? Number(t.total_minutes) : null, bzOnly: !_lr })
 }
 } catch (e) { console.error('schedule: moved-reconcile failed', e) }
 
