@@ -47,12 +47,15 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   // Per-unit "reviews to respond" count (real reviews with no host reply), for quick auditing.
   const unitIds = units.map((u: any) => u.id)
   const notResponded: Record<string, number> = {}
+  const _sum: Record<string, number> = {}
+  const _cnt: Record<string, number> = {}
   try {
     const sb = supabaseAdmin()
     const { data: revs } = await sb.from('guesty_reviews').select('listing_id, rating, reply, raw, excluded_from_score').in('listing_id', unitIds).limit(5000)
     for (const r of (revs ?? [])) {
       if ((r as any).excluded_from_score) continue
       if ((r as any).rating == null) continue
+      const _rid = String((r as any).listing_id); _sum[_rid] = (_sum[_rid] || 0) + Number((r as any).rating); _cnt[_rid] = (_cnt[_rid] || 0) + 1
       if (hasHostReply((r as any).raw, (r as any).reply)) continue
       const id = (r as any).listing_id
       notResponded[id] = (notResponded[id] || 0) + 1
@@ -71,7 +74,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
   const scored = units.map((l: any) => {
     const dead = DEAD.includes(String(l.status || '').toLowerCase())
-    const res = computeScore(l, { isBeach, siblingAmenities })
+    const res = computeScore(l, { isBeach, siblingAmenities, avgRating: _cnt[String(l.id)] ? Math.round((_sum[String(l.id)] / _cnt[String(l.id)]) * 100) / 100 : null, reviewCount: _cnt[String(l.id)] || 0 })
     return { l, dead, score: res.overall, suggestions: res.amenities.suggestions, mustFix: res.amenities.mustFix }
   }).sort((a, b) => {
     if (a.dead !== b.dead) return a.dead ? 1 : -1
