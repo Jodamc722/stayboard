@@ -109,9 +109,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
   const T = useMemo(() => function T({ path, value, className, rows = 2 }: { path: string[]; value: string; className?: string; rows?: number }) {
     const { edit, set } = _live.current
+    const v: any = typeof value === 'string' ? value : ((value && (value as any).body) || '')
     return edit
-      ? <textarea rows={rows} value={value || ''} onChange={(e: any) => set(path, e.target.value)} className={'w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px] ' + (className || '')} />
-      : <span className={className}>{value}</span>
+      ? <textarea rows={rows} value={v || ''} onChange={(e: any) => set(path, e.target.value)} className={'w-full bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1 text-[13px] ' + (className || '')} />
+      : <span className={className}>{v}</span>
   }, [])
 
   // v3.4: EVERY fixed label/caption in the book is editable. Overrides live in sections._labels
