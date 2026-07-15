@@ -36,7 +36,7 @@ async function buildIntelBlock(listingId: string): Promise<string | null> {
     const worst = low[0]
     const blob = low.map((r) => String(r.content || '')).join(' ').toLowerCase()
     const checks: string[] = []
-    for (const m of INTEL_CHECK_MAP) if (m.keys.some((k) => blob.includes(k))) checks.push(m.item)
+    for (const m of INTEL_CHECK_MAP) if (m.keys.some((k) => new RegExp('\\b' + k.trim()).test(blob))) checks.push(m.item)
     if (!checks.length) checks.push('Walk every room: cleanliness, damage, missing items')
     const excerpt = String(worst.content || '').replace(/\s+/g, ' ').trim().slice(0, 220)
     const when = String(worst.created_at || '').slice(0, 10)
