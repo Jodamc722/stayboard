@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
           await supabaseAdmin().from('breezeway_tasks_sync').upsert({ ..._mapped, rate_paid: Number.isFinite(_rp) ? _rp : null, reference_property_id: _mapped.reference_property_id || listingId, synced_at: new Date().toISOString() }, { onConflict: 'id' })
         }
       } catch {}
+      try { await supabaseAdmin().from('schedule_staged').delete().eq('listing_id', listingId).eq('date', date) } catch {}
       let descriptionSaved: boolean | null = null
       if (description) { try { const chk = await retrieveBreezewayTask(clean.id); const live = String(chk?.data?.description || ''); descriptionSaved = live.includes(description.slice(0, 24)) } catch { descriptionSaved = null } }
       results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved } as any)
