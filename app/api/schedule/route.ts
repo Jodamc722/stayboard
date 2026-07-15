@@ -147,7 +147,7 @@ let mirror: any[] = []
 try {
 const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
 mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
-} catch { /* mirror table optional */ }
+} catch (e) { console.error('schedule: mirror pull failed', e) }
 
 let enrichedOk = 0
 // MIRROR-FIRST (both views): same-day task match from breezeway_tasks_sync — instant, no API.
@@ -185,7 +185,7 @@ if (ppl && ppl.length) {
 c.assignedIds = ppl.map(p => Number(p.id)).filter(n => Number.isFinite(n))
 c.assignedNames = ppl.map(p => String(p.name || '')).filter(Boolean)
 }
-} catch { /* leave unassigned */ }
+} catch (e) { console.error('schedule: live task lookup failed', e) }
 }))
 }
 }
@@ -228,7 +228,7 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
           }
         }
       }
-    } catch { /* schedule_blocks not present yet — ignore */ }
+    } catch (e) { console.error('schedule: blocks pass failed', e) }
 
     // BLOCKED/MOVED rows are built AFTER the mirror pass above, so they always rendered with empty
     // assignees even when the Breezeway task (moved to the new date) was assigned. Re-match them
@@ -294,7 +294,7 @@ if (_rids.length) {
 const { data: _rr } = await db.from('guesty_reservations').select('id,guest_name,check_out').in('id', _rids)
 for (const _r of (_rr || []) as any[]) _resById[String(_r.id)] = { guest: _r.guest_name || null, checkout: String(_r.check_out || '').slice(0, 10) }
 }
-} catch {}
+} catch (e) { console.error('schedule: reservation hydrate failed', e) }
 for (const t of mirror) {
       if (extendedTaskIds.has(String(t.id))) continue
 const d = String(t.scheduled_date).slice(0, 10)
@@ -308,7 +308,7 @@ const ppl = Array.isArray(t.assignees) ? t.assignees : []
 const _lr: any = t.linked_reservation_id ? _resById[String(t.linked_reservation_id)] : null
 cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: _lr ? _lr.guest : null, movedFrom: (_lr && _lr.checkout && _lr.checkout !== d) ? _lr.checkout : null, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, newDoorCode: null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', bzOnly: !_lr })
 }
-} catch { /* mirror table optional */ }
+} catch (e) { console.error('schedule: moved-reconcile failed', e) }
 
 // MANUAL CLEANS: tasks added from the board (create-clean logs them). Breezeway is a co-source
 // of truth, so board-added tasks show on the calendar even without a Guesty checkout.
@@ -320,7 +320,7 @@ if (cleans.some(c => c.listingId === id && c.date === d)) continue
 const m = meta[id]
 cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other', date: d, guestOut: null, nights: null, bedrooms: m?.bedrooms ?? null, checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m?.doorCode || null, newDoorCode: null, cleaningTime: m?.cleaningTime || null, vendor: m?.vendor || null, assignedIds: [], assignedNames: [], syncStatus: 'synced', breezewayTaskId: mr.breezeway_task_id ? String(mr.breezeway_task_id) : null, manual: true })
 }
-} catch { /* schedule_manual_cleans not created yet - run the SQL */ }
+} catch (e) { console.error('schedule: manual cleans pass failed', e) }
 // MISSING CLEAN: a confirmed Guesty checkout with NO Breezeway departure task on any
 // day (same-day + cross-day matching both failed) = the clean was never scheduled.
 for (const c of cleans) { if (c.syncStatus === 'guesty-only' && c.guestOut && !c.vendor && c.date >= today && c.date <= addDays(today, 14)) c.missing = true }
@@ -344,7 +344,7 @@ if (breezewayConfigured()) {
 try {
 const people = await listBreezewayPeople()
 housekeepers = people.filter(p => p.departments.length === 0 || p.departments.includes('housekeeping')).map(p => ({ id: p.id, name: p.name, region: p.region })).sort((a, b) => a.name.localeCompare(b.name))
-} catch { /* empty */ }
+} catch (e) { console.error('schedule: people list failed', e) }
 }
 
 return {
@@ -378,6 +378,6 @@ const payload = await compute(view, start, end, today)
         }
       }
     }
-  } catch { /* staged overlay optional */ }
+  } catch (e) { console.error('schedule: staged overlay failed', e) }
   return NextResponse.json(payload)
 }
