@@ -96,7 +96,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tags, setTags] = useState<string[]>(() => suggestTags(amenities, city, building))
+  const [tags, setTags] = useState<string[]>([])
   const [seeds, setSeeds] = useState<number[]>([])
   const [uploads, setUploads] = useState<{ url: string; name: string }[]>([])
   const [pushing, setPushing] = useState<number | null>(null)
@@ -158,9 +158,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
         imgs = await loadImages(uploads.map(u => u.url), false)
         if (imgs.length < 1) throw new Error('Could not read the uploaded photos. Try different files.')
       } else {
-        const chosen = await selectUrls()
-        imgs = await loadImages(chosen, true)
-        if (imgs.length < 1) throw new Error('Could not load this listing’s photos. Upload your own photos above for the best quality.')
+        throw new Error('Please upload photos first - hero images are built from your uploads only.')
       }
       const newSeeds = Array.from({ length: 3 }, () => Math.floor(Math.random() * 1e9))
       setSeeds(newSeeds)
@@ -251,18 +249,6 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
-            {[0, 1, 2].map(i => (
-              <div key={i}>
-                <label className="block text-[11px] font-semibold text-muted mb-1">Tag {i + 1}</label>
-                <div className="relative">
-                  <input value={tags[i] || ''} onChange={e => setTag(i, e.target.value)} placeholder="e.g. Pool Access"
-                    className="w-44 text-[13px] rounded-lg border border-line bg-app pl-2.5 pr-7 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-                  {!!(tags[i] || '').trim() && (
-                    <button type="button" onClick={() => setTag(i, '')} title="Remove this tag" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-rose-600"><X size={13} /></button>
-                  )}
-                </div>
-              </div>
-            ))}
             <button onClick={generate} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">
               {busy ? <Sparkles size={14} className="animate-pulse" /> : <RefreshCw size={14} />} {busy ? 'Building…' : seeds.length ? 'New ideas' : 'Generate ideas'}
             </button>
