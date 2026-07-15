@@ -88,6 +88,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const [shotIdx, setShotIdx] = useState(-1)
   const [shotMap, setShotMap] = useState<Record<number, string>>({})
   const [essBusy, setEssBusy] = useState(false)
+  const [basicsOpen, setBasicsOpen] = useState(false)
 
   async function load() {
     try {
@@ -119,6 +120,7 @@ export default function AuditCapture({ code }: { code: string }) {
   function roomCover(r: string) { const c = cfgByKey[roomKey(r)]; return c ? c.cover_photo_url : null }
 
   const isOnboarding = !!(data && data.audit && data.audit.auditType === 'onboarding')
+  const basicsDone = BASICS.every(b => items.some((it: any) => it.room === 'Unit basics' && it.kind === 'tag' && b.opts.indexOf(String(it.title || '')) >= 0))
   function startDraft(room: string, seed?: Partial<Draft>) {
     setDraft({ room, kind: (seed && seed.kind) || (isOnboarding ? 'inventory' : 'replace'), title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', photos: [], ai: null })
     setOpenRoom(room)
@@ -328,7 +330,7 @@ function quickTags(r: string): string[] {
     return ['Smart TV', 'Ceiling fan', 'Closet', 'Window A/C', 'Balcony access']
   }
   async function addTag(room: string, name: string) {
-    const nm = name.trim(); if (!nm) return
+    const nm = name.trim(); if (!nm || tagBusy) return
     if (room.indexOf(' — ') < 0) {
       const sub0 = /ensuite|bathroom/i.test(nm) ? (room + ' — Bathroom') : (/closet/i.test(nm) ? (room + ' — Closet') : '')
       if (sub0) {
@@ -446,7 +448,9 @@ function quickTags(r: string): string[] {
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
       {isOnboarding && !done ? (
         <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
-          <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Unit basics - confirm these first</div>
+          <div className="flex items-center justify-between mb-1"><div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold">Unit basics{basicsDone ? ' \u2713' : ' - confirm these first'}</div>{basicsDone ? <button onClick={() => setBasicsOpen(o => !o)} className="text-[11px] font-semibold text-indigo-600">{basicsOpen ? 'Done' : 'Edit'}</button> : null}</div>
+          {basicsDone && !basicsOpen ? <div className="flex flex-wrap gap-1">{BASICS.map(b => { const sel = items.find((it: any) => it.room === 'Unit basics' && it.kind === 'tag' && b.opts.indexOf(String(it.title || '')) >= 0); return sel ? <span key={b.cat} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-neutral-100 text-neutral-700">{sel.title}</span> : null })}</div> : null}
+          {basicsDone && !basicsOpen ? null : <>
           {data.listing.bedrooms !== null || data.listing.bathrooms !== null ? <div className="text-[11px] text-neutral-400 mb-1.5">Listing says {data.listing.bedrooms !== null ? data.listing.bedrooms + ' bedroom ' : ''}{data.listing.bathrooms !== null ? '· ' + data.listing.bathrooms + ' bath' : ''} - is that right? Tap to confirm or correct.</div> : null}
           <div className="space-y-1.5">
             {BASICS.map(b => {
@@ -460,7 +464,7 @@ function quickTags(r: string): string[] {
                 </div>
               )
             })}
-          </div>
+          </div></>}
         </div>
       ) : null}
       <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
