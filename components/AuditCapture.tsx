@@ -85,6 +85,8 @@ export default function AuditCapture({ code }: { code: string }) {
   const [orgPick, setOrgPick] = useState<Record<number, boolean>>({})
   const [hint, setHint] = useState('')
   const [reBusy, setReBusy] = useState(false)
+  const [shotIdx, setShotIdx] = useState(-1)
+  const [shotMap, setShotMap] = useState<Record<number, string>>({})
 
   async function load() {
     try {
@@ -121,13 +123,16 @@ export default function AuditCapture({ code }: { code: string }) {
     setOpenRoom(room)
   }
 
-  function stageGallery(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]) } setOrgRoom(room); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
-  function stageCamera(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]) } setOrgRoom(room); if (camRef.current) { camRef.current.value = ''; camRef.current.click() } }
+  function stageGallery(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); setShotMap({}); setShotIdx(-1) } setOrgRoom(room); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
+  function stageCamera(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); setShotMap({}); setShotIdx(-1) } setOrgRoom(room); if (camRef.current) { camRef.current.value = ''; camRef.current.click() } }
   async function runOrganize(urls: string[], answers: string) {
+    const tagTitles = items.filter((x: any) => x.room === orgRoom && x.kind === 'tag').map((x: any) => String(x.title || ''))
+    const shotList = shotsFor(orgRoom, tagTitles)
+    const hints = Object.keys(shotMap).map(k => ({ photo: shotMap[Number(k)] || '', label: shotList[Number(k)] || '' })).filter(h => h.photo && h.label)
     if (!urls.length) return
     setOrgBusy(true)
     try {
-      const r = await fetch('/api/audit/organize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, room: orgRoom, photoUrls: urls, answers, tags: items.filter((x: any) => x.room === orgRoom && x.kind === 'tag').map((x: any) => (x.qty > 1 ? x.qty + 'x ' + x.title : x.title)) }) })
+      const r = await fetch('/api/audit/organize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, room: orgRoom, photoUrls: urls, answers, hints, tags: items.filter((x: any) => x.room === orgRoom && x.kind === 'tag').map((x: any) => (x.qty > 1 ? x.qty + 'x ' + x.title : x.title)) }) })
       const j = await r.json()
       const its = (j && j.items) || []
       setOrgItems(its); setOrgQuestions((j && j.questions) || [])
@@ -147,6 +152,7 @@ export default function AuditCapture({ code }: { code: string }) {
       }))
       const newUrls = uploaded.filter(Boolean) as string[]
       setOrgPhotos(prev => [...prev, ...newUrls].slice(0, 10))
+      if (shotIdx >= 0 && newUrls[0]) { const si = shotIdx; const u0 = newUrls[0]; setShotMap(m => ({ ...m, [si]: u0 })); setShotIdx(-1) }
     } catch {}
     setOrgBusy(false)
   }
@@ -250,7 +256,25 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
     setIedBusy(false)
   }
-  function quickTags(r: string): string[] {
+  function shotsFor(room: string, tagTitles: string[]): string[] {
+  const out: string[] = []
+  const has = (re: RegExp) => tagTitles.some(x => re.test(x))
+  const r = room.toLowerCase()
+  if (has(/tv|television/i) || r.indexOf('living') >= 0) { out.push('TV - wide shot'); out.push('TV - brand / model close-up'); out.push('TV remote') }
+  if (has(/bed|king|queen|full|twin/i) || r.indexOf('bedroom') >= 0 || r.indexOf('master') >= 0) out.push('Bed - full shot')
+  if (has(/thermostat/i)) out.push('Thermostat - close-up')
+  if (has(/closet/i) || r.indexOf('closet') >= 0) out.push('Closet - inside')
+  if (has(/shower|tub/i) || r.indexOf('bath') >= 0) { out.push('Shower / tub'); out.push('Vanity + sinks') }
+  if (r.indexOf('kitchen') >= 0) { out.push('Fridge - front + brand badge'); out.push('Stove / oven - brand close-up'); out.push('Microwave + dishwasher'); out.push('Coffee maker - close-up'); out.push('Utensil + knife drawers') }
+  if (r.indexOf('living') >= 0) out.push('Seating area - wide')
+  if (r.indexOf('balcony') >= 0 || r.indexOf('patio') >= 0) out.push('Balcony + view')
+  if (r.indexOf('laundry') >= 0) out.push('Washer / dryer - brand badge')
+  out.push('Room - wide shot from doorway')
+  const uniq: string[] = []
+  for (const x of out) if (uniq.indexOf(x) < 0) uniq.push(x)
+  return uniq.slice(0, 9)
+}
+function quickTags(r: string): string[] {
     const s = (r || '').toLowerCase()
     if (/bath|shower|ensuite|powder| wc|toilet/.test(s)) return ['His & Hers sinks', 'Single sink', 'Double vanity', 'Walk-in shower', 'Tub/shower combo', 'Soaking tub', 'Bidet', 'Hair dryer', 'Heated floor']
     if (/closet|wardrobe|dressing/.test(s)) return ['Walk-in', 'Reach-in', 'Hanging rods', 'Shelving', 'Safe', 'Full-length mirror']
@@ -413,7 +437,25 @@ export default function AuditCapture({ code }: { code: string }) {
                     <button onClick={() => { if (tagInput.trim()) { addTag(room, tagInput.trim()); setTagInput('') } }} disabled={tagBusy} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300 disabled:opacity-50">Add</button>
                   </div>
                 </div>
-                <div className="flex gap-1.5">
+                {!done ? (() => {
+                    const tt = roomItems.filter(x => x.kind === 'tag').map(x => String(x.title || ''))
+                    const sl = shotsFor(room, tt)
+                    const doneN = orgRoom === room ? sl.filter((_, i) => shotMap[i]).length : 0
+                    return (
+                      <div className="mb-1.5 rounded-lg border border-indigo-100 bg-indigo-50 p-2">
+                        <div className="text-[11px] font-semibold text-indigo-800 mb-1">Shot list · {doneN}/{sl.length} <span className="font-normal text-indigo-400">optional - skip any</span></div>
+                        <div className="space-y-1">
+                          {sl.map((lbl, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              {orgRoom === room && shotMap[i] ? <img src={shotMap[i]} alt="" className="w-7 h-7 rounded object-cover shrink-0" /> : <button onClick={() => { stageCamera(room); setShotIdx(i) }} disabled={orgBusy && orgRoom === room} className="w-7 h-7 rounded border border-indigo-300 text-indigo-600 text-sm leading-none shrink-0">📷</button>}
+                              <span className={'text-[12px] ' + (orgRoom === room && shotMap[i] ? 'text-indigo-400 line-through' : 'text-indigo-900')}>{lbl}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })() : null}
+                  <div className="flex gap-1.5">
                     <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
                     <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
                   </div>
@@ -423,7 +465,12 @@ export default function AuditCapture({ code }: { code: string }) {
                       {orgQuestions.length > 0 ? (
                         <div>
                           <div className="text-[11px] font-semibold text-indigo-800 mb-1">A few questions to complete it:</div>
-                          <ul className="text-[12px] text-neutral-700 list-disc pl-4 space-y-0.5">{orgQuestions.map((q, i) => <li key={i}>{q}</li>)}</ul>
+                          <div className="space-y-1.5">{orgQuestions.map((q, i) => { const parts = String(q).split('|').map(x => x.trim()).filter(Boolean); const qq = parts[0] || ''; const opts = parts.slice(1); return (
+                            <div key={i}>
+                              <div className="text-[12px] text-neutral-700">{qq}</div>
+                              {opts.length ? <div className="flex flex-wrap gap-1 mt-0.5">{opts.map((o, k) => <button key={k} onClick={() => setOrgAnswers(a => (a ? a + ' ' : '') + qq + ' ' + o + '.')} className="text-[11px] font-semibold px-2 py-0.5 rounded-md border border-indigo-300 text-indigo-700 bg-white">{o}</button>)}</div> : null}
+                            </div>
+                          ) })}</div>
                           <textarea value={orgAnswers} onChange={e => setOrgAnswers(e.target.value)} placeholder="Answer here (e.g. yes ensuite, King bed)…" rows={2} className="mt-1.5 w-full text-sm rounded-lg border border-line px-2 py-1.5" />
                           <button onClick={() => runOrganize(orgPhotos, orgAnswers)} disabled={orgBusy} className="mt-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">Re-analyze with answers</button>
                         </div>
