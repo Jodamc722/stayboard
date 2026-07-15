@@ -422,7 +422,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         )}
 
         {/* ARRIVAL — adaptive: sparse copy + photo becomes a full-height split page */}
-        {((s.arrival?.entry || '').length + (s.arrival?.parking || '').length) < 340 && !has('gettingAround', !!str2(s.gettingAround?.body)) && pa.arrival ? (
+        {((s.arrival?.entry || '').length + (s.arrival?.parking || '').length) < 340 && !has('gettingAround', !!str2(s.gettingAround?.body)) && false ? (
           <Page id="arrival">
             <div className="absolute inset-y-0 left-0 w-[42%] overflow-hidden">
               <img src={pa.arrival} alt="" className="h-full w-full object-cover" />
@@ -561,7 +561,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* LOCAL — places / eats. Photo cards when imagery exists; big editorial cards when few items. */}
         {localSecs.map((sec: any) => {
           const items = (s[sec.key].items || []).slice(0, 6)
-          const anyPhoto = items.some((p: any) => p.photo)
+          const anyPhoto = false
           const few = items.length <= 3
           return (
             <Page key={sec.key} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
