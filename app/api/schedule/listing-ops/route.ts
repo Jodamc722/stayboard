@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 
   const blob = recentLow.map((r) => String(r.content || '')).join(' ').toLowerCase()
   const checklist: string[] = []
-  for (const m of CHECK_MAP) if (m.keys.some((k) => blob.includes(k))) checklist.push(m.item)
+  for (const m of CHECK_MAP) if (m.keys.some((k) => new RegExp('\\b' + k.trim()).test(blob))) checklist.push(m.item)
   if (!checklist.length) for (const g of GENERIC_CHECKS) checklist.push(g)
 
   const lastFeedback = lastReview
