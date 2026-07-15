@@ -604,7 +604,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 </div>
               )}
               <div className="mt-5 border-t pt-4 text-center" style={{ borderColor: accentColor + '33' }}>
-                <div className="text-[12px] leading-[1.7]" style={{ fontFamily: SERIF }}>{(() => { const d = "Want a table or a local tip? Call our front desk at " + (s.contact?.customerService || '954-526-8998') + " — we're happy to arrange reservations."; return edit ? <L k="local.reservations" def={d} rows={2} /> : withTel(lbl('local.reservations', d)) })()}</div>
+                <div className="text-[12px] leading-[1.7]" style={{ fontFamily: SERIF }}>{(() => { const d = "Looking for a local tip? Call our front desk at " + (s.contact?.customerService || '954-526-8998') + " — we are always happy to help."; return edit ? <L k="local.reservations" def={d} rows={2} /> : withTel(lbl('local.reservations', d)) })()}</div>
               </div>
             </Page>
           )
