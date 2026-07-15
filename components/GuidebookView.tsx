@@ -149,10 +149,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   }
   // Local places & restaurants click through to Google Maps (venue + city) on the digital view.
   const placeCity = String(s.guidelines?.address || '').split(',')[1]?.trim() || ''
-  const PlaceLink = ({ name, children }: { name?: string; children: any }) => {
+  const PlaceLink = ({ name, addr, children }: { name?: string; addr?: string; children: any }) => {
     const nm = String(name || '').trim()
+    const mq = String(addr || '').trim() ? nm + ', ' + String(addr || '').trim() : nm + (placeCity ? ', ' + placeCity : '')
     return !edit && nm
-      ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(nm + (placeCity ? ', ' + placeCity : ''))} target="_blank" rel="noreferrer" className="block transition-opacity hover:opacity-85" style={{ color: 'inherit' }}>{children}</a>
+      ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(mq)} target="_blank" rel="noreferrer" className="block transition-opacity hover:opacity-85" style={{ color: 'inherit' }}>{children}</a>
       : <>{children}</>
   }
 
@@ -213,7 +214,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   // Half-photo header with scrim — text below is always on paper, label over photo is scrimmed white.
   const PhotoBand = ({ src, label, k }: { src: string | null; label?: string; k?: string }) => src ? (
     <div className="relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 88%, 0 100%)' }}>
-      <img src={src} alt="" className="h-full w-full object-cover" />
+      <img loading="lazy" decoding="async" src={src} alt="" className="h-full w-full object-cover" />
       <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.45), rgba(10,10,12,0.05) 55%)' }} />
       {showTags && <span className="absolute left-[58px] top-[44%] h-px w-16 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />}
       {showTags && <span className="absolute left-[78px] top-[47%] h-px w-10 bg-white/40" style={{ transform: 'rotate(-24deg)' }} />}
@@ -417,7 +418,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               ))}
             </div>
             <div className="mt-5 flex items-center gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
-              <img src={QR} alt="stay-hospitality.com" className="h-20 w-20 bg-white p-1" />
+              <img loading="lazy" decoding="async" src={QR} alt="stay-hospitality.com" className="h-20 w-20 bg-white p-1" />
               <div className="flex-1 text-[13px] leading-[1.7]" style={{ fontFamily: SERIF }}><L k="special.qr" def="Scan to explore our collection and book direct at stay-hospitality.com" rows={2} /></div>
             </div>
           </Page>
@@ -427,7 +428,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {((s.arrival?.entry || '').length + (s.arrival?.parking || '').length) < 340 && !has('gettingAround', !!str2(s.gettingAround?.body)) && false ? (
           <Page id="arrival">
             <div className="absolute inset-y-0 left-0 w-[42%] overflow-hidden">
-              <img src={pa.arrival} alt="" className="h-full w-full object-cover" />
+              <img loading="lazy" decoding="async" src={pa.arrival} alt="" className="h-full w-full object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.5), rgba(10,10,12,0.06) 50%)' }} />
               <p className="absolute bottom-10 left-6 right-4 text-[9px] tracking-[0.45em] text-white/90"><L k="band.arrival" def="YOUR ARRIVAL" /></p>
             </div>
@@ -493,7 +494,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             const wifiPhoto = scene?.url || pa.about || null
             return wifiPhoto ? (
               <div className="absolute inset-x-0 top-0 h-[46%] overflow-hidden">
-                <img src={wifiPhoto} alt="" className="h-full w-full object-cover" />
+                <img loading="lazy" decoding="async" src={wifiPhoto} alt="" className="h-full w-full object-cover" />
                 <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(19,18,16,0.10), rgba(19,18,16,0.45) 65%, #131210 100%)' }} />
               </div>
             ) : null
@@ -533,7 +534,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                     <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
                     <p className="mt-1 text-[10px] font-light leading-[1.5]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
                   </div>
-                  {it.photo && <img src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} />}
+                  {it.photo && <img loading="lazy" decoding="async" src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} />}
                 </div>
               ))}
             </div>
@@ -573,10 +574,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 <div className={'mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1 content-center' : 'grid-cols-2 content-start')}>
                   {items.map((p: any, i: number) => (
                     <div key={i} className={!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : ''}>
-                      <PlaceLink name={p.name}>
+                      <PlaceLink name={p.name} addr={p.address}>
                       {p.photo ? (
                         <div className={'relative overflow-hidden ' + (few ? 'h-[190px]' : 'h-[145px]')}>
-                          <img src={p.photo} alt="" className="h-full w-full object-cover" />
+                          <img loading="lazy" decoding="async" src={p.photo} alt="" className="h-full w-full object-cover" />
                           <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.62), rgba(10,10,12,0.02) 55%)' }} />
                           <span className="absolute right-3 top-3 h-px w-10 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />
                           <p className="absolute bottom-3 left-4 text-[15px] font-medium tracking-wide text-white" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
@@ -596,7 +597,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 <div className="mt-9 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
                   {items.map((p: any, i: number) => (
                     <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
-                      <PlaceLink name={p.name}>
+                      <PlaceLink name={p.name} addr={p.address}>
                       <p className="text-[13px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                       {p.note && <p className="mt-1 text-[11px] font-light leading-[1.6] opacity-75"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p>}
                       {(edit || p.address || p.phone) ? <p className="mt-1 text-[10px] font-light tracking-wide opacity-60"><T path={[sec.key, 'items', String(i), 'address'] as any} value={p.address} rows={1} />{p.address && p.phone ? ' · ' : ''}<Tel v={p.phone}><T path={[sec.key, 'items', String(i), 'phone'] as any} value={p.phone} rows={1} /></Tel></p> : null}
