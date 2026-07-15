@@ -11,6 +11,14 @@ type RoomCfg = { room_key: string; display_name: string; cover_photo_url: string
 type Suggestion = { title: string; why?: string }
 type Draft = { room: string; kind: string; title: string; itemType: string; note: string; severity: string; photoUrl: string; photos: string[]; ai: any }
 
+const BASICS: { cat: string; opts: string[] }[] = [
+  { cat: 'Bedrooms', opts: ['Studio', '1 bedroom', '2 bedrooms', '3 bedrooms', '4+ bedrooms'] },
+  { cat: 'Bathrooms', opts: ['1 bath', '1.5 baths', '2 baths', '2.5 baths', '3+ baths'] },
+  { cat: 'Sleeps', opts: ['Sleeps 2', 'Sleeps 4', 'Sleeps 6', 'Sleeps 8', 'Sleeps 10+'] },
+  { cat: 'Beds', opts: ['1 bed', '2 beds', '3 beds', '4 beds', '5+ beds'] },
+  { cat: 'Sofa sleeper', opts: ['Sofa sleeper', 'No sofa sleeper'] },
+  { cat: 'Washer + dryer', opts: ['W+D in unit', 'W+D on site', 'No W+D'] },
+]
 const KIND_META: Record<string, { label: string; cls: string }> = {
   inventory: { label: 'Inventory', cls: 'bg-neutral-100 text-neutral-700 border-neutral-300' },
   maintenance: { label: 'Fix', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
@@ -281,15 +289,7 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
     setIedBusy(false)
   }
-  const BASICS: { cat: string; opts: string[] }[] = [
-  { cat: 'Bedrooms', opts: ['Studio', '1 bedroom', '2 bedrooms', '3 bedrooms', '4+ bedrooms'] },
-  { cat: 'Bathrooms', opts: ['1 bath', '1.5 baths', '2 baths', '2.5 baths', '3+ baths'] },
-  { cat: 'Sleeps', opts: ['Sleeps 2', 'Sleeps 4', 'Sleeps 6', 'Sleeps 8', 'Sleeps 10+'] },
-  { cat: 'Beds', opts: ['1 bed', '2 beds', '3 beds', '4 beds', '5+ beds'] },
-  { cat: 'Sofa sleeper', opts: ['Sofa sleeper', 'No sofa sleeper'] },
-  { cat: 'Washer + dryer', opts: ['W+D in unit', 'W+D on site', 'No W+D'] },
-]
-function essFor(room: string): string[] {
+  function essFor(room: string): string[] {
   const parts = room.split(' — ')
   const r = String(parts[parts.length - 1] || room).toLowerCase()
   if (r.indexOf('kitchen') >= 0) return ['Plates', 'Bowls', 'Glasses', 'Mugs', 'Silverware', 'Cooking utensils', 'Pots + pans', 'Knife set', 'Cutting board', 'Baking sheet', 'Coffee maker', 'Toaster', 'Blender', 'Kettle', 'Can opener', 'Wine opener', 'Trash bin']
