@@ -252,8 +252,14 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
 
   useEffect(() => {
     setLastSync(Date.now())
-    const iv = setInterval(() => { refresh() }, 15 * 60 * 1000)
-    return () => clearInterval(iv)
+    // Auto-refresh every 15 min, but only while the tab is visible — a hidden/background tab
+    // shouldn't keep hitting /sync. On regaining focus, refresh if it has been >15 min.
+    let last = Date.now()
+    const tick = () => { if (document.visibilityState === 'visible') { last = Date.now(); refresh() } }
+    const iv = setInterval(tick, 15 * 60 * 1000)
+    const onVis = () => { if (document.visibilityState === 'visible' && Date.now() - last > 15 * 60 * 1000) { last = Date.now(); refresh() } }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis) }
   }, [])
 
   // Staged, not pushed — assignments wait in the scheduler until you hit "Push to Breezeway".
