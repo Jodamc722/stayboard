@@ -61,17 +61,17 @@ export async function POST(req: NextRequest) {
   if (!items.length) return NextResponse.json({ error: 'No assignments to push.' }, { status: 400 })
 
   const results: { listingId: string; date: string; ok: boolean; taskId?: string; error?: string }[] = []
-  for (const it of items) {
+  // Our block is wrapped in [STAY SCHEDULE]...[/STAY SCHEDULE]; everything outside it (manual NOTEs,
+  // Breezeway edits) is PRESERVED across pushes. Re-push replaces only our block = idempotent.
+  async function handleItem(it: any) {
     const listingId = String(it?.listingId || '').trim()
     const date = String(it?.date || '').slice(0, 10)
     const assigneeIds = (Array.isArray(it?.assigneeIds) ? it.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
     const description = typeof it?.description === 'string' ? it.description.slice(0, 1000) : ''
     const sdt = it?.sameDayTurn === true
     const knownTaskId = String(it?.taskId || '').trim()
-    if (!listingId || !date) { results.push({ listingId, date, ok: false, error: 'missing listingId/date' }); continue }
+    if (!listingId || !date) { results.push({ listingId, date, ok: false, error: 'missing listingId/date' }); return }
     try {
-      // Resolve the task: trust a known taskId first (a MOVED clean lives on another date and
-      // never resolves by property+date), else look up the departure clean for the date.
       let clean: any = null
       if (knownTaskId) {
         const cur = await retrieveBreezewayTask(knownTaskId)
@@ -82,34 +82,39 @@ export async function POST(req: NextRequest) {
         const tasks = await listPropertyHousekeeping(listingId, date, date)
         clean = pickDepartureClean(tasks, date)
       }
-      if (!clean || !clean.id) { results.push({ listingId, date, ok: false, error: 'No departure clean found in Breezeway for that date yet.' }); continue }
-      // assignments REPLACES the task's assignees (override, not append). name is sent because the
-      // Breezeway update treats it as required; re-pushing a different cleaner swaps the assignment.
+      if (!clean || !clean.id) { results.push({ listingId, date, ok: false, error: 'No departure clean found in Breezeway for that date yet.' }); return }
       let intelBlock: string | null = null
       try { intelBlock = await buildIntelBlock(listingId) } catch (e) { console.error('assign: intel failed', e) }
       const composed = [description, intelBlock].filter(Boolean).join('\n\n').slice(0, 1800)
+      const currentDesc = String((clean.description ?? clean.raw?.description) || '')
+      const foreign = currentDesc.replace(/\[STAY SCHEDULE\][\s\S]*?\[\/STAY SCHEDULE\]/g, '').replace(/--- STAY INTEL[\s\S]*?--- end intel ---/g, '').trim()
+      const envelope = '[STAY SCHEDULE]\n' + composed + '\n[/STAY SCHEDULE]'
+      const finalDesc = ((foreign ? foreign + '\n\n' : '') + envelope).slice(0, 3500)
       const payload: Record<string, any> = { assignments: assigneeIds }
-      const baseName = clean.name || 'Clean'; payload.name = (sdt && !baseName.includes('SAME-DAY TURN')) ? (baseName + '  ⚠ SAME-DAY TURN') : baseName
-      if (composed) payload.description = composed
+      const baseName = String(clean.name || 'Clean').replace(/\s*⚠ SAME-DAY TURN\s*$/, '').trimEnd()
+      payload.name = sdt ? (baseName + '  ⚠ SAME-DAY TURN') : baseName
+      if (composed) payload.description = finalDesc
       const r = await updateBreezewayTask(clean.id, payload)
-      if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: `Breezeway ${r.status}: ${r.text.slice(0, 140)}` }); continue }
-            try {
+      if (!r.ok) { results.push({ listingId, date, ok: false, taskId: clean.id, error: 'Breezeway ' + r.status + ': ' + r.text.slice(0, 140) }); return }
+      let descriptionSaved: boolean | null = null
+      try {
         const _fresh = await retrieveBreezewayTask(clean.id)
         const _ft: any = _fresh && (_fresh as any).data
         if (_ft && _ft.id) {
+          if (composed) descriptionSaved = String(_ft.description || '').includes(composed.slice(0, 24))
           const _mapped: any = mapBreezewayTask(_ft)
           const _rp = parseFloat(String(_mapped.rate_paid ?? '').replace(/[^0-9.]/g, ''))
           await supabaseAdmin().from('breezeway_tasks_sync').upsert({ ..._mapped, rate_paid: Number.isFinite(_rp) ? _rp : null, reference_property_id: _mapped.reference_property_id || listingId, synced_at: new Date().toISOString() }, { onConflict: 'id' })
         }
       } catch (e) { console.error('assign: mirror upsert failed', e) }
       try { await supabaseAdmin().from('schedule_staged').delete().eq('listing_id', listingId).eq('date', date) } catch (e) { console.error('assign: staged clear failed', e) }
-      let descriptionSaved: boolean | null = null
-      if (composed) { try { const chk = await retrieveBreezewayTask(clean.id); const live = String(chk?.data?.description || ''); descriptionSaved = live.includes(composed.slice(0, 24)) } catch { descriptionSaved = null } }
       results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved } as any)
     } catch (e: any) {
       results.push({ listingId, date, ok: false, error: String(e?.message || e).slice(0, 140) })
     }
   }
+  const CONC = 6
+  for (let i = 0; i < items.length; i += CONC) { await Promise.all(items.slice(i, i + CONC).map(handleItem)) }
   const pushed = results.filter(r => r.ok).length
   // Bust the schedule cache so the next load reflects the fresh assignment right away.
   if (pushed > 0) { try { revalidateTag('schedule') } catch (e) { console.error('assign: revalidateTag failed', e) } }
