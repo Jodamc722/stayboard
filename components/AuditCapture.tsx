@@ -87,6 +87,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const [reBusy, setReBusy] = useState(false)
   const [shotIdx, setShotIdx] = useState(-1)
   const [shotMap, setShotMap] = useState<Record<number, string>>({})
+  const [essBusy, setEssBusy] = useState(false)
 
   async function load() {
     try {
@@ -125,6 +126,28 @@ export default function AuditCapture({ code }: { code: string }) {
 
   function stageGallery(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); setShotMap({}); setShotIdx(-1) } setOrgRoom(room); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
   function stageCamera(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); setShotMap({}); setShotIdx(-1) } setOrgRoom(room); if (camRef.current) { camRef.current.value = ''; camRef.current.click() } }
+  async function bumpEss(room: string, label: string) {
+    if (essBusy) return
+    setEssBusy(true)
+    try {
+      const ex = items.find(it => it.room === room && it.kind === 'inventory' && String(it.title || '').toLowerCase() === label.toLowerCase())
+      if (ex) await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: ex.id, fields: { qty: (Number(ex.qty) || 1) + 1 } }) })
+      else await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'inventory', title: label }) })
+    } catch {}
+    setEssBusy(false)
+    await load()
+  }
+  async function pickBasic(opt: string, opts: string[]) {
+    if (essBusy) return
+    setEssBusy(true)
+    try {
+      const old = items.filter(it => it.room === 'Unit basics' && it.kind === 'tag' && opts.indexOf(String(it.title || '')) >= 0)
+      for (const o of old) await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: o.id }) })
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: 'Unit basics', kind: 'tag', title: opt }) })
+    } catch {}
+    setEssBusy(false)
+    await load()
+  }
   async function runOrganize(urls: string[], answers: string) {
     const tagTitles = items.filter((x: any) => x.room === orgRoom && x.kind === 'tag').map((x: any) => String(x.title || ''))
     const shotList = shotsFor(orgRoom, tagTitles)
@@ -256,7 +279,26 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
     setIedBusy(false)
   }
-  function shotsFor(room: string, tagTitles: string[]): string[] {
+  const BASICS: { cat: string; opts: string[] }[] = [
+  { cat: 'Bedrooms', opts: ['Studio', '1 bedroom', '2 bedrooms', '3 bedrooms', '4+ bedrooms'] },
+  { cat: 'Bathrooms', opts: ['1 bath', '1.5 baths', '2 baths', '2.5 baths', '3+ baths'] },
+  { cat: 'Sleeps', opts: ['Sleeps 2', 'Sleeps 4', 'Sleeps 6', 'Sleeps 8', 'Sleeps 10+'] },
+  { cat: 'Beds', opts: ['1 bed', '2 beds', '3 beds', '4 beds', '5+ beds'] },
+  { cat: 'Sofa sleeper', opts: ['Sofa sleeper', 'No sofa sleeper'] },
+  { cat: 'Washer + dryer', opts: ['W+D in unit', 'W+D on site', 'No W+D'] },
+]
+function essFor(room: string): string[] {
+  const parts = room.split(' — ')
+  const r = String(parts[parts.length - 1] || room).toLowerCase()
+  if (r.indexOf('kitchen') >= 0) return ['Plates', 'Bowls', 'Glasses', 'Mugs', 'Silverware', 'Cooking utensils', 'Pots + pans', 'Knife set', 'Cutting board', 'Baking sheet', 'Coffee maker', 'Toaster', 'Blender', 'Kettle', 'Can opener', 'Wine opener', 'Trash bin']
+  if (r.indexOf('bath') >= 0) return ['Bath towels', 'Hand towels', 'Bath mat', 'Hair dryer', 'Plunger', 'Trash bin']
+  if (r.indexOf('bedroom') >= 0 || r.indexOf('master') >= 0) return ['Pillows', 'Extra linens', 'Hangers', 'Iron', 'Luggage rack', 'Safe']
+  if (r.indexOf('living') >= 0) return ['Throw blankets', 'Extra pillows', 'Board games']
+  if (r.indexOf('laundry') >= 0 || r.indexOf('hall') >= 0 || r.indexOf('utility') >= 0) return ['Vacuum', 'Broom + dustpan', 'Mop', 'Ironing board', 'First aid kit', 'Fire extinguisher']
+  if (r.indexOf('balcony') >= 0 || r.indexOf('patio') >= 0) return ['Outdoor seating', 'Outdoor table']
+  return []
+}
+function shotsFor(room: string, tagTitles: string[]): string[] {
   const out: string[] = []
   const has = (re: RegExp) => tagTitles.some(x => re.test(x))
   const parts = room.split(' — ')
@@ -386,6 +428,25 @@ function quickTags(r: string): string[] {
         <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.'}</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
+      {isOnboarding && !done ? (
+        <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Unit basics - confirm these first</div>
+          {data.listing.bedrooms !== null || data.listing.bathrooms !== null ? <div className="text-[11px] text-neutral-400 mb-1.5">Listing says {data.listing.bedrooms !== null ? data.listing.bedrooms + ' bedroom ' : ''}{data.listing.bathrooms !== null ? '· ' + data.listing.bathrooms + ' bath' : ''} - is that right? Tap to confirm or correct.</div> : null}
+          <div className="space-y-1.5">
+            {BASICS.map(b => {
+              const sel = items.find(it => it.room === 'Unit basics' && it.kind === 'tag' && b.opts.indexOf(String(it.title || '')) >= 0)
+              return (
+                <div key={b.cat}>
+                  <div className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">{b.cat}</div>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {b.opts.map(o => <button key={o} onClick={() => pickBasic(o, b.opts)} disabled={essBusy} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (sel && sel.title === o ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-600 border-neutral-200')}>{o}</button>)}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
       <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
         <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Building amenities</div>
         <div className="flex flex-wrap gap-1.5">
@@ -456,6 +517,16 @@ function quickTags(r: string): string[] {
                       </div>
                     )
                   })() : null}
+                  {!done && essFor(room).length ? (
+                    <div className="mb-1.5 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
+                      <div className="text-[11px] font-semibold text-emerald-800 mb-1">Essentials - tap what the unit has <span className="font-normal text-emerald-500">tap again for +1</span></div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {essFor(room).map((lbl, i) => { const ex = roomItems.find(x => x.kind === 'inventory' && String(x.title || '').toLowerCase() === lbl.toLowerCase()); return (
+                          <button key={i} onClick={() => bumpEss(room, lbl)} disabled={essBusy} className={'text-xs font-semibold px-2 py-1 rounded-md border ' + (ex ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300')}>{ex && (Number(ex.qty) || 1) > 1 ? ex.qty + '× ' : ''}{ex ? '✓ ' : ''}{lbl}</button>
+                        ) })}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex gap-1.5">
                     <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
                     <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
