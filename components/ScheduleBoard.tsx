@@ -77,14 +77,14 @@ export function ScheduleBoard() {
     fetch('/api/schedule/forecast?weekStart=' + ws).then(r => r.json()).then(j => { if (!dead && j && j.ok) setFc(j) }).catch(() => {})
     ;(async () => {
       const next: Record<string, TeamDoc> = {}
-      for (const mk of MARKETS) {
+      await Promise.all(MARKETS.map(async mk => {
         try {
           const r = await fetch('/api/schedule/team?weekStart=' + ws + '&market=' + mk)
           const j = await r.json()
           const dd = j && j.doc ? j.doc : {}
           next[mk] = { members: Array.isArray(dd.members) ? dd.members : [], cells: dd.cells && typeof dd.cells === 'object' ? dd.cells : {}, rate: typeof dd.rate === 'number' ? dd.rate : undefined, locked: !!dd.locked }
         } catch { next[mk] = { members: [], cells: {} } }
-      }
+      }))
       if (!dead) { teamDirty.current = {}; setTeamDocs(next) }
     })()
     return () => { dead = true }
@@ -170,7 +170,8 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       const raw = await r.text(); let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || 'Could not load the schedule.')
       setData(j); setDate(d || j.weekStart)
-      setOverrides({}); setCleared({}); setSelected({}); setPushMsg(null)
+      // Keep row selections across day nav (they're keyed by listingId__date so only matching rows light up); overrides/cleared re-derive from the server staged overlay.
+      setOverrides({}); setCleared({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
   useEffect(() => { const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); setView('day'); setDate(_d); load('day', _d) }, [])
@@ -657,7 +658,7 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   const panelRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   function place() { const b = btnRef.current; if (!b) return; const r = b.getBoundingClientRect(); const PH = 260; const top = (r.bottom + PH > window.innerHeight && r.top > PH) ? Math.max(4, r.top - PH - 4) : r.bottom + 4; const left = Math.max(4, Math.min(r.left, window.innerWidth - 232)); setPos({ top, left }) }
-  useEffect(() => { if (!open) return; const h = () => place(); window.addEventListener('scroll', h, true); window.addEventListener('resize', h); return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', h) } }, [open])
+  useEffect(() => { if (!open) return; let raf = 0; const h = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; place() }) }; window.addEventListener('scroll', h, true); window.addEventListener('resize', h); return () => { if (raf) cancelAnimationFrame(raf); window.removeEventListener('scroll', h, true); window.removeEventListener('resize', h) } }, [open])
   useEffect(() => {
     function onDoc(e: MouseEvent) { const t = e.target as Node; if ((ref.current && ref.current.contains(t)) || (panelRef.current && panelRef.current.contains(t))) return; setOpen(false) }
     document.addEventListener('mousedown', onDoc); return () => document.removeEventListener('mousedown', onDoc)
