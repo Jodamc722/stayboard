@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,6 +8,9 @@ export const dynamic = 'force-dynamic'
 // Shifts live in Homebase; this stores who is Working / On Call / OFF / REQ OFF for the week.
 
 export async function GET(req: NextRequest) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { searchParams } = new URL(req.url)
   const weekStart = searchParams.get('weekStart') || ''
   const market = searchParams.get('market') || ''
@@ -30,6 +34,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => null)
   if (!body || !body.weekStart || !body.market) {
     return NextResponse.json({ ok: false, error: 'weekStart and market required' }, { status: 400 })
