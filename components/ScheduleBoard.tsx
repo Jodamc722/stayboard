@@ -266,7 +266,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     if (!selectedKeys.length) return
     setPushing(true); setPushMsg(null); setError(null)
     try {
-      const items = selectedKeys.map(k => { const c = cleanByKey[k]; if (!c) return null; const e = effective(c); return { listingId: c.listingId, date: c.date, assigneeIds: e.ids, description: descFor(c), sameDayTurn: c.sameDayTurn } }).filter(Boolean) as any[]
+      const items = selectedKeys.map(k => { const c = cleanByKey[k]; if (!c) return null; const e = effective(c); return { listingId: c.listingId, date: c.date, assigneeIds: e.ids, description: descFor(c), taskId: c.breezewayTaskId || null, sameDayTurn: c.sameDayTurn } }).filter(Boolean) as any[]
       const r = await fetch('/api/schedule/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) })
       const raw = await r.text(); let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || 'Push failed.')
