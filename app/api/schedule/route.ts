@@ -1,8 +1,7 @@
 // Turnover schedule — cleaning plan from CONFIRMED Guesty checkouts (each checkout = the departure
 // clean Breezeway auto-creates). Day view (rich table) + weekly view (Sun-Saturday), grouped by
 // market (Miami / Broward / North). Adds per clean: hub/building, bedrooms, check-in/out times,
-// nights, same-day-turn, current DOOR CODE + a suggested NEW 4-digit code (blank for 17West, whose
-// codes are managed elsewhere), and cleaning time. Read-only; assignment via /api/schedule/assign.
+// nights, same-day-turn, current DOOR CODE, and cleaning time. Read-only; assignment via /api/schedule/assign.
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache, revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
@@ -22,14 +21,10 @@ const LIVE = /confirm|checked/i // ONLY confirmed/checked stays make cleans. NOT
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
 const VENDOR_RE = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i // vendor-cleaned buildings (hotel/vendor staff, not our team) - mirrors forecast API + ForecastBoard
 const VENDOR_OF = (s: string) => { if (!VENDOR_RE.test(s)) return null; if (/botanica/i.test(s)) return 'Botanica'; if (/park\s*towers?|\bpt\b/i.test(s)) return 'Park Towers'; if (/amrit/i.test(s)) return 'Amrit'; if (/capri/i.test(s)) return 'Capri'; return 'Lucerne' }
-const NO_CODE = (s: string) => IS_17WEST(s) || /elser/i.test(s) // 17West + Elser door codes are managed elsewhere — don't generate a new code
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
-function weekStartSunday(iso: string) { const d = new Date(iso + 'T12:00:00'); const dow = d.getDay(); d.setDate(d.getDate() - dow); return d.toISOString().slice(0, 10) }
 const DAYLABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
-// Deterministic suggested NEW 4-digit code (stable per unit+date so it doesn't change on refresh).
-function newCode(seed: string): string { let h = 5381; for (let i = 0; i < seed.length; i++) h = ((h * 33) + seed.charCodeAt(i)) >>> 0; return String(1000 + (h % 9000)) }
 function cfValue(raw: any, fieldId: string): string | null {
 const arr = Array.isArray(raw?.customFields) ? raw.customFields : []
 for (const c of arr) { const fid = typeof c?.fieldId === 'object' ? c?.fieldId?._id : c?.fieldId; if (String(fid) === fieldId) return c?.value != null ? String(c.value) : null }
@@ -71,7 +66,7 @@ db.from('guesty_listings').select('id,nickname,title,building,address_city,statu
 // (rows would render with hub 'Other', no bedrooms/door codes - worse than an error).
 if (!listings || !listings.length) throw new Error('Listing data unavailable - hit Sync to retry.')
 
-type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; noCode: boolean; vendor: string | null }
+type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null }
 const meta: Record<string, Meta> = {}
 const units: { id: string; name: string }[] = []
 for (const l of (listings || [])) {
@@ -89,7 +84,6 @@ cleaningTime: cfValue(raw, CLEANING_TIME_FIELD),
 checkIn: raw?.defaultCheckInTime || null,
 checkOut: raw?.defaultCheckOutTime || null,
 is17: IS_17WEST(building) || IS_17WEST(name),
-noCode: NO_CODE(building) || NO_CODE(name),
 vendor: VENDOR_OF(building) || VENDOR_OF(name),
 }
 if (!/inactive|disabled|archived|deleted/i.test(str((l as any).status))) units.push({ id, name })
@@ -104,7 +98,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -133,7 +127,6 @@ checkOutTime: m?.checkOut || null,
 sameDayTurn,
 nextArrival,
 doorCode: m?.doorCode || null,
-newDoorCode: m?.noCode ? null : newCode(id + date),
 cleaningTime: m?.cleaningTime || null,
 vendor: m?.vendor || null,
 assignedIds: [],
@@ -222,7 +215,7 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
               listingId: id, unit: m?.name || r?.listing_name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other',
               date: String(b.blocked_until), guestOut: r?.guest_name || null, nights: r?.nights ?? null, bedrooms: m?.bedrooms ?? null,
               checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null,
-              doorCode: m?.doorCode || null, newDoorCode: m?.noCode ? null : newCode(id + oid), cleaningTime: m?.cleaningTime || null,
+              doorCode: m?.doorCode || null, cleaningTime: m?.cleaningTime || null,
               vendor: m?.vendor || null, assignedIds: [], assignedNames: [], blocked: true, blockedFrom: oid,
             })
           }
@@ -306,7 +299,7 @@ const m2 = meta[id]
 if (!m2) continue
 const ppl = Array.isArray(t.assignees) ? t.assignees : []
 const _lr: any = t.linked_reservation_id ? _resById[String(t.linked_reservation_id)] : null
-cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: _lr ? _lr.guest : null, movedFrom: (_lr && _lr.checkout && _lr.checkout !== d) ? _lr.checkout : null, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, newDoorCode: null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', bzOnly: !_lr })
+cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: _lr ? _lr.guest : null, movedFrom: (_lr && _lr.checkout && _lr.checkout !== d) ? _lr.checkout : null, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', bzOnly: !_lr })
 }
 } catch (e) { console.error('schedule: moved-reconcile failed', e) }
 
@@ -318,7 +311,7 @@ for (const mr of (manual || []) as any[]) {
 const id = String(mr.listing_id); const d = String(mr.date).slice(0, 10)
 if (cleans.some(c => c.listingId === id && c.date === d)) continue
 const m = meta[id]
-cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other', date: d, guestOut: null, nights: null, bedrooms: m?.bedrooms ?? null, checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m?.doorCode || null, newDoorCode: null, cleaningTime: m?.cleaningTime || null, vendor: m?.vendor || null, assignedIds: [], assignedNames: [], syncStatus: 'synced', breezewayTaskId: mr.breezeway_task_id ? String(mr.breezeway_task_id) : null, manual: true })
+cleans.push({ listingId: id, unit: m?.name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other', date: d, guestOut: null, nights: null, bedrooms: m?.bedrooms ?? null, checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m?.doorCode || null, cleaningTime: m?.cleaningTime || null, vendor: m?.vendor || null, assignedIds: [], assignedNames: [], syncStatus: 'synced', breezewayTaskId: mr.breezeway_task_id ? String(mr.breezeway_task_id) : null, manual: true })
 }
 } catch (e) { console.error('schedule: manual cleans pass failed', e) }
 // MISSING CLEAN: a confirmed Guesty checkout with NO Breezeway departure task on any
