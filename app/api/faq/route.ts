@@ -69,9 +69,11 @@ export async function GET(req: NextRequest) {
   const cfMap: Record<string, string> = {}
   for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = String((f as any).display_name || (f as any).name || '')
   const factList = lrow ? facts(lrow.raw, cfMap) : []
-  const entries = fr.data || []
+  const allFaq: any[] = fr.data || []
+  const entries = allFaq.filter(e => e.status !== 'draft' && e.status !== 'dismissed')
+  const drafts = allFaq.filter(e => e.status === 'draft')
   const promoted: Record<string, boolean> = {}
-  for (const e of entries) if (e.source === 'audit' && e.question) promoted[String(e.question).toLowerCase()] = true
+  for (const e of allFaq) if (e.question) promoted[String(e.question).toLowerCase()] = true
   const howtos: any[] = []
   const highlights: any[] = []
   const keyDetails: any[] = []
@@ -83,7 +85,7 @@ export async function GET(req: NextRequest) {
     if (d.highlight) highlights.push({ id: it.id, room: it.room, title: it.title || it.item_type || 'Item', brand: d.brand || '', tier: d.tier || '', features: Array.isArray(d.features) ? d.features : [] })
     if (d.size) keyDetails.push({ item: it.title || it.item_type || 'Item', size: d.size, room: it.room })
   }
-  return NextResponse.json({ ok: true, listing, facts: factList, entries, howtos, highlights, otaLinks, keyDetails })
+  return NextResponse.json({ ok: true, listing, facts: factList, entries, drafts, howtos, highlights, otaLinks, keyDetails })
 }
 
 export async function POST(req: NextRequest) {
@@ -108,6 +110,18 @@ export async function POST(req: NextRequest) {
     const ins = await db.from('listing_faq').insert(row).select('*').limit(1)
     if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
     return NextResponse.json({ ok: true, entry: ins.data && ins.data[0] })
+  }
+  if (action === 'approveDraft' || action === 'dismissDraft') {
+    const id = String(body.id || '')
+    if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+    const patch: any = { status: action === 'approveDraft' ? 'published' : 'dismissed', updated_at: new Date().toISOString() }
+    if (action === 'approveDraft') {
+      if (body.question != null) patch.question = String(body.question).slice(0, 300)
+      if (body.answer != null) patch.answer = String(body.answer).slice(0, 4000)
+    }
+    const up = await db.from('listing_faq').update(patch).eq('id', id)
+    if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 })
+    return NextResponse.json({ ok: true })
   }
   if (action === 'updateEntry') {
     const id = String(body.id || '')
