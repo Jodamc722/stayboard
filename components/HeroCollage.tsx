@@ -204,7 +204,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
       <div className="px-4 py-3 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><LayoutGrid size={15} className="text-brand-600" /> Hero collage ideas</h2>
-          <p className="text-[12px] text-muted mt-0.5">Builds marketing hero images with amenity tags. Upload your own photos for the sharpest result, or use this unit&apos;s photos. Generate a few ideas, then download the ones you like.</p>
+          <p className="text-[12px] text-muted mt-0.5">Builds clean hero images from your uploaded photos — no text or tag overlays. Upload photos, generate a few ideas, then download or push the one you like.</p>
         </div>
         <button onClick={() => setOpen(o => !o)}
           className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 flex-shrink-0">
@@ -253,7 +253,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               {busy ? <Sparkles size={14} className="animate-pulse" /> : <RefreshCw size={14} />} {busy ? 'Building…' : seeds.length ? 'New ideas' : 'Generate ideas'}
             </button>
           </div>
-          <p className="text-[11px] text-muted">Set your tags (or clear any you don&apos;t want with the ×), then Generate. Leave all blank for no tags.</p>
+          <p className="text-[11px] text-muted">Upload photos above, then hit Generate.</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {seeds.map(s => (
@@ -269,7 +269,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-muted">Tip: collages shine on Booking.com, Vrbo, your direct site and social. Keep your Airbnb cover a single clean real photo to stay on the right side of their photo policy.</p>
+          <p className="text-[11px] text-muted">Tip: use bright, high-resolution originals for the sharpest result.</p>
         </div>
       )}
     </section>
