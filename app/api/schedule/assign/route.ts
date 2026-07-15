@@ -3,6 +3,7 @@
 // scheduled_date = checkout date), set its assignment AND write the door code + notes into the task
 // description so the cleaner sees them. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -27,10 +28,21 @@ export async function POST(req: NextRequest) {
     const assigneeIds = (Array.isArray(it?.assigneeIds) ? it.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
     const description = typeof it?.description === 'string' ? it.description.slice(0, 1500) : ''
     const sdt = it?.sameDayTurn === true
+    const knownTaskId = String(it?.taskId || '').trim()
     if (!listingId || !date) { results.push({ listingId, date, ok: false, error: 'missing listingId/date' }); continue }
     try {
-      const tasks = await listPropertyHousekeeping(listingId, date, date)
-      const clean = pickDepartureClean(tasks, date)
+      // Resolve the task: trust a known taskId first (a MOVED clean lives on another date and
+      // never resolves by property+date), else look up the departure clean for the date.
+      let clean: any = null
+      if (knownTaskId) {
+        const cur = await retrieveBreezewayTask(knownTaskId)
+        const ct: any = cur && (cur as any).data
+        if (ct && ct.id) clean = ct
+      }
+      if (!clean) {
+        const tasks = await listPropertyHousekeeping(listingId, date, date)
+        clean = pickDepartureClean(tasks, date)
+      }
       if (!clean || !clean.id) { results.push({ listingId, date, ok: false, error: 'No departure clean found in Breezeway for that date yet.' }); continue }
       // assignments REPLACES the task's assignees (override, not append). name is sent because the
       // Breezeway update treats it as required; re-pushing a different cleaner swaps the assignment.
@@ -47,8 +59,8 @@ export async function POST(req: NextRequest) {
           const _rp = parseFloat(String(_mapped.rate_paid ?? '').replace(/[^0-9.]/g, ''))
           await supabaseAdmin().from('breezeway_tasks_sync').upsert({ ..._mapped, rate_paid: Number.isFinite(_rp) ? _rp : null, reference_property_id: _mapped.reference_property_id || listingId, synced_at: new Date().toISOString() }, { onConflict: 'id' })
         }
-      } catch {}
-      try { await supabaseAdmin().from('schedule_staged').delete().eq('listing_id', listingId).eq('date', date) } catch {}
+      } catch (e) { console.error('assign: mirror upsert failed', e) }
+      try { await supabaseAdmin().from('schedule_staged').delete().eq('listing_id', listingId).eq('date', date) } catch (e) { console.error('assign: staged clear failed', e) }
       let descriptionSaved: boolean | null = null
       if (description) { try { const chk = await retrieveBreezewayTask(clean.id); const live = String(chk?.data?.description || ''); descriptionSaved = live.includes(description.slice(0, 24)) } catch { descriptionSaved = null } }
       results.push({ listingId, date, ok: true, taskId: clean.id, descriptionSaved } as any)
@@ -57,5 +69,7 @@ export async function POST(req: NextRequest) {
     }
   }
   const pushed = results.filter(r => r.ok).length
+  // Bust the schedule cache so the next load reflects the fresh assignment right away.
+  if (pushed > 0) { try { revalidateTag('schedule') } catch (e) { console.error('assign: revalidateTag failed', e) } }
   return NextResponse.json({ ok: true, pushed, failed: results.length - pushed, results })
 }
