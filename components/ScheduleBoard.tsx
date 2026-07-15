@@ -10,7 +10,7 @@ import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Upl
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
 
-type Clean = { extended?: boolean; extendedFrom?: string | null; listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; newDoorCode: string | null; cleaningTime?: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: string; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean }
+type Clean = { extended?: boolean; extendedFrom?: string | null; listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkOutTime: string | null; sameDayTurn: boolean; doorCode: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: string; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; blocked?: boolean; blockedFrom?: string | null; missing?: boolean; walkInRisk?: boolean }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
 type Person = { id: number; name: string; region: string | null }
 type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; byMarket: { market: string; count: number }[] }; days: Day[]; housekeepers: Person[]; units?: { id: string; name: string }[]; breezeway: boolean; syncedAt?: string; error?: string }
@@ -276,18 +276,6 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   }
 
 
-  async function blockClean(c: Clean) {
-    const k = keyOf(c)
-    const action = c.blocked ? 'unblock' : 'block'
-    if (action === 'block' && !window.confirm('Move ' + c.unit + "'s clean to the next day? Housekeeping will see it moved in Breezeway.")) return
-    setBlocking(prev => ({ ...prev, [k]: true }))
-    try {
-      const r = await fetch('/api/schedule/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: c.listingId, date: c.blocked ? c.blockedFrom : c.date, action }) })
-      const j = await r.json().catch(() => null)
-      if (!r.ok || !j) throw new Error((j && j.error) || 'Could not move the clean.')
-      await load(view, date)
-    } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking(prev => ({ ...prev, [k]: false })) }
-  }
   function toggleBlockStage(c: Clean) {
     const k = keyOf(c)
     setBlockStaged(prev => { const n = { ...prev }; if (n[k]) delete n[k]; else n[k] = true; return n })
@@ -397,8 +385,8 @@ async function pushBlocks() {
     } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking({}) }
   }
   function exportCsv() {
-    const head = ['Building', 'Vendor', 'Unit', 'Bedrooms', 'Market', 'Date', 'Guest out', 'Check-out', 'Nights', 'Same-day turn', 'Door code', 'New code', 'Cleaner']
-    const body = rows.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', c.newDoorCode || '', e.label || ''] })
+    const head = ['Building', 'Vendor', 'Unit', 'Bedrooms', 'Market', 'Date', 'Guest out', 'Check-out', 'Nights', 'Same-day turn', 'Door code', 'Cleaner']
+    const body = rows.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', e.label || ''] })
     const esc = (v: any) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
     const csv = [head, ...body].map(r => r.map(esc).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
@@ -707,6 +695,3 @@ function CleanerPicker({ people, value, existing, onChange, disabled, placeholde
   )
 }
 
-// redeploy trigger 2026-07-06
-
-// redeploy trigger
