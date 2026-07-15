@@ -120,7 +120,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   )).map((a: any) => String(a)).filter(Boolean)
 
   const isBeach = /beach/i.test(String(listing.address_city || ''))
-  const res = computeScore(listing, { avgRating, reviewCount: reviews.length, isBeach, siblingAmenities })
+  const res = computeScore(listing, { avgRating, reviewCount: rated.length, isBeach, siblingAmenities })
   // If the historical optimize stamp was lost (pre-dedicated-column), infer "optimized" from complete
   // content: a real title + 5+ of the 6 description sections filled is unmistakably optimized copy.
   const contentOptimized = !!(name && name !== 'Untitled unit' && res.description.sections.length >= 5)
