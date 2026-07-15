@@ -20,7 +20,8 @@ const CLEANING_TIME_FIELD = '69977f98e346440013af2462'
 const DEAD = /cancel|declin|inquir|expire|denied/i
 const LIVE = /confirm|checked/i // ONLY confirmed/checked stays make cleans. NOT inquiry/reserved (holds) and NOT 'closed' (Guesty closed = released/replaced - verified with the Cindy/Rustic-18 phantom)
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
-const VENDOR_OF = (s: string) => /botanica/i.test(s) ? 'Botanica' : null // Botanica is cleaned by hotel staff (vendor), not our team
+const VENDOR_RE = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i // vendor-cleaned buildings (hotel/vendor staff, not our team) - mirrors forecast API + ForecastBoard
+const VENDOR_OF = (s: string) => { if (!VENDOR_RE.test(s)) return null; if (/botanica/i.test(s)) return 'Botanica'; if (/park\s*towers?|\bpt\b/i.test(s)) return 'Park Towers'; if (/amrit/i.test(s)) return 'Amrit'; if (/capri/i.test(s)) return 'Capri'; return 'Lucerne' }
 const NO_CODE = (s: string) => IS_17WEST(s) || /elser/i.test(s) // 17West + Elser door codes are managed elsewhere — don't generate a new code
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
