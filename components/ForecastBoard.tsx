@@ -5,7 +5,7 @@ import ListingOpsPanel from './ListingOpsPanel'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[]; avgByMarketDow?: Record<string, number[]>; vendorAvgByMarketDow?: Record<string, number[]> }
-type Unit = { unit: string; movedTo?: string | null; movedFrom?: string | null; listingId?: string; bedrooms?: number | null; hub?: string; sameDay?: boolean; extended?: boolean; missing?: boolean; walkInRisk?: boolean; bzOnly?: boolean; assigned?: string[] }
+type Unit = { unit: string; movedTo?: string | null; movedFrom?: string | null; listingId?: string; bedrooms?: number | null; hub?: string; sameDay?: boolean; extended?: boolean; extendedFrom?: string | null; missing?: boolean; walkInRisk?: boolean; bzOnly?: boolean; assigned?: string[] }
 type HK = { id: string; name: string }
 type Pending = { listingId: string; date: string; id: string; name: string }
 
@@ -120,7 +120,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
               if (!(c?.guestOut || c?.bzOnly)) continue // departure cleans = Guesty checkout OR Breezeway departure task (moved/next-day); route already outputs departures only
               const unit = c?.unit || c?.name || c?.listingName || c?.title || 'Unit'
               const an0 = Array.isArray(c?.assignedNames) ? c.assignedNames : []
-              const rec: Unit = { unit, listingId: c?.listingId || c?.listing_id || c?._id, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay, assigned: an0, movedTo: c?.movedTo, movedFrom: c?.movedFrom, extended: c?.extended, missing: c?.missing, walkInRisk: c?.walkInRisk, bzOnly: c?.bzOnly }
+              const rec: Unit = { unit, listingId: c?.listingId || c?.listing_id || c?._id, bedrooms: c?.bedrooms, hub: c?.hub, sameDay: c?.sameDayTurn || c?.sameDay, assigned: an0, movedTo: c?.movedTo, movedFrom: c?.movedFrom, extended: c?.extended, extendedFrom: c?.extendedFrom, missing: c?.missing, walkInRisk: c?.walkInRisk, bzOnly: c?.bzOnly }
               if (VENDOR.test(String(unit)) || c?.vendor) (vend[key] ||= []).push(rec)
               else (ours[key] ||= []).push(rec)
               an0.forEach((n: string) => { if (n) names.add(n) })
@@ -510,12 +510,12 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
                     const settled = isAssigned || st === 'done'
                     return (
                       <div key={i} className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 border-l-2 ${pend ? 'border-amber-400 bg-amber-50/50' : settled ? 'border-transparent' : 'border-rose-400 bg-rose-50/40'}`}>
-                        <span className="flex-1 text-neutral-800 truncate">{u.listingId ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpsFor({ listingId: String(u.listingId), unit: String(u.unit), date: selDate }) }} className="text-left hover:underline decoration-dotted underline-offset-2">{u.unit}</button> : u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null && !/\dbr\b/i.test(u.unit) ? ` · ${u.bedrooms}BR` : ''}</span>{u.sameDay && <span className="text-amber-600 text-xs font-medium"> ⇄ same-day</span>}</span>
+                        <span className="flex-1 text-neutral-800 truncate">{u.listingId ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpsFor({ listingId: String(u.listingId), unit: String(u.unit), date: selDate }) }} className="text-left hover:underline decoration-dotted underline-offset-2">{u.unit}</button> : u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null && !/\dbr\b/i.test(u.unit) ? ` · ${u.bedrooms}BR` : ''}</span>{u.sameDay && <span className="text-rose-600 text-xs font-semibold"> ⇄ same-day</span>}</span>
                         {u.movedTo && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-medium px-1.5 py-0.5">Moved to {u.movedTo.slice(5)} (+{Math.max(1, Math.round((new Date(u.movedTo + 'T12:00:00').getTime() - new Date(selDate + 'T12:00:00').getTime()) / 86400000))}d)</span>}
                         {u.movedFrom && <span className="shrink-0 rounded bg-emerald-100 text-emerald-700 text-[10px] font-medium px-1.5 py-0.5">Moved to today</span>}
                         {u.walkInRisk && <span className="shrink-0 rounded bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5">⚠ Guest in-house</span>}
-                        {u.extended && <span className="shrink-0 rounded bg-violet-100 text-violet-700 text-[10px] font-medium px-1.5 py-0.5">Extended</span>}
-                        {u.missing && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5 py-0.5">⚠ No clean</span>}
+                        {u.extended && <span className="shrink-0 rounded bg-violet-100 text-violet-700 text-[10px] font-medium px-1.5 py-0.5">Extended{u.extendedFrom ? ' · was ' + String(u.extendedFrom).slice(5) : ''}</span>}
+                        {u.missing && <span className="shrink-0 rounded bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5 py-0.5">⚠ No clean scheduled</span>}
                         <div className="flex items-center gap-1 shrink-0">
                           {u.listingId && hkPeople.length > 0 && st !== 'saving' ? (
                             <select
@@ -544,7 +544,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
                   {selVendor.length === 0 && <div className="text-xs text-neutral-400 py-2">No vendor cleans this day.</div>}
                   {selVendor.map((u, i) => (
                     <div key={i} className="flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 border-l-2 border-amber-300 bg-amber-50/40">
-                      <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null && !/\dbr\b/i.test(u.unit) ? ` · ${u.bedrooms}BR` : ''}</span>{u.sameDay && <span className="text-amber-600 text-xs font-medium"> ⇄ same-day</span>}</span>
+                      <span className="flex-1 text-neutral-800 truncate">{u.unit}<span className="text-neutral-400 text-xs">{u.bedrooms != null && !/\dbr\b/i.test(u.unit) ? ` · ${u.bedrooms}BR` : ''}</span>{u.sameDay && <span className="text-rose-600 text-xs font-semibold"> ⇄ same-day</span>}</span>
                       <span className="text-[11px] text-amber-700 shrink-0">vendor</span>
                     </div>
                   ))}
