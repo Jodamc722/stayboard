@@ -73,8 +73,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   }
   const s = gb.sections || {}
   const omit: string[] = Array.isArray(s.omit) ? s.omit : []
-  const pa = s._photoAssign || {}
-  const photos: string[] = Array.isArray(s._photos) ? s._photos : []
+  const purl = (p: any): string | null => { if (!p) return null; if (typeof p === 'string') return p; return p.original || p.thumbnail || p.url || null }
+  const _paRaw = s._photoAssign || {}
+  const pa: any = {}
+  for (const _k of Object.keys(_paRaw)) pa[_k] = purl(_paRaw[_k])
+  const photos: string[] = (Array.isArray(s._photos) ? s._photos : []).map(purl).filter(Boolean) as string[]
   const dark = gb.theme === 'dark'
   const showTags = s._showTags !== false
 
