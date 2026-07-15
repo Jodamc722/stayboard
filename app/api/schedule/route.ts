@@ -329,6 +329,17 @@ for (const c of cleans) { if (!c.date || c.vendor) continue; const occ = (outs |
 const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
 for (let d = start; d <= end; d = addDays(d, 1)) dayList.push(d)
+// DEDUPE by listingId+date: the moved/orphan/manual passes can re-add a clean already present from
+// the checkout loop, producing duplicate rows that COLLIDE React keys on the board (ghost rows that
+// leak across market tabs). Keep the richest copy (a row with a Breezeway task + assignee wins).
+{
+  const _byKey = new Map<string, Clean>()
+  const _score = (x: Clean) => (x.breezewayTaskId ? 2 : 0) + ((x.assignedNames && x.assignedNames.length) ? 1 : 0)
+  for (const c of cleans) { const kk = c.listingId + '__' + c.date; const ex = _byKey.get(kk); if (!ex || _score(c) > _score(ex)) _byKey.set(kk, c) }
+  const _dedup = Array.from(_byKey.values())
+  cleans.length = 0
+  for (const c of _dedup) cleans.push(c)
+}
 const days = dayList.map(date => {
 const dayCleans = cleans.filter(c => c.date === date).sort((a, b) => (b.sameDayTurn ? 1 : 0) - (a.sameDayTurn ? 1 : 0) || a.hub.localeCompare(b.hub) || a.unit.localeCompare(b.unit))
 const markets: Record<string, Clean[]> = {}
