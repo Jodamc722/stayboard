@@ -115,8 +115,9 @@ export default function AuditCapture({ code }: { code: string }) {
   function roomLabel(r: string) { const c = cfgByKey[roomKey(r)]; return c && c.display_name ? c.display_name : r }
   function roomCover(r: string) { const c = cfgByKey[roomKey(r)]; return c ? c.cover_photo_url : null }
 
+  const isOnboarding = !!(data && data.audit && data.audit.auditType === 'onboarding')
   function startDraft(room: string, seed?: Partial<Draft>) {
-    setDraft({ room, kind: (seed && seed.kind) || 'replace', title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', photos: [], ai: null })
+    setDraft({ room, kind: (seed && seed.kind) || (isOnboarding ? 'inventory' : 'replace'), title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', photos: [], ai: null })
     setOpenRoom(room)
   }
 
@@ -345,7 +346,7 @@ export default function AuditCapture({ code }: { code: string }) {
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
         {data.listing.building ? <div className="text-xs text-neutral-500 mt-0.5">{data.listing.building}</div> : null}
-        <div className="text-[11px] text-neutral-400 mt-2">Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.</div>
+        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.'}</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
       <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
@@ -452,7 +453,7 @@ export default function AuditCapture({ code }: { code: string }) {
                 </div>
                 <div className="mb-2">
                   {roomCover(room) ? <img src={roomCover(room) as string} alt="" className="w-full h-32 object-cover rounded-lg" /> : <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center text-[11px] text-neutral-400">No cover photo</div>}
-                  {!done ? <div className="flex flex-wrap items-center gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { setFaqOpen(o => !o); setFaqTitle(''); setFaqHowto(''); setFaqPhoto('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-indigo-300 text-indigo-600">+ Add to FAQ</button><button onClick={() => { setOrderOpen(o => !o); setOrderName(''); setOrderQty('1'); setOrderNote('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-amber-300 text-amber-700">+ Order</button>{orderOpen && openRoom === room ? (
+                  {!done ? <div className="flex flex-wrap items-center gap-2 mt-1.5"><button onClick={() => pickCover(room)} disabled={coverBusy && coverRoom === room} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">{coverBusy && coverRoom === room ? 'Uploading…' : (roomCover(room) ? 'Replace cover' : 'Add cover photo')}</button><button onClick={() => renameRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-neutral-200">Rename room</button><button onClick={() => removeRoom(room)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 text-rose-600">Remove room</button><button onClick={() => { setFaqOpen(o => !o); setFaqTitle(''); setFaqHowto(''); setFaqPhoto('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-indigo-300 text-indigo-600">+ Add to FAQ</button>{!isOnboarding ? <button onClick={() => { setOrderOpen(o => !o); setOrderName(''); setOrderQty('1'); setOrderNote('') }} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-amber-300 text-amber-700">+ Order</button> : null}{orderOpen && openRoom === room ? (
                     <div className="w-full mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 space-y-1.5">
                       <div className="text-[11px] font-semibold text-amber-800">Order — add an item this unit needs</div>
                       <input value={orderName} onChange={e => setOrderName(e.target.value)} placeholder="Item to order (e.g. Nightstand)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" />
@@ -492,8 +493,8 @@ export default function AuditCapture({ code }: { code: string }) {
                   </div>
                 ))}
                 <div>
-                  {!done && !sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
-                  {!done && sug[room] && sug[room].length > 0 ? (
+                  {!isOnboarding && !done && !sug[room] ? <button onClick={() => loadSug(room)} className="text-[11px] font-semibold text-violet-700">{sugBusy === room ? 'Thinking\u2026' : '\u2728 Ideas for this room'}</button> : null}
+                  {!isOnboarding && !done && sug[room] && sug[room].length > 0 ? (
                     <div className="flex gap-1.5 flex-wrap">
                       {sug[room].map((s, i) => (
                         <button key={i} title={s.why || ''} onClick={() => startDraft(room, { kind: 'add', title: s.title, note: s.why || '' })} className="text-[11px] px-2 py-1 rounded-full border border-violet-200 bg-violet-50 text-violet-800">+ {s.title}</button>
@@ -503,11 +504,11 @@ export default function AuditCapture({ code }: { code: string }) {
                 </div>
                 {draft && draft.room === room ? (
                   <div className="rounded-lg border border-neutral-200 p-2.5 space-y-2">
-                    <div className="flex gap-1.5">
+                    {!isOnboarding ? <div className="flex gap-1.5">
                       {['maintenance', 'replace', 'add', 'faq'].map(k => (
                         <button key={k} onClick={() => { if (k === 'replace') { const why = window.prompt('Why should this be replaced? (may not be obvious in the photos)'); setDraft(d => d ? { ...d, kind: k, note: (why != null && why.trim()) ? why.trim() : d.note } : d) } else setDraft(d => d ? { ...d, kind: k } : d) }} className={'flex-1 text-xs font-semibold px-2 py-2 rounded-lg border ' + (draft.kind === k ? KIND_META[k].cls : 'border-neutral-200 text-neutral-500 bg-white')}>{KIND_META[k].label}</button>
                       ))}
-                    </div>
+                    </div> : null}
                     <button onClick={() => { if (fileRef.current) fileRef.current.click() }} className="w-full rounded-lg border-2 border-dashed border-neutral-300 py-3 text-sm text-neutral-500">
                       {uploading ? 'Uploading \u0026 analyzing\u2026' : draft.photoUrl ? 'Photo added \u2713 \u2014 tap to retake' : '\ud83d\udcf7 Take a photo (AI fills the details)'}
                     </button>
@@ -543,7 +544,7 @@ export default function AuditCapture({ code }: { code: string }) {
           </div>
         )
       })}
-      <div className="mt-4 rounded-xl border border-neutral-200 bg-white overflow-hidden">
+      {!isOnboarding ? <div className="mt-4 rounded-xl border border-neutral-200 bg-white overflow-hidden">
         <button onClick={loadSuggest} disabled={gapBusy} className="w-full text-left px-3.5 py-2.5 text-sm font-semibold text-neutral-800 flex items-center justify-between">
           <span>✨ Suggest missing items</span>
           <span className="text-xs text-neutral-400">{gapBusy ? 'Thinking…' : (sugOpen ? 'Refresh' : 'Tap')}</span>
@@ -558,7 +559,7 @@ export default function AuditCapture({ code }: { code: string }) {
             ))}
           </div>
         ) : (sugOpen && !sugBusy ? <div className="px-3.5 pb-3 text-xs text-muted">Nothing obvious missing.</div> : null)}
-      </div>
+      </div> : null}
       <div className="flex gap-2 mt-3">
         <input value={newRoom} onChange={e => setNewRoom(e.target.value)} placeholder="Add a space (room, garage, hallway…)" className="flex-1 text-sm border border-neutral-200 rounded-lg px-2.5 py-2 bg-white" />
         <button onClick={() => { const n = newRoom.trim(); if (n && customRooms.indexOf(n) < 0) { setCustomRooms(c => [...c, n]); setOpenRoom(n) } setNewRoom('') }} className="text-sm font-semibold px-3 rounded-lg border border-neutral-200 bg-white">Add</button>
