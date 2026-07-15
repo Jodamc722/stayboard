@@ -357,5 +357,26 @@ syncedAt: new Date().toISOString(),
 }, ['schedule-v2'], { tags: ['schedule'], revalidate: 86400 })
 
 const payload = await compute(view, start, end, today)
-return NextResponse.json(payload)
+// LIVE staged-assignment overlay (uncached): server-saved cleaner picks survive refresh/tab-switch
+  try {
+    const sdb = supabaseAdmin()
+    const { data: staged } = await sdb.from('schedule_staged').select('listing_id,date,cleaner_id,cleaner_name').gte('date', start).lte('date', end)
+    if (staged && staged.length && payload && Array.isArray((payload as any).days)) {
+      const smap = new Map<string, any>()
+      for (const r of staged) { if (r && r.cleaner_id != null) smap.set(String(r.listing_id) + '|' + String(r.date).slice(0, 10), r) }
+      if (smap.size) {
+        for (const day of (payload as any).days) {
+          const mk = day && day.markets
+          if (!mk) continue
+          for (const key of Object.keys(mk)) {
+            for (const c of ((mk[key] || []) as any[])) {
+              const hit = smap.get(String(c.listingId) + '|' + String(c.date).slice(0, 10))
+              if (hit) { c.assignedIds = [Number(hit.cleaner_id)]; c.assignedNames = hit.cleaner_name ? [String(hit.cleaner_name)] : c.assignedNames; c.staged = true }
+            }
+          }
+        }
+      }
+    }
+  } catch { /* staged overlay optional */ }
+  return NextResponse.json(payload)
 }
