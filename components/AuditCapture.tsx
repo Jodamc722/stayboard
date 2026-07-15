@@ -4,7 +4,7 @@
 // in the desktop app, never here.
 import { useEffect, useRef, useState } from 'react'
 
-type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number }
+type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; details?: any }
 type Listing = { id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null }
 type Payload = { ok: boolean; audit: { id: string; status: string; auditType?: string | null }; listing: Listing; items: Item[]; rooms?: RoomCfg[]; scope?: string; error?: string }
 type RoomCfg = { room_key: string; display_name: string; cover_photo_url: string | null; sort: number }
@@ -153,7 +153,19 @@ export default function AuditCapture({ code }: { code: string }) {
   async function buildFromStaged() { if (!orgPhotos.length) return; await runOrganize(orgPhotos, orgAnswers) }
   async function addAllOrg() {
     const chosen = orgItems.filter((_: any, i: number) => orgPick[i])
+    const nrm = (x: any) => String(x || '').toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+    const prior = items.filter(it => it.room === orgRoom && it.kind === 'inventory')
     for (const it of chosen) {
+      const match = prior.find(e => e.title && nrm(e.title) === nrm(it.item))
+      if (match) {
+        const fields: any = { qty: Math.max(Number(match.qty) || 1, Math.max(1, it.count || 1)) }
+        const md: any = match.details || {}
+        if (it.brand && !md.brand) fields.brand = it.brand
+        if (it.size && !md.size) fields.size = it.size
+        if (it.howTo && !md.howTo) fields.howTo = it.howTo
+        await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: match.id, fields }) })
+        continue
+      }
       const kind = 'inventory'
       const note = [it.condition, it.size ? 'Size: ' + it.size : ''].filter(Boolean).join(' - ')
       await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, qty: Math.max(1, it.count || 1), photoUrl: it.photo || orgPhotos[0] || '', photos: it.photo ? [it.photo] : [], ai: it }) })
