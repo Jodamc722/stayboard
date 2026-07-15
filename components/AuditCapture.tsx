@@ -167,7 +167,7 @@ export default function AuditCapture({ code }: { code: string }) {
         continue
       }
       const kind = 'inventory'
-      const note = [it.condition, it.size ? 'Size: ' + it.size : ''].filter(Boolean).join(' - ')
+      const note = String(it.condition || '')
       await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: orgRoom, kind, title: it.item, itemType: it.itemType, note, severity: it.severity, qty: Math.max(1, it.count || 1), photoUrl: it.photo || orgPhotos[0] || '', photos: it.photo ? [it.photo] : [], ai: it }) })
     }
     setOrgRoom(''); setOrgItems([]); setOrgQuestions([]); setOrgPhotos([]); await load()
