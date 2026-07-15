@@ -658,7 +658,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         <Page id="booknext" ghost="stay">
           <div className="flex flex-1 flex-col items-center justify-center text-center">
             <p className="text-[10px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="booknext.kicker" def="COME BACK SOON" /></p>
-            <h2 className="mt-4 text-[40px] lowercase font-medium leading-[1.05]" style={{ fontFamily: SERIF }}><L k="booknext.heading" def="book your next day" /></h2>
+            <h2 className="mt-4 text-[40px] lowercase font-medium leading-[1.05]" style={{ fontFamily: SERIF }}><L k="booknext.heading" def="book your next stay" /></h2>
             <p className="mt-4 max-w-[42ch] text-[13px] font-light leading-[1.8]" style={{ fontFamily: SERIF }}><L k="booknext.body" def="We would love to host you again. Scan the code to book directly with us and enjoy a little something off your next stay." rows={3} /></p>
             <div className="mt-7 rounded-2xl bg-white p-3 shadow-[0_2px_20px_rgba(0,0,0,0.10)]">
               <a href={lbl('booknext.url', 'https://stay-hospitality.com')} target="_blank" rel="noopener noreferrer"><img src={'https://api.qrserver.com/v1/create-qr-code/?size=340x340&data=' + encodeURIComponent(lbl('booknext.url', 'https://stay-hospitality.com'))} alt="Book your next stay" className="h-40 w-40" /></a>
