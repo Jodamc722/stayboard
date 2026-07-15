@@ -329,6 +329,22 @@ function quickTags(r: string): string[] {
   }
   async function addTag(room: string, name: string) {
     const nm = name.trim(); if (!nm) return
+    if (room.indexOf(' — ') < 0) {
+      const sub0 = /ensuite|bathroom/i.test(nm) ? (room + ' — Bathroom') : (/closet/i.test(nm) ? (room + ' — Closet') : '')
+      if (sub0) {
+        let sub = sub0
+        let n2 = 2
+        while (items.some((x: any) => x.room === sub)) { sub = sub0 + ' ' + n2; n2++ }
+        setTagBusy(true)
+        try {
+          await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: sub, kind: 'tag', title: nm }) })
+          await load()
+          setOpenRoom(sub)
+        } catch { alert('Failed - retry.') }
+        setTagBusy(false)
+        return
+      }
+    }
     const existing = items.find((x: any) => x.kind === 'tag' && x.room === room && x.title === nm)
     setTagBusy(true)
     try {
