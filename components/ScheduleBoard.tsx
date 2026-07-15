@@ -195,11 +195,15 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     if (c.assignedIds && c.assignedIds.length) return { ids: c.assignedIds, label: (c.assignedNames || []).join(', '), source: 'existing' }
     return { ids: [], label: '', source: 'none' }
   }
+  function stageSave(listingId: string, date: string, p: Person | null) {
+    try { fetch('/api/schedule/stage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, date, cleanerId: p ? p.id : null, cleanerName: p ? p.name : null }) }).catch(() => {}) } catch {}
+  }
   function setPerson(c: Clean, p: Person | null) {
     const k = keyOf(c)
     setOverrides(prev => { const n = { ...prev }; if (p) n[k] = p; else delete n[k]; return n })
     setCleared(prev => { const n = { ...prev }; if (p) delete n[k]; else n[k] = true; return n })
     if (p) setSelected(prev => ({ ...prev, [k]: true }))
+    stageSave(c.listingId, c.date, p)
   }
   function toggleSelect(c: Clean, on?: boolean) { const k = keyOf(c); setSelected(prev => { const n = { ...prev }; const v = on === undefined ? !n[k] : on; if (v) n[k] = true; else delete n[k]; return n }) }
   function setSelectMany(cleans: Clean[], on: boolean) { setSelected(prev => { const n = { ...prev }; for (const c of cleans) { const k = keyOf(c); if (on) n[k] = true; else delete n[k] } return n }) }
@@ -207,6 +211,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     const keys = Object.keys(selected).filter(k => selected[k])
     setOverrides(prev => { const n = { ...prev }; for (const k of keys) { if (p) n[k] = p; else delete n[k] } return n })
     setCleared(prev => { const n = { ...prev }; for (const k of keys) { if (p) delete n[k]; else n[k] = true } return n })
+    for (const bk of keys) { const bx = bk.lastIndexOf('__'); stageSave(bk.slice(0, bx), bk.slice(bx + 2), p) }
   }
 
   const selectedKeys = Object.keys(selected).filter(k => selected[k])
