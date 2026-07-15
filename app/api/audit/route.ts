@@ -252,6 +252,17 @@ export async function POST(req: NextRequest) {
     }
     const ins = await db.from('audit_items').insert(row).select('*').limit(1)
     if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
+    try {
+      const _d: any = (row as any).details || {}
+      const _ans = kind === 'faq' ? String(row.note || _d.howTo || '') : String(_d.howTo || '')
+      const _lid = String(audit.listing_id || '')
+      if (_ans && row.title && _lid && _lid.indexOf(':') < 0) {
+        const ex = await db.from('listing_faq').select('id,question').eq('listing_id', _lid).limit(500)
+        let dup = false
+        for (const e of (ex.data || []) as any[]) if (e.question && String(e.question).toLowerCase() === String(row.title).toLowerCase()) dup = true
+        if (!dup) await db.from('listing_faq').insert({ listing_id: _lid, category: room, question: row.title, answer: _ans.slice(0, 4000), photo_url: row.photo_url, source: 'audit', status: 'draft', created_by: 'audit-capture' })
+      }
+    } catch {}
     return NextResponse.json({ ok: true, item: ins.data && ins.data[0] })
   }
 
