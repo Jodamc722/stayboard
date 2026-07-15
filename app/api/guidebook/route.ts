@@ -346,14 +346,23 @@ function buildFallback(ctx: { name: string; building: string; city: string; l: a
   return {
     omit: [],
     cover: { line1: 'welcome', line2: 'to your stay', subtitle: place.toUpperCase() },
-    about: { heading: 'about the space', body: `Welcome to ${building || name}. Your residence has been prepared for a seamless, restful stay${city ? ' in ' + city : ''} — settle in, slow down, and make yourself at home.` },
+    about: { heading: 'about the space', body: (() => {
+      const kind = Number(l.bedrooms) === 0 ? 'studio' : ((l.bedrooms ? l.bedrooms + '-bedroom ' : '') + 'suite')
+      const sleeps = l.max_occupancy ? ' comfortably sleeps up to ' + l.max_occupancy + (l.max_occupancy === 1 ? ' guest' : ' guests') : ''
+      const baths = l.bathrooms ? ' with ' + l.bathrooms + ' bath' + (l.bathrooms === 1 ? '' : 's') : ''
+      const lead = 'Welcome to ' + (building || name) + (city ? ' in ' + city : '') + '. This ' + kind + sleeps + baths + '.'
+      const pub = l.pub || {}
+      const desc = [pub.space, pub.summary, pub.neighborhood].map((x: any) => (x ? String(x) : '')).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+      const detail = desc ? (' ' + desc.slice(0, 420)) : ' Your residence has been prepared for a seamless, restful stay — settle in, slow down, and make yourself at home.'
+      return lead + detail
+    })() },
     retreat: { heading: 'your private retreat', lines: [
       `THANK YOU FOR CHOOSING ${(building || name).toUpperCase()}. WE'RE HONORED TO HOST YOU.`,
       'MORE THAN A STAY — A PRIVATE ESCAPE DESIGNED FOR COMFORT AND EASE.',
       'OUR TEAM IS A MESSAGE AWAY FOR ANYTHING YOU NEED.',
     ] },
     special: { heading: 'what makes this stay special', groups: [
-      { title: 'The Residence', items: [`${l.bedrooms ?? '-'} bedroom${l.bedrooms === 1 ? '' : 's'} · ${l.bathrooms ?? '-'} bath${l.bathrooms === 1 ? '' : 's'}`, `Sleeps ${l.max_occupancy ?? '-'}`] },
+      { title: 'The Residence', items: [`${Number(l.bedrooms) === 0 ? 'Studio' : (l.bedrooms ?? '-') + ' bedroom' + (l.bedrooms === 1 ? '' : 's')} · ${l.bathrooms ?? '-'} bath${l.bathrooms === 1 ? '' : 's'}`, `Sleeps ${l.max_occupancy ?? '-'}`] },
       { title: 'Amenities', items: (Array.isArray(l.amenities) ? l.amenities : []).slice(0, 4) },
     ] },
     host: { heading: 'meet your host', body: 'We manage beautiful stays across South Florida with one obsession: the details. Whether you\'re here to relax, explore, or celebrate, our team is close by to make every day effortless.' },
