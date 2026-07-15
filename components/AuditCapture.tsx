@@ -259,9 +259,10 @@ export default function AuditCapture({ code }: { code: string }) {
   function shotsFor(room: string, tagTitles: string[]): string[] {
   const out: string[] = []
   const has = (re: RegExp) => tagTitles.some(x => re.test(x))
-  const r = room.toLowerCase()
+  const parts = room.split(' — ')
+  const r = String(parts[parts.length - 1] || room).toLowerCase()
   if (has(/tv|television/i) || r.indexOf('living') >= 0) { out.push('TV - wide shot'); out.push('TV - brand / model close-up'); out.push('TV remote') }
-  if (has(/bed|king|queen|full|twin/i) || r.indexOf('bedroom') >= 0 || r.indexOf('master') >= 0) out.push('Bed - full shot')
+  if (has(/bed\b|king|queen|twin/i) || r.indexOf('bedroom') >= 0 || r.indexOf('master') >= 0) out.push('Bed - full shot')
   if (has(/thermostat/i)) out.push('Thermostat - close-up')
   if (has(/closet/i) || r.indexOf('closet') >= 0) out.push('Closet - inside')
   if (has(/shower|tub/i) || r.indexOf('bath') >= 0) { out.push('Shower / tub'); out.push('Vanity + sinks') }
