@@ -43,10 +43,13 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   }
   function approve(h: Howto) { post({ action: 'approveHowto', listingId: pick, category: 'How-To', question: h.title, answer: h.howTo, photoUrl: h.photo_url }) }
   function del(id: string) { post({ action: 'deleteEntry', id }) }
+  function approveDraft(id: string) { post({ action: 'approveDraft', id }) }
+  function dismissDraft(id: string) { post({ action: 'dismissDraft', id }) }
 
   const facts: Fact[] = (data && data.facts) || []
   const entries: Entry[] = (data && data.entries) || []
   const howtos: Howto[] = (data && data.howtos) || []
+  const drafts: Entry[] = (data && (data as any).drafts) || []
   const highlights: Highlight[] = (data && data.highlights) || []
   const otaLinks: any[] = (data && data.otaLinks) || []
   const keyDetails: any[] = (data && data.keyDetails) || []
@@ -115,6 +118,26 @@ function Section({ id, title, note, children }: { id: string; title: string; not
             <Section id="highlights" title="Highlights" note="from onboarding">
               <div className="py-3 flex flex-wrap gap-1.5">
                 {highlights.map(h => <span key={h.id} className="text-[12px] px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">{h.title}{h.brand ? ' · ' + h.brand : ''}</span>)}
+              </div>
+            </Section>
+          ) : null}
+
+          {drafts.length > 0 ? (
+            <Section id="drafts" title="Drafts to approve" note="captured in audits - approve to publish">
+              <div className="py-2 space-y-2">
+                {drafts.map(d => (
+                  <div key={d.id} className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-2.5">
+                    {d.photo_url ? <img src={d.photo_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" /> : null}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-ink">{d.question}{d.category ? <span className="text-[11px] text-muted ml-1.5">{d.category}</span> : null}</div>
+                      <div className="text-[13px] text-muted mt-0.5">{d.answer}</div>
+                    </div>
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <button onClick={() => approveDraft(d.id)} disabled={busy} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-neutral-900 text-white">Approve</button>
+                      <button onClick={() => dismissDraft(d.id)} disabled={busy} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted">Dismiss</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </Section>
           ) : null}
