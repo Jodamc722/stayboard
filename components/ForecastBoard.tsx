@@ -157,14 +157,14 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
       .then((j: any) => {
         if (loadKey.current !== key) return
         const doc = j?.doc || {}
-        setMembers(Array.isArray(doc.members) ? doc.members : [])
+        setMembers(Array.isArray(doc.members) && doc.members.length ? doc.members : (DEFAULT_TEAM[market] || []))
         setCells(doc.cells && typeof doc.cells === 'object' ? doc.cells : {})
         if (typeof doc.rate === 'number' && doc.rate > 0) setRate(r => ({ ...r, [market]: doc.rate }))
         setLocked(!!doc.locked)
         dirty.current = false
         setSaveState('idle')
       })
-      .catch(() => { setMembers([]); setCells({}); dirty.current = false })
+      .catch(() => { setMembers(DEFAULT_TEAM[market] || []); setCells({}); dirty.current = false })
   }, [weekStart, market])
 
   useEffect(() => {
