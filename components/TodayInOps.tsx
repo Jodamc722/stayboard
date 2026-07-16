@@ -5,10 +5,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, AlertTriangle, Plus, Clock } from 'lucide-react'
 
-type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean }
+type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number }
-type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number }
+type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean }
+type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Data = { ok: boolean; today: string; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; error?: string }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -33,6 +33,7 @@ const PRIOS = [['normal', 'Normal'], ['high', 'High'], ['urgent', 'Urgent'], ['l
 function hhmm(iso: string | null) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d.getTime())) return ''; return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) }
 function fmtLeft(m: number) { const a = Math.abs(m); const h = Math.floor(a / 60); const mm = a % 60; return (h ? h + 'h ' : '') + mm + 'm' }
 function statusCls(t: Task) {
+  if (t.untracked && !t.done) return 'bg-app text-muted border-line'
   if (t.done) return 'bg-emerald-50 text-emerald-700 border-emerald-200'
   if (t.late) return 'bg-rose-100 text-rose-800 border-rose-300'
   if (t.running) return 'bg-sky-50 text-sky-700 border-sky-200'
@@ -40,6 +41,7 @@ function statusCls(t: Task) {
   return 'bg-app text-muted border-line'
 }
 function statusText(t: Task) {
+  if (t.untracked && !t.done) return 'Vendor'
   if (t.done) return t.missed ? 'Done (after 4pm)' : 'Done'
   if (t.late) return 'LATE'
   if (t.running) return 'In progress'
@@ -113,6 +115,7 @@ export function TodayInOps() {
           </div>
         )}
         {d.missed > 0 && <div className="mt-1 text-xs text-muted">{d.missed} finished after 4pm today</div>}
+        {(d.untracked || 0) > 0 && <div className="mt-1 text-xs text-muted">Excludes {d.untracked} vendor-cleaned unit{(d.untracked || 0) > 1 ? 's' : ''} (Botanica) — the vendor doesn&rsquo;t close tasks in Breezeway, so they can&rsquo;t be tracked against 4pm.</div>}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-5">
@@ -132,6 +135,7 @@ export function TodayInOps() {
               <span className="font-semibold text-ink">{u.unit}</span>
               <span className="text-xs text-muted">{u.market}</span>
               {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
+              {u.untracked && <span title="Vendor-cleaned. The vendor doesn't close tasks in Breezeway, so status here isn't reliable and these aren't tracked against 4pm." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line">Vendor clean</span>}
               {u.guestOut && <span className="text-xs text-muted">out: {u.guestOut}</span>}
               {u.qc.map((q, i) => (
                 <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
