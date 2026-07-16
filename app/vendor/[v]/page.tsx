@@ -12,6 +12,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [err, setErr] = useState('')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [seen, setSeen] = useState<Set<string>>(new Set())
+  const [syncing, setSyncing] = useState(false)
   const seenInit = useRef(false)
   const SEEN_KEY = 'vendor_seen_' + params.v
   const load = useCallback(() => {
@@ -24,6 +25,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
       })
       .catch((err: any) => setErr(String(err)))
   }, [params.v])
+  const resync = async () => { setSyncing(true); try { await fetch('/api/sync/guesty?only=reservations', { method: 'POST' }) } catch {} ; load(); setTimeout(() => setSyncing(false), 900) }
   useEffect(() => { try { const raw = localStorage.getItem(SEEN_KEY); if (raw) { setSeen(new Set(JSON.parse(raw))); seenInit.current = true } } catch {} ; load() }, [load])
   useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30 * 60 * 1000); return () => clearInterval(tm) }, [load])
 
@@ -55,6 +57,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
           <div className="flex items-center gap-2 print:hidden">
             <span className="text-xs text-neutral-400 mr-1 self-center">{lastUpdated ? 'Updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</span>
             {newCount > 0 && <button onClick={markSeen} className="text-sm px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 border border-amber-200 font-medium">{newCount} new</button>}
+            <button onClick={resync} disabled={syncing} className="text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700 font-medium disabled:opacity-50">{syncing ? 'Syncing…' : 'Resync'}</button>
             <button onClick={() => load()} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Refresh</button>
             <button onClick={exportCsv} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Download CSV</button>
             <button onClick={() => window.print()} className="text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700 font-medium">Print / PDF</button>
