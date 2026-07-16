@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Clean = { unit: string; date: string; bedrooms: number | null; doorCode: string | null; checkOut: string; sameDayTurn: boolean }
 type Day = { date: string; dow: string; count: number; cleans: Clean[] }
@@ -10,12 +10,26 @@ function fmtDate(iso: string) { const d = new Date(iso + 'T12:00:00'); return d.
 export default function VendorPage({ params }: { params: { v: string } }) {
   const [data, setData] = useState<Data | null>(null)
   const [err, setErr] = useState('')
-  useEffect(() => {
-    fetch('/api/public/vendor-checkouts?v=' + encodeURIComponent(params.v))
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [seen, setSeen] = useState<Set<string>>(new Set())
+  const seenInit = useRef(false)
+  const SEEN_KEY = 'vendor_seen_' + params.v
+  const load = useCallback(() => {
+    fetch('/api/public/vendor-checkouts?v=' + encodeURIComponent(params.v), { cache: 'no-store' })
       .then(r => r.json())
-      .then((j: Data) => { if (!j || !j.ok) setErr(j?.error || 'Could not load the schedule.'); else setData(j) })
-      .catch(() => setErr('Could not load the schedule.'))
+      .then((j: Data) => {
+        if (!j || j.ok === false) { setErr((j && j.error) || 'Failed to load'); return }
+        setData(j); setLastUpdated(new Date())
+        if (j.days) { const ids: string[] = []; for (const dd of j.days) for (const c of dd.cleans) ids.push(dd.date + '|' + c.unit); if (!seenInit.current) { const st = new Set(ids); setSeen(st); seenInit.current = true; try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} } }
+      })
+      .catch((err: any) => setErr(String(err)))
   }, [params.v])
+  useEffect(() => { try { const raw = localStorage.getItem(SEEN_KEY); if (raw) { setSeen(new Set(JSON.parse(raw))); seenInit.current = true } } catch {} ; load() }, [load])
+  useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30 * 60 * 1000); const _allIds: string[] = []
+  if (data && data.days) for (const dd of data.days) for (const c of dd.cleans) _allIds.push(dd.date + '|' + c.unit)
+  const newCount = seenInit.current ? _allIds.filter(id => !seen.has(id)).length : 0
+  const markSeen = () => { const st = new Set(_allIds); setSeen(st); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} }
+  return () => clearInterval(tm) }, [load])
 
   function exportCsv() {
     if (!data?.days) return
@@ -39,6 +53,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
             <div className="text-xs text-neutral-500">{data.total} checkouts · {data.today && fmtDate(data.today)} – {data.weekEnd && fmtDate(data.weekEnd)}</div>
           </div>
           <div className="flex items-center gap-2 print:hidden">
+            <span className="text-xs text-neutral-400 mr-1 self-center">{lastUpdated ? 'Updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</span>
+            {newCount > 0 && <button onClick={markSeen} className="text-sm px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 border border-amber-200 font-medium">{newCount} new</button>}
+            <button onClick={() => load()} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Refresh</button>
             <button onClick={exportCsv} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Download CSV</button>
             <button onClick={() => window.print()} className="text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700 font-medium">Print / PDF</button>
           </div>
@@ -55,7 +72,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
               ) : (
                 <div className="divide-y divide-neutral-100">
                   {day.cleans.map((c, i) => (
-                    <div key={i} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                    <div key={i} className="flex items-center gap-3 px-4 py-2.5 text-sm">{seenInit.current && !seen.has(day.date + '|' + c.unit) && <span className="ml-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">New</span>}
                       <div className="flex-1 font-medium">{c.unit}{c.sameDayTurn && <span className="ml-2 text-[10px] font-bold text-rose-600 uppercase">Same-day turn</span>}</div>
                       <div className="text-xs text-neutral-500 w-16 text-right">{c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : ''}</div>
                       <div className="text-xs text-neutral-500 w-20 text-right">out {c.checkOut}</div>
