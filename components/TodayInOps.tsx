@@ -9,6 +9,7 @@ type Task = { id: string; listingId: string; unit: string; market: string; dept:
 type Qc = { issue: string; status: string; reportUrl: string | null }
 type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
+type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
 type Data = { ok: boolean; today: string; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
 
@@ -61,6 +62,7 @@ export function TodayInOps() {
   const [showDone, setShowDone] = useState(false)
   const [addFor, setAddFor] = useState('')
   const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
+  const [people, setPeople] = useState<Person[]>([])
   const [showVacant, setShowVacant] = useState(false)
   const [addVacant, setAddVacant] = useState('')
 
@@ -75,6 +77,8 @@ export function TodayInOps() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  // roster for assigning — fetched once, filtered per task department
+  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 5 * 60 * 1000); return () => clearInterval(t) }, [load])
 
   if (loading && !data) return <div className="text-sm text-muted py-10 text-center">Loading today&rsquo;s operations&hellip;</div>
@@ -200,7 +204,10 @@ export function TodayInOps() {
                   <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-28 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-ink truncate">{t.name}</div>
-                    <div className="text-xs text-muted">{t.assignees.length ? t.assignees.join(', ') : <span className="text-amber-700 font-medium">Unassigned</span>}{t.finishedAt ? ' · done ' + hhmm(t.finishedAt) : t.startedAt ? ' · started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</div>
+                    <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
+                      <Assign task={t} people={people} onDone={load} />
+                      <span>{t.finishedAt ? '· done ' + hhmm(t.finishedAt) : t.startedAt ? '· started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
+                    </div>
                   </div>
                   <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
                   <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
@@ -302,6 +309,41 @@ function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string;
       {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
       {ok && <div className="text-xs text-emerald-700 mt-2">{ok}</div>}
     </div>
+  )
+}
+
+// Assign straight from the board — pick a person and it writes to Breezeway immediately.
+// Roster is filtered to people in that task's department (or with no department set).
+function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const opts = people.filter(p => !p.departments || p.departments.length === 0 || p.departments.indexOf(task.dept) >= 0)
+  const assign = async (id: number) => {
+    if (!Number.isFinite(id)) return
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, assigneeIds: [id] }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Assign failed'); setBusy(false); return }
+      onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const cur = task.assignees.length ? task.assignees.join(', ') : 'Unassigned'
+  return (
+    <span className="inline-flex items-center gap-1">
+      <select
+        value=""
+        disabled={busy || opts.length === 0}
+        onChange={e => assign(Number(e.target.value))}
+        title={'Assign this ' + task.dept + ' task'}
+        className={'text-xs rounded border px-1 py-0.5 bg-white max-w-[150px] ' + (task.assignees.length ? 'border-line text-ink' : 'border-amber-300 text-amber-800 font-medium')}
+      >
+        <option value="">{busy ? 'Saving…' : cur}</option>
+        {opts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      {err && <span className="text-[10px] text-rose-700">{err}</span>}
+    </span>
   )
 }
 
