@@ -25,11 +25,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
       .catch((err: any) => setErr(String(err)))
   }, [params.v])
   useEffect(() => { try { const raw = localStorage.getItem(SEEN_KEY); if (raw) { setSeen(new Set(JSON.parse(raw))); seenInit.current = true } } catch {} ; load() }, [load])
-  useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30 * 60 * 1000); const _allIds: string[] = []
-  if (data && data.days) for (const dd of data.days) for (const c of dd.cleans) _allIds.push(dd.date + '|' + c.unit)
-  const newCount = seenInit.current ? _allIds.filter(id => !seen.has(id)).length : 0
-  const markSeen = () => { const st = new Set(_allIds); setSeen(st); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} }
-  return () => clearInterval(tm) }, [load])
+  useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30 * 60 * 1000); return () => clearInterval(tm) }, [load])
 
   function exportCsv() {
     if (!data?.days) return
@@ -42,6 +38,10 @@ export default function VendorPage({ params }: { params: { v: string } }) {
 
   if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6">{err}</div>
   if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading…</div>
+  const _allIds: string[] = []
+  if (data && data.days) for (const dd of data.days) for (const c of dd.cleans) _allIds.push(dd.date + '|' + c.unit)
+  const newCount = seenInit.current ? _allIds.filter(id => !seen.has(id)).length : 0
+  const markSeen = () => { const st = new Set(_allIds); setSeen(st); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} }
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
