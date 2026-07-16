@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active'
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -22,6 +22,8 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
   const [expanded, setExpanded] = useState('')
   const [needsPw, setNeedsPw] = useState(false)
   const [pw, setPw] = useState('')
@@ -59,7 +61,20 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     return () => { document.removeEventListener('visibilitychange', onFocus); window.removeEventListener('focus', onFocus) }
   }, [load])
 
-  const resync = async () => { setSyncing(true); try { await fetch('/api/sync/guesty?only=reservations', { method: 'POST' }) } catch {} ; await load(); setSyncing(false) }
+  const resync = async () => {
+    setSyncing(true); setSyncMsg('')
+    try {
+      const r = await fetch('/api/public/board-resync', { method: 'POST' })
+      const j = await r.json()
+      if (r.status === 429 && j.nextAt) {
+        const mins = Math.max(1, Math.ceil((new Date(j.nextAt).getTime() - Date.now()) / 60000))
+        setSyncMsg('Synced recently — you can sync again in ' + mins + ' min')
+      } else if (!r.ok || !j.ok) { setSyncMsg(j.error || 'Sync failed') }
+      else { setSyncMsg('Synced ' + (j.synced || 0) + ' reservations') }
+    } catch (e: any) { setSyncMsg(String(e?.message || e)) }
+    await load()
+    setSyncing(false)
+  }
   const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
   const submitPw = async (e: any) => {
     e.preventDefault()
@@ -132,7 +147,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
             <button onClick={() => window.print()} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Print</button>
           </div>
         </div>
-        <div className="text-xs text-neutral-400 mb-4">{data.unitCount} units · {data.today ? fmtDate(data.today) : ''} – {data.end ? fmtDate(data.end) : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</div>
+        <div className="text-xs text-neutral-400 mb-1">{data.unitCount} units · {data.today ? fmtDate(data.today) : ''} – {data.end ? fmtDate(data.end) : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}{data.lastSync ? ' · last synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</div>
+        {syncMsg && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-3 inline-block print:hidden">{syncMsg}</div>}
+        <div className="mb-3" />
 
         <div className="flex gap-1 mb-4 bg-neutral-100 rounded-xl p-1 print:hidden">
           {TABS.map(t => { const n = ((data as any)[t.key] || []).length; return (
