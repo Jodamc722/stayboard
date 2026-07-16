@@ -60,10 +60,12 @@ export async function GET(req: NextRequest) {
       db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
       db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
     ])
+    // NOTE: compare status EXACTLY — /active/i also matches 'inactive', which silently counted all
+    // 48 inactive listings (e.g. every Waves unit) as vacant.
     const lmap: Record<string, { name: string; market: string; active: boolean }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
-      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active'  // EXACT match: /active/i also matches 'inactive' }
+      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active' }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
