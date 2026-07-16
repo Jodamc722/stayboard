@@ -12,6 +12,7 @@ const TABS: { key: TabKey; label: string }[] = [
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? r.checkOut : r.checkIn }
+function bedLabel(n: number | null) { if (n == null) return ''; return n === 0 ? 'Studio' : n + 'BR' }
 function keyOf(r: Row, tab: TabKey) { return tab.charAt(0) + r.unit + '|' + dateFor(r, tab) }
 
 export default function VendorPage({ params }: { params: { v: string } }) {
@@ -60,7 +61,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
 
   const exportCsv = () => {
     const head = [['Date', 'Unit', 'Bedrooms', 'Door code', tab === 'departures' ? 'Checkout' : 'Check-in', 'Same-day turn']]
-    const body = rows.map(r => [dateFor(r, tab), r.unit, String(r.bedrooms ?? ''), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : ''])
+    const body = rows.map(r => [dateFor(r, tab), r.unit, bedLabel(r.bedrooms), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : ''])
     const csv = head.concat(body).map(line => line.map(x => /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -106,7 +107,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                     {isNew(r) && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">New</span>}
                     {tab === 'departures' && r.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
                   </div>
-                  <div className="text-xs text-neutral-500">{r.bedrooms != null ? r.bedrooms + 'BR' : ''}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.guests ? ' · ' + r.guests + ' guests' : ''}{tab === 'active' ? ' · out ' + fmtDate(r.checkOut) : ''}</div>
+                  <div className="text-xs text-neutral-500">{bedLabel(r.bedrooms)}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.guests ? ' · ' + r.guests + ' guests' : ''}{tab === 'active' ? ' · out ' + fmtDate(r.checkOut) : ''}</div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-sm font-medium">{fmtDate(dateFor(r, tab))}</div>
