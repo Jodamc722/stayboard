@@ -55,7 +55,7 @@ export async function middleware(request: NextRequest) {
   const user: any = await Promise.race([supabase.auth.getUser().then((r: any) => (r && r.data && r.data.user) || null).catch(() => null), new Promise<any>((res) => setTimeout(() => res(null), 2500))])
 
   const path = request.nextUrl.pathname
-  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path.startsWith('/signup') || path === '/no-access' || path.startsWith('/api') || path.startsWith('/g/') || path.startsWith('/audit/') || path === '/manifest.json' || path.startsWith('/favicon') || path === '/robots.txt'
+  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path.startsWith('/signup') || path === '/no-access' || path.startsWith('/api') || path.startsWith('/g/') || path.startsWith('/audit/') || path.startsWith('/vendor/') || path === '/manifest.json' || path.startsWith('/favicon') || path === '/robots.txt'
 
   // Lock the whole app behind auth: any visitor without a session on a non-public path is sent to /login.
   // The public guest guidebook (/g/) stays open, so a shared book link can never expose the app itself.
