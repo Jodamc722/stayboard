@@ -117,6 +117,13 @@ export async function GET() {
   const openByBuilding: Record<string, number> = {}
   ;(work ?? []).forEach((w: any) => { const b = rollupBuilding(w.building); if (!b || b === 'Unassigned') return; const wt = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1; openByBuilding[b] = (openByBuilding[b] || 0) + wt })
 
+  const { data: audOpen } = await sb.from('audit_items').select('listing_id, kind, title, severity, room').eq('status', 'open').in('kind', ['maintenance', 'replace', 'add']).limit(2000)
+  const audByL = new Map<string, any[]>()
+  ;(audOpen ?? []).forEach((a: any) => { if (!a.listing_id || String(a.listing_id).indexOf(':') >= 0) return; const arr = audByL.get(a.listing_id) || []; arr.push(a); audByL.set(a.listing_id, arr) })
+  const { data: qAud } = await sb.from('property_audits').select('listing_id, created_at').eq('audit_type', 'quality').eq('status', 'completed').order('created_at', { ascending: false }).limit(3000)
+  const lastQByL = new Map<string, number>()
+  ;(qAud ?? []).forEach((a: any) => { if (!a.listing_id || lastQByL.has(a.listing_id)) return; lastQByL.set(a.listing_id, Date.parse(a.created_at)) })
+
   const byListing = new Map<string, HealthReview[]>()
   ;(revRows ?? []).forEach((r: any) => { if (!r.listing_id) return; const a = byListing.get(r.listing_id) || []; a.push({ rating: r.rating != null && r.rating !== '' ? Number(r.rating) : null, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }); byListing.set(r.listing_id, a) })
 
@@ -170,6 +177,16 @@ export async function GET() {
       // 2) Standard turnover audit + preventative maintenance (the "last audit / last PM" cadence).
       tasks.push({ key: 'audit', category: 'Inspection', title: 'Turnover inspection & audit', detail: 'Walk the unit on checkout: cleanliness, damage, amenities, restock, photos vs. reality.', severity: 'medium' })
       tasks.push({ key: 'pm', category: 'PM', title: 'Preventative maintenance check', detail: 'Quick PM pass: HVAC filter, smoke/CO detectors, leaks, lightbulbs, batteries, hardware.', severity: 'low' })
+      // 3) Open audit findings + yearly quality-audit cadence.
+      for (const a of (audByL.get(lid) || []).slice(0, 5)) {
+        const sev = a.severity === 'high' ? 'high' : (a.severity === 'medium' ? 'medium' : 'low')
+        const kl = a.kind === 'maintenance' ? 'Fix' : (a.kind === 'replace' ? 'Replace' : 'Add')
+        tasks.push({ key: 'audit-item', category: 'Audit finding', title: kl + ': ' + String(a.title || 'item').slice(0, 80), detail: 'Open property-audit item' + (a.room ? ' - ' + a.room : '') + '. Close it out or order.', severity: sev })
+      }
+      const lastQ = lastQByL.get(lid)
+      if (!lastQ || (Date.now() - lastQ) > 365 * 24 * 3600 * 1000) {
+        tasks.push({ key: 'audit-due', category: 'Inspection', title: 'Quality audit due (yearly)', detail: lastQ ? 'Last quality audit was over a year ago - do one while the unit turns over.' : 'No completed quality audit on record - do one while the unit turns over.', severity: 'medium' })
+      }
 
       tasks.sort((a, b) => (SEV_RANK[a.severity] ?? 2) - (SEV_RANK[b.severity] ?? 2))
       // Attach department (pushable?) + any existing push status.
