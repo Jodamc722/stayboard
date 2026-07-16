@@ -3,13 +3,14 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, Plus, Clock } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
 type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
-type Data = { ok: boolean; today: string; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; error?: string }
+type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
+type Data = { ok: boolean; today: string; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
 
 const TYPE_LABEL: Record<string, string> = {
   departure_clean: 'Departure clean', strip: 'Strip', deep_clean: 'Deep clean', inspection: 'Inspection',
@@ -33,6 +34,7 @@ const PRIOS = [['normal', 'Normal'], ['high', 'High'], ['urgent', 'Urgent'], ['l
 // Breezeway ADMIN task view (where you can actually edit/assign). report_url is the field report.
 function adminUrl(taskId: string) { return 'https://app.breezeway.io/task/' + taskId }
 function hhmm(iso: string | null) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d.getTime())) return ''; return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) }
+function fmtDay(iso: string) { const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 function fmtLeft(m: number) { const a = Math.abs(m); const h = Math.floor(a / 60); const mm = a % 60; return (h ? h + 'h ' : '') + mm + 'm' }
 function statusCls(t: Task) {
   if (t.untracked && !t.done) return 'bg-app text-muted border-line'
@@ -59,6 +61,8 @@ export function TodayInOps() {
   const [showDone, setShowDone] = useState(false)
   const [addFor, setAddFor] = useState('')
   const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
+  const [showVacant, setShowVacant] = useState(false)
+  const [addVacant, setAddVacant] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +91,8 @@ export function TodayInOps() {
     || (tf === 'maintenance' && t.dept === 'maintenance')
     || (tf === 'inspection' && t.dept === 'inspection')
     || (tf === 'unassigned' && t.assignees.length === 0 && !t.done)
+  const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
+  const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
   const all = tf === 'all' ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
   const units = showDone ? all : all.filter(u => !u.allDone)
@@ -139,6 +145,39 @@ export function TodayInOps() {
       </div>
 
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
+
+      {/* VACANT UNITS — safe to work in. Conservative by design: anything with a live reservation
+          spanning today (including arrivals today) is treated as occupied and never listed here. */}
+      <div className="rounded-2xl border border-line bg-white mb-3 overflow-hidden">
+        <button onClick={() => setShowVacant(!showVacant)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left">
+          <DoorOpen size={15} className="text-muted" />
+          <span className="font-semibold text-ink text-sm">Vacant units</span>
+          <span className="text-xs text-muted">{vacants.length} empty{market === 'all' ? '' : ' in ' + market} &middot; free to work in</span>
+          <span className="ml-auto text-xs text-muted">{data.lastSync ? 'reservations synced ' + hhmm(data.lastSync) : 'sync time unknown'}</span>
+          <span className="text-muted text-xs">{showVacant ? '\u25b2' : '\u25bc'}</span>
+        </button>
+        {showVacant && (
+          <div className="border-t border-line">
+            <div className="px-4 py-2 text-[11px] text-muted bg-app">Empty per Guesty as of the sync above. A unit is only listed when no live reservation covers today &mdash; guests arriving today are treated as occupied.</div>
+            {vacants.length === 0 && <div className="px-4 py-4 text-sm text-muted">No vacant units{market === 'all' ? '' : ' in ' + market} today.</div>}
+            <div className="divide-y divide-line">
+              {vacants.map(vu => (
+                <div key={vu.listingId}>
+                  <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-ink truncate">{vu.unit}</div>
+                      <div className="text-xs text-muted">{vu.market}{vu.leftToday ? ' · checked out today' : ''}{vu.openTasks ? ' · ' + vu.openTasks + ' task' + (vu.openTasks > 1 ? 's' : '') + ' today' : ''}</div>
+                    </div>
+                    <div className="text-xs text-muted shrink-0">{vu.nextArrival ? 'next in ' + fmtDay(vu.nextArrival) : 'no upcoming booking'}</div>
+                    <button onClick={() => setAddVacant(addVacant === vu.listingId ? '' : vu.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1 shrink-0"><Plus size={12} /> Add task</button>
+                  </div>
+                  {addVacant === vu.listingId && <AddTask listingId={vu.listingId} unit={vu.unit} onDone={() => { setAddVacant(''); load() }} />}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="space-y-3">
         {units.map(u => (
