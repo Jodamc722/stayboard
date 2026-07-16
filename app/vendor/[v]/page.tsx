@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null }
+type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null }
 type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active'
 
@@ -11,7 +11,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'active', label: 'Active reservations' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
-function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? r.checkOut : r.checkIn }
+function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? (r.cleanDay || r.checkOut) : r.checkIn }
 function bedLabel(n: number | null) { if (n == null) return ''; return n === 0 ? 'Studio' : n + 'BR' }
 function keyOf(r: Row, tab: TabKey) { return tab.charAt(0) + r.unit + '|' + dateFor(r, tab) }
 function relDay(iso: string, today: string) { if (!today) return ''; if (iso === today) return 'Today'; const a = new Date(iso + 'T12:00:00'), b = new Date(today + 'T12:00:00'); const dd = Math.round((+a - +b) / 86400000); if (dd === 1) return 'Tomorrow'; return '' }
@@ -60,6 +60,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   }, [load])
 
   const resync = async () => { setSyncing(true); try { await fetch('/api/sync/guesty?only=reservations', { method: 'POST' }) } catch {} ; await load(); setSyncing(false) }
+  const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
   const submitPw = async (e: any) => {
     e.preventDefault()
     setPwBusy(true); setPwErr('')
@@ -126,7 +127,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
           <div className="flex items-center gap-2 print:hidden">
             {newCount > 0 && <button onClick={markSeen} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-800 border border-amber-200">{newCount} new</button>}
             <button onClick={resync} disabled={syncing} className="text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700 font-medium disabled:opacity-50">{syncing ? 'Syncing…' : 'Resync'}</button>
-            <button onClick={() => load()} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Refresh</button>
+            <button onClick={doRefresh} disabled={refreshing} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium disabled:opacity-50">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
             <button onClick={exportCsv} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">CSV</button>
             <button onClick={() => window.print()} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Print</button>
           </div>
