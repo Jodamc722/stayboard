@@ -56,6 +56,7 @@ export function TodayInOps() {
   const [market, setMarket] = useState('all')
   const [showDone, setShowDone] = useState(false)
   const [addFor, setAddFor] = useState('')
+  const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
 
   const load = useCallback(async () => {
     try {
@@ -78,7 +79,14 @@ export function TodayInOps() {
   // page once already. Degrade to empty rather than throw.
   const srcUnits: Unit[] = Array.isArray(data.units) ? data.units : []
   const totals = data.totals || {}
-  const all = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
+  const inFilter = (t: Task) => tf === 'all'
+    || (tf === 'cleans' && t.type === 'departure_clean')
+    || (tf === 'strips' && t.type === 'strip')
+    || (tf === 'maintenance' && t.dept === 'maintenance')
+    || (tf === 'inspection' && t.dept === 'inspection')
+    || (tf === 'unassigned' && t.assignees.length === 0 && !t.done)
+  const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
+  const all = tf === 'all' ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
   const units = showDone ? all : all.filter(u => !u.allDone)
   const doneCount = all.filter(u => u.allDone).length
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
@@ -118,12 +126,14 @@ export function TodayInOps() {
         {(d.untracked || 0) > 0 && <div className="mt-1 text-xs text-muted">Excludes {d.untracked} vendor-cleaned unit{(d.untracked || 0) > 1 ? 's' : ''} (Botanica) — the vendor doesn&rsquo;t close tasks in Breezeway, so they can&rsquo;t be tracked against 4pm.</div>}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-5">
-        <Stat label="Units today" value={all.length + ''} sub={(totals.tasks || 0) + ' tasks'} />
-        <Stat label="Cleans" value={d.cleans + ''} sub={d.done + ' done'} />
-        <Stat label="Strips" value={(totals.strips || 0) + ''} />
-        <Stat label="Maintenance" value={(totals.maintenance || 0) + ''} sub={(totals.inspection || 0) + ' inspections'} />
-        <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} />
+      {/* stat cards double as filters — click Maintenance to see only maintenance, etc. */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-5">
+        <Stat label="All work" value={srcUnits.length + ''} sub={(totals.tasks || 0) + ' tasks'} active={tf === 'all'} onClick={() => setTf('all')} />
+        <Stat label="Cleans" value={d.cleans + ''} sub={d.done + ' done'} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
+        <Stat label="Strips" value={(totals.strips || 0) + ''} active={tf === 'strips'} onClick={() => setTf('strips')} />
+        <Stat label="Maintenance" value={(totals.maintenance || 0) + ''} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
+        <Stat label="Inspections" value={(totals.inspection || 0) + ''} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
+        <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
       </div>
 
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
@@ -206,12 +216,12 @@ function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string;
   )
 }
 
-function Stat({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
+function Stat({ label, value, sub, warn, active, onClick }: { label: string; value: string; sub?: string; warn?: boolean; active?: boolean; onClick?: () => void }) {
   return (
-    <div className={'rounded-2xl border p-3 ' + (warn ? 'border-amber-200 bg-amber-50' : 'border-line bg-white')}>
+    <button onClick={onClick} className={'text-left w-full rounded-2xl border p-3 transition ' + (active ? 'border-ink ring-1 ring-ink/20 bg-white' : warn ? 'border-amber-200 bg-amber-50 hover:border-amber-300' : 'border-line bg-white hover:border-ink/30')}>
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
       <div className={'text-2xl font-bold ' + (warn ? 'text-amber-800' : 'text-ink')}>{value}</div>
       {sub && <div className="text-[11px] text-muted">{sub}</div>}
-    </div>
+    </button>
   )
 }
