@@ -21,6 +21,10 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [needsPw, setNeedsPw] = useState(false)
+  const [pw, setPw] = useState('')
+  const [pwErr, setPwErr] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [seen, setSeen] = useState<Set<string>>(new Set())
   const seenInit = useRef(false)
@@ -31,6 +35,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
       setErr('')
       const res = await fetch('/api/public/board?v=' + encodeURIComponent(params.v), { cache: 'no-store' })
       const j: Data = await res.json()
+      if (res.status === 401 || (j as any).needsPassword) { setNeedsPw(true); setLoading(false); return }
       if (!res.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setData(j)
       setLastUpdated(new Date())
@@ -46,7 +51,32 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30 * 60 * 1000); return () => clearInterval(tm) }, [load])
 
   const resync = async () => { setSyncing(true); try { await fetch('/api/sync/guesty?only=reservations', { method: 'POST' }) } catch {} ; await load(); setSyncing(false) }
+  const submitPw = async (e: any) => {
+    e.preventDefault()
+    setPwBusy(true); setPwErr('')
+    try {
+      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const jr = await r.json()
+      if (!r.ok || !jr.ok) { setPwErr(jr.error || 'Wrong password'); setPwBusy(false); return }
+      setNeedsPw(false); setPw(''); setLoading(true); await load()
+    } catch (ex: any) { setPwErr(String(ex?.message || ex)) }
+    setPwBusy(false)
+  }
 
+  if (needsPw) return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50">
+      <form onSubmit={submitPw} className="w-full max-w-xs bg-white border border-neutral-200 rounded-xl p-5 space-y-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">Stay Hospitality</div>
+          <h1 className="text-lg font-bold">Enter password</h1>
+          <p className="text-xs text-neutral-500 mt-1">This schedule is password protected.</p>
+        </div>
+        <input type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="Password" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
+        {pwErr && <div className="text-xs text-red-600">{pwErr}</div>}
+        <button type="submit" disabled={pwBusy || !pw} className="w-full text-sm font-medium px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{pwBusy ? 'Checking…' : 'View schedule'}</button>
+      </form>
+    </div>
+  )
   if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6">{err}</div>
   if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading…</div>
 
