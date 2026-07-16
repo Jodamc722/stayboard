@@ -3,6 +3,8 @@
 // No guest names / phone / email / notes — unit, dates, times, bedrooms, door code, guest count, source.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { cookies } from 'next/headers'
+import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -30,6 +32,8 @@ export async function GET(req: NextRequest) {
   const v = String(new URL(req.url).searchParams.get('v') || '').toLowerCase()
   const scope = SCOPES[v]
   if (!scope) return NextResponse.json({ ok: false, error: 'Unknown link' }, { status: 404 })
+  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
+  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
