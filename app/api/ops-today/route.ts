@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
     const lmap: Record<string, { name: string; market: string; active: boolean }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
-      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), active: /active|listed/i.test(str(l.status)) }
+      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active'  // EXACT match: /active/i also matches 'inactive' }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
@@ -132,6 +132,7 @@ export async function GET(req: NextRequest) {
       .map(id => ({
         listingId: id, unit: lmap[id].name, market: lmap[id].market,
         leftToday: outToday[id] || null,
+        needsClean: !!outToday[id] && tasks.some(t => t.listingId === id && t.type === 'departure_clean' && !t.done),
         nextArrival: nextIn[id] || null,
         openTasks: taskCount[id] || 0,
       }))
