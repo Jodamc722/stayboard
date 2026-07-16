@@ -36,7 +36,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
           <div>
             <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">Checkout schedule</div>
             <h1 className="text-2xl font-bold">{data.vendor}</h1>
-            <div className="text-xs text-neutral-500">{data.total} checkouts \u00b7 {data.today && fmtDate(data.today)} \u2013 {data.weekEnd && fmtDate(data.weekEnd)}</div>
+            <div className="text-xs text-neutral-500">{data.total} checkouts · {data.today && fmtDate(data.today)} – {data.weekEnd && fmtDate(data.weekEnd)}</div>
           </div>
           <div className="flex items-center gap-2 print:hidden">
             <button onClick={exportCsv} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Download CSV</button>
@@ -67,7 +67,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
             </div>
           ))}
         </div>
-        <div className="text-[11px] text-neutral-400 mt-6">Live schedule \u2014 refresh for the latest. Stay Hospitality.</div>
+        <div className="text-[11px] text-neutral-400 mt-6">Live schedule — refresh for the latest. Stay Hospitality.</div>
       </div>
     </div>
   )
