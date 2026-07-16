@@ -10,8 +10,7 @@ export const maxDuration = 30
 const VENDORS: Record<string, { label: string; re: RegExp }> = {
   botanica: { label: 'Botanica', re: /botanica/i },
   pt: { label: 'Park Towers', re: /park\s*towers?|\bpt\b/i },
-  'capri-lucerne': { label: 'Capri & Lucerne', re: /capri|lucerne/i },
-  amrit: { label: 'Amrit', re: /amrit/i },
+  'amrit-capri-lucerne': { label: 'Amrit / Capri / Lucerne', re: /amrit|capri|lucerne/i },
 }
 const LIVE = /confirm|checked/i
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
