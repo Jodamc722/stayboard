@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
       // Code valid on THIS stay's day: the reservation's own access code, else the listing's static code.
       const resCode = cfValue({ customFields: Array.isArray(r.custom_fields) && r.custom_fields.length ? r.custom_fields : raw.customFields }, RES_CODE_FIELD)
       return {
-        listingId: String(r.listing_id), extended: false, extendedTo: null as string | null,
+        listingId: String(r.listing_id), extended: false, extendedTo: null as string | null, cleanDay: null as string | null,
         unit: m ? m.name : 'Unit', checkIn: ci, checkOut: co, nights: r.nights ?? null,
         bedrooms: m ? m.bedrooms : null, doorCode: resCode || (m ? m.doorCode : null),
         guestName: r.guest_name || null, phone: r.guest_phone || null,
@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
     // EXTENSION GUARD (walk-in prevention): Breezeway still has a clean scheduled on a day, but the
     // guest's stay now runs past it — i.e. they extended. Surface it so nobody cleans an occupied unit.
     const depSet: Record<string, boolean> = {}
-    for (const dp of departures) depSet[dp.listingId + '|' + dp.checkOut] = true
+    for (const dp of departures) depSet[dp.listingId + '|' + (dp.cleanDay || dp.checkOut)] = true
     const { data: bz } = await db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,status').eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', today).lte('scheduled_date', end).limit(1000)
     for (const t of (bz || []) as any[]) {
       const lid = String(t.reference_property_id)
@@ -103,10 +103,11 @@ export async function GET(req: NextRequest) {
       const stay = live.find((r: any) => String(r.listing_id) === lid && str(r.check_in).slice(0, 10) <= dd && str(r.check_out).slice(0, 10) > dd)
       if (!stay) continue
       const base = row(stay)
-      departures.push(Object.assign({}, base, { checkOut: dd, sameDayTurn: false, extended: true, extendedTo: str(stay.check_out).slice(0, 10) }))
+      // keep checkIn/checkOut/nights as the ACTUAL (extended) reservation; cleanDay is only where it groups
+      departures.push(Object.assign({}, base, { cleanDay: dd, sameDayTurn: false, extended: true, extendedTo: str(stay.check_out).slice(0, 10) }))
       depSet[lid + '|' + dd] = true
     }
-    departures.sort((a, b) => a.checkOut.localeCompare(b.checkOut) || (b.sameDayTurn ? 1 : 0) - (a.sameDayTurn ? 1 : 0) || a.unit.localeCompare(b.unit))
+    departures.sort((a, b) => (a.cleanDay || a.checkOut).localeCompare(b.cleanDay || b.checkOut) || (b.sameDayTurn ? 1 : 0) - (a.sameDayTurn ? 1 : 0) || a.unit.localeCompare(b.unit))
     return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: ids.length, arrivals, departures, active })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
