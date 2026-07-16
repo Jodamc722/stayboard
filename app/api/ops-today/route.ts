@@ -12,6 +12,10 @@ export const maxDuration = 30
 
 const DEADLINE_MIN = 16 * 60      // 4:00pm ET — next guest can check in
 const AT_RISK_MIN = 2 * 60        // flag when under 2h left and not started
+// Botanica is cleaned by a vendor who does NOT close the task in Breezeway, so its cleans sit at
+// 'not started' forever. Tracking them against 4pm produced 11 false 'at risk' alerts out of 17.
+// They still show on the board, but they carry no deadline and no status alarm.
+const UNTRACKED_RE = /botanica/i
 
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function etMinutes(d: Date) {
@@ -85,8 +89,9 @@ export async function GET(req: NextRequest) {
       const done = isDone(status)
       const running = isRunning(status)
       const ppl = Array.isArray(t.assignees) ? t.assignees : []
-      // the 4pm clock applies to DEPARTURE CLEANS only
-      const clocked = type === 'departure_clean'
+      // the 4pm clock applies to DEPARTURE CLEANS only, and only where Breezeway completion is real
+      const untracked = UNTRACKED_RE.test(li ? li.name : '')
+      const clocked = type === 'departure_clean' && !untracked
       const finishedMin = t.finished_at ? etMinutes(new Date(t.finished_at)) : null
       const late = clocked && !done && minsLeft < 0
       const atRisk = clocked && !done && !late && minsLeft <= AT_RISK_MIN && !running
@@ -98,7 +103,7 @@ export async function GET(req: NextRequest) {
         assignees: ppl.map((p: any) => p && p.name).filter(Boolean),
         startedAt: t.started_at || null, finishedAt: t.finished_at || null,
         minutes: t.total_minutes ?? null, reportUrl: t.report_url || null,
-        done, running, clocked, late, atRisk, missed,
+        done, running, clocked, late, atRisk, missed, untracked,
       }
     })
     // group BY UNIT — one card per unit with everything on it today
@@ -121,6 +126,7 @@ export async function GET(req: NextRequest) {
       u.late = u.tasks.some((t: any) => t.late)
       u.atRisk = u.tasks.some((t: any) => t.atRisk)
       u.unassigned = u.tasks.some((t: any) => t.assignees.length === 0 && !t.done)
+      u.untracked = u.tasks.some((t: any) => t.untracked)
       u.allDone = u.tasks.every((t: any) => t.done)
       u.openTasks = u.tasks.filter((t: any) => !t.done).length
       return u
@@ -139,6 +145,7 @@ export async function GET(req: NextRequest) {
       late: cleans.filter(t => t.late).length,
       atRisk: cleans.filter(t => t.atRisk).length,
       missed: cleans.filter(t => t.missed).length,
+      untracked: tasks.filter(t => t.type === 'departure_clean' && t.untracked).length,
     }
     const byMarket = MARKETS.map(m => {
       const mt = tasks.filter(t => t.market === m)
