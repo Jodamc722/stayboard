@@ -128,6 +128,7 @@ export default function AuditCapture({ code }: { code: string }) {
   function roomCover(r: string) { const c = cfgByKey[roomKey(r)]; return c ? c.cover_photo_url : null }
 
   const isOnboarding = !!(data && data.audit && data.audit.auditType === 'onboarding')
+  const fSize = (() => { const f = items.find((x: any) => /filter/i.test(String(x.title || '')) && x.details && x.details.size); return f ? String(f.details.size) : '' })()
   const basicsDone = BASICS.every(b => items.some((it: any) => it.room === 'Unit basics' && it.kind === 'tag' && b.opts.indexOf(String(it.title || '')) >= 0))
   function startDraft(room: string, seed?: Partial<Draft>) {
     setDraft({ room, kind: (seed && seed.kind) || (isOnboarding ? 'inventory' : 'replace'), title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', photos: [], ai: null })
@@ -136,6 +137,31 @@ export default function AuditCapture({ code }: { code: string }) {
 
   function stageGallery(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); setShotMap({}); setShotIdx(-1) } setOrgRoom(room); if (bulkRef.current) { bulkRef.current.value = ''; bulkRef.current.click() } }
   function stageCamera(room: string) { if (orgRoom !== room) { setOrgItems([]); setOrgQuestions([]); setOrgAnswers(''); setOrgPhotos([]); setShotMap({}); setShotIdx(-1) } setOrgRoom(room); if (camRef.current) { camRef.current.value = ''; camRef.current.click() } }
+  function pmFor(room: string): string[] {
+    const parts = room.split(' — ')
+    const r = String(parts[parts.length - 1] || room).toLowerCase()
+    const out: string[] = ['Smoke / CO detector', 'Lights + bulbs', 'Doors, locks + hinges', 'Walls + paint']
+    if (r.indexOf('bath') >= 0) { out.push('Caulking + grout'); out.push('Drains + leaks'); out.push('Toilet flush + seal'); out.push('Exhaust fan') }
+    if (r.indexOf('kitchen') >= 0) { out.push('Fridge seals + temp'); out.push('Oven + burners'); out.push('Dishwasher + filter'); out.push('Under-sink leaks') }
+    if (r.indexOf('bedroom') >= 0 || r.indexOf('master') >= 0) { out.push('Mattress condition'); out.push('Bed frame stability'); out.push('Blinds / blackout') }
+    if (r.indexOf('living') >= 0) { out.push('Sofa condition'); out.push('TV + remote'); out.push('Balcony door + lock') }
+    if (r.indexOf('laundry') >= 0 || r.indexOf('hall') >= 0 || r.indexOf('utility') >= 0) { out.push('AC filter replace'); out.push('Water heater check'); out.push('Washer hoses + lint') }
+    return out
+  }
+  async function addMissing(room: string, label: string) {
+    if (essBusy) return
+    setEssBusy(true)
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'add', title: label, note: 'Missing essential' }) }) } catch {}
+    setEssBusy(false)
+    await load()
+  }
+  async function pmOk(room: string, label: string) {
+    if (essBusy) return
+    setEssBusy(true)
+    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'inventory', itemType: 'pm-ok', title: label + ' — OK' }) }) } catch {}
+    setEssBusy(false)
+    await load()
+  }
   async function bumpEss(room: string, label: string) {
     if (essBusy) return
     setEssBusy(true)
@@ -537,12 +563,38 @@ function quickTags(r: string): string[] {
                       </div>
                     )
                   })() : null}
-                  {!done && essFor(room).length ? (
+                  {!done && isOnboarding && essFor(room).length ? (
                     <div className="mb-1.5 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
                       <div className="text-[11px] font-semibold text-emerald-800 mb-1">Essentials - tap what the unit has <span className="font-normal text-emerald-500">tap again for +1</span></div>
                       <div className="flex flex-wrap gap-1.5">
                         {essFor(room).map((lbl, i) => { const ex = roomItems.find(x => x.kind === 'inventory' && String(x.title || '').toLowerCase() === lbl.toLowerCase()); return (
                           <button key={i} onClick={() => bumpEss(room, lbl)} disabled={essBusy} className={'text-xs font-semibold px-2 py-1 rounded-md border ' + (ex ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300')}>{ex && (Number(ex.qty) || 1) > 1 ? ex.qty + '× ' : ''}{ex ? '✓ ' : ''}{lbl}</button>
+                        ) })}
+                      </div>
+                    </div>
+                  ) : null}
+                  {!done && !isOnboarding ? (() => {
+                    const miss = essFor(room).filter(l => !roomItems.some(x => x.kind !== 'tag' && String(x.title || '').toLowerCase().indexOf(l.toLowerCase()) >= 0))
+                    return miss.length ? (
+                      <div className="mb-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2">
+                        <div className="text-[11px] font-semibold text-amber-800 mb-1">Missing essentials <span className="font-normal text-amber-500">tap to add to order</span></div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {miss.map((lbl, i) => <button key={i} onClick={() => addMissing(room, lbl)} disabled={essBusy} className="text-xs font-semibold px-2 py-1 rounded-md border border-amber-300 text-amber-700 bg-white">+ {lbl}</button>)}
+                        </div>
+                      </div>
+                    ) : null
+                  })() : null}
+                  {!done && !isOnboarding ? (
+                    <div className="mb-1.5 rounded-lg border border-violet-200 bg-violet-50 p-2">
+                      <div className="text-[11px] font-semibold text-violet-800 mb-1">Preventative maintenance <span className="font-normal text-violet-400">OK or flag an issue</span></div>
+                      <div className="space-y-1">
+                        {pmFor(room).map((lbl, i) => { const ok = roomItems.some(x => String(x.title || '') === lbl + ' — OK'); return (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className={'flex-1 text-[12px] ' + (ok ? 'text-violet-400 line-through' : 'text-violet-900')}>{lbl}{lbl === 'AC filter replace' && fSize ? ' (' + fSize + ')' : ''}</span>
+                            {ok ? <span className="text-[11px] font-semibold text-emerald-600">OK ✓</span> : null}
+                            {!ok ? <button onClick={() => pmOk(room, lbl)} disabled={essBusy} className="text-[11px] font-semibold px-2 py-0.5 rounded-md border border-emerald-300 text-emerald-700 bg-white">OK</button> : null}
+                            {!ok ? <button onClick={() => startDraft(room, { kind: 'maintenance', title: lbl })} className="text-[11px] font-semibold px-2 py-0.5 rounded-md border border-rose-300 text-rose-600 bg-white">Issue</button> : null}
+                          </div>
                         ) })}
                       </div>
                     </div>
