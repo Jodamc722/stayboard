@@ -3,6 +3,7 @@
 import { Shell } from '@/components/Shell'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { UsersAdmin } from '@/components/UsersAdmin'
+import { ShareLinksCard } from '@/components/ShareLinksCard'
 import { ShieldAlert } from 'lucide-react'
 import { redirect } from 'next/navigation'
 
@@ -22,7 +23,10 @@ export default async function UsersPage() {
           <ShieldAlert size={16} className="mt-0.5 flex-shrink-0" /> This page is for admins only. Ask an admin to manage access.
         </div>
       ) : (
-        <UsersAdmin myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
+        <>
+          <UsersAdmin myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
+          <ShareLinksCard />
+        </>
       )}
     </Shell>
   )
