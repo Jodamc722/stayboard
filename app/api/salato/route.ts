@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
         for (const n of (tn || []) as any[]) { const k = String(n.reservation_id); (notesByRes[k] = notesByRes[k] || []).push({ id: String(n.id), author: n.author || 'Team', body: n.body || '', at: n.created_at }) }
       }
     } catch (e) { console.error('salato notes fetch', e) }
-    function detail(r: any) {
+    const detail = (r: any) => {
       const raw = r.raw || {}
       const guest = raw.guest || {}
       const cf = Array.isArray(raw.customFields) ? raw.customFields : []
