@@ -72,11 +72,15 @@ export function TodayInOps() {
   if (err) return <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>
   if (!data) return null
 
-  const all = market === 'all' ? data.units : data.units.filter(u => u.market === market)
+  // Never trust the payload shape: a deploy race (new page bundle + old API response) crashed this
+  // page once already. Degrade to empty rather than throw.
+  const srcUnits: Unit[] = Array.isArray(data.units) ? data.units : []
+  const totals = data.totals || {}
+  const all = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
   const units = showDone ? all : all.filter(u => !u.allDone)
   const doneCount = all.filter(u => u.allDone).length
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
-  const d = data.deadline
+  const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
   const behind = d.late > 0 || d.atRisk > 0
 
   return (
@@ -112,11 +116,11 @@ export function TodayInOps() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-5">
-        <Stat label="Units today" value={all.length + ''} sub={data.totals.tasks + ' tasks'} />
+        <Stat label="Units today" value={all.length + ''} sub={(totals.tasks || 0) + ' tasks'} />
         <Stat label="Cleans" value={d.cleans + ''} sub={d.done + ' done'} />
-        <Stat label="Strips" value={data.totals.strips + ''} />
-        <Stat label="Maintenance" value={data.totals.maintenance + ''} sub={data.totals.inspection + ' inspections'} />
-        <Stat label="Unassigned" value={data.totals.unassigned + ''} warn={data.totals.unassigned > 0} />
+        <Stat label="Strips" value={(totals.strips || 0) + ''} />
+        <Stat label="Maintenance" value={(totals.maintenance || 0) + ''} sub={(totals.inspection || 0) + ' inspections'} />
+        <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} />
       </div>
 
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
