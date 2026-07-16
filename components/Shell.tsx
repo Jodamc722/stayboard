@@ -56,7 +56,7 @@ const SECTIONS: {
       { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
       { to: '/salato', label: 'Salato', Icon: CalendarDays },
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
-      { to: '/plan',     label: 'Ops Plans', Icon: ListChecks },
+      { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
       { to: '/requests', label: 'Requests',  Icon: ClipboardList },
     ],
   },
