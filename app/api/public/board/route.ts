@@ -108,7 +108,10 @@ export async function GET(req: NextRequest) {
       depSet[lid + '|' + dd] = true
     }
     departures.sort((a, b) => (a.cleanDay || a.checkOut).localeCompare(b.cleanDay || b.checkOut) || (b.sameDayTurn ? 1 : 0) - (a.sameDayTurn ? 1 : 0) || a.unit.localeCompare(b.unit))
-    return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: ids.length, arrivals, departures, active })
+    // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
+    const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
+    const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
+    return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: ids.length, lastSync, arrivals, departures, active })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
