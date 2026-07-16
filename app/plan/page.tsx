@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
+import { TodayInOps } from '@/components/TodayInOps'
 import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
@@ -28,6 +29,7 @@ const catC = (c: string) => CAT[c] || 'bg-app text-muted'
 
 export default function OpsPlanPage() {
   const { data, loading, error, refresh } = useCachedFetch<Data>('/api/ops-plan/daily')
+  const [tab, setTab] = useState<'today' | 'plan'>('today')
   const [open, setOpen] = useState<string | null>(null)
   const [market, setMarket] = useState<'all' | 'Miami' | 'Broward' | 'North'>('all')
   const [ccs, setCcs] = useState(false)  // include CCS (desk) work?
@@ -36,9 +38,19 @@ export default function OpsPlanPage() {
     <Shell>
       <header className="mb-5">
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Ops Plan</h1>
-        <p className="text-sm text-muted mt-1">Operational improvements for the next three days of checkouts &mdash; from guest feedback, audits, and preventative maintenance. Ranked luxe first. Push a field task to Breezeway to assign &amp; track it.</p>
+        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Today in Ops</h1>
+        <p className="text-sm text-muted mt-1">Everything happening in the field right now &mdash; cleans, maintenance and inspections by market, who&rsquo;s on them, and what needs attention. The 3-day plan of unit improvements lives in the second tab.</p>
       </header>
+
+      <div className="flex gap-1 mb-5 bg-app rounded-xl p-1 max-w-sm">
+        {([['today', 'Today'], ['plan', '3-day plan']] as const).map(([k, lbl]) => (
+          <button key={k} onClick={() => setTab(k)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition ' + (tab === k ? 'bg-white shadow-soft text-ink' : 'text-muted hover:text-ink')}>{lbl}</button>
+        ))}
+      </div>
+
+      {tab === 'today' && <TodayInOps />}
+
+      {tab === 'plan' && (<>
 
       {data?.days && (
         <div className="flex items-center gap-2 flex-wrap mb-4">
@@ -141,6 +153,7 @@ export default function OpsPlanPage() {
           })}
         </div>
       )}
+      </>)}
     </Shell>
   )
 }
