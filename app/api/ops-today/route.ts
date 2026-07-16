@@ -55,15 +55,15 @@ export async function GET(req: NextRequest) {
     const nowMin = etMinutes(now)
     const minsLeft = DEADLINE_MIN - nowMin
     const [lRes, tRes, qRes, rRes] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building,address_city'),
+      db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
       db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
       db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
     ])
-    const lmap: Record<string, { name: string; market: string }> = {}
+    const lmap: Record<string, { name: string; market: string; active: boolean }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
-      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) }
+      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), active: /active|listed/i.test(str(l.status)) }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
@@ -106,6 +106,36 @@ export async function GET(req: NextRequest) {
         done, running, clocked, late, atRisk, missed, untracked,
       }
     })
+    // VACANT UNITS — walk-in prevention, so this is deliberately CONSERVATIVE:
+    // a unit counts as OCCUPIED if ANY live reservation spans today (check_in <= today < check_out).
+    // That includes guests ARRIVING today — they'd be in the unit by 4pm, so it is not free to work in.
+    // Anything we're not certain is empty stays off the vacant list.
+    const [occRes, nextRes] = await Promise.all([
+      db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).limit(4000),
+      db.from('guesty_reservations').select('listing_id,check_in,status').gt('check_in', today).order('check_in', { ascending: true }).limit(4000),
+    ])
+    const occupied: Record<string, string> = {}
+    for (const r of (occRes.data || []) as any[]) {
+      if (!/confirm|checked/i.test(str(r.status))) continue
+      occupied[String(r.listing_id)] = r.guest_name || 'Guest'
+    }
+    const nextIn: Record<string, string> = {}
+    for (const r of (nextRes.data || []) as any[]) {
+      if (!/confirm|checked/i.test(str(r.status))) continue
+      const id = String(r.listing_id)
+      if (!nextIn[id]) nextIn[id] = str(r.check_in).slice(0, 10)
+    }
+    const taskCount: Record<string, number> = {}
+    for (const t of tasks) taskCount[t.listingId] = (taskCount[t.listingId] || 0) + 1
+    const vacants = Object.keys(lmap)
+      .filter(id => lmap[id].active && !occupied[id])
+      .map(id => ({
+        listingId: id, unit: lmap[id].name, market: lmap[id].market,
+        leftToday: outToday[id] || null,
+        nextArrival: nextIn[id] || null,
+        openTasks: taskCount[id] || 0,
+      }))
+      .sort((a, b) => (a.nextArrival || '9999').localeCompare(b.nextArrival || '9999') || a.unit.localeCompare(b.unit))
     // group BY UNIT — one card per unit with everything on it today
     const unitMap: Record<string, any> = {}
     for (const t of tasks) {
@@ -167,8 +197,12 @@ export async function GET(req: NextRequest) {
       inspection: tasks.filter(t => t.dept === 'inspection').length,
       unassigned: tasks.filter(t => t.assignees.length === 0 && !t.done).length,
       openQc: (qRes.data || []).length,
+      vacant: vacants.length,
     }
-    return NextResponse.json({ ok: true, today, nowMin, deadline, totals, byMarket, units })
+    // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
+    const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
+    const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
+    return NextResponse.json({ ok: true, today, nowMin, lastSync, deadline, totals, byMarket, units, vacants })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
