@@ -27,6 +27,20 @@ export async function GET(req: NextRequest) {
 
   const candidates: any[] = []
   const seen: Record<string, boolean> = {}
+  const { data: pub } = await db.from('listing_faq')
+    .select('id, category, question, answer')
+    .eq('listing_id', listingId)
+    .eq('status', 'published')
+    .limit(300)
+  for (const e of (pub || [])) {
+    const title = String((e as any).question || '').slice(0, 120)
+    const body = String((e as any).answer || '').slice(0, 600)
+    if (!title || !body) continue
+    const key = norm(title)
+    if (!key || seen[key]) continue
+    seen[key] = true
+    candidates.push({ id: 'faq-' + (e as any).id, title, body, kind: 'faq', room: String((e as any).category || '') })
+  }
   for (const it of (items || [])) {
     const d = (it && it.details) || {}
     const isFaq = it.kind === 'faq'
