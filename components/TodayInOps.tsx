@@ -3,7 +3,7 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, CalendarDays } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
@@ -63,7 +63,6 @@ export function TodayInOps() {
   const [addFor, setAddFor] = useState('')
   const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
   const [people, setPeople] = useState<Person[]>([])
-  const [moveFor, setMoveFor] = useState('')
   const [showVacant, setShowVacant] = useState(false)
   const [addVacant, setAddVacant] = useState('')
 
@@ -178,8 +177,6 @@ export function TodayInOps() {
                   </div>
                   {addVacant === vu.listingId && <AddTask listingId={vu.listingId} unit={vu.unit} onDone={() => { setAddVacant(''); load() }} />}
                 </div>
-                {moveFor === t.id && <MoveCalendar task={t} onClose={() => setMoveFor('')} onMoved={() => { setMoveFor(''); load() }} />}
-                </div>
               ))}
             </div>
           </div>
@@ -203,8 +200,7 @@ export function TodayInOps() {
             </div>
             <div className="divide-y divide-line">
               {u.tasks.map(t => (
-                <div key={t.id}>
-                <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
                   <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-28 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-ink truncate">{t.name}</div>
@@ -216,7 +212,6 @@ export function TodayInOps() {
                   <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
                   <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
                   {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0">report</a>}
-                  {!t.done && <button onClick={() => setMoveFor(moveFor === t.id ? '' : t.id)} className="text-xs font-medium text-muted hover:text-ink shrink-0">move</button>}
                 </div>
               ))}
             </div>
@@ -313,54 +308,6 @@ function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string;
       )}
       {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
       {ok && <div className="text-xs text-emerald-700 mt-2">{ok}</div>}
-    </div>
-  )
-}
-
-// Calendar of the unit's real availability, straight from the task. A task may only land on a
-// CHECKOUT or VACANT day; days with a guest in the unit are blocked and named. The server
-// re-checks on submit, so this picker is a convenience, not the safety net.
-type Day = { date: string; state: string; guest: string | null; allowed: boolean }
-function MoveCalendar({ task, onClose, onMoved }: { task: Task; onClose: () => void; onMoved: () => void }) {
-  const [days, setDays] = useState<Day[]>([])
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState('')
-  const [err, setErr] = useState('')
-  useEffect(() => {
-    fetch('/api/ops-today/reschedule?listingId=' + encodeURIComponent(task.listingId), { cache: 'no-store' })
-      .then(r => r.json()).then(j => { setDays(Array.isArray(j.days) ? j.days : []); setLoading(false) })
-      .catch(e => { setErr(String(e)); setLoading(false) })
-  }, [task.listingId])
-  const move = async (date: string) => {
-    setBusy(date); setErr('')
-    try {
-      const r = await fetch('/api/ops-today/reschedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, listingId: task.listingId, date }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setErr(j.error || 'Could not move the task'); setBusy(''); return }
-      onMoved()
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy('')
-  }
-  return (
-    <div className="px-4 py-3 bg-app border-t border-line">
-      <div className="flex items-center gap-2 mb-2">
-        <CalendarDays size={13} className="text-muted" />
-        <span className="text-xs uppercase tracking-wide text-muted">Move {task.name} &mdash; {task.unit} availability</span>
-        <button onClick={onClose} className="ml-auto text-xs text-muted hover:text-ink">close</button>
-      </div>
-      {loading && <div className="text-xs text-muted">Loading availability&hellip;</div>}
-      <div className="flex gap-1 flex-wrap">
-        {days.map(dd => (
-          <button key={dd.date} disabled={!dd.allowed || !!busy} onClick={() => move(dd.date)}
-            title={dd.allowed ? (dd.state === 'checkout' ? 'Checkout day — free after the guest leaves' : 'Vacant all day') : 'Active reservation — ' + (dd.guest || 'guest') + ' is in the unit'}
-            className={'text-[11px] rounded-lg border px-2 py-1 text-left min-w-[74px] ' + (!dd.allowed ? 'bg-rose-50 border-rose-200 text-rose-700 cursor-not-allowed' : dd.state === 'checkout' ? 'bg-white border-brand-300 text-brand-700 hover:border-brand-500' : 'bg-white border-line text-ink hover:border-ink/40')}>
-            <div className="font-semibold">{fmtDay(dd.date).replace(/,.*/, '')} {dd.date.slice(8)}</div>
-            <div className="opacity-80">{busy === dd.date ? 'moving…' : !dd.allowed ? (dd.guest || 'booked') : dd.state === 'checkout' ? 'checkout' : 'vacant'}</div>
-          </button>
-        ))}
-      </div>
-      {err && <div className="text-xs text-rose-700 mt-2 font-medium">{err}</div>}
-      <div className="text-[11px] text-muted mt-2">Only checkout and vacant days can be picked. Red = active reservation.</div>
     </div>
   )
 }
