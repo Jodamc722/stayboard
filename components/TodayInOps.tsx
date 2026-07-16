@@ -177,32 +177,76 @@ export function TodayInOps() {
   )
 }
 
+// Smart Add Task: pick WHY, and the task builds itself — standard template for that kind of work,
+// plus unit-specific things to look at pulled from recent guest feedback (reuses /api/schedule/listing-ops,
+// the same intel engine the scheduler ops panel + Push already use).
+type Intel = { inspection?: { recommended: boolean; reasons: string[] }; lastFeedback?: { rating: number | null; guest: string | null; date: string | null; excerpt: string | null } | null; checklist?: string[] }
+const TEMPLATES: { key: string; label: string; department: string; priority: string; title: string; base: string; useIntel?: boolean }[] = [
+  { key: 'inspection', label: 'Inspection', department: 'inspection', priority: 'high', title: 'Unit Check', useIntel: true, base: 'Standard unit inspection: cleanliness vs. the photos, damage / wear, all amenities present and working, consumables restocked, photos still match reality.' },
+  { key: 'audit', label: 'Quality audit', department: 'inspection', priority: 'normal', title: 'Quality Audit', useIntel: true, base: 'Full quality audit: score the unit against the standard checklist, log any damage or wear, confirm inventory counts.' },
+  { key: 'feedback', label: 'Audit from guest feedback', department: 'inspection', priority: 'high', title: 'Guest-feedback inspection', useIntel: true, base: 'Inspection raised from guest feedback. Verify and fix what guests reported.' },
+  { key: 'batteries', label: 'Lock batteries', department: 'maintenance', priority: 'normal', title: 'Replace lock batteries', base: 'Annual lock battery replacement. Replace batteries in every door lock, re-test the lock and codes afterwards, and log the date.' },
+  { key: 'acfilter', label: 'A/C filter', department: 'maintenance', priority: 'normal', title: 'Change A/C filter', base: 'Change the central A/C filter. Note the filter size used and log the date.' },
+  { key: 'pm', label: 'PM check', department: 'maintenance', priority: 'normal', title: 'Preventative Maintenance Task', base: 'Preventative maintenance pass: A/C, plumbing under sinks, water heater, smoke / CO detectors, light bulbs, door hardware.' },
+]
+
 function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string; onDone: () => void }) {
   const [title, setTitle] = useState('')
   const [department, setDepartment] = useState('maintenance')
   const [priority, setPriority] = useState('normal')
+  const [description, setDescription] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [ok, setOk] = useState('')
+  const [intel, setIntel] = useState<Intel | null>(null)
+  const [picked, setPicked] = useState('')
+
+  useEffect(() => {
+    fetch('/api/schedule/listing-ops?listingId=' + encodeURIComponent(listingId), { cache: 'no-store' })
+      .then(r => r.json()).then(j => setIntel(j || null)).catch(() => {})
+  }, [listingId])
+
+  const pick = (key: string) => {
+    const t = TEMPLATES.filter(x => x.key === key)[0]
+    if (!t) return
+    setPicked(key); setTitle(t.title); setDepartment(t.department); setPriority(t.priority)
+    let body = t.base
+    if (t.useIntel && intel) {
+      const cl = intel.checklist || []
+      if (cl.length) body += '\n\nLook specifically at (from this unit\u2019s recent guest feedback):\n' + cl.map(c => '- ' + c).join('\n')
+      const lf = intel.lastFeedback
+      if (lf && lf.excerpt) body += '\n\nLast guest feedback' + (lf.rating ? ' (' + lf.rating + '\u2605)' : '') + (lf.date ? ' ' + String(lf.date).slice(0, 10) : '') + ': \u201c' + String(lf.excerpt).slice(0, 240) + '\u201d'
+    }
+    setDescription(body)
+  }
 
   const save = async () => {
     const t = title.trim()
     if (!t) return
     setBusy(true); setErr(''); setOk('')
     try {
-      const r = await fetch('/api/ops-today/add-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, title: t, department, priority }) })
+      const r = await fetch('/api/ops-today/add-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, title: t, department, priority, description }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Could not create the task'); setBusy(false); return }
       setOk('Created in Breezeway')
-      setTitle('')
+      setTitle(''); setDescription(''); setPicked('')
       setTimeout(onDone, 700)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
 
+  const rec = intel && intel.inspection && intel.inspection.recommended
   return (
     <div className="px-4 py-3 bg-app border-t border-line">
-      <div className="text-xs uppercase tracking-wide text-muted mb-2">Add a task to {unit}</div>
+      <div className="text-xs uppercase tracking-wide text-muted mb-2">Add a task to {unit} &mdash; what&rsquo;s the reason?</div>
+      {rec && (intel!.inspection!.reasons || []).length > 0 && (
+        <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2 inline-block">Inspection recommended &middot; {(intel!.inspection!.reasons || []).join(' &middot; ')}</div>
+      )}
+      <div className="flex gap-1.5 flex-wrap mb-3">
+        {TEMPLATES.map(t => (
+          <button key={t.key} onClick={() => pick(t.key)} className={'text-xs font-medium px-2.5 py-1 rounded-lg border transition ' + (picked === t.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:border-ink/30')}>{t.label}{t.key === 'inspection' && rec ? ' \u2022' : ''}</button>
+        ))}
+      </div>
       <div className="flex gap-2 flex-wrap items-center">
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs doing?" className="flex-1 min-w-[200px] text-sm border border-line rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
         <select value={department} onChange={e => setDepartment(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-2 bg-white">
@@ -213,6 +257,9 @@ function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string;
         </select>
         <button onClick={save} disabled={busy || !title.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating…' : 'Create in Breezeway'}</button>
       </div>
+      {description && (
+        <textarea value={description} onChange={e => setDescription(e.target.value)} rows={5} className="w-full mt-2 text-xs border border-line rounded-lg px-3 py-2 bg-white font-mono text-muted" />
+      )}
       {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
       {ok && <div className="text-xs text-emerald-700 mt-2">{ok}</div>}
     </div>
