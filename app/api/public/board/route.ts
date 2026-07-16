@@ -108,6 +108,14 @@ export async function GET(req: NextRequest) {
       depSet[lid + '|' + dd] = true
     }
     departures.sort((a, b) => (a.cleanDay || a.checkOut).localeCompare(b.cleanDay || b.checkOut) || (b.sameDayTurn ? 1 : 0) - (a.sameDayTurn ? 1 : 0) || a.unit.localeCompare(b.unit))
+    // ACCESS-CODE POLICY: a code is only revealed on the day of that unit's departure clean.
+    // Vendors must never hold codes ahead of time, so we strip them server-side (not just in the
+    // UI) — otherwise they'd still leak via this JSON and the CSV export. Extended = occupied,
+    // nobody should be going in, so no code there either.
+    for (const r of arrivals) r.doorCode = null
+    for (const r of active) r.doorCode = null
+    for (const r of departures) { if ((r.cleanDay || r.checkOut) !== today || r.extended) r.doorCode = null }
+
     // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
