@@ -30,6 +30,8 @@ const TYPE_CLS: Record<string, string> = {
 const DEPTS = [['maintenance', 'Maintenance'], ['housekeeping', 'Housekeeping'], ['inspection', 'Inspection'], ['safety', 'Safety']] as const
 const PRIOS = [['normal', 'Normal'], ['high', 'High'], ['urgent', 'Urgent'], ['low', 'Low']] as const
 
+// Breezeway ADMIN task view (where you can actually edit/assign). report_url is the field report.
+function adminUrl(taskId: string) { return 'https://app.breezeway.io/task/' + taskId }
 function hhmm(iso: string | null) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d.getTime())) return ''; return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) }
 function fmtLeft(m: number) { const a = Math.abs(m); const h = Math.floor(a / 60); const mm = a % 60; return (h ? h + 'h ' : '') + mm + 'm' }
 function statusCls(t: Task) {
@@ -162,7 +164,8 @@ export function TodayInOps() {
                     <div className="text-xs text-muted">{t.assignees.length ? t.assignees.join(', ') : <span className="text-amber-700 font-medium">Unassigned</span>}{t.finishedAt ? ' · done ' + hhmm(t.finishedAt) : t.startedAt ? ' · started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</div>
                   </div>
                   <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
-                  {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline shrink-0">open</a>}
+                  <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
+                  {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0">report</a>}
                 </div>
               ))}
             </div>
