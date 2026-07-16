@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean }
+type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null }
 type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active'
 
@@ -14,6 +14,7 @@ function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T
 function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? r.checkOut : r.checkIn }
 function bedLabel(n: number | null) { if (n == null) return ''; return n === 0 ? 'Studio' : n + 'BR' }
 function keyOf(r: Row, tab: TabKey) { return tab.charAt(0) + r.unit + '|' + dateFor(r, tab) }
+function relDay(iso: string, today: string) { if (!today) return ''; if (iso === today) return 'Today'; const a = new Date(iso + 'T12:00:00'), b = new Date(today + 'T12:00:00'); const dd = Math.round((+a - +b) / 86400000); if (dd === 1) return 'Tomorrow'; return '' }
 
 export default function VendorPage({ params }: { params: { v: string } }) {
   const [data, setData] = useState<Data | null>(null)
@@ -21,6 +22,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [expanded, setExpanded] = useState('')
   const [needsPw, setNeedsPw] = useState(false)
   const [pw, setPw] = useState('')
   const [pwErr, setPwErr] = useState('')
@@ -89,9 +91,15 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const markSeen = () => { const st = new Set(allIds); setSeen(st); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} }
   const isNew = (r: Row) => seenInit.current && !seen.has(keyOf(r, tab))
 
+  // group rows into days
+  const dayKeys: string[] = []
+  const byDay: Record<string, Row[]> = {}
+  for (const r of rows) { const k = dateFor(r, tab); if (!byDay[k]) { byDay[k] = []; dayKeys.push(k) } byDay[k].push(r) }
+  dayKeys.sort()
+
   const exportCsv = () => {
-    const head = [['Date', 'Unit', 'Bedrooms', 'Door code', tab === 'departures' ? 'Checkout' : 'Check-in', 'Same-day turn']]
-    const body = rows.map(r => [dateFor(r, tab), r.unit, bedLabel(r.bedrooms), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : ''])
+    const head = [['Date', 'Unit', 'Guest', 'Bedrooms', 'Code', tab === 'departures' ? 'Checkout' : 'Check-in', 'Same-day turn', 'Notes']]
+    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : '', r.notes || ''])
     const csv = head.concat(body).map(line => line.map(x => /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -124,30 +132,66 @@ export default function VendorPage({ params }: { params: { v: string } }) {
           )})}
         </div>
 
-        {loading && <div className="text-neutral-400 text-sm py-8 text-center">Loading…</div>}
-        {!loading && rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">Nothing here this week.</div>}
-        <div className="space-y-2">
-          {rows.map((r, i) => {
-            const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
-            return (
-              <div key={i} className={'rounded-xl border bg-white px-4 py-3 flex items-center gap-3 break-inside-avoid ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold truncate">{r.unit}</span>
-                    {isNew(r) && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">New</span>}
-                    {tab === 'departures' && r.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
-                  </div>
-                  <div className="text-xs text-neutral-500">{bedLabel(r.bedrooms)}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.guests ? ' · ' + r.guests + ' guests' : ''}{tab === 'active' ? ' · out ' + fmtDate(r.checkOut) : ''}</div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-sm font-medium">{fmtDate(dateFor(r, tab))}</div>
-                  {time && <div className="text-xs text-emerald-700 font-medium">{tab === 'departures' ? 'out ' : 'in '}{time}</div>}
-                </div>
+        {rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">Nothing here this week.</div>}
+
+        <div className="space-y-5">
+          {dayKeys.map(day => (
+            <div key={day} className="break-inside-avoid">
+              <div className="flex items-baseline gap-2 mb-2 px-1">
+                <h2 className="text-sm font-bold text-neutral-900">{fmtDate(day)}</h2>
+                {relDay(day, data.today || '') && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-neutral-900 text-white">{relDay(day, data.today || '')}</span>}
+                <span className="text-xs text-neutral-400">{byDay[day].length} {tab === 'departures' ? 'cleans' : tab === 'arrivals' ? 'arrivals' : 'staying'}</span>
               </div>
-            )
-          })}
+              <div className="space-y-2">
+                {byDay[day].map((r, i) => {
+                  const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
+                  const id = keyOf(r, tab) + i
+                  const open = expanded === id
+                  return (
+                    <div key={id} className={'rounded-xl border bg-white break-inside-avoid ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
+                      <button onClick={() => setExpanded(open ? '' : id)} className="w-full text-left px-4 py-3 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold truncate">{r.unit}</span>
+                            {isNew(r) && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">New</span>}
+                            {tab === 'departures' && r.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
+                            {r.notes && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">Note</span>}
+                          </div>
+                          <div className="text-xs text-neutral-500 truncate">{r.guestName || 'Guest'}{r.guests ? ' · ' + r.guests + ' guests' : ''}{bedLabel(r.bedrooms) ? ' · ' + bedLabel(r.bedrooms) : ''}{r.doorCode ? ' · code ' + r.doorCode : ''}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          {time && <div className="text-sm font-medium text-emerald-700">{tab === 'departures' ? 'out ' : 'in '}{time}</div>}
+                          {tab === 'active' && <div className="text-xs text-neutral-400">out {fmtDate(r.checkOut)}</div>}
+                        </div>
+                        <span className="text-neutral-300 text-xs">{open ? '▲' : '▼'}</span>
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-1 border-t border-neutral-100 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                          <Field label="Guest" value={r.guestName || '—'} />
+                          <Field label="Phone" value={r.phone || '—'} />
+                          <Field label="Check-in" value={fmtDate(r.checkIn) + (r.checkInTime ? ' · ' + r.checkInTime : '')} />
+                          <Field label="Check-out" value={fmtDate(r.checkOut) + (r.checkOutTime ? ' · ' + r.checkOutTime : '')} />
+                          <Field label="Nights" value={r.nights != null ? String(r.nights) : '—'} />
+                          <Field label="Guests" value={r.guests != null ? String(r.guests) : '—'} />
+                          <Field label="Door code" value={r.doorCode || '—'} />
+                          <Field label="Confirmation" value={r.confirmationCode || '—'} />
+                          <Field label="Source" value={r.source || '—'} />
+                          <Field label="Unit" value={bedLabel(r.bedrooms) || '—'} />
+                          {r.notes && <div className="col-span-2"><div className="text-xs uppercase tracking-wide text-neutral-400">Reservation notes</div><div className="text-neutral-900 whitespace-pre-wrap bg-neutral-50 rounded px-2 py-1 mt-0.5">{r.notes}</div></div>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
   )
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (<div><div className="text-xs uppercase tracking-wide text-neutral-400">{label}</div><div className="text-neutral-900 break-words">{value}</div></div>)
 }
