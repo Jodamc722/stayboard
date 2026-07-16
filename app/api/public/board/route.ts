@@ -18,6 +18,8 @@ const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
+function hhmm(v: any): string { const s = v ? String(v) : ''; return s.length >= 16 ? s.slice(11, 16) : '' }
+function timeET(iso: any): string { if (!iso) return ''; const d = new Date(String(iso)); if (isNaN(d.getTime())) return ''; return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(d) }
 function cfValue(raw: any, fieldId: string): string | null {
   const arr = Array.isArray(raw?.customFields) ? raw.customFields : []
   for (const c of arr) { const fid = typeof c?.fieldId === 'object' ? c?.fieldId?._id : c?.fieldId; if (String(fid) === fieldId) return c?.value != null ? String(c.value) : null }
@@ -55,8 +57,8 @@ export async function GET(req: NextRequest) {
       return {
         unit: m ? m.name : 'Unit', checkIn: ci, checkOut: co, nights: r.nights ?? null,
         bedrooms: m ? m.bedrooms : null, doorCode: m ? m.doorCode : null,
-        checkInTime: raw.checkInDateLocalized ? String(raw.checkInDateLocalized).slice(11, 16) : (m && m.checkInTime ? m.checkInTime : null),
-        checkOutTime: raw.checkOutDateLocalized ? String(raw.checkOutDateLocalized).slice(11, 16) : (m && m.checkOutTime ? m.checkOutTime : '11:00'),
+        checkInTime: hhmm(raw.checkInDateLocalized) || timeET(raw.checkIn) || (m && m.checkInTime) || null,
+        checkOutTime: hhmm(raw.checkOutDateLocalized) || timeET(raw.checkOut) || (m && m.checkOutTime) || '11:00',
         guests: raw.guestsCount ?? raw.numberOfGuests ?? null,
         source: r.source || raw.source || null,
         sameDayTurn: !!arrKey[String(r.listing_id) + '|' + co],
