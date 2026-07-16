@@ -17,6 +17,8 @@ const SCOPES: Record<string, { label: string; re: RegExp }> = {
 }
 const LIVE = /confirm|checked/i
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
+// Per-reservation access code (changes per stay) — this is the code valid on that day.
+const RES_CODE_FIELD = '693adec2ab73940025856e56'
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -49,7 +51,7 @@ export async function GET(req: NextRequest) {
     }
     const ids = Object.keys(match)
     if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, arrivals: [], departures: [], active: [] })
-    const { data: res } = await db.from('guesty_reservations').select('id,listing_id,check_in,check_out,nights,status,source,raw').in('listing_id', ids).lte('check_in', end).gte('check_out', start).limit(1000)
+    const { data: res } = await db.from('guesty_reservations').select('id,listing_id,guest_name,guest_phone,check_in,check_out,nights,status,source,confirmation_code,notes,custom_fields,raw').in('listing_id', ids).lte('check_in', end).gte('check_out', start).limit(1000)
     const live = ((res || []) as any[]).filter(r => LIVE.test(str(r.status)))
     const arrKey: Record<string, boolean> = {}
     for (const r of live) arrKey[String(r.listing_id) + '|' + str(r.check_in).slice(0, 10)] = true
@@ -58,9 +60,14 @@ export async function GET(req: NextRequest) {
       const raw = r.raw || {}
       const ci = str(r.check_in).slice(0, 10)
       const co = str(r.check_out).slice(0, 10)
+      // Code valid on THIS stay's day: the reservation's own access code, else the listing's static code.
+      const resCode = cfValue({ customFields: Array.isArray(r.custom_fields) && r.custom_fields.length ? r.custom_fields : raw.customFields }, RES_CODE_FIELD)
       return {
         unit: m ? m.name : 'Unit', checkIn: ci, checkOut: co, nights: r.nights ?? null,
-        bedrooms: m ? m.bedrooms : null, doorCode: m ? m.doorCode : null,
+        bedrooms: m ? m.bedrooms : null, doorCode: resCode || (m ? m.doorCode : null),
+        guestName: r.guest_name || null, phone: r.guest_phone || null,
+        confirmationCode: r.confirmation_code || null,
+        notes: r.notes ? String(r.notes) : null,
         checkInTime: hhmm(raw.checkInDateLocalized) || timeET(raw.checkIn) || (m && m.checkInTime) || null,
         checkOutTime: hhmm(raw.checkOutDateLocalized) || timeET(raw.checkOut) || (m && m.checkOutTime) || '11:00',
         guests: raw.guestsCount ?? raw.numberOfGuests ?? null,
