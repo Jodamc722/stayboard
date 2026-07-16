@@ -55,7 +55,7 @@ const end = view === 'day' ? anchor : addDays(start, 6)
 const compute = unstable_cache(async (view: string, start: string, end: string, today: string) => {
 const db = supabaseAdmin()
 const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
-db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,check_out,check_in,status,nights,source').gte('check_out', start).lte('check_out', end).limit(4000),
+db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).limit(4000),
 db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
 // PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
 // check-in/out times) instead of the full multi-MB raw blob for every listing.
@@ -98,7 +98,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null; cleaningFee?: number | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -121,6 +121,7 @@ hub: m?.hub || 'Other',
 date,
 guestOut: (r as any).guest_name || null, reservationId: String((r as any).id || '') || null,
 nights: (r as any).nights ?? null,
+cleaningFee: (r as any).fee != null ? (Number((r as any).fee) || 0) : null,
 bedrooms: m?.bedrooms ?? null,
 checkInTime: m?.checkIn || null,
 checkOutTime: m?.checkOut || null,
@@ -366,7 +367,7 @@ return {
 ok: true, view, today, weekStart: start, weekEnd: end,
 prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
 next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
-totals: { cleans: cleans.filter((c) => !c.movedTo).length, byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).length })) },
+totals: { cleans: cleans.filter((c) => !c.movedTo).length, feeTotal: cleans.filter(c => !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0), byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).length, fee: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0) })) },
 days, housekeepers, units, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
