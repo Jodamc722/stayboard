@@ -545,7 +545,7 @@ function quickTags(r: string): string[] {
                     <button onClick={() => { if (tagInput.trim()) { addTag(room, tagInput.trim()); setTagInput('') } }} disabled={tagBusy} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300 disabled:opacity-50">Add</button>
                   </div>
                 </div>
-                {!done ? (() => {
+                {!done && isOnboarding ? (() => {
                     const tt = roomItems.filter(x => x.kind === 'tag').map(x => String(x.title || ''))
                     const sl = shotsFor(room, tt)
                     const doneN = orgRoom === room ? sl.filter((_, i) => shotMap[i]).length : 0
@@ -569,32 +569,6 @@ function quickTags(r: string): string[] {
                       <div className="flex flex-wrap gap-1.5">
                         {essFor(room).map((lbl, i) => { const ex = roomItems.find(x => x.kind === 'inventory' && String(x.title || '').toLowerCase() === lbl.toLowerCase()); return (
                           <button key={i} onClick={() => bumpEss(room, lbl)} disabled={essBusy} className={'text-xs font-semibold px-2 py-1 rounded-md border ' + (ex ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300')}>{ex && (Number(ex.qty) || 1) > 1 ? ex.qty + '× ' : ''}{ex ? '✓ ' : ''}{lbl}</button>
-                        ) })}
-                      </div>
-                    </div>
-                  ) : null}
-                  {!done && !isOnboarding ? (() => {
-                    const miss = essFor(room).filter(l => !roomItems.some(x => x.kind !== 'tag' && String(x.title || '').toLowerCase().indexOf(l.toLowerCase()) >= 0))
-                    return miss.length ? (
-                      <div className="mb-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2">
-                        <div className="text-[11px] font-semibold text-amber-800 mb-1">Missing essentials <span className="font-normal text-amber-500">tap to add to order</span></div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {miss.map((lbl, i) => <button key={i} onClick={() => addMissing(room, lbl)} disabled={essBusy} className="text-xs font-semibold px-2 py-1 rounded-md border border-amber-300 text-amber-700 bg-white">+ {lbl}</button>)}
-                        </div>
-                      </div>
-                    ) : null
-                  })() : null}
-                  {!done && !isOnboarding ? (
-                    <div className="mb-1.5 rounded-lg border border-violet-200 bg-violet-50 p-2">
-                      <div className="text-[11px] font-semibold text-violet-800 mb-1">Preventative maintenance <span className="font-normal text-violet-400">OK or flag an issue</span></div>
-                      <div className="space-y-1">
-                        {pmFor(room).map((lbl, i) => { const ok = roomItems.some(x => String(x.title || '') === lbl + ' — OK'); return (
-                          <div key={i} className="flex items-center gap-2">
-                            <span className={'flex-1 text-[12px] ' + (ok ? 'text-violet-400 line-through' : 'text-violet-900')}>{lbl}{lbl === 'AC filter replace' && fSize ? ' (' + fSize + ')' : ''}</span>
-                            {ok ? <span className="text-[11px] font-semibold text-emerald-600">OK ✓</span> : null}
-                            {!ok ? <button onClick={() => pmOk(room, lbl)} disabled={essBusy} className="text-[11px] font-semibold px-2 py-0.5 rounded-md border border-emerald-300 text-emerald-700 bg-white">OK</button> : null}
-                            {!ok ? <button onClick={() => startDraft(room, { kind: 'maintenance', title: lbl })} className="text-[11px] font-semibold px-2 py-0.5 rounded-md border border-rose-300 text-rose-600 bg-white">Issue</button> : null}
-                          </div>
                         ) })}
                       </div>
                     </div>
