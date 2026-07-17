@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const KINDS = ['maintenance', 'replace', 'add', 'faq', 'inventory', 'tag']
+const KINDS = ['maintenance', 'replace', 'add', 'clean', 'faq', 'inventory', 'tag']
 function slugRoom(x: string): string { return String(x).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) }
 
 async function carryForwardItems(db: any, listingId: string, newAuditId: string) {
@@ -68,6 +68,17 @@ export async function GET(req: NextRequest) {
   }
   const user = await getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (req.nextUrl.searchParams.get('orders')) {
+    // Property-wide order sheet: every Replace/Add need across all audits, with lifecycle status.
+    const [oi, ol] = await Promise.all([
+      db.from('audit_items').select('id,audit_id,listing_id,room,kind,title,qty,note,photo_url,status,details,created_at').in('kind', ['replace', 'add']).neq('status', 'dismissed').order('created_at', { ascending: false }).limit(2000),
+      db.from('guesty_listings').select('id,nickname,title,building').limit(2000),
+    ])
+    const lm: Record<string, any> = {}
+    for (const l of ol.data || []) lm[String(l.id)] = { name: l.nickname || l.title || 'Unit', building: l.building || '' }
+    const orders = (oi.data || []).map((x: any) => { const lid = String(x.listing_id || ''); const meta = lm[lid]; return { ...x, unit: meta ? meta.name : (lid.indexOf(':') >= 0 ? lid.split(':').slice(1).join(':') : lid), building: meta ? meta.building : '' } })
+    return NextResponse.json({ ok: true, orders })
+  }
   const [ar, lr, ir, rr] = await Promise.all([
     db.from('property_audits').select('*').order('created_at', { ascending: false }).limit(300),
     db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
@@ -201,6 +212,18 @@ export async function POST(req: NextRequest) {
   const user = audit ? null : await getUser()
   if (!audit && !user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
+  if (action === 'learnTag') {
+    // A tag was used AND approved (kept through review + saved) - persist it so future
+    // dictations auto-attach it. Tolerant: no-op if the tag_taxonomy table is missing.
+    const name = String(body.name || '').trim().slice(0, 60)
+    if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
+    try {
+      const ex = await db.from('tag_taxonomy').select('id').ilike('name', name).limit(1)
+      if (!(ex.data && ex.data[0])) await db.from('tag_taxonomy').insert({ name, approved: true, source: 'walkthrough' })
+    } catch {}
+    return NextResponse.json({ ok: true })
+  }
+
   if (action === 'deleteRoom') {
     const listingId = String(body.listingId || (audit && audit.listing_id) || '')
     const room = String(body.room || '').slice(0, 120)
@@ -283,13 +306,13 @@ export async function POST(req: NextRequest) {
     const upd: Record<string, any> = { updated_at: new Date().toISOString() }
     if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
     if (f.qty !== undefined && Number.isFinite(Number(f.qty))) upd.qty = Math.max(1, Math.min(99, Number(f.qty)))
-    if (typeof f.brand === 'string' || typeof f.size === 'string' || typeof f.howTo === 'string') { const d: any = (item.details && typeof item.details === 'object') ? { ...item.details } : {}; if (typeof f.brand === 'string') d.brand = f.brand.slice(0, 120); if (typeof f.size === 'string') d.size = f.size.slice(0, 120); if (typeof f.howTo === 'string') d.howTo = f.howTo.slice(0, 2000); upd.details = d }
+    if (typeof f.brand === 'string' || typeof f.size === 'string' || typeof f.howTo === 'string' || typeof f.link === 'string') { const d: any = (item.details && typeof item.details === 'object') ? { ...item.details } : {}; if (typeof f.brand === 'string') d.brand = f.brand.slice(0, 120); if (typeof f.size === 'string') d.size = f.size.slice(0, 120); if (typeof f.howTo === 'string') d.howTo = f.howTo.slice(0, 2000); if (typeof f.link === 'string') d.link = f.link.slice(0, 500) || null; upd.details = d }
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
     if (typeof f.room === 'string' && f.room) upd.room = f.room.slice(0, 80)
     if (['low', 'medium', 'high'].includes(String(f.severity))) upd.severity = String(f.severity)
-    if (!audit && ['open', 'ordered', 'done', 'dismissed'].includes(String(f.status))) upd.status = String(f.status)
+    if (!audit && ['open', 'approved', 'ordered', 'arriving', 'done', 'dismissed'].includes(String(f.status))) upd.status = String(f.status)
     const r = await db.from('audit_items').update(upd).eq('id', itemId).select('*').limit(1)
     if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
     return NextResponse.json({ ok: true, item: r.data && r.data[0] })
