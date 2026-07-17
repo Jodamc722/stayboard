@@ -515,7 +515,8 @@ function quickTags(r: string): string[] {
                   <input type="checkbox" checked={!!wkPick[i]} onChange={() => setWkPick(p => ({ ...p, [i]: !p[i] }))} className="mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-neutral-900">{it.title}</div>
-                    <div className="text-[11px] text-neutral-500">{it.room} · {KIND_META[it.kind] ? KIND_META[it.kind].label : it.kind}{it.note ? ' · ' + it.note : ''}</div>
+                    <div className="flex gap-1 mt-1">{['maintenance', 'replace', 'add'].map(k => <button key={k} onClick={() => setWkItems(arr => arr.map((x: any, j: number) => j === i ? { ...x, kind: k } : x))} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (it.kind === k ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k] ? KIND_META[k].label : k}</button>)}</div>
+                    <div className="text-[11px] text-neutral-500">{it.room}{it.note ? ' · ' + it.note : ''}</div>
                   </div>
                 </div>
               ))}
@@ -582,7 +583,7 @@ function quickTags(r: string): string[] {
               <div className="px-3.5 pb-3.5 space-y-2">
                 <div className="mb-2">
                   {orgRoom === room && orgPhotos.length ? <div className="flex gap-1 flex-wrap mb-1.5">{orgPhotos.map((p, i) => <img key={i} src={p} alt="" className="w-11 h-11 rounded object-cover" />)}</div> : null}
-                  <div className="mb-2">
+                  {isOnboarding ? <div className="mb-2">
                   <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Room features</div>
                   <div className="flex flex-wrap gap-1.5">
                     {roomItems.filter(it => it.kind === 'tag').map(it => (
@@ -596,7 +597,7 @@ function quickTags(r: string): string[] {
                     <input value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Add a feature" className="flex-1 rounded border border-neutral-200 px-2 py-1 text-[12px]" />
                     <button onClick={() => { if (tagInput.trim()) { addTag(room, tagInput.trim()); setTagInput('') } }} disabled={tagBusy} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300 disabled:opacity-50">Add</button>
                   </div>
-                </div>
+                </div> : null}
                 {!done && isOnboarding ? (() => {
                     const tt = roomItems.filter(x => x.kind === 'tag').map(x => String(x.title || ''))
                     const sl = shotsFor(room, tt)
@@ -625,11 +626,11 @@ function quickTags(r: string): string[] {
                       </div>
                     </div>
                   ) : null}
-                  <div className="flex gap-1.5">
+                  {isOnboarding ? <div className="flex gap-1.5">
                     <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
                     <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
-                  </div>
-                  {orgRoom === room && orgPhotos.length ? <button onClick={buildFromStaged} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{orgBusy ? 'Analyzing ' + orgPhotos.length + ' photos…' : (orgPhotos.length >= 10 ? '✨ Analyze' : ('✨ Build inventory from ' + orgPhotos.length + ' photos'))}</button> : null}
+                  </div> : null}
+                  {isOnboarding && orgRoom === room && orgPhotos.length ? <button onClick={buildFromStaged} disabled={orgBusy} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{orgBusy ? 'Analyzing ' + orgPhotos.length + ' photos…' : (orgPhotos.length >= 10 ? '✨ Analyze' : ('✨ Build inventory from ' + orgPhotos.length + ' photos'))}</button> : null}
                   {orgRoom === room && (orgItems.length > 0 || orgQuestions.length > 0) ? (
                     <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 space-y-2">
                       {orgQuestions.length > 0 ? (
