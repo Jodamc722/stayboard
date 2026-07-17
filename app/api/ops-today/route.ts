@@ -16,6 +16,10 @@ const AT_RISK_MIN = 2 * 60        // flag when under 2h left and not started
 // 'not started' forever. Tracking them against 4pm produced 11 false 'at risk' alerts out of 17.
 // They still show on the board, but they carry no deadline and no status alarm.
 const UNTRACKED_RE = /botanica/i
+// Vendor-managed buildings are grouped under 'Vendor', NOT their geographic market — Botanica is
+// cleaned by a vendor, so it must not sit inside Broward's numbers (same rule as the scheduler).
+const VENDOR_RE = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
+const VENDOR_MARKET = 'Vendor'
 
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function etMinutes(d: Date) {
@@ -65,7 +69,8 @@ export async function GET(req: NextRequest) {
     const lmap: Record<string, { name: string; market: string; active: boolean }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
-      lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active' }
+      const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
+      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active' }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
@@ -180,7 +185,8 @@ export async function GET(req: NextRequest) {
       missed: cleans.filter(t => t.missed).length,
       untracked: tasks.filter(t => t.type === 'departure_clean' && t.untracked).length,
     }
-    const byMarket = MARKETS.map(m => {
+    const ALL_MARKETS = (MARKETS as string[]).concat([VENDOR_MARKET])
+    const byMarket = ALL_MARKETS.map(m => {
       const mt = tasks.filter(t => t.market === m)
       const mc = mt.filter(t => t.clocked)
       return {
