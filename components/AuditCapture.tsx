@@ -22,6 +22,7 @@ const BASICS: { cat: string; opts: string[] }[] = [
 const KIND_META: Record<string, { label: string; cls: string }> = {
   inventory: { label: 'Inventory', cls: 'bg-neutral-100 text-neutral-700 border-neutral-300' },
   maintenance: { label: 'Fix', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
+  clean: { label: 'Clean', cls: 'bg-purple-100 text-purple-800 border-purple-300' },
   replace: { label: 'Replace', cls: 'bg-rose-100 text-rose-700 border-rose-300' },
   add: { label: 'Add', cls: 'bg-sky-100 text-sky-800 border-sky-300' },
   faq: { label: 'FAQ', cls: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
@@ -59,6 +60,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const coverRef = useRef<HTMLInputElement | null>(null)
   const bulkRef = useRef<HTMLInputElement | null>(null)
   const camRef = useRef<HTMLInputElement | null>(null)
+  const wkCamRef = useRef<HTMLInputElement | null>(null)
   const [orgRoom, setOrgRoom] = useState('')
   const [orgBusy, setOrgBusy] = useState(false)
   const [orgItems, setOrgItems] = useState<any[]>([])
@@ -100,6 +102,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const [wkBusy, setWkBusy] = useState(false)
   const [wkItems, setWkItems] = useState<any[]>([])
   const [wkPick, setWkPick] = useState<Record<number, boolean>>({})
+  const [wkShotIdx, setWkShotIdx] = useState(-1)
   const [basicsOpen, setBasicsOpen] = useState(false)
 
   async function load() {
@@ -115,7 +118,9 @@ export default function AuditCapture({ code }: { code: string }) {
   const items = data ? data.items : []
   const done = !!(data && data.audit && data.audit.status === 'completed')
   const rooms: string[] = []
-  if (data) { const base = (data as any).scope === 'building' ? COMMON_AREAS : defaultRooms(data.listing.bedrooms, data.listing.bathrooms); for (const r of base) rooms.push(r) }
+  // Quality audits start ROOM-LESS - the dictation names the rooms and the parse builds the
+  // categories. Only onboarding (and building scope) seed a default room list.
+  if (data) { const base = (data as any).scope === 'building' ? COMMON_AREAS : ((data.audit && data.audit.auditType === 'onboarding') ? defaultRooms(data.listing.bedrooms, data.listing.bathrooms) : []); for (const r of base) rooms.push(r) }
   for (const r of customRooms) if (rooms.indexOf(r) < 0) rooms.push(r)
   for (const it of items) if (rooms.indexOf(it.room) < 0) rooms.push(it.room)
   const roomDepth = (r: string): number => r.split(' — ').length - 1
@@ -189,14 +194,40 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch { alert('Failed - retry') }
     setWkBusy(false)
   }
+  function wkShoot(i: number) { setWkShotIdx(i); if (wkCamRef.current) { wkCamRef.current.value = ''; wkCamRef.current.click() } }
+  async function onWkPhoto(e: any) {
+    const f = e.target.files && e.target.files[0]
+    const idx = wkShotIdx
+    if (!f || idx < 0) { setWkShotIdx(-1); return }
+    setWkBusy(true)
+    try {
+      const fd = new FormData(); fd.append('code', code); fd.append('file', f); fd.append('noai', '1')
+      const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json()
+      if (j && j.url) setWkItems(arr => arr.map((x: any, jx: number) => jx === idx ? { ...x, photoUrl: j.url } : x))
+    } catch {}
+    setWkShotIdx(-1); setWkBusy(false)
+  }
   async function saveWalkthrough() {
     if (wkBusy) return
     setWkBusy(true)
     try {
+      const sentTags: Record<string, boolean> = {}
       for (let i = 0; i < wkItems.length; i++) {
         if (!wkPick[i]) continue
         const it = wkItems[i]
-        await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: it.room || 'General', kind: it.kind, title: it.title, note: it.note || '' }) })
+        const room = it.room || 'General'
+        await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: it.kind, title: it.title, note: it.note || '', photoUrl: it.photoUrl || '' }) })
+        // Tags ride along: each furniture/appliance type heard becomes a unit tag (tracked for
+        // ordering + amenity data). Kept new tags are approved -> learned for future dictations.
+        const tgs = Array.isArray(it.tags) ? it.tags : []
+        for (const tg of tgs) {
+          const nm = String(tg && tg.name ? tg.name : '').trim()
+          if (!nm) continue
+          const dk = room.toLowerCase() + '|' + nm.toLowerCase()
+          const have = sentTags[dk] || items.some((x: any) => x.kind === 'tag' && x.room === room && String(x.title || '').toLowerCase() === nm.toLowerCase())
+          if (!have) { sentTags[dk] = true; await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'tag', title: nm }) }) }
+          if (tg.isNew) { try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'learnTag', code, name: nm }) }) } catch {} }
+        }
       }
       setWkItems([]); setWkPick({}); setWkText("")
       await load()
@@ -495,18 +526,19 @@ function quickTags(r: string): string[] {
       <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} className="hidden" />
       <input ref={coverRef} type="file" accept="image/*" capture="environment" onChange={onCoverPhoto} className="hidden" />
       <input ref={bulkRef} type="file" accept="image/*" multiple onChange={onStage} className="hidden" /><input ref={camRef} type="file" accept="image/*" capture="environment" onChange={onStage} className="hidden" />
+      <input ref={wkCamRef} type="file" accept="image/*" capture="environment" onChange={onWkPhoto} className="hidden" />
       <div className="mb-4">
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
         {data.listing.building ? <div className="text-xs text-neutral-500 mt-0.5">{data.listing.building}</div> : null}
-        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.'}</div>
+        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Talk the walk. Dictate what needs to be fixed, replaced, added or cleaned - the AI organizes it by room, asks for the photos it needs, and tags the unit. Photos can always be added later.'}</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
       {!done ? (
         <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
           <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Walkthrough - dictate your list</div>
           <div className="text-[11px] text-neutral-400 mb-1.5">Tap the box, hit the mic on your keyboard, and talk through the unit room by room. Then Build task list.</div>
-          <textarea value={wkText} onChange={e => setWkText(e.target.value)} rows={4} placeholder="Master bedroom: move TV from living room here. New bar stools. Touch-up paint..." className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
+          <textarea value={wkText} onChange={e => setWkText(e.target.value)} rows={4} placeholder={isOnboarding ? 'Master bedroom: king bed, Samsung smart TV. Breaker box in hallway closet. AC filter is 20x20x1...' : 'Kitchen: need a new coffee maker, need more cooking utensils. Master: new light bulbs, touch-up paint. Living room: sofa has a stain...'} className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
           <button onClick={runWalkthrough} disabled={wkBusy || !wkText.trim()} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{wkBusy ? 'Working...' : '✨ Build task list'}</button>
           {wkItems.length ? (
             <div className="mt-2 space-y-1.5">
@@ -515,8 +547,24 @@ function quickTags(r: string): string[] {
                   <input type="checkbox" checked={!!wkPick[i]} onChange={() => setWkPick(p => ({ ...p, [i]: !p[i] }))} className="mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-neutral-900">{it.title}</div>
-                    <div className="flex gap-1 mt-1">{['maintenance', 'replace', 'add'].map(k => <button key={k} onClick={() => setWkItems(arr => arr.map((x: any, j: number) => j === i ? { ...x, kind: k } : x))} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (it.kind === k ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k] ? KIND_META[k].label : k}</button>)}</div>
+                    <div className="flex gap-1 mt-1">{(isOnboarding ? ['inventory', 'faq'] : ['maintenance', 'replace', 'add', 'clean']).map(k => <button key={k} onClick={() => setWkItems(arr => arr.map((x: any, j: number) => j === i ? { ...x, kind: k } : x))} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (it.kind === k ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k] ? KIND_META[k].label : k}</button>)}</div>
                     <div className="text-[11px] text-neutral-500">{it.room}{it.note ? ' · ' + it.note : ''}</div>
+                    {Array.isArray(it.tags) && it.tags.length ? (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {it.tags.map((tg: any, ti: number) => (
+                          <span key={ti} className={'inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ' + (tg.isNew ? 'bg-amber-100 text-amber-800' : 'bg-violet-100 text-violet-700')}>
+                            {tg.name}{tg.isNew ? ' · new tag' : ''}
+                            <button onClick={() => setWkItems(arr => arr.map((x: any, j: number) => j === i ? { ...x, tags: x.tags.filter((_: any, k2: number) => k2 !== ti) } : x))} className="leading-none px-0.5">×</button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {it.photo ? (
+                      <div className="flex items-center gap-2 mt-1">
+                        <button onClick={() => wkShoot(i)} className={'text-[11px] font-semibold px-2 py-1 rounded-lg border ' + (it.photoUrl ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-neutral-300 text-neutral-700')}>{it.photoUrl ? '📷 Got it ✓ retake' : '📷 ' + it.photo}</button>
+                        {it.photoUrl ? <img src={it.photoUrl} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="text-[10px] text-neutral-400">optional - add later anytime</span>}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
