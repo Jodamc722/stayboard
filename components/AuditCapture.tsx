@@ -181,7 +181,7 @@ export default function AuditCapture({ code }: { code: string }) {
     if (wkBusy || !wkText.trim()) return
     setWkBusy(true)
     try {
-      const r = await fetch('/api/audit/walkthrough', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, transcript: wkText, rooms }) })
+      const r = await fetch('/api/audit/walkthrough', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, transcript: wkText, rooms, mode: isOnboarding ? 'onboarding' : 'quality' }) })
       const j = await r.json()
       const its = (j && j.items) || []
       setWkItems(its)
@@ -502,7 +502,7 @@ function quickTags(r: string): string[] {
         <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.'}</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
-      {!isOnboarding && !done ? (
+      {!done ? (
         <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
           <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Walkthrough - dictate your list</div>
           <div className="text-[11px] text-neutral-400 mb-1.5">Tap the box, hit the mic on your keyboard, and talk through the unit room by room. Then Build task list.</div>
