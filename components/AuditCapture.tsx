@@ -96,6 +96,10 @@ export default function AuditCapture({ code }: { code: string }) {
   const [shotIdx, setShotIdx] = useState(-1)
   const [shotMap, setShotMap] = useState<Record<number, string>>({})
   const [essBusy, setEssBusy] = useState(false)
+  const [wkText, setWkText] = useState('')
+  const [wkBusy, setWkBusy] = useState(false)
+  const [wkItems, setWkItems] = useState<any[]>([])
+  const [wkPick, setWkPick] = useState<Record<number, boolean>>({})
   const [basicsOpen, setBasicsOpen] = useState(false)
 
   async function load() {
@@ -172,6 +176,32 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch {}
     setEssBusy(false)
     await load()
+  }
+  async function runWalkthrough() {
+    if (wkBusy || !wkText.trim()) return
+    setWkBusy(true)
+    try {
+      const r = await fetch('/api/audit/walkthrough', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, transcript: wkText, rooms }) })
+      const j = await r.json()
+      const its = (j && j.items) || []
+      setWkItems(its)
+      const p: Record<number, boolean> = {}; its.forEach((_: any, i: number) => { p[i] = true }); setWkPick(p)
+    } catch { alert('Failed - retry') }
+    setWkBusy(false)
+  }
+  async function saveWalkthrough() {
+    if (wkBusy) return
+    setWkBusy(true)
+    try {
+      for (let i = 0; i < wkItems.length; i++) {
+        if (!wkPick[i]) continue
+        const it = wkItems[i]
+        await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: it.room || 'General', kind: it.kind, title: it.title, note: it.note || '' }) })
+      }
+      setWkItems([]); setWkPick({}); setWkText("")
+      await load()
+    } catch { alert('Failed - retry') }
+    setWkBusy(false)
   }
   async function pickBasic(opt: string, opts: string[]) {
     if (essBusy) return
@@ -472,6 +502,28 @@ function quickTags(r: string): string[] {
         <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. Photo an item, pick Fix / Replace / Add, save. Everything syncs to StayBoard instantly.'}</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
+      {!isOnboarding && !done ? (
+        <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">Walkthrough - dictate your list</div>
+          <div className="text-[11px] text-neutral-400 mb-1.5">Tap the box, hit the mic on your keyboard, and talk through the unit room by room. Then Build task list.</div>
+          <textarea value={wkText} onChange={e => setWkText(e.target.value)} rows={4} placeholder="Master bedroom: move TV from living room here. New bar stools. Touch-up paint..." className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
+          <button onClick={runWalkthrough} disabled={wkBusy || !wkText.trim()} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{wkBusy ? 'Working...' : '✨ Build task list'}</button>
+          {wkItems.length ? (
+            <div className="mt-2 space-y-1.5">
+              {wkItems.map((it: any, i: number) => (
+                <div key={i} className="flex items-start gap-2 rounded-lg border border-neutral-100 p-2">
+                  <input type="checkbox" checked={!!wkPick[i]} onChange={() => setWkPick(p => ({ ...p, [i]: !p[i] }))} className="mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-neutral-900">{it.title}</div>
+                    <div className="text-[11px] text-neutral-500">{it.room} · {KIND_META[it.kind] ? KIND_META[it.kind].label : it.kind}{it.note ? ' · ' + it.note : ''}</div>
+                  </div>
+                </div>
+              ))}
+              <button onClick={saveWalkthrough} disabled={wkBusy} className="w-full text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">Add selected items - attach photos after</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {isOnboarding && !done ? (
         <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
           <div className="flex items-center justify-between mb-1"><div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold">Unit basics{basicsDone ? ' \u2713' : ' - confirm these first'}</div>{basicsDone ? <button onClick={() => setBasicsOpen(o => !o)} className="text-[11px] font-semibold text-indigo-600">{basicsOpen ? 'Done' : 'Edit'}</button> : null}</div>
