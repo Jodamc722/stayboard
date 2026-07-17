@@ -7,7 +7,7 @@ import { featureForPath, featureEnabled } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange,
-  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -56,6 +56,7 @@ const SECTIONS: {
       { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
       { to: '/salato', label: 'Salato', Icon: CalendarDays },
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
+      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart },
       { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
       { to: '/requests', label: 'Requests',  Icon: ClipboardList },
     ],
