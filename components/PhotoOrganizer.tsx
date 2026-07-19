@@ -324,7 +324,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             {uploadingCount > 0 ? <Sparkles size={15} className="animate-pulse" /> : <ImagePlus size={15} />}
             {uploadingCount > 0 ? `Uploading ${uploadingCount}\u2026` : 'Add photos'}
           </button>
-          <button onClick={mirror} disabled={mirroring || pushing}
+          <button onClick={() => mirror()} disabled={mirroring || pushing}
             title="Back up every photo's untouched original to Stay storage — no changes, nothing pushed"
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
             {mirroring ? <Sparkles size={15} className="animate-pulse" /> : <Archive size={15} />}
