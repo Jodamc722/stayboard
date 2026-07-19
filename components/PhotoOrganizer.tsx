@@ -49,6 +49,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [uploads, setUploads] = useState<Record<string, { orig: string }>>({})
   const [uploadingCount, setUploadingCount] = useState(0)
   const [mirroring, setMirroring] = useState(false)
+  const [capBusy, setCapBusy] = useState<Set<string>>(new Set())
   const fileRef = useRef<HTMLInputElement | null>(null)
   // REPLACEMENTS: overwrite an existing photo's image with a new upload (keeps position + caption).
   // replaced[id] = { orig: new uploaded original URL, prevUrl: the old image (for undo) }.
@@ -107,10 +108,10 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   }
 
   // MIRROR ONLY: back up every original to Stay storage — no filter, no changes, nothing pushed.
-  async function mirror() {
+  async function mirror(only?: string[]) {
     setMirroring(true); setError(null); setPushedMsg(null)
     try {
-      const ids = order.filter(id => !uploads[id])
+      const ids = (only && Array.isArray(only) && only.length ? only : order.filter(id => !uploads[id]))
       const r = await fetch('/api/photo-enhance', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, mirrorOnly: true, ...(ids.length ? { photoIds: ids } : {}) }),
@@ -258,6 +259,17 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   }
   function setCategory(id: string, v: string) {
     setPhotos(prev => ({ ...prev, [id]: { ...prev[id], category: v } }))
+  }
+  // Per-photo AI description: regenerates ONE photo's caption on demand (deliberate overwrite).
+  async function regenCaption(id: string) {
+    setCapBusy(prev => { const n = new Set(prev); n.add(id); return n })
+    try {
+      const r = await fetch('/api/photo-caption', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, photoId: id }) })
+      const j: any = await r.json().catch(() => ({}))
+      if (!r.ok || !j?.caption) throw new Error(j?.error || 'Could not generate a description - try again.')
+      setCaption(id, j.caption)
+    } catch (e: any) { setError(e.message || String(e)) }
+    finally { setCapBusy(prev => { const n = new Set(prev); n.delete(id); return n }) }
   }
 
   async function push() {
@@ -444,6 +456,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                           {!isHero && <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>}
                           {!isHero && <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="Move later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>}
                           {!uploads[id] && <button onClick={() => startReplace(id)} disabled={uploadingCount > 0} title="Replace this photo's image with a new upload — keeps its spot and description" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><RefreshCw size={12} /></button>}
+                          <button onClick={() => regenCaption(id)} disabled={capBusy.has(id)} title="AI: write a description for this photo (overwrites the current one)" className="p-1 rounded border border-line text-brand-600 hover:text-brand-700 disabled:opacity-40">{capBusy.has(id) ? <RefreshCw size={12} className="animate-spin" /> : <Wand2 size={12} />}</button>
+                          {!uploads[id] && <button onClick={() => enhance([id])} disabled={enhancing} title="Enhance this photo (brightness / contrast / sharpen)" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><Sun size={12} /></button>}
+                          {!uploads[id] && <button onClick={() => mirror([id])} disabled={mirroring} title="Back up this photo's original to Stay storage" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><Archive size={12} /></button>}
                           {!isHero && <button onClick={() => setAsHero(id)} title="Make this the cover photo" className="ml-auto p-1 rounded border border-line text-amber-600 hover:text-amber-700"><Star size={12} /></button>}
                           {!isHero && <button onClick={() => uploads[id] ? removeUpload(id) : toggleRemove(id)} title={uploads[id] ? 'Discard this new photo (not uploaded to Guesty yet)' : toRemove.has(id) ? 'Keep this photo' : 'Remove this photo from the listing'} className={`p-1 rounded border ${toRemove.has(id) ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-line text-muted hover:text-rose-600'}`}><Trash2 size={12} /></button>}
                         </div>
