@@ -81,6 +81,44 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   const dark = gb.theme === 'dark'
   const showTags = s._showTags !== false
 
+  // v3.9: PHOTO PICKER — every photo in the book is swappable in Edit mode. Pool = the book's
+  // own photo set + the listing's live Guesty pictures + fresh uploads. Choices persist via the
+  // normal Save (slots write to sections._photoAssign, item photos write in place).
+  const [pickPath, setPickPath] = useState<string[] | null>(null)
+  const [pickPool, setPickPool] = useState<string[]>([])
+  const [pickBusy, setPickBusy] = useState(false)
+  const pickRef = useRef<HTMLInputElement>(null)
+  async function openPick(path: string[]) {
+    setPickPath(path)
+    if (!pickPool.length) {
+      const pool: string[] = []
+      for (const u of photos) if (pool.indexOf(u) < 0) pool.push(u)
+      try {
+        const r = await fetch('/api/guidebook?photosFor=' + encodeURIComponent(gb.listing_id || ''))
+        const d = await r.json()
+        for (const u of ((d && d.photos) || [])) if (pool.indexOf(u) < 0) pool.push(u)
+      } catch {}
+      setPickPool(pool)
+    }
+  }
+  function applyPick(url: string | null) { if (pickPath) set(pickPath, url); setPickPath(null) }
+  async function uploadPick(files: FileList | null) {
+    const f = files && files[0]
+    if (!f) return
+    setPickBusy(true)
+    try {
+      const fd = new FormData(); fd.append('file', f)
+      const r = await fetch('/api/guidebook/upload', { method: 'POST', body: fd })
+      const d = await r.json().catch(() => ({}))
+      if (d && d.url) { setPickPool(p => [d.url, ...p]); applyPick(d.url) }
+    } catch {}
+    setPickBusy(false)
+    if (pickRef.current) pickRef.current.value = ''
+  }
+  const pickBtn = (path: string[], abs: boolean = true) => !edit ? null : (
+    <button onClick={(e: any) => { e.preventDefault(); e.stopPropagation(); openPick(path) }} className={(abs ? 'absolute right-2 top-2 z-20 ' : 'mt-1 ') + 'rounded bg-white/95 px-2 py-1 text-[10px] font-bold text-neutral-900 shadow ring-1 ring-black/10 print:hidden'}>📷 Swap</button>
+  )
+
   function set(path: string[], value: any) {
     setGb((g: any) => {
       const next = JSON.parse(JSON.stringify(g))
@@ -212,15 +250,20 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   }
 
   // Half-photo header with scrim — text below is always on paper, label over photo is scrimmed white.
-  const PhotoBand = ({ src, label, k }: { src: string | null; label?: string; k?: string }) => src ? (
+  const PhotoBand = ({ src, label, k, p }: { src: string | null; label?: string; k?: string; p?: string[] }) => src ? (
     <div className="relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 88%, 0 100%)' }}>
       <img loading="lazy" decoding="async" src={src} alt="" className="h-full w-full object-cover" />
       <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.45), rgba(10,10,12,0.05) 55%)' }} />
       {showTags && <span className="absolute left-[58px] top-[44%] h-px w-16 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />}
       {showTags && <span className="absolute left-[78px] top-[47%] h-px w-10 bg-white/40" style={{ transform: 'rotate(-24deg)' }} />}
       {showTags && label && <p className="absolute bottom-7 left-[58px] right-10 text-[9px] tracking-[0.45em] text-white/90" style={{ fontFamily: SANS }}>{'// '}{k ? <L k={k} def={label} /> : label}</p>}
+      {p ? pickBtn(p) : null}
     </div>
-  ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{k ? <L k={k} def={label} /> : label}</p> : null)
+  ) : (edit && p ? (
+    <div className="relative -mx-[58px] -mt-[52px] mb-9 flex h-[120px] items-center justify-center border-b border-dashed border-neutral-300 print:hidden">
+      <button onClick={() => openPick(p)} className="rounded bg-neutral-100 px-3 py-1.5 text-[11px] font-bold text-neutral-700 ring-1 ring-neutral-300">📷 Add a photo</button>
+    </div>
+  ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{k ? <L k={k} def={label} /> : label}</p> : null))
 
   const H = ({ children, size = 'text-[40px]' }: { children: any; size?: string }) => (
     <h2 className={size + ' lowercase leading-[1.05] font-medium'} style={{ fontFamily: SERIF }}>{children}</h2>
@@ -301,6 +344,30 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           </select>}
           {!guest && <button onClick={() => matRef.current?.click()} disabled={matBusy} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-60" title="Upload building info, appliance photos, or manuals — the AI folds them into the book">{matBusy ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />} {matBusy ? 'Reading…' : 'Add materials'}</button>}
           {!guest && <input ref={matRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" onChange={e => addMaterials(e.target.files)} />}
+          {pickPath ? (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 print:hidden" onClick={() => setPickPath(null)}>
+              <div className="max-h-[80vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-4 text-neutral-900" onClick={(e: any) => e.stopPropagation()}>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-bold">Pick a photo</p>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => pickRef.current?.click()} disabled={pickBusy} className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50">{pickBusy ? 'Uploading…' : '⬆ Upload new'}</button>
+                    <button onClick={() => applyPick(null)} className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-semibold">Remove photo</button>
+                    <button onClick={() => setPickPath(null)} className="rounded-lg bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-white">Cancel</button>
+                  </div>
+                </div>
+                {pickPool.length === 0 ? <p className="py-8 text-center text-sm text-neutral-500">Loading photos…</p> : (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {pickPool.map((u, i) => (
+                      <button key={i} onClick={() => applyPick(u)} className="group relative overflow-hidden rounded-lg ring-1 ring-neutral-200 focus:ring-2 focus:ring-neutral-900">
+                        <img loading="lazy" src={u} alt="" className="h-28 w-full object-cover transition group-hover:scale-105" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input ref={pickRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e: any) => uploadPick(e.target.files)} />
+              </div>
+            </div>
+          ) : null}
           {!guest && <button onClick={() => setAskOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (askOpen ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300')} title="Tell the AI what to change — it rewrites the book for you"><Sparkles size={13} /> Ask AI</button>}
           {!guest && (edit
             ? <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white">{busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save</button>
@@ -349,6 +416,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       <div className="px-4 py-10 gb-pages">
         {/* COVER — full-bleed, scrimmed, white type */}
         <Page bleed={pa.cover || photos[0] || null} id="cover">
+          {pickBtn(['_photoAssign', 'cover'])}
           <div className="flex flex-1 flex-col items-center justify-center text-center">
             <p className="text-[9px] tracking-[0.55em] text-white/80"><L k="cover.kicker" def="WELCOME" /></p>
             <div className="mt-5 text-[54px] leading-[1.08] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 24px rgba(0,0,0,0.35)' }}>
@@ -363,7 +431,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* ABOUT — adaptive: short copy becomes a centered manifesto page; long copy reads editorial-left */}
         <Page id="about">
-          <PhotoBand src={pa.about || null} />
+          <PhotoBand src={pa.about || null} p={['_photoAssign', 'about']} />
           {(s.about?.body || '').length < 240 ? (
             <div className="flex flex-1 flex-col items-center justify-center pb-10 text-center">
               <Kicker><L k="about.kicker" def="THE RESIDENCE" /></Kicker>
@@ -404,7 +472,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* SPECIAL + QR */}
         {has('special', (s.special?.groups || []).length > 0) && (
           <Page id="special" hideKey="special">
-            <PhotoBand src={pa.special || null} label="THE EXPERIENCE" k="band.special" />
+            <PhotoBand src={pa.special || null} label="THE EXPERIENCE" k="band.special" p={['_photoAssign', 'special']} />
             <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
             <div className={'mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7 ' + ((s.special.groups || []).length <= 2 ? 'content-center' : 'content-start')}>
               {(s.special.groups).map((g: any, i: number) => (
@@ -454,7 +522,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           </Page>
         ) : (
         <Page id="arrival">
-          <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" k="band.arrival" />
+          <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" k="band.arrival" p={['_photoAssign', 'arrival']} />
           <H><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
           <div className="mt-6 flex gap-14">
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.inLabel" def="CHECK-IN" /></p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
@@ -492,13 +560,18 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           {(() => {
             const used = new Set(Object.values(pa).filter(Boolean))
             const scene = (s._photoMeta || []).find((x: any) => ['living', 'bedroom', 'view', 'beach', 'pool', 'kitchen', 'dining', 'exterior', 'amenity'].includes(x.category) && !x.hasText && !used.has(x.url))
-            const wifiPhoto = scene?.url || pa.about || null
+            const wifiPhoto = pa.wifi || scene?.url || pa.about || null
             return wifiPhoto ? (
               <div className="absolute inset-x-0 top-0 h-[46%] overflow-hidden">
                 <img loading="lazy" decoding="async" src={wifiPhoto} alt="" className="h-full w-full object-cover" />
                 <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(19,18,16,0.10), rgba(19,18,16,0.45) 65%, #131210 100%)' }} />
+                {pickBtn(['_photoAssign', 'wifi'])}
               </div>
-            ) : null
+            ) : (edit ? (
+              <div className="absolute inset-x-0 top-0 flex h-[46%] items-center justify-center print:hidden">
+                <button onClick={() => openPick(['_photoAssign', 'wifi'])} className="rounded bg-white/10 px-3 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/30">📷 Add a photo</button>
+              </div>
+            ) : null)
           })()}
           <div className="relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
             <div className="h-[38%] shrink-0" />
@@ -535,7 +608,12 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                     <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
                     <p className="mt-1 text-[10px] font-light leading-[1.5]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
                   </div>
-                  {it.photo && <img loading="lazy" decoding="async" src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} />}
+                  {(it.photo || edit) ? (
+                    <div className="flex shrink-0 flex-col items-end">
+                      {it.photo ? <img loading="lazy" decoding="async" src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} /> : null}
+                      {pickBtn(['houseGuide', 'items', String(i), 'photo'], false)}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -582,10 +660,12 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                           <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.62), rgba(10,10,12,0.02) 55%)' }} />
                           <span className="absolute right-3 top-3 h-px w-10 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />
                           <p className="absolute bottom-3 left-4 text-[15px] font-medium tracking-wide text-white" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+                          {pickBtn([sec.key, 'items', String(i), 'photo'])}
                         </div>
                       ) : (
-                        <div className={'flex items-end border-l-2 pl-4 ' + (few ? 'h-[190px]' : 'h-[145px]')} style={{ borderColor: accentColor + '66' }}>
+                        <div className={'relative flex items-end border-l-2 pl-4 ' + (few ? 'h-[190px]' : 'h-[145px]')} style={{ borderColor: accentColor + '66' }}>
                           <p className="pb-3 text-[15px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+                          {pickBtn([sec.key, 'items', String(i), 'photo'])}
                         </div>
                       )}
                       {p.note ? <p className="mt-2 text-[11px] font-light leading-[1.65] opacity-80"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p> : null}
@@ -598,6 +678,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 <div className="mt-9 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
                   {items.map((p: any, i: number) => (
                     <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
+                      {pickBtn([sec.key, 'items', String(i), 'photo'], false)}
                       <PlaceLink name={p.name} addr={p.address}>
                       <p className="text-[13px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                       {p.note && <p className="mt-1 text-[11px] font-light leading-[1.6] opacity-75"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p>}
@@ -633,7 +714,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* CLOSING — checklist + starred review ask + thank you, on paper for readability */}
         <Page id="closing" ghost="bye">
-          <PhotoBand src={pa.closing || null} label="UNTIL NEXT TIME" k="band.closing" />
+          <PhotoBand src={pa.closing || null} label="UNTIL NEXT TIME" k="band.closing" p={['_photoAssign', 'closing']} />
           <div className="grid flex-1 grid-cols-[1fr_1px_1.1fr] gap-x-8">
             <div>
               <p className="text-[9px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="closing.beforeLabel" def="BEFORE YOU GO" /></p>
