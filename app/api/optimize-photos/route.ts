@@ -18,7 +18,9 @@ function str(v: any): string { return typeof v === 'string' ? v : '' }
 // Guarantee every photo ends up with a caption: if the model skips one, fall back to a clean
 // category-based label so no photo is ever left without a guest-facing description.
 const CAT_CAPTION: Record<string, string> = { living: 'Living area', kitchen: 'Kitchen', dining: 'Dining area', bedroom: 'Bedroom', bathroom: 'Bathroom', outdoor: 'Outdoor space', view: 'View from the property', amenity: 'Building amenity', exterior: 'Building exterior', detail: 'Property detail', other: 'Property photo' }
-const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string) => (existing && existing.trim()) || (m?.caption && m.caption.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
+// Junk detector: Guesty sometimes stores UUIDs/filenames as captions - treat those as empty.
+const realCaption = (s: string) => { const t = (s || '').trim(); if (!t) return ''; if (/^[0-9a-f\-]{16,}$/i.test(t)) return ''; if (/\.(jpe?g|png|webp|gif)$/i.test(t)) return ''; return t }
+const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string) => realCaption(existing) || (m?.caption && m.caption.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
 
 // Tolerant JSON reader for vision output. The model occasionally returns slightly long or truncated
 // JSON (one description per photo over many photos); rather than hard-failing, we salvage the largest
