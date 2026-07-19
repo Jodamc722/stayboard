@@ -18,7 +18,7 @@ function str(v: any): string { return typeof v === 'string' ? v : '' }
 // Guarantee every photo ends up with a caption: if the model skips one, fall back to a clean
 // category-based label so no photo is ever left without a guest-facing description.
 const CAT_CAPTION: Record<string, string> = { living: 'Living area', kitchen: 'Kitchen', dining: 'Dining area', bedroom: 'Bedroom', bathroom: 'Bathroom', outdoor: 'Outdoor space', view: 'View from the property', amenity: 'Building amenity', exterior: 'Building exterior', detail: 'Property detail', other: 'Property photo' }
-const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string) => (m?.caption && m.caption.trim()) || (existing && existing.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
+const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string) => (existing && existing.trim()) || (m?.caption && m.caption.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
 
 // Tolerant JSON reader for vision output. The model occasionally returns slightly long or truncated
 // JSON (one description per photo over many photos); rather than hard-failing, we salvage the largest
@@ -78,8 +78,10 @@ function smallUrl(u: string): string {
 type Pic = { _id: string; url: string; caption: string }
 
 function readPics(raw: any, listing: any): Pic[] {
-  const arr: any[] = Array.isArray(raw?.pictures) ? raw.pictures
+  const arr0: any[] = Array.isArray(raw?.pictures) ? raw.pictures
     : (Array.isArray(listing?.pictures) ? listing.pictures : [])
+  // Some synced listings store each picture as a JSON STRING - parse those so newer listings work too.
+  const arr = arr0.map((p: any) => { if (typeof p === 'string') { try { return JSON.parse(p) } catch { return null } } return p }).filter(Boolean)
   return arr.map((p: any, i: number) => ({
     _id: str(p?._id) || `idx-${i}`,
     url: str(p?.thumbnail) || str(p?.original) || '',
