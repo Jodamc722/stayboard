@@ -37,6 +37,14 @@ export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
   const id = sp.get('id')
   const db = supabaseAdmin()
+  const photosFor = sp.get('photosFor')
+  if (photosFor) {
+    // Photo-picker pool: the listing's live Guesty pictures (originals) for swapping book photos.
+    const { data } = await db.from('guesty_listings').select('pictures:raw->pictures').eq('id', photosFor).limit(1)
+    const pics: any[] = (data && data[0] && Array.isArray((data[0] as any).pictures)) ? (data[0] as any).pictures : []
+    const photos = pics.map((p: any) => (p && (p.original || p.large || p.thumbnail)) || null).filter(Boolean).slice(0, 150)
+    return NextResponse.json({ ok: true, photos })
+  }
   if (id) {
     const { data, error } = await db.from('guidebooks').select('*').eq('id', id).limit(1)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
