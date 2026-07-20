@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pullReviews, resolveScope } from '@/lib/owner-report'
+import { hasEditCookie } from '@/lib/edit-access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -14,7 +15,7 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const sp = new URL(req.url).searchParams
   const id = str(sp.get('id'))
   const from = str(sp.get('from'))
