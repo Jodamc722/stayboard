@@ -65,7 +65,7 @@ async function fetchDocBlock(url: string): Promise<any | null> {
 }
 
 // PriceLabs pacing PDF -> Pacing vs Market rows (us vs comp set).
-async function parsePacing(url: string, scopeLabel: string, periodLabel: string) {
+async function parsePacing(url: string, scopeLabel: string, periodLabel: string, ourOccPct?: number) {
   const block = await fetchDocBlock(url)
   if (!block) return null
   const text = await anthropic({
@@ -79,6 +79,19 @@ async function parsePacing(url: string, scopeLabel: string, periodLabel: string)
     metric: str(r?.metric).slice(0, 20), ours: str(r?.ours).slice(0, 16), comps: str(r?.comps).slice(0, 16), delta: str(r?.delta).slice(0, 16),
   })).filter((r: any) => r.metric && r.ours)
   if (!rows.length) return null
+  // Deterministic anti-swap: our own occupancy is authoritative, so if the parsed "ours" occupancy is
+  // farther from it than the comp value is, PriceLabs' "Your"/"Market" lines were read backwards -> flip.
+  const numOf = (s: any) => { const m = String(s == null ? '' : s).match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : NaN }
+  const flipDelta = (d: any) => { const s = String(d == null ? '' : d).trim(); if (/^[-−]/.test(s)) return '+' + s.replace(/^[-−]/, ''); if (/^\+/.test(s)) return '-' + s.replace(/^\+/, ''); return s }
+  if (typeof ourOccPct === 'number' && ourOccPct > 0) {
+    const occ = rows.find((r: any) => /occup/i.test(r.metric))
+    if (occ) {
+      const o = numOf(occ.ours), c = numOf(occ.comps)
+      if (isFinite(o) && isFinite(c) && Math.abs(c - ourOccPct) < Math.abs(o - ourOccPct)) {
+        for (const r of rows) { const t = r.ours; r.ours = r.comps; r.comps = t; r.delta = flipDelta(r.delta) }
+      }
+    }
+  }
   const ahead = rows.every((r: any) => !String(r.delta).trim().startsWith('-') && !String(r.delta).trim().startsWith('−'))
   return {
     headline: ahead ? 'Ahead of the market across the board.' : 'How we stack up against the market.',
@@ -207,7 +220,7 @@ export async function POST(req: NextRequest) {
   // ---- uploaded docs (optional): PriceLabs pacing + owner statements ----
   const periodLabel = prettyDate(periodStart) + ' - ' + prettyDate(periodEnd)
   const [pacingSection, statementSection] = await Promise.all([
-    pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel) : Promise.resolve(null),
+    pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel, period.occupancyPct) : Promise.resolve(null),
     statementUrls.length ? parseStatements(statementUrls, scopeLabel) : Promise.resolve(null),
   ])
 
