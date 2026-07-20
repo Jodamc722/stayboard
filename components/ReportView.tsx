@@ -6,7 +6,7 @@
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
 import { useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download } from 'lucide-react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud } from 'lucide-react'
 
 type Any = any
 
@@ -442,27 +442,59 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
       }).catch(() => setPool([]))
     }
   }
+  async function makePptx(): Promise<Any> {
+    if (!(window as Any).PptxGenJS) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script')
+        s.src = PPTX_CDN
+        s.onload = resolve
+        s.onerror = () => reject(new Error('load failed'))
+        document.head.appendChild(s)
+      })
+    }
+    const h = c.hero || {}
+    let heroData: string | null = null
+    if (h.heroImage) heroData = await fetchImageDataUrl(h.heroImage)
+    return buildPptx((window as Any).PptxGenJS, c, t, heroData)
+  }
   async function downloadPptx() {
     if (busy) return
     setAttachMsg(''); setBusy('pptx')
     try {
-      if (!(window as Any).PptxGenJS) {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement('script')
-          s.src = PPTX_CDN
-          s.onload = resolve
-          s.onerror = () => reject(new Error('load failed'))
-          document.head.appendChild(s)
-        })
-      }
+      const pptx = await makePptx()
       const h = c.hero || {}
-      let heroData: string | null = null
-      if (h.heroImage) heroData = await fetchImageDataUrl(h.heroImage)
-      const pptx = buildPptx((window as Any).PptxGenJS, c, t, heroData)
       const name = String(h.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'report'
       await pptx.writeFile({ fileName: name + '-owner-review.pptx' })
     } catch (_e) {
       setAttachMsg('PPTX export failed — try again.')
+    }
+    setBusy('')
+  }
+  async function sendToDrive() {
+    if (busy) return
+    setAttachMsg(''); setBusy('drive')
+    try {
+      const pptx = await makePptx()
+      const b64 = await pptx.write('base64')
+      const h = c.hero || {}
+      const fileName = String(h.title || 'Owner Review') + ' — ' + String(h.eyebrow || 'Owner Review')
+      const r = await fetch('/api/reports/pptx-to-drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName, base64: b64 }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.link) {
+        setAttachMsg('Sent to Google Drive ✓')
+        window.open(d.link, '_blank')
+      } else if (d?.needAuth) {
+        setAttachMsg('Connect Google in the popup, then press Slides again.')
+        window.open('/api/google/auth', 'gauth', 'width=540,height=680')
+      } else {
+        setAttachMsg((d && d.error) || 'Drive upload failed — try again.')
+      }
+    } catch (_e) {
+      setAttachMsg('Drive upload failed — try again.')
     }
     setBusy('')
   }
@@ -508,6 +540,9 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
           )}
           <button onClick={downloadPptx} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {busy === 'pptx' ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PPTX
+          </button>
+          <button onClick={sendToDrive} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+            {busy === 'drive' ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />} Slides
           </button>
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
