@@ -1,9 +1,12 @@
-// Owner Report generator. POST { listingIds?, buildings?, periodStart, periodEnd, asOf?, title? }
+// Owner Report generator. POST { listingIds?, buildings?, periodStart, periodEnd, asOf?, title?,
+// pacingUrl?, statementUrls?, heroImageUrl? }
 // -> assembles all sections from the Supabase mirrors (deterministic math in lib/owner-report),
 // runs ONE AI pass for narrative (headlines, quote picks, hearing/doing themes, project
 // categorization) in the deck's voice, inserts an owner_reports row and returns { id, code }.
 // Performance vs Plan is included ONLY when owner_budgets rows exist for the scope (17 West today).
-// Pacing vs Market + Owner Statement sections are added later via uploads (P3) — null here.
+// pacingUrl (PriceLabs PDF, uploaded via /api/guidebook/upload) is AI-parsed into the Pacing vs
+// Market section; statementUrls (owner statement PDFs) into the Owner Statement section; both
+// sections stay null when nothing is uploaded, so they simply don't render.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -49,6 +52,62 @@ function parseJson(text: string | null): any | null {
   try { return JSON.parse(m[0]) } catch { return null }
 }
 
+const DOC_MODEL = 'claude-sonnet-4-6'
+
+async function fetchDocBlock(url: string): Promise<any | null> {
+  try {
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (buf.length > 8 * 1024 * 1024) return null
+    return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } }
+  } catch { return null }
+}
+
+// PriceLabs pacing PDF -> Pacing vs Market rows (us vs comp set).
+async function parsePacing(url: string, scopeLabel: string, periodLabel: string) {
+  const block = await fetchDocBlock(url)
+  if (!block) return null
+  const text = await anthropic({
+    model: DOC_MODEL, max_tokens: 900,
+    system: 'You extract market-pacing figures from PriceLabs reports for an owner report. Output STRICT JSON only.',
+    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This is a PriceLabs pacing/market report for the property "' + scopeLabel + '" (period: ' + periodLabel + '). Extract OUR property vs the market/comp set. Return JSON: {"subtitle": one line naming the pull window + comp set (e.g. "Jul 2026 pacing - vs PriceLabs ABB comp set (13 listings)"), "rows": [{"metric": "RevPAR"|"ADR"|"Occupancy", "ours": display value like "$265" or "82%", "comps": same format, "delta": signed advantage like "+56%" or "+25 pts" (negative if behind)}]}. Include only metrics actually present. If the document has no usable comparison, return {"rows": []}.' }] }],
+  })
+  const j = parseJson(text)
+  if (!j || !Array.isArray(j.rows) || !j.rows.length) return null
+  const rows = j.rows.slice(0, 4).map((r: any) => ({
+    metric: str(r?.metric).slice(0, 20), ours: str(r?.ours).slice(0, 16), comps: str(r?.comps).slice(0, 16), delta: str(r?.delta).slice(0, 16),
+  })).filter((r: any) => r.metric && r.ours)
+  if (!rows.length) return null
+  const ahead = rows.every((r: any) => !String(r.delta).trim().startsWith('-') && !String(r.delta).trim().startsWith('−'))
+  return {
+    headline: ahead ? 'Ahead of the market across the board.' : 'How we stack up against the market.',
+    subtitle: str(j.subtitle).slice(0, 140) || 'vs. PriceLabs comp set',
+    rows,
+  }
+}
+
+// Owner statement PDFs -> summarized Statement items (owner-safe, figures only).
+async function parseStatements(urls: string[], scopeLabel: string) {
+  const blocks: any[] = []
+  for (const u of urls.slice(0, 4)) {
+    const b = await fetchDocBlock(u)
+    if (b) blocks.push(b)
+  }
+  if (!blocks.length) return null
+  const text = await anthropic({
+    model: DOC_MODEL, max_tokens: 1200,
+    system: 'You summarize owner statements for a property-management owner report. Data-forward, zero fluff, never speculate. Output STRICT JSON only.',
+    messages: [{ role: 'user', content: [...blocks, { type: 'text', text: 'These are owner statement(s) for "' + scopeLabel + '". For EACH document return one item. JSON: {"items": [{"title": short label like "June 2026 Owner Statement", "summary": 1-2 sentences with the key figures - gross rent collected, total expenses/management fees, and the net owner payout, using exact numbers from the document}]}.' }] }],
+  })
+  const j = parseJson(text)
+  const items = (Array.isArray(j?.items) ? j.items : []).slice(0, 4).map((it: any) => ({
+    title: str(it?.title).slice(0, 90), summary: str(it?.summary).slice(0, 400), url: null,
+  })).filter((it: any) => it.title && it.summary)
+  if (!items.length) return null
+  return { headline: 'Owner statement summary.', items }
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -61,6 +120,9 @@ export async function POST(req: NextRequest) {
   const periodEnd = str(body?.periodEnd)
   const asOf = str(body?.asOf) || etToday()
   const theme = str(body?.theme) || 'capri'
+  const pacingUrl = str(body?.pacingUrl)
+  const statementUrls: string[] = Array.isArray(body?.statementUrls) ? body.statementUrls.filter((u: any) => typeof u === 'string' && u).slice(0, 4) : []
+  const heroImageUrl = str(body?.heroImageUrl)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd) {
     return NextResponse.json({ error: 'periodStart/periodEnd (YYYY-MM-DD) required' }, { status: 400 })
   }
@@ -142,6 +204,13 @@ export async function POST(req: NextRequest) {
   const tasks = await pullTasks(ids, byId, periodStart, periodEnd)
   const buckets = weekBuckets(periodStart, periodEnd)
 
+  // ---- uploaded docs (optional): PriceLabs pacing + owner statements ----
+  const periodLabel = prettyDate(periodStart) + ' - ' + prettyDate(periodEnd)
+  const [pacingSection, statementSection] = await Promise.all([
+    pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel) : Promise.resolve(null),
+    statementUrls.length ? parseStatements(statementUrls, scopeLabel) : Promise.resolve(null),
+  ])
+
   // ---- AI narrative pass (single call; template fallback) ----
   const goodReviews = reviews.filter(r => (r.rating == null || r.rating >= 4.2) && r.content && r.content.length > 15).slice(0, 30)
   const reviewLines = goodReviews.map((r, i) => {
@@ -177,7 +246,7 @@ export async function POST(req: NextRequest) {
     + '"themes": [2-3 objects {"title": short theme name like "Communication - a highlight", "body": 1 sentence on what guests are saying, "action": 1 sentence on what we are doing}], '
     + '"projectWeeks": [one object per week bucket {"label": the bucket label EXACTLY as given, "groups": [{"category": UPPERCASE grouping like "DEEP CLEAN + PM" or "REPAIRS + MAINTENANCE" or "COMMON AREAS", "items": [concise task lines, merge duplicates, max 6 per group]}]}], '
     + '"tracking": [up to 3 objects {"title": short item title, "body": 1 sentence status} from open items worth telling an owner about], '
-    + '"planNotes": [optional, one short sentence per budget month in order]}'
+    + '"planNotes": {optional, one entry PER BUDGET MONTH keyed by the month name in UPPERCASE (e.g. "MAY", "JUNE", "JULY"), value = one short sentence about THAT month only}}'
 
   const aiText = await anthropic({
     model: MODEL, max_tokens: 3000,
@@ -238,8 +307,11 @@ export async function POST(req: NextRequest) {
     title: str(t?.title).slice(0, 80), body: str(t?.body).slice(0, 200),
   })).filter((t: any) => t.title)
 
-  if (plan && Array.isArray(ai.planNotes)) {
-    for (let i = 0; i < plan.months.length; i++) plan.months[i].note = str(ai.planNotes[i]).slice(0, 200)
+  if (plan && ai.planNotes && typeof ai.planNotes === 'object' && !Array.isArray(ai.planNotes)) {
+    for (let i = 0; i < plan.months.length; i++) {
+      const note = ai.planNotes[plan.months[i].label]
+      if (note) plan.months[i].note = str(note).slice(0, 200)
+    }
   }
 
   const cur = mAhead[1]; const nxt = mAhead[2]
@@ -254,7 +326,7 @@ export async function POST(req: NextRequest) {
       headline: str(ai.heroHeadline) || (period.occupancyPct + '% on the books with ' + fmtK(period.accomRevenue) + ' in accommodation revenue.'),
       preparedFor: 'Prepared for the owners of ' + scopeLabel,
       dateLabel: 'OWNER REVIEW',
-      heroImage: null,
+      heroImage: heroImageUrl || null,
     },
     snapshot: {
       headline: str(ai.snapshotHeadline) || 'Where the period stands today.',
@@ -274,9 +346,9 @@ export async function POST(req: NextRequest) {
         ],
       } : null,
     },
-    pacing: null,
+    pacing: pacingSection,
     plan,
-    statement: null,
+    statement: statementSection,
     ahead: {
       headline: str(ai.aheadHeadline) || 'On-the-books by stay month.',
       subtitle: 'On-the-books occupancy by stay month, as of ' + prettyDate(asOf),
