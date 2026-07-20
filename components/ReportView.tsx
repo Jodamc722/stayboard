@@ -158,6 +158,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
           <p className="mt-5 text-lg sm:text-xl font-medium max-w-2xl mx-auto" style={{ color: '#41586e' }}>
             <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
           </p>
+          {hero.heroImage && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={hero.heroImage} alt="" className="mt-8 w-full rounded-2xl shadow-md object-cover" style={{ maxHeight: 420 }} />
+          )}
           <p className="mt-8 text-[12px] uppercase tracking-[0.18em] font-semibold" style={{ color: '#8b8674' }}>
             <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />  ·  STAY HOSPITALITY
           </p>
