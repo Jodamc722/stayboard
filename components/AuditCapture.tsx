@@ -103,6 +103,7 @@ export default function AuditCapture({ code }: { code: string }) {
   const [wkItems, setWkItems] = useState<any[]>([])
   const [wkPick, setWkPick] = useState<Record<number, boolean>>({})
   const [wkShotIdx, setWkShotIdx] = useState(-1)
+  const [wkMsg, setWkMsg] = useState('')
   const [basicsOpen, setBasicsOpen] = useState(false)
 
   async function load() {
@@ -185,6 +186,7 @@ export default function AuditCapture({ code }: { code: string }) {
   async function runWalkthrough() {
     if (wkBusy || !wkText.trim()) return
     setWkBusy(true)
+    setWkMsg('')
     try {
       const r = await fetch('/api/audit/walkthrough', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, transcript: wkText, rooms, mode: isOnboarding ? 'onboarding' : 'quality' }) })
       const j = await r.json()
@@ -207,16 +209,31 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch {}
     setWkShotIdx(-1); setWkBusy(false)
   }
+  function answerAsk(i: number, opt: string) {
+    setWkItems(arr => arr.map((x: any, j: number) => {
+      if (j !== i) return x
+      const q = String(x.ask && x.ask.q ? x.ask.q : '').replace(/\?+\s*$/, '')
+      const note = (x.note ? x.note + ' · ' : '') + (q ? q + ': ' : '') + opt
+      return { ...x, note: note.slice(0, 400), askDone: opt }
+    }))
+  }
   async function saveWalkthrough() {
     if (wkBusy) return
     setWkBusy(true)
     try {
+      let nAdd = 0, nMerge = 0, nSkip = 0
       const sentTags: Record<string, boolean> = {}
       for (let i = 0; i < wkItems.length; i++) {
         if (!wkPick[i]) continue
         const it = wkItems[i]
         const room = it.room || 'General'
-        await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: it.kind, title: it.title, note: it.note || '', photoUrl: it.photoUrl || '' }) })
+        try {
+          const sr = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: it.kind, title: it.title, note: it.note || '', photoUrl: it.photoUrl || '', dedupe: 1 }) })
+          const sj = await sr.json()
+          if (sj && sj.merged) nMerge++
+          else if (sj && sj.duplicate) nSkip++
+          else if (sj && sj.ok) nAdd++
+        } catch {}
         // Tags ride along: each furniture/appliance type heard becomes a unit tag (tracked for
         // ordering + amenity data). Kept new tags are approved -> learned for future dictations.
         const tgs = Array.isArray(it.tags) ? it.tags : []
@@ -230,6 +247,11 @@ export default function AuditCapture({ code }: { code: string }) {
         }
       }
       setWkItems([]); setWkPick({}); setWkText("")
+      const bits: string[] = []
+      if (nAdd) bits.push(nAdd + ' added')
+      if (nMerge) bits.push(nMerge + ' merged into an existing order line (qty bumped)')
+      if (nSkip) bits.push(nSkip + ' already captured - skipped')
+      setWkMsg(bits.length ? bits.join(' · ') : '')
       await load()
     } catch { alert('Failed - retry') }
     setWkBusy(false)
@@ -540,6 +562,7 @@ function quickTags(r: string): string[] {
           <div className="text-[11px] text-neutral-400 mb-1.5">Tap the box, hit the mic on your keyboard, and talk through the unit room by room. Then Build task list.</div>
           <textarea value={wkText} onChange={e => setWkText(e.target.value)} rows={4} placeholder={isOnboarding ? 'Master bedroom: king bed, Samsung smart TV. Breaker box in hallway closet. AC filter is 20x20x1...' : 'Kitchen: need a new coffee maker, need more cooking utensils. Master: new light bulbs, touch-up paint. Living room: sofa has a stain...'} className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-2" />
           <button onClick={runWalkthrough} disabled={wkBusy || !wkText.trim()} className="mt-1.5 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{wkBusy ? 'Working...' : '✨ Build task list'}</button>
+          {wkMsg ? <div className="mt-1.5 text-[11px] font-semibold text-emerald-700">{wkMsg} ✓</div> : null}
           {wkItems.length ? (
             <div className="mt-2 space-y-1.5">
               {wkItems.map((it: any, i: number) => (
@@ -549,6 +572,17 @@ function quickTags(r: string): string[] {
                     <div className="text-sm font-semibold text-neutral-900">{it.title}</div>
                     <div className="flex gap-1 mt-1">{(isOnboarding ? ['inventory', 'faq'] : ['maintenance', 'replace', 'add', 'clean']).map(k => <button key={k} onClick={() => setWkItems(arr => arr.map((x: any, j: number) => j === i ? { ...x, kind: k } : x))} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (it.kind === k ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k] ? KIND_META[k].label : k}</button>)}</div>
                     <div className="text-[11px] text-neutral-500">{it.room}{it.note ? ' · ' + it.note : ''}</div>
+                    {it.ask && it.ask.q && !it.askDone ? (
+                      <div className="mt-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1.5">
+                        <div className="text-[11px] font-semibold text-amber-800">{it.ask.q}</div>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {(it.ask.opts || []).map((o: string, oi: number) => (
+                            <button key={oi} onClick={() => answerAsk(i, o)} className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-white text-amber-800 border-amber-300">{o}</button>
+                          ))}
+                          <button onClick={() => setWkItems(arr => arr.map((x: any, j: number) => j === i ? { ...x, askDone: 'skip' } : x))} className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-white text-neutral-400 border-neutral-200">skip</button>
+                        </div>
+                      </div>
+                    ) : null}
                     {Array.isArray(it.tags) && it.tags.length ? (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {it.tags.map((tg: any, ti: number) => (
