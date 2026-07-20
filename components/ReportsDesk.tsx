@@ -1,8 +1,8 @@
 'use client'
 // Owner Reports desk: list of generated reports + the New-report flow
 // (pick buildings, period, as-of → generate → open the share page).
-import { useEffect, useState } from 'react'
-import { FileText, Loader2, Plus, Trash2, ExternalLink, Sparkles } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { FileText, Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X } from 'lucide-react'
 
 type ReportRow = {
   id: string; code: string; title: string; scope_label: string | null
@@ -29,6 +29,56 @@ export function ReportsDesk() {
   const [generating, setGenerating] = useState(false)
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
+  const [pacing, setPacing] = useState<{ name: string; url: string } | null>(null)
+  const [statements, setStatements] = useState<{ name: string; url: string }[]>([])
+  const [heroImg, setHeroImg] = useState<{ name: string; url: string } | null>(null)
+  const [uploading, setUploading] = useState<string>('')
+  const pacingRef = useRef<HTMLInputElement>(null)
+  const stmtRef = useRef<HTMLInputElement>(null)
+  const heroRef = useRef<HTMLInputElement>(null)
+
+  async function uploadOne(file: File): Promise<{ name: string; url: string } | null> {
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const r = await fetch('/api/guidebook/upload', { method: 'POST', body: fd })
+      const d = await r.json()
+      if (d?.ok && d?.url) return { name: file.name, url: d.url }
+      setMsg(d?.error || 'Upload failed')
+    } catch { setMsg('Upload failed') }
+    return null
+  }
+  async function onPacingPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files && e.target.files[0]
+    if (!f) return
+    setUploading('pacing')
+    const up = await uploadOne(f)
+    if (up) setPacing(up)
+    setUploading('')
+    e.target.value = ''
+  }
+  async function onStatementsPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files ? Array.from(e.target.files).slice(0, 4) : []
+    if (!files.length) return
+    setUploading('statements')
+    const ups: { name: string; url: string }[] = []
+    for (const f of files) {
+      const up = await uploadOne(f)
+      if (up) ups.push(up)
+    }
+    setStatements(prev => [...prev, ...ups].slice(0, 4))
+    setUploading('')
+    e.target.value = ''
+  }
+  async function onHeroPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files && e.target.files[0]
+    if (!f) return
+    setUploading('hero')
+    const up = await uploadOne(f)
+    if (up) setHeroImg(up)
+    setUploading('')
+    e.target.value = ''
+  }
 
   function loadReports() {
     fetch('/api/reports').then(r => r.json()).then(d => {
@@ -54,7 +104,12 @@ export function ReportsDesk() {
       const r = await fetch('/api/reports/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ buildings: picked, periodStart, periodEnd }),
+        body: JSON.stringify({
+          buildings: picked, periodStart, periodEnd,
+          pacingUrl: pacing ? pacing.url : undefined,
+          statementUrls: statements.length ? statements.map(s => s.url) : undefined,
+          heroImageUrl: heroImg ? heroImg.url : undefined,
+        }),
       })
       const d = await r.json()
       if (d?.ok && d?.code) {
@@ -119,8 +174,50 @@ export function ReportsDesk() {
               </button>
               <button onClick={() => { setShowNew(false); setMsg('') }} className="text-sm text-muted hover:text-ink px-2 py-2">Cancel</button>
             </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Optional attachments</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
+                <input ref={stmtRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onStatementsPick} />
+                <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
+                <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!uploading}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
+                  {uploading === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} PriceLabs pacing PDF
+                </button>
+                <button onClick={() => stmtRef.current && stmtRef.current.click()} disabled={!!uploading}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
+                  {uploading === 'statements' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Owner statement PDFs
+                </button>
+                <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!uploading}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
+                  {uploading === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
+                </button>
+              </div>
+              {(pacing || statements.length > 0 || heroImg) && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {pacing && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
+                      Pacing: {pacing.name}
+                      <button onClick={() => setPacing(null)} className="hover:text-red-600"><X size={11} /></button>
+                    </span>
+                  )}
+                  {statements.map((s, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
+                      Statement: {s.name}
+                      <button onClick={() => setStatements(prev => prev.filter((_, j) => j !== i))} className="hover:text-red-600"><X size={11} /></button>
+                    </span>
+                  ))}
+                  {heroImg && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
+                      Hero: {heroImg.name}
+                      <button onClick={() => setHeroImg(null)} className="hover:text-red-600"><X size={11} /></button>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             {msg && <p className="text-[13px] text-amber-700">{msg}</p>}
-            <p className="text-[11px] text-muted">Performance vs Plan appears automatically when the property has a stored budget. PriceLabs pacing + owner statements arrive as upload options next.</p>
+            <p className="text-[11px] text-muted">Performance vs Plan appears automatically when the property has a stored budget. Attach a PriceLabs pacing PDF to add &ldquo;Pacing vs Market&rdquo;, owner statement PDFs to add a statement summary, and a hero photo for the cover.</p>
           </div>
         )}
       </section>
