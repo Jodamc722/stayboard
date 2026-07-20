@@ -17,7 +17,7 @@ const DEPTS = ['maintenance', 'inspection', 'housekeeping', 'safety']
 const PRIOS = ['urgent', 'high', 'normal', 'low']
 
 function personName(p: Person): string { return p.name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || String(p.id) }
-function defCfg(it: Item): Cfg { return { department: it.kind === 'maintenance' ? 'maintenance' : 'inspection', priority: it.severity === 'high' ? 'high' : 'normal', assignee: '' } }
+function defCfg(it: Item): Cfg { return { department: it.kind === 'maintenance' ? 'maintenance' : it.kind === 'clean' ? 'housekeeping' : 'inspection', priority: it.severity === 'high' ? 'high' : 'normal', assignee: '' } }
 
 function defaultRooms(bedrooms: number | null, bathrooms: number | null): string[] {
   const rooms: string[] = []
