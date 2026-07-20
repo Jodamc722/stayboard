@@ -5,8 +5,8 @@
 // project items be removed/added, and sections be hidden/shown (content.omit).
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
-import { useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon } from 'lucide-react'
 
 type Any = any
 
@@ -73,6 +73,13 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const [saving, setSaving] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [attachMsg, setAttachMsg] = useState('')
+  const [picker, setPicker] = useState(false)
+  const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
+  const pacingRef = useRef<HTMLInputElement>(null)
+  const stmtRef = useRef<HTMLInputElement>(null)
+  const heroRef = useRef<HTMLInputElement>(null)
 
   // path setter: patch('voices.quotes.0.text', v)
   function patch(path: string, value: Any) {
@@ -116,6 +123,74 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
     try { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {}
   }
 
+  // ---- attachments on an existing report (P3.5) ----
+  async function uploadOne(file: File): Promise<string | null> {
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const r = await fetch('/api/guidebook/upload', { method: 'POST', body: fd })
+      const d = await r.json()
+      if (d?.ok && d?.url) return d.url
+      setAttachMsg(d?.error || 'Upload failed')
+    } catch { setAttachMsg('Upload failed') }
+    return null
+  }
+  async function parseAttach(payload: Any): Promise<Any | null> {
+    try {
+      const r = await fetch('/api/reports/attach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportId: initial.id, ...payload }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.section) return d.section
+      setAttachMsg(d?.error || 'Could not read that PDF')
+    } catch { setAttachMsg('Could not read that PDF') }
+    return null
+  }
+  async function onPacingPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files && e.target.files[0]
+    if (!f) return
+    setAttachMsg(''); setBusy('pacing')
+    const url = await uploadOne(f)
+    if (url) {
+      const section = await parseAttach({ kind: 'pacing', url })
+      if (section) patch('pacing', section)
+    }
+    setBusy(''); e.target.value = ''
+  }
+  async function onStatementsPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files ? Array.from(e.target.files).slice(0, 4) : []
+    if (!files.length) return
+    setAttachMsg(''); setBusy('statements')
+    const urls: string[] = []
+    for (const f of files) {
+      const url = await uploadOne(f)
+      if (url) urls.push(url)
+    }
+    if (urls.length) {
+      const section = await parseAttach({ kind: 'statements', urls })
+      if (section) patch('statement', section)
+    }
+    setBusy(''); e.target.value = ''
+  }
+  async function onHeroPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files && e.target.files[0]
+    if (!f) return
+    setAttachMsg(''); setBusy('hero')
+    const url = await uploadOne(f)
+    if (url) { patch('hero.heroImage', url); setPicker(false) }
+    setBusy(''); e.target.value = ''
+  }
+  function openPicker() {
+    setPicker(!picker)
+    if (pool === null) {
+      fetch('/api/reports/attach?photos=' + encodeURIComponent(initial.id)).then(r => r.json()).then(d => {
+        setPool(Array.isArray(d?.photos) ? d.photos : [])
+      }).catch(() => setPool([]))
+    }
+  }
+
   const meta = c.meta || {}
   const hero = c.hero || {}
   const snap = c.snapshot || {}
@@ -129,7 +204,24 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
     <div className="min-h-screen" style={{ background: CREAM, color: NAVY }}>
       {/* toolbar (edit only appears for logged-in team) */}
       {canEdit && (
-        <div className="sticky top-0 z-20 flex items-center justify-end gap-2 px-4 py-2.5" style={{ background: 'rgba(250,246,239,0.92)', backdropFilter: 'blur(6px)', borderBottom: '1px solid #eadfc9' }}>
+        <div className="sticky top-0 z-20 flex items-center justify-end gap-2 px-4 py-2.5 flex-wrap" style={{ background: 'rgba(250,246,239,0.92)', backdropFilter: 'blur(6px)', borderBottom: '1px solid #eadfc9' }}>
+          {attachMsg && <span className="mr-auto text-[11px] font-semibold" style={{ color: CORAL }}>{attachMsg}</span>}
+          {edit && (
+            <>
+              <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
+              <input ref={stmtRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onStatementsPick} />
+              <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
+              <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full border border-[#d9d0bc] bg-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">
+                {busy === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Pacing PDF
+              </button>
+              <button onClick={() => stmtRef.current && stmtRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full border border-[#d9d0bc] bg-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">
+                {busy === 'statements' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Statements
+              </button>
+              <button onClick={openPicker} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={picker ? { background: NAVY, color: 'white' } : { background: 'white', border: '1px solid #d9d0bc' }}>
+                {busy === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
+              </button>
+            </>
+          )}
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full border border-[#d9d0bc] bg-white px-3.5 py-1.5 text-[12px] font-semibold">
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
           </button>
@@ -141,6 +233,38 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
           <button onClick={() => setEdit(!edit)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={edit ? { background: NAVY, color: 'white' } : { background: 'white', border: '1px solid #d9d0bc' }}>
             <Pencil size={12} /> {edit ? 'Done editing' : 'Edit report'}
           </button>
+        </div>
+      )}
+
+      {/* hero photo picker: pick from the scoped listings' Guesty photos, or upload */}
+      {canEdit && edit && picker && (
+        <div className="px-4 py-3 border-b" style={{ background: '#fffdf7', borderColor: '#eadfc9' }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: GOLD }}>HERO PHOTO  ·  FROM THE LISTING</p>
+            <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1 rounded-full border border-[#d9d0bc] bg-white px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50">
+              <Plus size={11} /> Upload instead
+            </button>
+            {hero.heroImage && (
+              <button onClick={() => patch('hero.heroImage', null)} className="inline-flex items-center gap-1 rounded-full border border-[#d9d0bc] bg-white px-2.5 py-1 text-[11px] font-semibold" style={{ color: CORAL }}>
+                <X size={11} /> Remove current
+              </button>
+            )}
+            <button onClick={() => setPicker(false)} className="ml-auto" style={{ color: '#93a3b3' }}><X size={14} /></button>
+          </div>
+          {pool === null ? (
+            <p className="mt-2 text-[12px] italic" style={{ color: '#93a3b3' }}>Loading listing photos&hellip;</p>
+          ) : pool.length ? (
+            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+              {pool.map((p, i) => (
+                <button key={i} onClick={() => { patch('hero.heroImage', p.url); setPicker(false) }} className="shrink-0 rounded-lg overflow-hidden border-2" style={{ borderColor: hero.heroImage === p.url ? CORAL : '#efe8d8' }} title={p.listing}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.thumb} alt="" loading="lazy" className="h-20 w-28 object-cover" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-[12px] italic" style={{ color: '#93a3b3' }}>No listing photos found for this report&rsquo;s properties &mdash; use Upload instead.</p>
+          )}
         </div>
       )}
 
@@ -179,7 +303,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             </p>
             <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-3">
               {(snap.cards || []).map((card: Any, i: number) => (
-                <div key={card.key || i} className="rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                <div key={card.key || i} className="relative rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                  {edit && (
+                    <button onClick={() => mutate(d => d.snapshot.cards.splice(i, 1))} className="absolute top-2 right-2" style={{ color: CORAL }}><X size={13} /></button>
+                  )}
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: CORAL }}>
                     <Ed v={card.label || ''} set={v => patch('snapshot.cards.' + i + '.label', v)} edit={edit} />
                   </p>
@@ -226,7 +353,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
               </p>
               <div className="mt-6 space-y-4">
                 {(c.pacing.rows || []).map((r: Any, i: number) => (
-                  <div key={i} className="rounded-2xl bg-white p-5 shadow-sm border flex items-center gap-4" style={{ borderColor: '#efe8d8' }}>
+                  <div key={i} className="relative rounded-2xl bg-white p-5 shadow-sm border flex items-center gap-4" style={{ borderColor: '#efe8d8' }}>
+                    {edit && (
+                      <button onClick={() => mutate(d => d.pacing.rows.splice(i, 1))} className="absolute top-2 right-2" style={{ color: CORAL }}><X size={13} /></button>
+                    )}
                     <div className="w-28 text-sm font-bold">{r.metric}</div>
                     <div className="flex-1 grid grid-cols-2 gap-3 text-center">
                       <div>
@@ -239,7 +369,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
                       </div>
                     </div>
                     <div className="w-24 text-right">
-                      <p className="text-lg font-black" style={{ color: '#1a7f4f' }}><Ed v={r.delta || ''} set={v => patch('pacing.rows.' + i + '.delta', v)} edit={edit} /></p>
+                      <p className="text-lg font-black" style={{ color: (String(r.delta || '').trim().indexOf('-') === 0 || String(r.delta || '').trim().indexOf('−') === 0) ? '#a6b1bc' : '#1a7f4f' }}><Ed v={r.delta || ''} set={v => patch('pacing.rows.' + i + '.delta', v)} edit={edit} /></p>
                       <p className="text-[10px] uppercase tracking-wider" style={{ color: '#93a3b3' }}>vs. comps</p>
                     </div>
                   </div>
@@ -259,7 +389,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
               </h2>
               <div className="mt-6 space-y-4">
                 {(plan.months || []).map((m: Any, mi: number) => (
-                  <div key={mi} className="rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                  <div key={mi} className="relative rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                    {edit && (
+                      <button onClick={() => mutate(d => d.plan.months.splice(mi, 1))} className="absolute top-2 right-2" style={{ color: CORAL }}><X size={13} /></button>
+                    )}
                     <div className="flex items-center gap-2.5">
                       <span className="text-sm font-black tracking-[0.14em]">{m.label}</span>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={m.status === 'IN MONTH' ? { background: '#fdeee9', color: CORAL } : { background: '#eef3f7', color: '#5a7186' }}>
@@ -272,7 +405,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
                           <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#93a3b3' }}>{r.metric}</p>
                           <p className="text-xl font-black tabular-nums mt-0.5"><Ed v={r.actual || ''} set={v => patch('plan.months.' + mi + '.rows.' + ri + '.actual', v)} edit={edit} /></p>
                           <p className="text-[11px]" style={{ color: '#93a3b3' }}><Ed v={r.budget || ''} set={v => patch('plan.months.' + mi + '.rows.' + ri + '.budget', v)} edit={edit} /></p>
-                          <p className="text-[12px] font-bold mt-0.5" style={{ color: r.good ? '#1a7f4f' : CORAL }}>
+                          <p className="text-[12px] font-bold mt-0.5" style={{ color: r.good ? '#1a7f4f' : '#a6b1bc' }}>
                             <Ed v={r.delta || ''} set={v => patch('plan.months.' + mi + '.rows.' + ri + '.delta', v)} edit={edit} />
                           </p>
                         </div>
@@ -297,9 +430,12 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
               <Eyebrow>OWNER STATEMENT</Eyebrow>
               <div className="mt-4 space-y-3">
                 {(c.statement.items || []).map((it: Any, i: number) => (
-                  <div key={i} className="rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
-                    <p className="text-sm font-bold">{it.title}</p>
-                    <p className="text-[13px] mt-1" style={{ color: '#41586e' }}>{it.summary}</p>
+                  <div key={i} className="relative rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                    {edit && (
+                      <button onClick={() => mutate(d => d.statement.items.splice(i, 1))} className="absolute top-2 right-2" style={{ color: CORAL }}><X size={13} /></button>
+                    )}
+                    <p className="text-sm font-bold"><Ed v={it.title || ''} set={v => patch('statement.items.' + i + '.title', v)} edit={edit} /></p>
+                    <p className="text-[13px] mt-1" style={{ color: '#41586e' }}><Ed v={it.summary || ''} set={v => patch('statement.items.' + i + '.summary', v)} edit={edit} multiline /></p>
                   </div>
                 ))}
               </div>
@@ -319,7 +455,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             </p>
             <div className="mt-6 grid sm:grid-cols-2 gap-4">
               {(ahead.months || []).map((m: Any, i: number) => (
-                <div key={i} className="rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                <div key={i} className="relative rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                  {edit && (
+                    <button onClick={() => mutate(d => d.ahead.months.splice(i, 1))} className="absolute top-2 right-2" style={{ color: CORAL }}><X size={13} /></button>
+                  )}
                   <div className="flex items-center gap-2.5">
                     <span className="text-sm font-black tracking-[0.14em]"><Ed v={m.label || ''} set={v => patch('ahead.months.' + i + '.label', v)} edit={edit} /></span>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ background: '#fdeee9', color: CORAL }}>{m.status}</span>
@@ -422,7 +561,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             </p>
             <div className="mt-6 grid md:grid-cols-3 gap-4">
               {(projects.weeks || []).map((w: Any, wi: number) => (
-                <div key={wi} className="rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                <div key={wi} className="relative rounded-2xl bg-white p-5 shadow-sm border" style={{ borderColor: '#efe8d8' }}>
+                  {edit && (
+                    <button onClick={() => mutate(d => d.projects.weeks.splice(wi, 1))} className="absolute top-2 right-2" style={{ color: CORAL }}><X size={13} /></button>
+                  )}
                   <p className="text-[11px] font-black tracking-[0.16em] pb-2 border-b" style={{ color: CORAL, borderColor: '#f3ecdd' }}>
                     <Ed v={w.label || ''} set={v => patch('projects.weeks.' + wi + '.label', v)} edit={edit} />
                   </p>
