@@ -39,7 +39,7 @@ const THEMES: Record<string, Any> = {
 }
 
 // ---------- PPTX export (P5): built in the browser from the content JSON + active theme ----------
-const PPTX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.min.js'
+const PPTX_CDN = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 
 function cx(v: string, fb: string): string {
   return (v && v.indexOf('#') === 0) ? v.slice(1) : fb
