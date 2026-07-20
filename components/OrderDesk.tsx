@@ -28,6 +28,9 @@ export function OrderDesk() {
   const [xlUnit, setXlUnit] = useState('all')
   const [xlBusy, setXlBusy] = useState(false)
   const [planCopied, setPlanCopied] = useState(false)
+  const [ownerCopied, setOwnerCopied] = useState(false)
+  const [estBusy, setEstBusy] = useState(false)
+  const [estMsg, setEstMsg] = useState('')
 
   async function load() {
     try {
@@ -157,6 +160,46 @@ export function OrderDesk() {
     try { navigator.clipboard.writeText(window.location.origin + '/delivery'); setPlanCopied(true); setTimeout(() => setPlanCopied(false), 1600) } catch {}
   }
 
+  // OWNER APPROVAL LINK - signed share URL for the selected property or unit. The owner
+  // opens it, sees just their items with estimated costs, and taps Approve per line.
+  function ownerScope(): string {
+    if (xlUnit !== 'all') { const row = rows.find(it => it.unit === xlUnit); return row ? 'u:' + row.listing_id : '' }
+    if (xlBldg !== 'all') return 'b:' + xlBldg
+    return ''
+  }
+  async function copyOwnerLink() {
+    const scope = ownerScope()
+    if (!scope) { alert('Pick a property or unit first - owner links are per property or per unit.'); return }
+    try {
+      const r = await fetch('/api/orders/share?scope=' + encodeURIComponent(scope))
+      const j = await r.json()
+      if (!r.ok || !j.ok) { alert(j.error || 'Could not build the link.'); return }
+      await navigator.clipboard.writeText(j.url)
+      setOwnerCopied(true); setTimeout(() => setOwnerCopied(false), 1600)
+    } catch { alert('Could not build the link - retry.') }
+  }
+  async function estimateCosts() {
+    if (estBusy) return
+    setEstBusy(true); setEstMsg('')
+    try {
+      const r = await fetch('/api/orders/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: ownerScope() || 'all' }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setEstMsg(j.error || 'failed'); setEstBusy(false); return }
+      setEstMsg(j.estimated + ' price' + (j.estimated === 1 ? '' : 's') + ' estimated ✓')
+      await load()
+    } catch { setEstMsg('failed - retry') }
+    setEstBusy(false)
+  }
+  function askEst(it: Row) {
+    const cur = it.details && it.details.est ? String(it.details.est) : ''
+    const v = window.prompt('Estimated price in USD for ONE ' + (it.title || 'item') + ':', cur)
+    if (v === null) return
+    const n = Math.round(Number(v))
+    if (!Number.isFinite(n) || n < 0) { alert('Enter a number.'); return }
+    setBusy(it.id)
+    fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', itemId: it.id, fields: { est: n } }) }).catch(() => {}).then(() => { setBusy(''); load() })
+  }
+
   if (loading) return <div className="text-sm text-muted">Loading orders…</div>
   if (err) return <div className="text-sm text-rose-600">{err}</div>
 
@@ -189,7 +232,10 @@ export function OrderDesk() {
             {Array.from(new Set(rows.filter(it => xlBldg === 'all' || (it.building || 'Other') === xlBldg).map(it => it.unit))).sort().map(u => <option key={u} value={u}>{u}</option>)}
           </select>
           <button onClick={exportExcel} disabled={xlBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{xlBusy ? 'Building…' : 'Download .xlsx'}</button>
-          <span className="text-[11px] text-muted">Owner-ready sheet: items grouped with totals. Completed lines excluded.</span>
+          <button onClick={estimateCosts} disabled={estBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">{estBusy ? 'Estimating…' : '✨ Estimate costs'}</button>
+          <button onClick={copyOwnerLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Copy owner link'}</button>
+          {estMsg ? <span className="text-[11px] font-semibold text-emerald-700">{estMsg}</span> : null}
+          <span className="text-[11px] text-muted">Owner link = pick a property or unit, estimate costs, copy - the owner approves right on the page.</span>
         </div>
       ) : null}
       {bldgs.length === 0 ? <div className="text-sm text-muted">No order items match. Replace / Add needs captured on audits land here automatically.</div> : null}
@@ -216,6 +262,7 @@ export function OrderDesk() {
                               {it.room ? <span className="text-[11px] text-muted">{it.room}</span> : null}
                               <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + (STATUS_CLS[it.status] || STATUS_CLS.open)}>{STATUS_LABEL[it.status] || it.status}</span>
                               {it.details && it.details.reorder ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800" title="Matched to a previous order of the same product - link reused">↻ reorder</span> : null}
+                              <button onClick={() => askEst(it)} disabled={busy === it.id} className={'text-[11px] font-semibold px-1.5 py-0.5 rounded border disabled:opacity-50 ' + (it.details && it.details.est ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-line text-muted')} title="Estimated price per unit - shown to owners">{it.details && it.details.est ? '~$' + Number(it.details.est).toLocaleString('en-US') : '$ est'}</button>
                               <span className="ml-auto flex items-center gap-1">
                                 {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer"><img src={it.photo_url} alt="" className="h-7 w-7 rounded object-cover" /></a> : null}
                                 {link ? <a href={link} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-brand-600">open link</a> : null}
