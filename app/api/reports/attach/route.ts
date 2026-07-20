@@ -91,6 +91,32 @@ async function parseStatements(urls: string[], scopeLabel: string) {
   return { headline: 'Owner statement summary.', items }
 }
 
+async function fetchAnyBlock(url: string): Promise<any | null> {
+  try {
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const ct = (r.headers.get('content-type') || '').toLowerCase()
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (buf.length > 8 * 1024 * 1024) return null
+    if (ct.includes('pdf') || /\.pdf($|\?)/i.test(url)) return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } }
+    const mt = ct.includes('png') || /\.png($|\?)/i.test(url) ? 'image/png' : (ct.includes('webp') || /\.webp($|\?)/i.test(url)) ? 'image/webp' : 'image/jpeg'
+    return { type: 'image', source: { type: 'base64', media_type: mt, data: buf.toString('base64') } }
+  } catch { return null }
+}
+
+async function parseCompleted(url: string, scopeLabel: string): Promise<string[] | null> {
+  const block = await fetchAnyBlock(url)
+  if (!block) return null
+  const text = await anthropic({
+    model: DOC_MODEL, max_tokens: 700,
+    system: 'You extract a concise list of completed work items for a property owner report. Output STRICT JSON only.',
+    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This document or photo describes work completed at "' + scopeLabel + '". Extract the completed work as a short list an owner would care about (repairs, installs, replacements, projects, deliveries, inspections). EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs). Return JSON: {"items": [up to 12 concise lines, each <= 140 chars; prefix with the unit like "Unit 405: ..." when the unit is known]}.' }] }],
+  })
+  const j = parseJson(text)
+  const items = (Array.isArray(j?.items) ? j.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).slice(0, 12)
+  return items.length ? items : null
+}
+
 async function loadReport(id: string) {
   const db = supabaseAdmin()
   const { data } = await db.from('owner_reports').select('id, scope_label, listing_ids, period_start, period_end').eq('id', id).limit(1)
@@ -131,12 +157,19 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const reportId = str(body?.reportId)
   const kind = str(body?.kind)
-  if (!reportId || (kind !== 'pacing' && kind !== 'statements')) {
-    return NextResponse.json({ error: 'reportId + kind (pacing|statements) required' }, { status: 400 })
+  if (!reportId || (kind !== 'pacing' && kind !== 'statements' && kind !== 'completed')) {
+    return NextResponse.json({ error: 'reportId + kind (pacing|statements|completed) required' }, { status: 400 })
   }
   const rep = await loadReport(reportId)
   if (!rep) return NextResponse.json({ error: 'report not found' }, { status: 404 })
   const scopeLabel = str(rep.scope_label) || 'the property'
+  if (kind === 'completed') {
+    const url = str(body?.url)
+    if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
+    const items = await parseCompleted(url, scopeLabel)
+    if (!items) return NextResponse.json({ error: 'Could not read work items from that file.' }, { status: 422 })
+    return NextResponse.json({ ok: true, items })
+  }
   if (kind === 'pacing') {
     const url = str(body?.url)
     if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
