@@ -23,6 +23,11 @@ export function OrderDesk() {
   const [sugList, setSugList] = useState<any[]>([])
   const [sugBusy, setSugBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [xlOpen, setXlOpen] = useState(false)
+  const [xlBldg, setXlBldg] = useState('all')
+  const [xlUnit, setXlUnit] = useState('all')
+  const [xlBusy, setXlBusy] = useState(false)
+  const [planCopied, setPlanCopied] = useState(false)
 
   async function load() {
     try {
@@ -102,6 +107,56 @@ export function OrderDesk() {
     try { navigator.clipboard.writeText(lines.join('\n')); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch {}
   }
 
+  // OWNER EXCEL EXPORT - real .xlsx via SheetJS (loaded on demand from the CDN, no bundle
+  // weight). Scope is selectable: whole portfolio, one property (building), or one unit.
+  function loadXLSX(): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const w: any = window as any
+      if (w.XLSX) { resolve(w.XLSX); return }
+      const s = document.createElement('script')
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+      s.onload = () => resolve((window as any).XLSX)
+      s.onerror = () => reject(new Error('xlsx load failed'))
+      document.head.appendChild(s)
+    })
+  }
+  async function exportExcel() {
+    if (xlBusy) return
+    setXlBusy(true)
+    try {
+      const XLSX = await loadXLSX()
+      const chosen = rows.filter(it => {
+        if (it.status === 'done') return false
+        if (xlBldg !== 'all' && (it.building || 'Other') !== xlBldg) return false
+        if (xlUnit !== 'all' && it.unit !== xlUnit) return false
+        return true
+      }).sort((a, b) => ((a.building || '') + a.unit).localeCompare((b.building || '') + b.unit))
+      const head = ['Building', 'Unit', 'Room', 'Action', 'Item', 'Qty', 'Status', 'Product link', 'Notes']
+      const aoa: any[][] = [head]
+      for (const it of chosen) aoa.push([it.building || '', it.unit, it.room || '', it.kind === 'add' ? 'Add' : 'Replace', it.title || '', Number(it.qty) || 1, STATUS_LABEL[it.status] || it.status, it.details && it.details.link ? String(it.details.link) : '', it.note || ''])
+      const ws = XLSX.utils.aoa_to_sheet(aoa)
+      ws['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 8 }, { wch: 34 }, { wch: 5 }, { wch: 14 }, { wch: 40 }, { wch: 36 }]
+      const totals: Record<string, number> = {}
+      for (const it of chosen) { const t = String(it.title || '').trim(); if (t) totals[t] = (totals[t] || 0) + (Number(it.qty) || 1) }
+      const taoa: any[][] = [['Item', 'Total qty']]
+      const tkeys = Object.keys(totals).sort()
+      for (const t of tkeys) taoa.push([t, totals[t]])
+      const ws2 = XLSX.utils.aoa_to_sheet(taoa)
+      ws2['!cols'] = [{ wch: 40 }, { wch: 10 }]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Order sheet')
+      XLSX.utils.book_append_sheet(wb, ws2, 'Totals by item')
+      const scope = xlUnit !== 'all' ? xlUnit : (xlBldg !== 'all' ? xlBldg : 'All properties')
+      const d = new Date()
+      const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+      XLSX.writeFile(wb, ('Order sheet - ' + scope + ' - ' + ds).replace(/[\\/:*?"<>|]+/g, ' ').trim() + '.xlsx')
+    } catch { alert('Excel export failed - retry') }
+    setXlBusy(false)
+  }
+  function copyPlanLink() {
+    try { navigator.clipboard.writeText(window.location.origin + '/delivery'); setPlanCopied(true); setTimeout(() => setPlanCopied(false), 1600) } catch {}
+  }
+
   if (loading) return <div className="text-sm text-muted">Loading orders…</div>
   if (err) return <div className="text-sm text-rose-600">{err}</div>
 
@@ -115,8 +170,28 @@ export function OrderDesk() {
         ))}
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit / building / item" className="text-xs border border-line rounded-lg px-2.5 py-1.5 w-52" />
         <label className="text-xs text-muted flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> show completed</label>
-        <button onClick={copySheet} className="ml-auto text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{copied ? 'Copied ✓' : 'Copy order sheet'}</button>
+        <span className="ml-auto flex items-center gap-2">
+          <a href="/delivery" target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Delivery plan</a>
+          <button onClick={copyPlanLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">{planCopied ? 'Link copied ✓' : 'Copy plan link'}</button>
+          <button onClick={() => setXlOpen(o => !o)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Excel for owner</button>
+          <button onClick={copySheet} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{copied ? 'Copied ✓' : 'Copy order sheet'}</button>
+        </span>
       </div>
+      {xlOpen ? (
+        <div className="mb-4 rounded-xl border border-line bg-white p-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-ink">Export scope:</span>
+          <select value={xlBldg} onChange={e => { setXlBldg(e.target.value); setXlUnit('all') }} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white">
+            <option value="all">All properties</option>
+            {Array.from(new Set(rows.map(it => it.building || 'Other'))).sort().map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <select value={xlUnit} onChange={e => setXlUnit(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white">
+            <option value="all">All units</option>
+            {Array.from(new Set(rows.filter(it => xlBldg === 'all' || (it.building || 'Other') === xlBldg).map(it => it.unit))).sort().map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <button onClick={exportExcel} disabled={xlBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{xlBusy ? 'Building…' : 'Download .xlsx'}</button>
+          <span className="text-[11px] text-muted">Owner-ready sheet: items grouped with totals. Completed lines excluded.</span>
+        </div>
+      ) : null}
       {bldgs.length === 0 ? <div className="text-sm text-muted">No order items match. Replace / Add needs captured on audits land here automatically.</div> : null}
       <div className="space-y-4">
         {bldgs.map(b => {
@@ -140,6 +215,7 @@ export function OrderDesk() {
                               <span className="text-sm font-semibold text-ink">{it.qty && it.qty > 1 ? it.qty + '× ' : ''}{it.title}</span>
                               {it.room ? <span className="text-[11px] text-muted">{it.room}</span> : null}
                               <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + (STATUS_CLS[it.status] || STATUS_CLS.open)}>{STATUS_LABEL[it.status] || it.status}</span>
+                              {it.details && it.details.reorder ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800" title="Matched to a previous order of the same product - link reused">↻ reorder</span> : null}
                               <span className="ml-auto flex items-center gap-1">
                                 {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer"><img src={it.photo_url} alt="" className="h-7 w-7 rounded object-cover" /></a> : null}
                                 {link ? <a href={link} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-brand-600">open link</a> : null}
