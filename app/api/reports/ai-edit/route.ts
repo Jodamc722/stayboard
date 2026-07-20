@@ -4,6 +4,7 @@
 // into local state and the user saves normally. Same voice + safety rules as generate.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { hasEditCookie } from '@/lib/edit-access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -52,7 +53,7 @@ async function fetchDocBlock(url: string): Promise<any | null> {
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const sectionKey = str(body?.sectionKey).slice(0, 30)
   const prompt = str(body?.prompt).slice(0, 2000)
