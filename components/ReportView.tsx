@@ -71,62 +71,68 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   const CHIP = cx(t.chip, 'f5f5f5'), BARA = cx(t.barA, '102A43'), BARB = cx(t.barB, 'E2725B')
   const hero = c.hero || {}, snap = c.snapshot || {}, plan = c.plan, ahead = c.ahead || {}, voices = c.voices || {}, projects = c.projects || {}, meta = c.meta || {}
   const isDown = (v: Any) => String(v || '').trim().indexOf('-') === 0 || String(v || '').trim().indexOf('−') === 0
+  // content band: header lives above CT, content fills CT..CBOT so no empty bottom strip
+  const CT = 1.85, CBOT = 6.95
   function head(s: Any, eyebrow: string, headline: string, subtitle?: string) {
     s.background = { color: BG }
-    s.addText(eyebrow, { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontSize: 11, bold: true, color: ACC, charSpacing: 3 })
-    s.addText(String(headline || '').slice(0, 120), { x: 0.6, y: 0.65, w: 12.1, h: 0.65, fontSize: 21, bold: true, color: INK })
-    if (subtitle) s.addText(String(subtitle).slice(0, 160), { x: 0.6, y: 1.28, w: 12.1, h: 0.3, fontSize: 10.5, color: SUB })
+    s.addText(eyebrow, { x: 0.6, y: 0.4, w: 12.13, h: 0.3, fontSize: 12, bold: true, color: ACC, charSpacing: 3 })
+    s.addText(String(headline || '').slice(0, 120), { x: 0.6, y: 0.72, w: 12.13, h: 0.7, fontSize: 25, bold: true, color: INK })
+    if (subtitle) s.addText(String(subtitle).slice(0, 160), { x: 0.6, y: 1.44, w: 12.13, h: 0.3, fontSize: 11, color: SUB })
   }
 
-  // hero
+  // hero — full-width photo, big title
   const s1 = pptx.addSlide()
   s1.background = { color: BG }
-  s1.addText(String(hero.eyebrow || ''), { x: 0.6, y: 0.85, w: 12.1, h: 0.3, align: 'center', fontSize: 12, bold: true, color: ACC, charSpacing: 4 })
-  s1.addText(String(hero.dateLabel || 'OWNER REVIEW'), { x: 0.6, y: 1.25, w: 12.1, h: 0.3, align: 'center', fontSize: 11, bold: true, color: GOLD, charSpacing: 4 })
-  s1.addText(String(hero.title || ''), { x: 0.6, y: 1.6, w: 12.1, h: 1.05, align: 'center', fontSize: 46, bold: true, color: INK })
-  s1.addText(String(hero.headline || ''), { x: 1.8, y: 2.75, w: 9.7, h: 0.95, align: 'center', fontSize: 16, color: BODY })
-  if (heroData) s1.addImage({ data: heroData, x: 2.9, y: 3.85, w: 7.5, h: 2.8, sizing: { type: 'cover', w: 7.5, h: 2.8 } })
-  s1.addText(String(hero.preparedFor || '') + '  ·  STAY HOSPITALITY', { x: 0.6, y: 6.95, w: 12.1, h: 0.3, align: 'center', fontSize: 9, bold: true, color: MUT, charSpacing: 2 })
+  s1.addText(String(hero.eyebrow || ''), { x: 0.6, y: 0.7, w: 12.13, h: 0.3, align: 'center', fontSize: 12, bold: true, color: ACC, charSpacing: 4 })
+  s1.addText(String(hero.dateLabel || 'OWNER REVIEW'), { x: 0.6, y: 1.06, w: 12.13, h: 0.3, align: 'center', fontSize: 11, bold: true, color: GOLD, charSpacing: 4 })
+  s1.addText(String(hero.title || ''), { x: 0.6, y: 1.4, w: 12.13, h: 1.1, align: 'center', fontSize: 52, bold: true, color: INK })
+  s1.addText(String(hero.headline || ''), { x: 1.6, y: 2.62, w: 10.13, h: 0.7, align: 'center', fontSize: 16, color: BODY })
+  if (heroData) s1.addImage({ data: heroData, x: 0.6, y: 3.5, w: 12.13, h: 3.2, sizing: { type: 'cover', w: 12.13, h: 3.2 } })
+  else s1.addShape('roundRect', { x: 0.6, y: 3.5, w: 12.13, h: 3.2, fill: { color: CHIP }, rectRadius: 0.06 })
+  s1.addText(String(hero.preparedFor || '') + '  ·  STAY HOSPITALITY', { x: 0.6, y: 6.88, w: 12.13, h: 0.3, align: 'center', fontSize: 9, bold: true, color: MUT, charSpacing: 2 })
 
   // snapshot
   const s2 = pptx.addSlide()
   head(s2, 'SNAPSHOT', snap.headline, snap.subtitle)
   const cards = (snap.cards || []).slice(0, 4)
+  const cn = Math.max(1, cards.length), cgap = 0.19, cw = (12.13 - (cn - 1) * cgap) / cn
   for (let i = 0; i < cards.length; i++) {
-    const x = 0.6 + i * 3.09
-    s2.addShape('roundRect', { x, y: 1.8, w: 2.94, h: 1.9, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-    s2.addText(String(cards[i].label || ''), { x: x + 0.15, y: 1.95, w: 2.6, h: 0.25, fontSize: 9, bold: true, color: ACC, charSpacing: 2 })
-    s2.addText(String(cards[i].value || ''), { x: x + 0.15, y: 2.25, w: 2.6, h: 0.6, fontSize: 27, bold: true, color: INK })
-    s2.addText(String(cards[i].sub || '').slice(0, 95), { x: x + 0.15, y: 2.9, w: 2.64, h: 0.7, fontSize: 8.5, color: SUB })
+    const x = 0.6 + i * (cw + cgap)
+    s2.addShape('roundRect', { x, y: CT, w: cw, h: 2.05, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+    s2.addText(String(cards[i].label || ''), { x: x + 0.18, y: CT + 0.16, w: cw - 0.32, h: 0.25, fontSize: 9.5, bold: true, color: ACC, charSpacing: 2 })
+    s2.addText(String(cards[i].value || ''), { x: x + 0.18, y: CT + 0.46, w: cw - 0.32, h: 0.66, fontSize: 30, bold: true, color: INK })
+    s2.addText(String(cards[i].sub || '').slice(0, 95), { x: x + 0.18, y: CT + 1.2, w: cw - 0.3, h: 0.78, fontSize: 8.5, color: SUB })
   }
   if (snap.ytd) {
-    s2.addShape('roundRect', { x: 0.6, y: 4.1, w: 12.13, h: 2.2, fill: { color: BAND }, rectRadius: 0.06 })
-    s2.addText((meta.asOf ? String(meta.asOf).slice(0, 4) : '') + ' YEAR-TO-DATE', { x: 0.9, y: 4.3, w: 6, h: 0.3, fontSize: 9, bold: true, color: GOLD, charSpacing: 2 })
-    s2.addText(String(snap.ytd.text || '').slice(0, 260), { x: 0.9, y: 4.65, w: 6.5, h: 1.45, fontSize: 12, color: 'FFFFFF' })
+    const by = CT + 2.3
+    s2.addShape('roundRect', { x: 0.6, y: by, w: 12.13, h: CBOT - by, fill: { color: BAND }, rectRadius: 0.06 })
+    s2.addText((meta.asOf ? String(meta.asOf).slice(0, 4) : '') + ' YEAR-TO-DATE', { x: 0.95, y: by + 0.26, w: 6, h: 0.3, fontSize: 10, bold: true, color: GOLD, charSpacing: 2 })
+    s2.addText(String(snap.ytd.text || '').slice(0, 260), { x: 0.95, y: by + 0.64, w: 6.6, h: 1.55, fontSize: 13, color: 'FFFFFF', valign: 'top' })
     const stats = (snap.ytd.stats || []).slice(0, 3)
+    const sy = by + (CBOT - by) / 2 - 0.35
     for (let i = 0; i < stats.length; i++) {
-      const x = 7.8 + i * 1.62
-      s2.addText(String(stats[i].value || ''), { x, y: 4.75, w: 1.55, h: 0.5, align: 'center', fontSize: 20, bold: true, color: 'FFFFFF' })
-      s2.addText(String(stats[i].label || ''), { x, y: 5.3, w: 1.55, h: 0.3, align: 'center', fontSize: 8, bold: true, color: 'CCCCCC', charSpacing: 1 })
+      const x = 7.95 + i * 1.55
+      s2.addText(String(stats[i].value || ''), { x, y: sy, w: 1.5, h: 0.55, align: 'center', fontSize: 22, bold: true, color: 'FFFFFF' })
+      s2.addText(String(stats[i].label || ''), { x, y: sy + 0.6, w: 1.5, h: 0.3, align: 'center', fontSize: 8, bold: true, color: 'CCCCCC', charSpacing: 1 })
     }
   }
 
-  // pacing
+  // pacing — rows fill the frame
   if (c.pacing) {
     const s = pptx.addSlide()
     head(s, 'PACING VS. MARKET', c.pacing.headline, c.pacing.subtitle)
     const rows = (c.pacing.rows || []).slice(0, 4)
+    const n = Math.max(1, rows.length), rgap = 0.22, rh = (CBOT - CT - (n - 1) * rgap) / n
     for (let i = 0; i < rows.length; i++) {
-      const y = 1.85 + i * 1.2
-      const r = rows[i]
-      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: 1.05, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-      s.addText(String(r.metric || ''), { x: 0.9, y: y + 0.35, w: 2.4, h: 0.35, fontSize: 13, bold: true, color: INK })
-      s.addText(String(r.ours || ''), { x: 3.9, y: y + 0.14, w: 2.4, h: 0.5, align: 'center', fontSize: 20, bold: true, color: INK })
-      s.addText(String(meta.scopeLabel || 'US'), { x: 3.9, y: y + 0.66, w: 2.4, h: 0.25, align: 'center', fontSize: 8, bold: true, color: ACC, charSpacing: 1 })
-      s.addText(String(r.comps || ''), { x: 6.8, y: y + 0.14, w: 2.4, h: 0.5, align: 'center', fontSize: 20, bold: true, color: MUT })
-      s.addText('COMP SET', { x: 6.8, y: y + 0.66, w: 2.4, h: 0.25, align: 'center', fontSize: 8, bold: true, color: MUT, charSpacing: 1 })
-      s.addText(String(r.delta || ''), { x: 10.1, y: y + 0.14, w: 2.3, h: 0.5, align: 'right', fontSize: 16, bold: true, color: isDown(r.delta) ? GRAY : GOOD })
-      s.addText('VS. COMPS', { x: 10.1, y: y + 0.66, w: 2.3, h: 0.25, align: 'right', fontSize: 8, color: MUT, charSpacing: 1 })
+      const r = rows[i], y = CT + i * (rh + rgap), cyc = y + rh / 2
+      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: rh, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(r.metric || ''), { x: 0.95, y: cyc - 0.2, w: 2.7, h: 0.4, fontSize: 15, bold: true, color: INK })
+      s.addText(String(r.ours || ''), { x: 3.9, y: cyc - 0.44, w: 2.5, h: 0.58, align: 'center', fontSize: 25, bold: true, color: INK })
+      s.addText(String(meta.scopeLabel || 'US'), { x: 3.9, y: cyc + 0.18, w: 2.5, h: 0.25, align: 'center', fontSize: 8.5, bold: true, color: ACC, charSpacing: 1 })
+      s.addText(String(r.comps || ''), { x: 6.7, y: cyc - 0.44, w: 2.5, h: 0.58, align: 'center', fontSize: 25, bold: true, color: MUT })
+      s.addText('COMP SET', { x: 6.7, y: cyc + 0.18, w: 2.5, h: 0.25, align: 'center', fontSize: 8.5, bold: true, color: MUT, charSpacing: 1 })
+      s.addText(String(r.delta || ''), { x: 9.9, y: cyc - 0.38, w: 2.5, h: 0.5, align: 'right', fontSize: 19, bold: true, color: isDown(r.delta) ? GRAY : GOOD })
+      s.addText('VS. COMPS', { x: 9.9, y: cyc + 0.2, w: 2.5, h: 0.25, align: 'right', fontSize: 8.5, color: MUT, charSpacing: 1 })
     }
   }
 
@@ -135,23 +141,24 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     const s = pptx.addSlide()
     head(s, 'PERFORMANCE VS. PLAN', plan.headline)
     const months = (plan.months || []).slice(0, 3)
+    const n = Math.max(1, months.length), mgap = 0.22, mh = (CBOT - CT - (n - 1) * mgap) / n
     for (let mi = 0; mi < months.length; mi++) {
-      const m = months[mi]
-      const y = 1.6 + mi * 1.88
-      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: 1.76, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-      s.addText(String(m.label || ''), { x: 0.9, y: y + 0.12, w: 2.5, h: 0.3, fontSize: 13, bold: true, color: INK, charSpacing: 2 })
-      s.addText(String(m.status || ''), { x: 3.2, y: y + 0.15, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: ACC, charSpacing: 1 })
+      const m = months[mi], y = CT + mi * (mh + mgap)
+      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: mh, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(m.label || ''), { x: 0.95, y: y + 0.16, w: 2.5, h: 0.3, fontSize: 14, bold: true, color: INK, charSpacing: 2 })
+      s.addText(String(m.status || ''), { x: 3.3, y: y + 0.19, w: 3.6, h: 0.25, fontSize: 9.5, bold: true, color: ACC, charSpacing: 1 })
       const rows = (m.rows || []).slice(0, 4)
+      const rn = Math.max(1, rows.length), cgap2 = 0.18, chW = (11.43 - (rn - 1) * cgap2) / rn
+      const chY = y + 0.52, chH = mh - (m.note ? 0.92 : 0.66)
       for (let ri = 0; ri < rows.length; ri++) {
-        const r = rows[ri]
-        const x = 0.9 + ri * 2.95
-        s.addShape('roundRect', { x, y: y + 0.48, w: 2.8, h: 0.86, fill: { color: CHIP }, rectRadius: 0.05 })
-        s.addText(String(r.metric || ''), { x: x + 0.1, y: y + 0.52, w: 2.6, h: 0.2, fontSize: 7.5, bold: true, color: MUT, charSpacing: 1 })
-        s.addText(String(r.actual || ''), { x: x + 0.1, y: y + 0.72, w: 1.7, h: 0.35, fontSize: 15, bold: true, color: INK })
-        s.addText(String(r.budget || ''), { x: x + 0.1, y: y + 1.08, w: 1.7, h: 0.22, fontSize: 8, color: MUT })
-        s.addText(String(r.delta || ''), { x: x + 1.6, y: y + 0.78, w: 1.1, h: 0.3, align: 'right', fontSize: 10, bold: true, color: r.good ? GOOD : GRAY })
+        const r = rows[ri], x = 0.95 + ri * (chW + cgap2)
+        s.addShape('roundRect', { x, y: chY, w: chW, h: chH, fill: { color: CHIP }, rectRadius: 0.05 })
+        s.addText(String(r.metric || ''), { x: x + 0.12, y: chY + 0.1, w: chW - 0.24, h: 0.2, fontSize: 8, bold: true, color: MUT, charSpacing: 1 })
+        s.addText(String(r.actual || ''), { x: x + 0.12, y: chY + 0.32, w: chW - 0.7, h: 0.4, fontSize: 16, bold: true, color: INK })
+        s.addText(String(r.budget || ''), { x: x + 0.12, y: chY + 0.72, w: chW - 0.3, h: 0.22, fontSize: 8.5, color: MUT })
+        s.addText(String(r.delta || ''), { x: x + chW - 0.9, y: chY + 0.38, w: 0.78, h: 0.3, align: 'right', fontSize: 10.5, bold: true, color: r.good ? GOOD : GRAY })
       }
-      if (m.note) s.addText(String(m.note).slice(0, 180), { x: 0.9, y: y + 1.4, w: 11.5, h: 0.3, fontSize: 9, color: BODY })
+      if (m.note) s.addText(String(m.note).slice(0, 180), { x: 0.95, y: y + mh - 0.34, w: 11.4, h: 0.28, fontSize: 9, color: BODY })
     }
   }
 
@@ -160,11 +167,12 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     const s = pptx.addSlide()
     head(s, 'OWNER STATEMENT', c.statement.headline || 'Owner statement summary.')
     const items = (c.statement.items || []).slice(0, 4)
+    const n = Math.max(1, items.length), igap = 0.22, ih = (CBOT - CT - (n - 1) * igap) / n
     for (let i = 0; i < items.length; i++) {
-      const y = 1.8 + i * 1.3
-      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: 1.15, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-      s.addText(String(items[i].title || ''), { x: 0.9, y: y + 0.1, w: 11.5, h: 0.3, fontSize: 12, bold: true, color: INK })
-      s.addText(String(items[i].summary || '').slice(0, 300), { x: 0.9, y: y + 0.42, w: 11.5, h: 0.65, fontSize: 10.5, color: BODY })
+      const y = CT + i * (ih + igap)
+      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: ih, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(items[i].title || ''), { x: 0.95, y: y + 0.16, w: 11.4, h: 0.3, fontSize: 13, bold: true, color: INK })
+      s.addText(String(items[i].summary || '').slice(0, 320), { x: 0.95, y: y + 0.54, w: 11.4, h: ih - 0.68, fontSize: 11, color: BODY, valign: 'top' })
     }
   }
 
@@ -172,44 +180,63 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   const s6 = pptx.addSlide()
   head(s6, 'LOOKING AHEAD', ahead.headline, ahead.subtitle)
   const aMonths = (ahead.months || []).slice(0, 2)
+  const acw = (12.13 - 0.25) / 2
   for (let i = 0; i < aMonths.length; i++) {
-    const m = aMonths[i]
-    const x = 0.6 + i * 6.15
-    s6.addShape('roundRect', { x, y: 1.8, w: 5.98, h: 2.45, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-    s6.addText(String(m.label || ''), { x: x + 0.25, y: 1.95, w: 3, h: 0.3, fontSize: 13, bold: true, color: INK, charSpacing: 2 })
-    s6.addText(String(m.status || ''), { x: x + 3.2, y: 1.98, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: ACC, charSpacing: 1 })
-    s6.addText(String(m.occPct != null ? m.occPct : 0) + '%', { x: x + 0.25, y: 2.3, w: 2.4, h: 0.6, fontSize: 30, bold: true, color: INK })
-    s6.addText('on the books', { x: x + 2.0, y: 2.52, w: 2.4, h: 0.3, fontSize: 10, color: MUT })
-    s6.addText('ADR ' + String(m.adr || '') + '   ·   RevPAR ' + String(m.revpar || ''), { x: x + 0.25, y: 3.0, w: 5.5, h: 0.3, fontSize: 11, bold: true, color: BODY })
-    if (m.note) s6.addText(String(m.note).slice(0, 190), { x: x + 0.25, y: 3.32, w: 5.5, h: 0.8, fontSize: 9, color: SUB })
+    const m = aMonths[i], x = 0.6 + i * (acw + 0.25)
+    s6.addShape('roundRect', { x, y: CT, w: acw, h: 2.7, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+    s6.addText(String(m.label || ''), { x: x + 0.28, y: CT + 0.2, w: 3, h: 0.3, fontSize: 14, bold: true, color: INK, charSpacing: 2 })
+    s6.addText(String(m.status || ''), { x: x + acw - 2.7, y: CT + 0.23, w: 2.4, h: 0.25, align: 'right', fontSize: 9.5, bold: true, color: ACC, charSpacing: 1 })
+    s6.addText(String(m.occPct != null ? m.occPct : 0) + '%', { x: x + 0.28, y: CT + 0.62, w: 2.6, h: 0.78, fontSize: 34, bold: true, color: INK })
+    s6.addText('on the books', { x: x + 2.5, y: CT + 0.94, w: 2.4, h: 0.3, fontSize: 10.5, color: MUT })
+    s6.addText('ADR ' + String(m.adr || '') + '   ·   RevPAR ' + String(m.revpar || ''), { x: x + 0.28, y: CT + 1.52, w: acw - 0.5, h: 0.3, fontSize: 12, bold: true, color: BODY })
+    if (m.note) s6.addText(String(m.note).slice(0, 190), { x: x + 0.28, y: CT + 1.9, w: acw - 0.5, h: 0.72, fontSize: 9.5, color: SUB, valign: 'top' })
   }
   const strip = (ahead.strip || []).slice(0, 8)
   if (strip.length) {
-    s6.addText('MONTHS AHEAD  ·  OCCUPANCY %', { x: 0.6, y: 4.55, w: 8, h: 0.25, fontSize: 9, bold: true, color: MUT, charSpacing: 2 })
-    const bw = 12.13 / strip.length
+    const stripTop = CT + 2.95
+    s6.addText('MONTHS AHEAD  ·  OCCUPANCY %', { x: 0.6, y: stripTop, w: 8, h: 0.25, fontSize: 9.5, bold: true, color: MUT, charSpacing: 2 })
+    const baseY = 7.0, maxBar = 1.55, bw = 12.13 / strip.length
     for (let i = 0; i < strip.length; i++) {
-      const pct = Number(strip[i].occPct) || 0
-      const bh = Math.max(0.08, (pct / 100) * 1.7)
-      const x = 0.6 + i * bw
-      s6.addShape('rect', { x: x + bw * 0.2, y: 6.75 - bh, w: bw * 0.6, h: bh, fill: { color: i === 1 ? BARB : BARA } })
-      s6.addText(String(pct) + '%', { x, y: 6.75 - bh - 0.3, w: bw, h: 0.25, align: 'center', fontSize: 9, bold: true, color: INK })
-      s6.addText(String(strip[i].month || ''), { x, y: 6.8, w: bw, h: 0.25, align: 'center', fontSize: 9, color: SUB })
+      const pct = Number(strip[i].occPct) || 0, bh = Math.max(0.08, (pct / 100) * maxBar), x = 0.6 + i * bw
+      s6.addShape('rect', { x: x + bw * 0.2, y: baseY - bh, w: bw * 0.6, h: bh, fill: { color: i === 1 ? BARB : BARA } })
+      s6.addText(String(pct) + '%', { x, y: baseY - bh - 0.28, w: bw, h: 0.24, align: 'center', fontSize: 9, bold: true, color: INK })
+      s6.addText(String(strip[i].month || ''), { x, y: baseY + 0.06, w: bw, h: 0.24, align: 'center', fontSize: 9, color: SUB })
     }
   }
 
-  // guest voices
+  // guest voices — reviews KPI band + quotes
   const quotes = (voices.quotes || []).slice(0, 4)
-  if (quotes.length) {
+  const kpi = voices.kpi
+  if (quotes.length || kpi) {
     const s = pptx.addSlide()
     head(s, 'GUEST VOICES', voices.headline, voices.subtitle)
+    let qTop = CT
+    if (kpi) {
+      const kh = 1.15
+      s.addShape('roundRect', { x: 0.6, y: CT, w: 12.13, h: kh, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      const kstats = [
+        { v: (kpi.avg != null ? String(kpi.avg) : '—'), l: 'AVG RATING' },
+        { v: (kpi.count != null ? String(kpi.count) : '—'), l: 'REVIEWS' },
+        { v: (kpi.fiveStar != null ? String(kpi.fiveStar) : '—'), l: '5-STAR' }
+      ]
+      const sw = 12.13 / 3
+      for (let i = 0; i < 3; i++) {
+        const x = 0.6 + i * sw
+        if (i) s.addShape('rect', { x, y: CT + 0.22, w: 0.012, h: kh - 0.44, fill: { color: CB } })
+        s.addText(kstats[i].v, { x, y: CT + 0.2, w: sw, h: 0.55, align: 'center', fontSize: 26, bold: true, color: i === 0 ? GOLD : INK })
+        s.addText(kstats[i].l, { x, y: CT + 0.78, w: sw, h: 0.25, align: 'center', fontSize: 9, bold: true, color: SUB, charSpacing: 2 })
+      }
+      if (kpi.from && kpi.to) s.addText(String(kpi.from) + '  →  ' + String(kpi.to), { x: 0.6, y: CT + kh + 0.06, w: 12.13, h: 0.22, align: 'center', fontSize: 8.5, color: MUT })
+      qTop = CT + kh + 0.36
+    }
+    const qn = quotes.length, qrows = Math.max(1, Math.ceil(qn / 2)), qgap = 0.22
+    const qh = (CBOT - qTop - (qrows - 1) * qgap) / qrows, qcw = (12.13 - 0.25) / 2
     for (let i = 0; i < quotes.length; i++) {
-      const q = quotes[i]
-      const x = 0.6 + (i % 2) * 6.15
-      const y = 1.8 + Math.floor(i / 2) * 2.55
-      s.addShape('roundRect', { x, y, w: 5.98, h: 2.4, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-      s.addText('“' + String(q.text || '').slice(0, 250) + '”', { x: x + 0.25, y: y + 0.15, w: 5.5, h: 1.55, fontSize: 10.5, italic: true, color: BODY })
-      s.addText(String(q.guest || ''), { x: x + 0.25, y: y + 1.85, w: 3, h: 0.3, fontSize: 9, bold: true, color: INK, charSpacing: 1 })
-      s.addText(String(q.unit || '') + (q.br ? ' · ' + q.br : ''), { x: x + 3.0, y: y + 1.85, w: 2.7, h: 0.3, align: 'right', fontSize: 8.5, color: MUT })
+      const q = quotes[i], x = 0.6 + (i % 2) * (qcw + 0.25), y = qTop + Math.floor(i / 2) * (qh + qgap)
+      s.addShape('roundRect', { x, y, w: qcw, h: qh, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText('“' + String(q.text || '').slice(0, 240) + '”', { x: x + 0.28, y: y + 0.18, w: qcw - 0.52, h: qh - 0.72, fontSize: 10.5, italic: true, color: BODY, valign: 'top' })
+      s.addText(String(q.guest || ''), { x: x + 0.28, y: y + qh - 0.44, w: 3, h: 0.3, fontSize: 9, bold: true, color: INK, charSpacing: 1 })
+      s.addText(String(q.unit || '') + (q.br ? ' · ' + q.br : ''), { x: x + qcw - 2.9, y: y + qh - 0.44, w: 2.6, h: 0.3, align: 'right', fontSize: 8.5, color: MUT })
     }
   }
 
@@ -218,13 +245,14 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   if (themes.length) {
     const s = pptx.addSlide()
     s.background = { color: BAND }
-    s.addText("WHAT WE'RE HEARING  ·  AND WHAT WE'RE DOING", { x: 0.6, y: 0.5, w: 12.1, h: 0.35, fontSize: 13, bold: true, color: GOLD, charSpacing: 2 })
+    s.addText("WHAT WE'RE HEARING  ·  AND WHAT WE'RE DOING", { x: 0.6, y: 0.5, w: 12.13, h: 0.4, fontSize: 14, bold: true, color: GOLD, charSpacing: 2 })
+    const n = Math.max(1, themes.length), tTop = 1.45, tgap = 0.3, th = (CBOT - tTop - (n - 1) * tgap) / n
     for (let i = 0; i < themes.length; i++) {
-      const y = 1.3 + i * 1.9
-      s.addShape('rect', { x: 0.6, y: y + 0.05, w: 0.045, h: 1.6, fill: { color: ACC } })
-      s.addText(String(themes[i].title || ''), { x: 0.9, y, w: 11.6, h: 0.35, fontSize: 14, bold: true, color: 'FFFFFF' })
-      s.addText(String(themes[i].body || '').slice(0, 260), { x: 0.9, y: y + 0.4, w: 11.6, h: 0.65, fontSize: 11, color: 'DDDDDD' })
-      s.addText(String(themes[i].action || '').slice(0, 220), { x: 0.9, y: y + 1.1, w: 11.6, h: 0.55, fontSize: 11, color: GOLD })
+      const y = tTop + i * (th + tgap)
+      s.addShape('rect', { x: 0.6, y: y + 0.05, w: 0.05, h: th - 0.1, fill: { color: ACC } })
+      s.addText(String(themes[i].title || ''), { x: 0.95, y, w: 11.6, h: 0.4, fontSize: 15, bold: true, color: 'FFFFFF' })
+      s.addText(String(themes[i].body || '').slice(0, 300), { x: 0.95, y: y + 0.46, w: 11.6, h: th - 1.0, fontSize: 11.5, color: 'DDDDDD', valign: 'top' })
+      s.addText(String(themes[i].action || '').slice(0, 240), { x: 0.95, y: y + th - 0.5, w: 11.6, h: 0.45, fontSize: 11.5, color: GOLD })
     }
   }
 
@@ -233,11 +261,13 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   if (weeks.length) {
     const s = pptx.addSlide()
     head(s, 'PROJECTS', projects.headline, projects.subtitle)
+    const tracking = (projects.tracking || []).slice(0, 4)
+    const colBottom = tracking.length ? 6.05 : CBOT
+    const n = Math.max(1, weeks.length), wgap = 0.2, ww = (12.13 - (n - 1) * wgap) / n
     for (let wi = 0; wi < weeks.length; wi++) {
-      const w = weeks[wi]
-      const x = 0.6 + wi * 4.13
-      s.addShape('roundRect', { x, y: 1.75, w: 3.98, h: 4.35, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-      s.addText(String(w.label || ''), { x: x + 0.2, y: 1.9, w: 3.6, h: 0.3, fontSize: 10.5, bold: true, color: ACC, charSpacing: 1 })
+      const w = weeks[wi], x = 0.6 + wi * (ww + wgap)
+      s.addShape('roundRect', { x, y: CT, w: ww, h: colBottom - CT, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(w.label || ''), { x: x + 0.22, y: CT + 0.15, w: ww - 0.4, h: 0.3, fontSize: 11, bold: true, color: ACC, charSpacing: 1 })
       let body = ''
       const groups = (w.groups || []).slice(0, 4)
       for (let gi = 0; gi < groups.length; gi++) {
@@ -246,14 +276,13 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
         for (let ii = 0; ii < items.length; ii++) body += '• ' + String(items[ii]).slice(0, 90) + '\n'
         body += '\n'
       }
-      s.addText(body.slice(0, 900), { x: x + 0.2, y: 2.25, w: 3.62, h: 3.75, fontSize: 8.5, color: BODY, valign: 'top' })
+      s.addText(body.slice(0, 1000), { x: x + 0.22, y: CT + 0.52, w: ww - 0.44, h: colBottom - CT - 0.6, fontSize: 9, color: BODY, valign: 'top' })
     }
-    const tracking = (projects.tracking || []).slice(0, 4)
     if (tracking.length) {
-      s.addShape('roundRect', { x: 0.6, y: 6.35, w: 12.13, h: 0.85, fill: { color: cx(t.trackBg, 'FFFDF7') }, line: { color: GOLD, dashType: 'dash' }, rectRadius: 0.06 })
+      s.addShape('roundRect', { x: 0.6, y: 6.25, w: 12.13, h: 0.7, fill: { color: cx(t.trackBg, 'FFFDF7') }, line: { color: GOLD, dashType: 'dash' }, rectRadius: 0.06 })
       let names = ''
       for (let i = 0; i < tracking.length; i++) names += (i ? '   ·   ' : '') + String(tracking[i].title || '')
-      s.addText('IN PROGRESS:  ' + names.slice(0, 200), { x: 0.9, y: 6.55, w: 11.6, h: 0.45, fontSize: 10, bold: true, color: GOLD })
+      s.addText('IN PROGRESS:  ' + names.slice(0, 200), { x: 0.95, y: 6.42, w: 11.4, h: 0.4, fontSize: 10.5, bold: true, color: GOLD })
     }
   }
 
