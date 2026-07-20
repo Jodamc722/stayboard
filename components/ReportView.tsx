@@ -5,8 +5,8 @@
 // project items be removed/added, and sections be hidden/shown (content.omit).
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
-import { useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight } from 'lucide-react'
 
 type Any = any
 
@@ -381,6 +381,68 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const [rvTo, setRvTo] = useState('')
   const [rvBusy, setRvBusy] = useState(false)
 
+  // ---------- present mode (full-screen slideshow) ----------
+  const [present, setPresent] = useState(false)
+  const [slide, setSlide] = useState(0)
+  const slideRef = useRef(0)
+  slideRef.current = slide
+  const scrollRef = useRef<HTMLDivElement>(null)
+  function slideEls(): HTMLElement[] {
+    const el = scrollRef.current
+    if (!el) return []
+    return (Array.prototype.slice.call(el.children) as HTMLElement[]).filter(ch => ch.tagName === 'SECTION' || ch.tagName === 'HEADER')
+  }
+  function goTo(idx: number) {
+    const kids = slideEls()
+    if (!kids.length) return
+    const i = Math.max(0, Math.min(kids.length - 1, idx))
+    setSlide(i)
+    if (kids[i]) kids[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  function enterPresent() {
+    setEdit(false); setAiKey(null); setPicker(false)
+    setPresent(true); setSlide(0)
+    setTimeout(() => {
+      const el = scrollRef.current
+      try {
+        const rf = (el && (el as Any).requestFullscreen) ? (el as Any).requestFullscreen() : ((document.documentElement as Any).requestFullscreen && (document.documentElement as Any).requestFullscreen())
+        if (rf && rf.catch) rf.catch(() => {})
+      } catch {}
+      if (el) el.scrollTop = 0
+    }, 40)
+  }
+  function exitPresent() {
+    setPresent(false)
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        const p = document.exitFullscreen()
+        if (p && (p as Any).catch) (p as Any).catch(() => {})
+      }
+    } catch {}
+  }
+  function onPresentScroll() {
+    const el = scrollRef.current
+    if (!present || !el) return
+    const kids = slideEls()
+    const mid = el.scrollTop + el.clientHeight / 2
+    let best = 0
+    for (let i = 0; i < kids.length; i++) { if (kids[i].offsetTop <= mid) best = i }
+    if (best !== slideRef.current) setSlide(best)
+  }
+  useEffect(() => {
+    if (!present) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { exitPresent() }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); goTo(slideRef.current + 1) }
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); goTo(slideRef.current - 1) }
+    }
+    function onFs() { if (!document.fullscreenElement) setPresent(false) }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => { window.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', onFs) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [present])
+
   // path setter: patch('voices.quotes.0.text', v)
   function patch(path: string, value: Any) {
     setC((prev: Any) => {
@@ -598,6 +660,12 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const voices = c.voices || {}
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
+  const presentCount = (['hero', 'snapshot',
+    (c.pacing ? 'pacing' : null),
+    (plan ? 'plan' : null),
+    ((c.statement && Array.isArray(c.statement.items) && c.statement.items.length) ? 'statement' : null),
+    'ahead', 'voices', 'projects'] as (string | null)[])
+    .filter(k => !!k && (k === 'hero' || !isHidden(k as string))).length
 
   return (
     <div className="min-h-screen" style={{ background: t.bg, color: t.ink, '--ed-bg': t.edBg, '--ed-border': t.edBorder, '--t-card': t.card, '--t-border': t.toolbarBorder, '--t-ink': t.ink, '--t-accent': t.accent } as Any}>
@@ -634,6 +702,9 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
           </button>
           <button onClick={sendToDrive} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {busy === 'drive' ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />} Slides
+          </button>
+          <button onClick={enterPresent} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.ink, color: t.bg }}>
+            <Play size={12} /> Present
           </button>
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
@@ -714,7 +785,48 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto px-5 sm:px-8 pb-20">
+      {/* elevated look: smoother rhythm + hairline dividers between sections */}
+      <style>{`
+        html { scroll-behavior: smooth; }
+        .sb-report > section { margin-top: 2.25rem; border-top: 1px solid ${t.rule}; }
+        .sb-report > section:first-of-type { border-top: 0; margin-top: 0; }
+        .sb-present { position: fixed; inset: 0; height: 100vh; width: 100vw; overflow-y: scroll; scroll-snap-type: y mandatory; z-index: 40; background: ${t.bg}; -ms-overflow-style: none; scrollbar-width: none; }
+        .sb-present::-webkit-scrollbar { display: none; }
+        .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; padding: 5vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
+        .sb-present > header { text-align: center; }
+        .sb-present > footer { display: none; }
+        .sb-present > section > *, .sb-present > header > * { max-width: 1080px; width: 100%; margin-left: auto; margin-right: auto; }
+        .sb-present > section > * > .pt-12 { padding-top: 0 !important; }
+      `}</style>
+
+      {/* Present button for owners (no edit toolbar) */}
+      {!canEdit && !present && (
+        <button onClick={enterPresent} className="fixed top-4 right-4 z-30 inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.ink, color: t.bg }}>
+          <Play size={13} /> Present
+        </button>
+      )}
+
+      {/* Present-mode overlay controls */}
+      {present && (
+        <>
+          <button onClick={exitPresent} className="fixed top-4 right-4 z-[60] inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+            <X size={13} /> Exit
+          </button>
+          <button onClick={() => goTo(slide - 1)} disabled={slide <= 0} className="fixed left-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+            <ChevronLeft size={22} />
+          </button>
+          <button onClick={() => goTo(slide + 1)} disabled={slide >= presentCount - 1} className="fixed right-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+            <ChevronRight size={22} />
+          </button>
+          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 rounded-full px-3 py-2 shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+            {Array.from({ length: presentCount }).map((_x, i) => (
+              <button key={i} onClick={() => goTo(i)} className="rounded-full transition-all" style={{ width: i === slide ? 22 : 8, height: 8, background: i === slide ? t.accent : t.toolbarBorder }} />
+            ))}
+          </div>
+        </>
+      )}
+
+      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? 'sb-present' : 'sb-report max-w-4xl mx-auto px-5 sm:px-8 pb-20'}>
 
         {/* ---------- HERO ---------- */}
         <header className="relative pt-14 pb-12 text-center border-b" style={{ borderColor: t.rule }}>
