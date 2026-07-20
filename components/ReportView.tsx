@@ -179,17 +179,17 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   // looking ahead
   const s6 = pptx.addSlide()
   head(s6, 'LOOKING AHEAD', ahead.headline, ahead.subtitle)
-  const aMonths = (ahead.months || []).slice(0, 2)
-  const acw = (12.13 - 0.25) / 2
+  const aMonths = (ahead.months || []).slice(0, 3)
+  const an = Math.max(1, aMonths.length), acw = (12.13 - (an - 1) * 0.25) / an
   for (let i = 0; i < aMonths.length; i++) {
     const m = aMonths[i], x = 0.6 + i * (acw + 0.25)
     s6.addShape('roundRect', { x, y: CT, w: acw, h: 2.7, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-    s6.addText(String(m.label || ''), { x: x + 0.28, y: CT + 0.2, w: 3, h: 0.3, fontSize: 14, bold: true, color: INK, charSpacing: 2 })
-    s6.addText(String(m.status || ''), { x: x + acw - 2.7, y: CT + 0.23, w: 2.4, h: 0.25, align: 'right', fontSize: 9.5, bold: true, color: ACC, charSpacing: 1 })
-    s6.addText(String(m.occPct != null ? m.occPct : 0) + '%', { x: x + 0.28, y: CT + 0.62, w: 2.6, h: 0.78, fontSize: 34, bold: true, color: INK })
-    s6.addText('on the books', { x: x + 2.5, y: CT + 0.94, w: 2.4, h: 0.3, fontSize: 10.5, color: MUT })
-    s6.addText('ADR ' + String(m.adr || '') + '   ·   RevPAR ' + String(m.revpar || ''), { x: x + 0.28, y: CT + 1.52, w: acw - 0.5, h: 0.3, fontSize: 12, bold: true, color: BODY })
-    if (m.note) s6.addText(String(m.note).slice(0, 190), { x: x + 0.28, y: CT + 1.9, w: acw - 0.5, h: 0.72, fontSize: 9.5, color: SUB, valign: 'top' })
+    s6.addText(String(m.label || ''), { x: x + 0.24, y: CT + 0.2, w: acw - 1.5, h: 0.3, fontSize: 13, bold: true, color: INK, charSpacing: 1 })
+    s6.addText(String(m.status || ''), { x: x + acw - 1.6, y: CT + 0.23, w: 1.4, h: 0.25, align: 'right', fontSize: 9, bold: true, color: ACC, charSpacing: 1 })
+    s6.addText(String(m.occPct != null ? m.occPct : 0) + '%', { x: x + 0.24, y: CT + 0.62, w: acw - 0.4, h: 0.78, fontSize: 32, bold: true, color: INK })
+    s6.addText('on the books', { x: x + 0.26, y: CT + 1.34, w: acw - 0.4, h: 0.28, fontSize: 10, color: MUT })
+    s6.addText('ADR ' + String(m.adr || '') + '  ·  RevPAR ' + String(m.revpar || ''), { x: x + 0.24, y: CT + 1.66, w: acw - 0.4, h: 0.3, fontSize: 11, bold: true, color: BODY })
+    if (m.note) s6.addText(String(m.note).slice(0, 190), { x: x + 0.24, y: CT + 1.98, w: acw - 0.4, h: 0.66, fontSize: 9, color: SUB, valign: 'top' })
   }
   const strip = (ahead.strip || []).slice(0, 8)
   if (strip.length) {
@@ -1016,7 +1016,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
               <Ed v={ahead.subtitle || ''} set={v => patch('ahead.subtitle', v)} edit={edit} />
             </p>
-            <div className="mt-6 grid sm:grid-cols-2 gap-4">
+            <div className={'mt-6 grid gap-4 ' + (((ahead.months || []).length >= 3) ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
               {(ahead.months || []).map((m: Any, i: number) => (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
