@@ -210,9 +210,11 @@ export default function BotanicaReportPage() {
         </div>
         <div className="text-xs text-neutral-500 mt-2">{fmtDate(range.from)} – {fmtDate(range.to)} · {rows.length} nights</div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-3">
+          <Tile label="Active units" value={String(rows.length ? rows[rows.length - 1].inv : 0)} sub={rows.length ? 'avg ' + Math.round(total.inv / rows.length) + ' across range' : 'units live'} />
           <Tile label="Occupancy" value={total.inv > 0 ? pct1(total.occ) : '—'} sub={total.rns + ' of ' + total.inv + ' room nights'} />
           <Tile label="ADR" value={total.rns > 0 ? money(total.adr) : '—'} sub="includes cleaning" />
+          <Tile label="RevPAR" value={total.inv > 0 ? money(total.rev / total.inv) : '—'} sub="per available night" />
           <Tile label="Total revenue" value={money0(total.rev)} sub={'room ' + money0(total.rev - total.cleaning)} />
           <Tile label="Cleaning revenue" value={money0(total.cleaning)} sub={'of ' + money0(total.rev) + ' total'} />
         </div>
