@@ -379,6 +379,8 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const [attachMsg, setAttachMsg] = useState('')
   const [picker, setPicker] = useState(false)
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
+  const [manualLine, setManualLine] = useState('')
+  const manualFileRef = useRef<HTMLInputElement>(null)
   const pacingRef = useRef<HTMLInputElement>(null)
   const stmtRef = useRef<HTMLInputElement>(null)
   const heroRef = useRef<HTMLInputElement>(null)
@@ -495,6 +497,29 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
 
   function copyLink() {
     try { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {}
+  }
+
+  // manual "completed work" — typed lines or a parsed file, added on top of the Breezeway pull
+  function addManualLine() {
+    const v = manualLine.trim(); if (!v) return
+    mutate(d => { d.projects = d.projects || {}; d.projects.manual = Array.isArray(d.projects.manual) ? d.projects.manual : []; d.projects.manual.push(v) })
+    setManualLine('')
+  }
+  async function onManualFilePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files && e.target.files[0]; if (!f) return
+    setAttachMsg(''); setBusy('completed')
+    const url = await uploadOne(f)
+    if (url) {
+      try {
+        const r = await fetch('/api/reports/attach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: initial.id, kind: 'completed', url }) })
+        const d = await r.json()
+        if (d?.ok && Array.isArray(d.items) && d.items.length) {
+          mutate(dr => { dr.projects = dr.projects || {}; dr.projects.manual = Array.isArray(dr.projects.manual) ? dr.projects.manual : []; d.items.forEach((it: string) => dr.projects.manual.push(it)) })
+          setAttachMsg('Added ' + d.items.length + ' item(s) from the file — review, then Save.')
+        } else { setAttachMsg((d && d.error) || 'Could not read work items from that file.') }
+      } catch { setAttachMsg('Could not read that file.') }
+    }
+    setBusy(''); if (manualFileRef.current) manualFileRef.current.value = ''
   }
 
   // ---- attachments on an existing report (P3.5) ----
@@ -881,7 +906,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             </p>
             <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-3">
               {(snap.cards || []).map((card: Any, i: number) => (
-                <div key={card.key || i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                <div key={card.key || i} className="relative rounded-2xl p-5 shadow-sm border flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
                     <button onClick={() => mutate(d => d.snapshot.cards.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                   )}
@@ -891,7 +916,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
                   <p className="mt-2 text-4xl font-black tabular-nums" style={{ color: t.ink }}>
                     <Ed v={card.value || ''} set={v => patch('snapshot.cards.' + i + '.value', v)} edit={edit} />
                   </p>
-                  <p className="mt-2 text-[11px] leading-snug" style={{ color: t.sub }}>
+                  <p className="mt-auto pt-2 text-[11px] leading-snug" style={{ color: t.sub }}>
                     <Ed v={card.sub || ''} set={v => patch('snapshot.cards.' + i + '.sub', v)} edit={edit} multiline />
                   </p>
                 </div>
@@ -1189,9 +1214,9 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
               <Ed v={projects.subtitle || ''} set={v => patch('projects.subtitle', v)} edit={edit} />
             </p>
-            <div className="mt-6 grid md:grid-cols-3 gap-4">
+            <div className="mt-6 grid md:grid-cols-3 gap-4 items-stretch">
               {(projects.weeks || []).map((w: Any, wi: number) => (
-                <div key={wi} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                <div key={wi} className="relative rounded-2xl p-5 shadow-sm border h-full flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
                     <button onClick={() => mutate(d => d.projects.weeks.splice(wi, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                   )}
@@ -1225,6 +1250,30 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
                 </div>
               ))}
             </div>
+
+            {((projects.manual && projects.manual.length) || edit) ? (
+              <div className="mt-4 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                <p className="text-[11px] font-black tracking-[0.16em]" style={{ color: t.accent }}>COMPLETED WORK</p>
+                <ul className="mt-2 space-y-1.5">
+                  {(projects.manual || []).map((it: string, i: number) => (
+                    <li key={i} className="relative text-[12.5px] leading-snug pl-3" style={{ color: t.body }}>
+                      <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
+                      <Ed v={it} set={v => patch('projects.manual.' + i, v)} edit={edit} multiline />
+                      {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(i, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
+                    </li>
+                  ))}
+                </ul>
+                {edit && (
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    <input value={manualLine} onChange={e => setManualLine(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManualLine() } }} placeholder="Add a completed item, press Enter" className="flex-1 min-w-[200px] rounded-lg px-3 py-1.5 text-[13px] outline-none" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                    <button onClick={addManualLine} disabled={!manualLine.trim()} className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.accent, color: t.card }}><Plus size={12} /> Add</button>
+                    <input ref={manualFileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={onManualFilePick} />
+                    <button onClick={() => manualFileRef.current && manualFileRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>{busy === 'completed' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Upload file</button>
+                  </div>
+                )}
+                {edit && <p className="mt-2 text-[11px] italic" style={{ color: t.muted }}>Added on top of the Breezeway-pulled work above. Upload a PDF or photo and the AI pulls out the completed items.</p>}
+              </div>
+            ) : null}
 
             {(Array.isArray(projects.tracking) && projects.tracking.length > 0) || edit ? (
               <div className="mt-6 rounded-2xl p-5 border-2 border-dashed" style={{ borderColor: t.gold, background: t.trackBg }}>
