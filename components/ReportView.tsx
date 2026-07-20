@@ -1014,22 +1014,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </p>
               <div className="mt-6 space-y-4">
                 {(c.pacing.rows || []).map((r: Any, i: number) => (
-                  <div key={i} className="relative rounded-2xl p-5 shadow-sm border flex items-center gap-4" style={{ background: t.card, borderColor: t.cardBorder }}>
+                  <div key={i} className="relative rounded-2xl p-5 shadow-sm border grid items-center gap-3" style={{ background: t.card, borderColor: t.cardBorder, gridTemplateColumns: 'minmax(6rem,1.15fr) 1fr 1fr minmax(5rem,1fr)' }}>
                     {edit && (
                       <button onClick={() => mutate(d => d.pacing.rows.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                     )}
-                    <div className="w-28 text-sm font-bold">{r.metric}</div>
-                    <div className="flex-1 grid grid-cols-2 gap-3 text-center">
-                      <div>
-                        <p className="text-2xl font-black tabular-nums" style={{ color: t.ink }}><Ed v={r.ours || ''} set={v => patch('pacing.rows.' + i + '.ours', v)} edit={edit} /></p>
-                        <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.accent }}>{meta.scopeLabel || 'Us'}</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-black tabular-nums" style={{ color: t.muted }}><Ed v={r.comps || ''} set={v => patch('pacing.rows.' + i + '.comps', v)} edit={edit} /></p>
-                        <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Comp set</p>
-                      </div>
+                    <div className="text-sm font-bold" style={{ color: t.ink }}>{r.metric}</div>
+                    <div className="text-center">
+                      <p className="text-2xl font-black tabular-nums" style={{ color: t.ink }}><Ed v={r.ours || ''} set={v => patch('pacing.rows.' + i + '.ours', v)} edit={edit} /></p>
+                      <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.accent }}>{meta.scopeLabel || 'Us'}</p>
                     </div>
-                    <div className="w-24 text-right">
+                    <div className="text-center">
+                      <p className="text-2xl font-black tabular-nums" style={{ color: t.muted }}><Ed v={r.comps || ''} set={v => patch('pacing.rows.' + i + '.comps', v)} edit={edit} /></p>
+                      <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Comp set</p>
+                    </div>
+                    <div className="text-right">
                       <p className="text-lg font-black" style={{ color: (String(r.delta || '').trim().indexOf('-') === 0 || String(r.delta || '').trim().indexOf('−') === 0) ? t.downGray : t.good }}><Ed v={r.delta || ''} set={v => patch('pacing.rows.' + i + '.delta', v)} edit={edit} /></p>
                       <p className="text-[10px] uppercase tracking-wider" style={{ color: t.muted }}>vs. comps</p>
                     </div>
