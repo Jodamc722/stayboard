@@ -241,7 +241,7 @@ export async function POST(req: NextRequest) {
     + '{"heroHeadline": one punchy sentence on the period, '
     + '"snapshotHeadline": one short sentence, '
     + '"aheadHeadline": one short sentence on pickup/pacing, '
-    + '"aheadNotes": {"current": 1-2 sentences on the current month, "next": 1-2 sentences on next month}, '
+    + '"aheadNotes": {"current": 1-2 sentences on the current month, "next": 1-2 sentences on next month, "third": 1-2 sentences on the month after next (only used when included)}, '
     + '"quotes": [up to 4 objects {"i": review index number, "text": lightly trimmed quote max 220 chars}] pick the most specific, credible, positive quotes across DIFFERENT units, '
     + '"themes": [2-3 objects {"title": short theme name like "Communication - a highlight", "body": 1 sentence on what guests are saying, "action": 1 sentence on what we are doing}], '
     + '"projectWeeks": [one object per week bucket {"label": the bucket label EXACTLY as given, "groups": [{"category": UPPERCASE grouping like "DEEP CLEAN + PM" or "REPAIRS + MAINTENANCE" or "COMMON AREAS", "items": [concise task lines, merge duplicates, max 6 per group]}]}], '
@@ -315,6 +315,9 @@ export async function POST(req: NextRequest) {
   }
 
   const cur = mAhead[1]; const nxt = mAhead[2]
+  // Once we're past the 19th of the current month, look one further month ahead (3rd card).
+  const asOfDay = Number(String(asOf).slice(8, 10)) || 1
+  const nxt2 = asOfDay > 19 ? mAhead[3] : null
   const content: ReportContent = {
     meta: {
       scopeLabel, periodStart, periodEnd, asOf,
@@ -355,6 +358,7 @@ export async function POST(req: NextRequest) {
       months: [
         cur ? { label: cur.label.toUpperCase(), status: 'IN MONTH', occPct: cur.m.occupancyPct, adr: '$' + cur.m.adr, revpar: '$' + cur.m.revpar, note: str(ai.aheadNotes?.current).slice(0, 260) } : null,
         nxt ? { label: nxt.label.toUpperCase(), status: 'BUILDING', occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260) } : null,
+        nxt2 ? { label: nxt2.label.toUpperCase(), status: 'BUILDING', occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260) } : null,
       ].filter(Boolean) as any,
       strip: mAhead.map(m => ({ month: m.short, occPct: m.m.occupancyPct })),
     },
