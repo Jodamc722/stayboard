@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Link2 } from 'lucide-react'
 
-type ShareLink = { v: string; label: string }
+type ShareLink = { v: string; label: string; path?: string }
 
 export function ShareLinksCard() {
   const [links, setLinks] = useState<ShareLink[]>([])
@@ -40,10 +40,10 @@ export function ShareLinksCard() {
       <div className="flex items-center gap-2 mb-1"><Link2 size={16} className="text-muted" /><h2 className="font-semibold text-ink">Vendor share links</h2></div>
       <p className="text-sm text-muted mb-4">Send these to vendors and the front desk. They open without a StayBoard login — one shared password protects all of them.</p>
       <div className="space-y-2 mb-5">
-        {links.map(l => { const url = origin + '/vendor/' + l.v; return (
+        {links.map(l => { const href = l.path || '/vendor/' + l.v; const url = origin + href; return (
           <div key={l.v} className="flex items-center gap-2 text-sm">
             <span className="w-44 shrink-0 font-medium text-ink">{l.label}</span>
-            <a href={'/vendor/' + l.v} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
+            <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
             <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
           </div>
         )})}
