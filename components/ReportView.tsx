@@ -140,7 +140,7 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   if (plan) {
     const s = pptx.addSlide()
     head(s, 'PERFORMANCE VS. PLAN', plan.headline)
-    const months = (plan.months || []).slice(0, 3)
+    const months = (plan.months || []).slice(0, 4)
     const n = Math.max(1, months.length), mgap = 0.22, mh = (CBOT - CT - (n - 1) * mgap) / n
     for (let mi = 0; mi < months.length; mi++) {
       const m = months[mi], y = CT + mi * (mh + mgap)
@@ -1054,7 +1054,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     )}
                     <div className="flex items-center gap-2.5">
                       <span className="text-sm font-black tracking-[0.14em]">{m.label}</span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={m.status === 'IN MONTH' ? { background: t.statusHotBg, color: t.statusHotInk } : { background: t.statusColdBg, color: t.statusColdInk }}>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={(m.status === 'IN MONTH' || m.status === 'PACING') ? { background: t.statusHotBg, color: t.statusHotInk } : { background: t.statusColdBg, color: t.statusColdInk }}>
                         <Ed v={m.status || ''} set={v => patch('plan.months.' + mi + '.status', v)} edit={edit} />
                       </span>
                     </div>
