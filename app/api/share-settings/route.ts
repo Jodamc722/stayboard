@@ -12,6 +12,7 @@ const LINKS = [
   { v: 'pt', label: 'Park Towers' },
   { v: 'amrit-capri-lucerne', label: 'Amrit / Capri / Lucerne' },
   { v: 'salato', label: 'Salato (front desk)' },
+  { v: 'botanica-report', label: 'Botanica report (Margaux)', path: '/report/botanica' },
 ]
 
 export async function GET() {
