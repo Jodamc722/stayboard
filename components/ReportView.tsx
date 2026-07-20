@@ -6,7 +6,7 @@
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
 import { useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud } from 'lucide-react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star } from 'lucide-react'
 
 type Any = any
 
@@ -288,20 +288,31 @@ function Ed({ v, set, edit, className, multiline, placeholder }: {
   )
 }
 
-function SectionShell({ id, title, hidden, edit, onToggle, children }: {
-  id: string; title: string; hidden: boolean; edit: boolean; onToggle: () => void; children: React.ReactNode
+function SectionShell({ id, title, hidden, edit, onToggle, onAi, children }: {
+  id: string; title: string; hidden: boolean; edit: boolean; onToggle: () => void; onAi?: () => void; children: React.ReactNode
 }) {
   if (hidden && !edit) return null
   return (
     <section className="relative">
       {edit && (
-        <button
-          onClick={onToggle}
-          className="absolute -top-3 right-4 z-10 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold"
-          style={{ background: 'var(--t-card)', border: '1px solid var(--t-border)', color: 'var(--t-ink)' }}
-        >
-          {hidden ? <Eye size={11} /> : <EyeOff size={11} />} {hidden ? 'Show ' + title : 'Hide ' + title}
-        </button>
+        <div className="absolute -top-3 right-4 z-10 flex items-center gap-1.5">
+          {onAi && (
+            <button
+              onClick={onAi}
+              className="inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold"
+              style={{ background: 'var(--t-card)', border: '1px solid var(--t-border)', color: 'var(--t-accent)' }}
+            >
+              <Sparkles size={11} /> AI
+            </button>
+          )}
+          <button
+            onClick={onToggle}
+            className="inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold"
+            style={{ background: 'var(--t-card)', border: '1px solid var(--t-border)', color: 'var(--t-ink)' }}
+          >
+            {hidden ? <Eye size={11} /> : <EyeOff size={11} />} {hidden ? 'Show ' + title : 'Hide ' + title}
+          </button>
+        </div>
       )}
       <div className={hidden ? 'opacity-30 pointer-events-none select-none' : ''}>{children}</div>
     </section>
@@ -332,6 +343,14 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const pacingRef = useRef<HTMLInputElement>(null)
   const stmtRef = useRef<HTMLInputElement>(null)
   const heroRef = useRef<HTMLInputElement>(null)
+  const aiFileRef = useRef<HTMLInputElement>(null)
+  const [aiKey, setAiKey] = useState<string | null>(null)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiFiles, setAiFiles] = useState<string[]>([])
+  const [aiBusy, setAiBusy] = useState(false)
+  const [rvFrom, setRvFrom] = useState('')
+  const [rvTo, setRvTo] = useState('')
+  const [rvBusy, setRvBusy] = useState(false)
 
   // path setter: patch('voices.quotes.0.text', v)
   function patch(path: string, value: Any) {
@@ -498,6 +517,49 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
     }
     setBusy('')
   }
+  function openAi(k: string) { setAiKey(k); setAiPrompt(''); setAiFiles([]) }
+  async function onAiFilePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files && e.target.files[0]
+    if (!f) return
+    const url = await uploadOne(f)
+    if (url) setAiFiles(prev => prev.concat([url]))
+    e.target.value = ''
+  }
+  async function runAi() {
+    if (!aiKey || !aiPrompt.trim() || aiBusy) return
+    setAiBusy(true); setAttachMsg('')
+    try {
+      const r = await fetch('/api/reports/ai-edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportId: initial.id, sectionKey: aiKey, section: c[aiKey] || {}, prompt: aiPrompt, fileUrls: aiFiles }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.section) {
+        patch(aiKey, d.section)
+        setAttachMsg('AI updated the section — review it, then Save.')
+        setAiKey(null)
+      } else {
+        setAttachMsg((d && d.error) || 'AI edit failed — try again.')
+      }
+    } catch (_e) { setAttachMsg('AI edit failed — try again.') }
+    setAiBusy(false)
+  }
+  async function pullReviewsNow() {
+    if (!rvFrom || !rvTo || rvBusy) return
+    setRvBusy(true); setAttachMsg('')
+    try {
+      const r = await fetch('/api/reports/reviews?id=' + encodeURIComponent(initial.id) + '&from=' + rvFrom + '&to=' + rvTo)
+      const d = await r.json()
+      if (d?.ok && d?.kpi) {
+        mutate(dr => { dr.voices = dr.voices || {}; dr.voices.kpi = d.kpi; dr.voices.all = d.reviews })
+        setAttachMsg('Pulled ' + (d.kpi.count || 0) + ' reviews — Save to keep them on the report.')
+      } else {
+        setAttachMsg((d && d.error) || 'Could not pull reviews.')
+      }
+    } catch (_e) { setAttachMsg('Could not pull reviews.') }
+    setRvBusy(false)
+  }
 
   const meta = c.meta || {}
   const hero = c.hero || {}
@@ -590,10 +652,48 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         </div>
       )}
 
+      {/* AI section editor (P7): prompt + optional file attachments, rewrites one section */}
+      {canEdit && edit && aiKey && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 w-[min(680px,92vw)] rounded-2xl shadow-xl border p-4" style={{ background: t.card, borderColor: t.toolbarBorder }}>
+          <div className="flex items-center gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.gold }}>AI EDIT &middot; {aiKey}</p>
+            <button onClick={() => setAiKey(null)} className="ml-auto" style={{ color: t.muted }}><X size={14} /></button>
+          </div>
+          <textarea
+            value={aiPrompt}
+            onChange={e => setAiPrompt(e.target.value)}
+            rows={2}
+            placeholder="Tell the AI what to change in this section &mdash; e.g. make it punchier, add the roof project, fold in the attached vendor report&hellip;"
+            className="mt-2 w-full rounded-xl px-3 py-2 text-[13px] outline-none"
+            style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}
+          />
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <input ref={aiFileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={onAiFilePick} />
+            <button onClick={() => aiFileRef.current && aiFileRef.current.click()} disabled={aiBusy} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+              <Paperclip size={11} /> Attach file
+            </button>
+            {aiFiles.map((u, i) => (
+              <span key={i} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]" style={{ background: t.chip, color: t.sub }}>
+                file {i + 1}
+                <button onClick={() => setAiFiles(aiFiles.filter((_x, xi) => xi !== i))} style={{ color: t.accent }}><X size={11} /></button>
+              </span>
+            ))}
+            <button onClick={runAi} disabled={aiBusy || !aiPrompt.trim()} className="ml-auto inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.accent, color: t.card }}>
+              {aiBusy ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Apply
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-4xl mx-auto px-5 sm:px-8 pb-20">
 
         {/* ---------- HERO ---------- */}
-        <header className="pt-14 pb-12 text-center border-b" style={{ borderColor: t.rule }}>
+        <header className="relative pt-14 pb-12 text-center border-b" style={{ borderColor: t.rule }}>
+          {edit && (
+            <button onClick={() => openAi('hero')} className="absolute top-4 right-4 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
+              <Sparkles size={11} /> AI
+            </button>
+          )}
           <Eyebrow>{hero.eyebrow || ''}</Eyebrow>
           <p className="mt-5 text-[12px] font-bold uppercase tracking-[0.3em]" style={{ color: t.gold }}>
             <Ed v={hero.dateLabel || 'OWNER REVIEW'} set={v => patch('hero.dateLabel', v)} edit={edit} />
@@ -614,7 +714,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         </header>
 
         {/* ---------- SNAPSHOT ---------- */}
-        <SectionShell id="snapshot" title="Snapshot" hidden={isHidden('snapshot')} edit={edit} onToggle={() => toggleSection('snapshot')}>
+        <SectionShell id="snapshot" title="Snapshot" hidden={isHidden('snapshot')} edit={edit} onToggle={() => toggleSection('snapshot')} onAi={() => openAi('snapshot')}>
           <div className="pt-12">
             <Eyebrow>SNAPSHOT</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
@@ -664,7 +764,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
 
         {/* ---------- PACING (only when data exists) ---------- */}
         {c.pacing && (
-          <SectionShell id="pacing" title="Pacing" hidden={isHidden('pacing')} edit={edit} onToggle={() => toggleSection('pacing')}>
+          <SectionShell id="pacing" title="Pacing" hidden={isHidden('pacing')} edit={edit} onToggle={() => toggleSection('pacing')} onAi={() => openAi('pacing')}>
             <div className="pt-12">
               <Eyebrow>PACING VS. MARKET</Eyebrow>
               <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
@@ -703,7 +803,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
 
         {/* ---------- PERFORMANCE VS PLAN ---------- */}
         {plan && (
-          <SectionShell id="plan" title="Plan" hidden={isHidden('plan')} edit={edit} onToggle={() => toggleSection('plan')}>
+          <SectionShell id="plan" title="Plan" hidden={isHidden('plan')} edit={edit} onToggle={() => toggleSection('plan')} onAi={() => openAi('plan')}>
             <div className="pt-12">
               <Eyebrow>PERFORMANCE VS. PLAN</Eyebrow>
               <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
@@ -747,7 +847,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
 
         {/* ---------- OWNER STATEMENT (P3 — renders when present) ---------- */}
         {c.statement && (
-          <SectionShell id="statement" title="Statement" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
+          <SectionShell id="statement" title="Statement" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')} onAi={() => openAi('statement')}>
             <div className="pt-12">
               <Eyebrow>OWNER STATEMENT</Eyebrow>
               <div className="mt-4 space-y-3">
@@ -766,7 +866,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         )}
 
         {/* ---------- LOOKING AHEAD ---------- */}
-        <SectionShell id="ahead" title="Looking Ahead" hidden={isHidden('ahead')} edit={edit} onToggle={() => toggleSection('ahead')}>
+        <SectionShell id="ahead" title="Looking Ahead" hidden={isHidden('ahead')} edit={edit} onToggle={() => toggleSection('ahead')} onAi={() => openAi('ahead')}>
           <div className="pt-12">
             <Eyebrow>LOOKING AHEAD</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
@@ -818,7 +918,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         </SectionShell>
 
         {/* ---------- GUEST VOICES ---------- */}
-        <SectionShell id="voices" title="Guest Voices" hidden={isHidden('voices')} edit={edit} onToggle={() => toggleSection('voices')}>
+        <SectionShell id="voices" title="Guest Voices" hidden={isHidden('voices')} edit={edit} onToggle={() => toggleSection('voices')} onAi={() => openAi('voices')}>
           <div className="pt-12">
             <Eyebrow>GUEST VOICES</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
@@ -827,6 +927,39 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
               <Ed v={voices.subtitle || ''} set={v => patch('voices.subtitle', v)} edit={edit} />
             </p>
+            {voices.kpi && (
+              <div className="mt-5 rounded-2xl p-4 shadow-sm border grid grid-cols-3 gap-3 text-center" style={{ background: t.card, borderColor: t.cardBorder }}>
+                <div>
+                  <p className="text-3xl font-black tabular-nums inline-flex items-center gap-1.5" style={{ color: t.ink }}><Star size={20} style={{ color: t.gold }} />{voices.kpi.avg != null ? voices.kpi.avg : '—'}</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] font-semibold mt-0.5" style={{ color: t.muted }}>Avg rating</p>
+                </div>
+                <div>
+                  <p className="text-3xl font-black tabular-nums" style={{ color: t.ink }}>{voices.kpi.count}</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] font-semibold mt-0.5" style={{ color: t.muted }}>Reviews</p>
+                </div>
+                <div>
+                  <p className="text-3xl font-black tabular-nums" style={{ color: t.ink }}>{voices.kpi.fiveStar != null ? voices.kpi.fiveStar : '—'}</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] font-semibold mt-0.5" style={{ color: t.muted }}>5-star</p>
+                </div>
+              </div>
+            )}
+            {voices.kpi && (
+              <p className="mt-1.5 text-center text-[11px]" style={{ color: t.muted }}>{voices.kpi.from} &rarr; {voices.kpi.to}</p>
+            )}
+            {edit && (
+              <div className="mt-4 flex items-center gap-2 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+                <span className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Reviews window</span>
+                <input type="date" value={rvFrom} onChange={e => setRvFrom(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <span style={{ color: t.muted }}>&rarr;</span>
+                <input type="date" value={rvTo} onChange={e => setRvTo(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <button onClick={pullReviewsNow} disabled={rvBusy || !rvFrom || !rvTo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.ink, color: t.bg }}>
+                  {rvBusy ? <Loader2 size={12} className="animate-spin" /> : <Star size={12} />} Pull reviews
+                </button>
+                <button onClick={() => mutate(d => { d.voices = d.voices || {}; d.voices.showAll = !d.voices.showAll })} className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-semibold" style={voices.showAll ? { background: t.ink, color: t.bg } : { background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+                  {voices.showAll ? 'Showing all' : 'Show all reviews'}
+                </button>
+              </div>
+            )}
             <div className="mt-6 grid sm:grid-cols-2 gap-4">
               {(voices.quotes || []).map((q: Any, i: number) => (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
@@ -848,6 +981,25 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             </div>
             {edit && (
               <button onClick={() => mutate(d => { d.voices.quotes = d.voices.quotes || []; d.voices.quotes.push({ text: '', guest: 'GUEST', unit: '', br: '' }) })} className="mt-3 inline-flex items-center gap-1 text-[12px] font-semibold" style={{ color: t.accent }}><Plus size={12} /> Add quote</button>
+            )}
+
+            {voices.showAll && Array.isArray(voices.all) && voices.all.length > 0 && (
+              <div className="mt-6 rounded-2xl shadow-sm border overflow-hidden pb-3" style={{ background: t.card, borderColor: t.cardBorder }}>
+                <p className="px-5 pt-4 text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.gold }}>ALL REVIEWS{voices.kpi ? ' · ' + voices.kpi.from + ' → ' + voices.kpi.to : ''}</p>
+                <div className="mt-2">
+                  {voices.all.map((r: Any, i: number) => (
+                    <div key={i} className="px-5 py-3" style={{ borderTop: i ? '1px solid ' + t.rule : 'none' }}>
+                      <div className="flex items-center gap-2 flex-wrap text-[11px] font-semibold" style={{ color: t.sub }}>
+                        <span style={{ color: t.ink }}>{r.guest}</span>
+                        {r.rating != null && <span className="inline-flex items-center gap-0.5" style={{ color: t.gold }}><Star size={10} />{r.rating}</span>}
+                        <span>{r.unit}{r.br ? ' · ' + r.br : ''}</span>
+                        <span className="ml-auto" style={{ color: t.muted }}>{r.date}</span>
+                      </div>
+                      {r.text && <p className="mt-1 text-[12.5px] leading-snug" style={{ color: t.body }}>{r.text}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             <div className="mt-8 rounded-2xl p-6" style={{ background: t.band, color: 'white' }}>
@@ -872,7 +1024,7 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         </SectionShell>
 
         {/* ---------- PROJECTS ---------- */}
-        <SectionShell id="projects" title="Projects" hidden={isHidden('projects')} edit={edit} onToggle={() => toggleSection('projects')}>
+        <SectionShell id="projects" title="Projects" hidden={isHidden('projects')} edit={edit} onToggle={() => toggleSection('projects')} onAi={() => openAi('projects')}>
           <div className="pt-12">
             <Eyebrow>PROJECTS</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
