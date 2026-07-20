@@ -3,6 +3,7 @@
 import { notFound } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
+import { hasEditCookie } from '@/lib/edit-access'
 import { ReportView } from '@/components/ReportView'
 
 export const dynamic = 'force-dynamic'
@@ -26,5 +27,6 @@ export default async function PublicReportPage({ params }: { params: { code: str
   if (!rep) notFound()
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  return <ReportView initial={rep} canEdit={!!user} />
+  const unlocked = hasEditCookie()
+  return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} />
 }
