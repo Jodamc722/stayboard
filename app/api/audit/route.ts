@@ -362,7 +362,7 @@ export async function POST(req: NextRequest) {
     const upd: Record<string, any> = { updated_at: new Date().toISOString() }
     if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
     if (f.qty !== undefined && Number.isFinite(Number(f.qty))) upd.qty = Math.max(1, Math.min(99, Number(f.qty)))
-    if (typeof f.brand === 'string' || typeof f.size === 'string' || typeof f.howTo === 'string' || typeof f.link === 'string') { const d: any = (item.details && typeof item.details === 'object') ? { ...item.details } : {}; if (typeof f.brand === 'string') d.brand = f.brand.slice(0, 120); if (typeof f.size === 'string') d.size = f.size.slice(0, 120); if (typeof f.howTo === 'string') d.howTo = f.howTo.slice(0, 2000); if (typeof f.link === 'string') d.link = f.link.slice(0, 500) || null; upd.details = d }
+    if (typeof f.brand === 'string' || typeof f.size === 'string' || typeof f.howTo === 'string' || typeof f.link === 'string' || f.est !== undefined) { const d: any = (item.details && typeof item.details === 'object') ? { ...item.details } : {}; if (typeof f.brand === 'string') d.brand = f.brand.slice(0, 120); if (typeof f.size === 'string') d.size = f.size.slice(0, 120); if (typeof f.howTo === 'string') d.howTo = f.howTo.slice(0, 2000); if (typeof f.link === 'string') d.link = f.link.slice(0, 500) || null; if (f.est !== undefined) { const n = Math.round(Number(f.est)); d.est = Number.isFinite(n) && n > 0 && n <= 100000 ? n : null } upd.details = d }
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
