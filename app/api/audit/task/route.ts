@@ -36,9 +36,11 @@ export async function POST(req: NextRequest) {
   const listingId = String(item.listing_id)
   const { data: lrows } = await db.from('guesty_listings').select('id,nickname,title,building').eq('id', listingId).limit(1)
   const unit = (lrows && lrows[0] && (lrows[0].nickname || lrows[0].title)) || 'Unit'
-  const department = DEPTS.includes(String(body.department)) ? String(body.department) : (item.kind === 'maintenance' ? 'maintenance' : 'inspection')
+  // ROUTING: maintenance findings go to the maintenance dept, cleanliness findings go to the
+  // housekeeping team - both overridable per item from the desk.
+  const department = DEPTS.includes(String(body.department)) ? String(body.department) : (item.kind === 'maintenance' ? 'maintenance' : item.kind === 'clean' ? 'housekeeping' : 'inspection')
   const priority = PRIOS.includes(String(body.priority)) ? String(body.priority) : (item.severity === 'high' ? 'high' : 'normal')
-  const kindLabel = item.kind === 'maintenance' ? 'Fix' : item.kind === 'add' ? 'Add' : 'Replace'
+  const kindLabel = item.kind === 'maintenance' ? 'Fix' : item.kind === 'clean' ? 'Clean' : item.kind === 'add' ? 'Add' : 'Replace'
   const name = (kindLabel + ': ' + (item.title || item.item_type || 'item') + ' \u2014 ' + item.room).slice(0, 120)
   const ai = item.ai_assessment && typeof item.ai_assessment === 'object' ? item.ai_assessment : null
   const descParts = [
