@@ -286,6 +286,16 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     }
   }
 
+  // custom sections (owner-added) — one clean slide each
+  const custom = Array.isArray(c.custom) ? c.custom : []
+  for (let ci = 0; ci < custom.length; ci++) {
+    const cs = custom[ci]
+    if (!cs || (!String(cs.title || '').trim() && !String(cs.body || '').trim())) continue
+    const s = pptx.addSlide()
+    head(s, String(cs.eyebrow || 'SECTION').toUpperCase().slice(0, 40), String(cs.title || ''))
+    s.addText(String(cs.body || ''), { x: 0.6, y: CT, w: 12.13, h: CBOT - CT, fontSize: 14, color: BODY, valign: 'top' })
+  }
+
   return pptx
 }
 
@@ -660,12 +670,13 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const voices = c.voices || {}
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
+  const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim()))
   const presentCount = (['hero', 'snapshot',
     (c.pacing ? 'pacing' : null),
     (plan ? 'plan' : null),
     ((c.statement && Array.isArray(c.statement.items) && c.statement.items.length) ? 'statement' : null),
     'ahead', 'voices', 'projects'] as (string | null)[])
-    .filter(k => !!k && (k === 'hero' || !isHidden(k as string))).length
+    .filter(k => !!k && (k === 'hero' || !isHidden(k as string))).length + customSecs.length
 
   return (
     <div className="min-h-screen" style={{ background: t.bg, color: t.ink, '--ed-bg': t.edBg, '--ed-border': t.edBorder, '--t-card': t.card, '--t-border': t.toolbarBorder, '--t-ink': t.ink, '--t-accent': t.accent } as Any}>
@@ -1232,6 +1243,46 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             ) : null}
           </div>
         </SectionShell>
+
+        {/* ---------- CUSTOM SECTIONS (owner-added: label + write anything) ---------- */}
+        {(Array.isArray(c.custom) ? c.custom : []).map((cs: Any, ci: number) => {
+          if (!edit && !String(cs.title || '').trim() && !String(cs.body || '').trim()) return null
+          return (
+            <section key={cs.id || ci} className="relative">
+              {edit && (
+                <button onClick={() => mutate(d => { d.custom.splice(ci, 1) })} className="absolute -top-3 right-4 z-10 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
+                  <X size={11} /> Remove section
+                </button>
+              )}
+              <div className="pt-12">
+                {(edit || String(cs.eyebrow || '').trim()) && (
+                  <p className="text-[11px] font-bold uppercase tracking-[0.28em]" style={{ color: t.accent }}>
+                    <Ed v={cs.eyebrow || ''} set={v => patch('custom.' + ci + '.eyebrow', v)} edit={edit} placeholder="OVERLINE (OPTIONAL)" />
+                  </p>
+                )}
+                <h2 className="mt-2 text-3xl sm:text-4xl font-black tracking-tight" style={{ color: t.ink }}>
+                  <Ed v={cs.title || ''} set={v => patch('custom.' + ci + '.title', v)} edit={edit} placeholder="Section title" />
+                </h2>
+                <div className="mt-4 text-[15px] leading-relaxed whitespace-pre-line" style={{ color: t.body }}>
+                  <Ed v={cs.body || ''} set={v => patch('custom.' + ci + '.body', v)} edit={edit} multiline placeholder="Write anything you want in this section&hellip;" />
+                </div>
+              </div>
+            </section>
+          )
+        })}
+
+        {/* Add a custom section (edit mode only) */}
+        {edit && (
+          <div className="mt-10 flex justify-center">
+            <button
+              onClick={() => mutate(d => { d.custom = Array.isArray(d.custom) ? d.custom : []; d.custom.push({ id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), eyebrow: '', title: 'New section', body: '' }) })}
+              className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-sm"
+              style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}
+            >
+              <Plus size={13} /> Add section
+            </button>
+          </div>
+        )}
 
         {/* footer */}
         <footer className="mt-16 pt-6 border-t text-center" style={{ borderColor: t.rule }}>
