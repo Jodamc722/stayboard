@@ -6,7 +6,7 @@
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
 import { useEffect, useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock } from 'lucide-react'
 
 type Any = any
 
@@ -363,7 +363,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 // ---------- main ----------
-export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolean }) {
+export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit: boolean; isTeam?: boolean }) {
   const [c, setC] = useState<Any>(initial.content || {})
   const [edit, setEdit] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -381,6 +381,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
   const [manualLine, setManualLine] = useState('')
   const manualFileRef = useRef<HTMLInputElement>(null)
+  const [pwMode, setPwMode] = useState<'set' | 'unlock' | null>(null)
+  const [pwValue, setPwValue] = useState('')
+  const [pwMsg, setPwMsg] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
   const pacingRef = useRef<HTMLInputElement>(null)
   const stmtRef = useRef<HTMLInputElement>(null)
   const heroRef = useRef<HTMLInputElement>(null)
@@ -497,6 +501,22 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
 
   function copyLink() {
     try { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {}
+  }
+
+  // shared team-edit password: set (team) / unlock (anyone with the link + password)
+  function openPw(mode: 'set' | 'unlock') { setPwMode(mode); setPwValue(''); setPwMsg('') }
+  async function submitPw() {
+    if (!pwValue || pwBusy) return
+    setPwBusy(true); setPwMsg('')
+    try {
+      const r = await fetch('/api/reports/edit-access', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: pwMode, password: pwValue }) })
+      const d = await r.json()
+      if (d?.ok) {
+        if (pwMode === 'unlock') { window.location.reload(); return }
+        setPwMsg('Saved. Share the link + password with your team.'); setPwValue(''); setTimeout(() => setPwMode(null), 1400)
+      } else { setPwMsg((d && d.error) || 'Something went wrong.') }
+    } catch { setPwMsg('Something went wrong.') }
+    setPwBusy(false)
   }
 
   // manual "completed work" — typed lines or a parsed file, added on top of the Breezeway pull
@@ -735,6 +755,11 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
               </button>
             </>
           )}
+          {isTeam && (
+            <button onClick={() => openPw('set')} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              <Lock size={12} /> Team password
+            </button>
+          )}
           <button onClick={downloadPptx} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {busy === 'pptx' ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PPTX
           </button>
@@ -839,11 +864,44 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         .sb-present img { object-fit: cover; }
       `}</style>
 
-      {/* Present button for owners (no edit toolbar) */}
+      {/* Present + unlock-editing buttons for viewers (no edit toolbar) */}
       {!canEdit && !present && (
-        <button onClick={enterPresent} className="fixed top-4 right-4 z-30 inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.ink, color: t.bg }}>
-          <Play size={13} /> Present
-        </button>
+        <div className="fixed top-4 right-4 z-30 flex items-center gap-2">
+          <button onClick={() => openPw('unlock')} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+            <Lock size={12} /> Team edit
+          </button>
+          <button onClick={enterPresent} className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.ink, color: t.bg }}>
+            <Play size={13} /> Present
+          </button>
+        </div>
+      )}
+
+      {/* team-edit password modal (set / unlock) */}
+      {pwMode && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" style={{ background: 'rgba(16,42,67,0.35)' }} onClick={() => !pwBusy && setPwMode(null)}>
+          <div className="w-[min(420px,94vw)] rounded-2xl shadow-xl border p-5" style={{ background: t.card, borderColor: t.toolbarBorder }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <Lock size={14} style={{ color: t.accent }} />
+              <p className="text-[13px] font-bold" style={{ color: t.ink }}>{pwMode === 'set' ? 'Set the team edit password' : 'Unlock editing'}</p>
+              <button onClick={() => setPwMode(null)} className="ml-auto" style={{ color: t.muted }}><X size={15} /></button>
+            </div>
+            <p className="mt-1.5 text-[12px]" style={{ color: t.sub }}>
+              {pwMode === 'set' ? 'Teammates can edit any report by opening its link and entering this password.' : 'Enter the team password to edit this report on this device.'}
+            </p>
+            <input
+              type="password" value={pwValue} autoFocus
+              onChange={e => setPwValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitPw() }}
+              placeholder={pwMode === 'set' ? 'New team password' : 'Team password'}
+              className="mt-3 w-full rounded-xl px-3 py-2 text-[14px] outline-none"
+              style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}
+            />
+            {pwMsg && <p className="mt-2 text-[12px] font-semibold" style={{ color: t.accent }}>{pwMsg}</p>}
+            <button onClick={submitPw} disabled={pwBusy || !pwValue} className="mt-3 w-full inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold disabled:opacity-50" style={{ background: t.accent, color: t.card }}>
+              {pwBusy ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />} {pwMode === 'set' ? 'Save password' : 'Unlock'}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Present-mode overlay controls */}
