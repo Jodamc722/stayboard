@@ -175,10 +175,12 @@ export async function POST(req: NextRequest) {
   let plan: ReportContent['plan'] = null
   if (Object.keys(budgets).length > 0) {
     const monthsOut: { label: string; status: string; rows: { metric: string; actual: string; budget: string; delta: string; good: boolean }[]; note: string }[] = []
-    const candidates: { iso: string; endExcl: string }[] = []
+    const candidates: { iso: string; endExcl: string; pacing?: boolean }[] = []
     if (prevPrev) candidates.push({ iso: prevPrev, endExcl: mAhead[0].iso })
     candidates.push({ iso: mAhead[0].iso, endExcl: mAhead[1].iso })
     candidates.push({ iso: mAhead[1].iso, endExcl: addDaysIso(mAhead[2] ? mAhead[2].iso : mAhead[1].iso, 0) })
+    // Forward "PACING" card: next month's on-the-books pace vs its budget (only appears if a budget row exists).
+    if (mAhead[2]) candidates.push({ iso: mAhead[2].iso, endExcl: mAhead[3] ? mAhead[3].iso : addDaysIso(mAhead[2].iso, 31), pacing: true })
     for (const c of candidates) {
       const b = budgets[c.iso]
       if (!b) continue
@@ -204,7 +206,9 @@ export async function POST(req: NextRequest) {
       }
       if (!rows.length) continue
       const mLabel = new Date(c.iso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }).toUpperCase()
-      monthsOut.push({ label: mLabel, status: inMonth ? 'IN MONTH' : 'CLOSED', rows, note: '' })
+      const status = inMonth ? 'IN MONTH' : (c.pacing ? 'PACING' : 'CLOSED')
+      const note = c.pacing ? 'On the books so far — these numbers build as the month fills in.' : ''
+      monthsOut.push({ label: mLabel, status, rows, note })
     }
     if (monthsOut.length) {
       plan = { headline: 'Tracking against the ' + asOf.slice(0, 4) + ' budget.', subtitle: '', months: monthsOut }
@@ -324,6 +328,9 @@ export async function POST(req: NextRequest) {
 
   if (plan && ai.planNotes && typeof ai.planNotes === 'object' && !Array.isArray(ai.planNotes)) {
     for (let i = 0; i < plan.months.length; i++) {
+      // Keep the on-the-books note on the PACING card; the AI can't see it's a forward month and may
+      // mislabel it as closed actuals, so it only annotates closed / in-month cards.
+      if (plan.months[i].status === 'PACING') continue
       const note = ai.planNotes[plan.months[i].label]
       if (note) plan.months[i].note = str(note).slice(0, 200)
     }
