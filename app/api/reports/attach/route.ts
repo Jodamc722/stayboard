@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { hasEditCookie } from '@/lib/edit-access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -126,7 +127,7 @@ async function loadReport(id: string) {
 export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const sp = new URL(req.url).searchParams
   const reportId = str(sp.get('photos'))
   if (!reportId) return NextResponse.json({ error: 'photos=<reportId> required' }, { status: 400 })
@@ -153,7 +154,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const reportId = str(body?.reportId)
   const kind = str(body?.kind)
