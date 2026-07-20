@@ -8,11 +8,11 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 
 function page(msg: string): NextResponse {
-  const html = '<!doctype html><html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:90vh;background:#FAF6EF;color:#102A43">'
+  const html = '<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:90vh;background:#FAF6EF;color:#102A43">'
     + '<div style="text-align:center"><p style="font-size:18px;font-weight:700">' + msg + '</p>'
     + '<p style="font-size:13px;color:#6b7c8d">You can close this window and go back to the report.</p></div>'
     + '<script>try { window.close() } catch (e) {}</script></body></html>'
-  return new NextResponse(html, { headers: { 'content-type': 'text/html' } })
+  return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
 }
 
 export async function GET(req: NextRequest) {
