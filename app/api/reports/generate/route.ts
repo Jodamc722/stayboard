@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
     + '"aheadNotes": {"current": 1-2 sentences on the current month, "next": 1-2 sentences on next month, "third": 1-2 sentences on the month after next (only used when included)}, '
     + '"quotes": [up to 4 objects {"i": review index number, "text": lightly trimmed quote max 220 chars}] pick the most specific, credible, positive quotes across DIFFERENT units, '
     + '"themes": [2-3 objects {"title": short theme name like "Communication - a highlight", "body": 1 sentence on what guests are saying, "action": 1 sentence on what we are doing}], '
-    + '"projectWeeks": [one object per week bucket {"label": the bucket label EXACTLY as given, "groups": [{"category": UPPERCASE grouping like "DEEP CLEAN + PM" or "REPAIRS + MAINTENANCE" or "COMMON AREAS", "items": [concise task lines, merge duplicates, max 6 per group]}]}], '
+    + '"projectWeeks": [one object per week bucket {"label": the bucket label EXACTLY as given, "groups": [{"category": UPPERCASE grouping like "DEEP CLEAN + PM" or "REPAIRS + MAINTENANCE" or "COMMON AREAS", "items": [concise task lines, merge duplicates, max 6 per group]}]}] -- EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs); only include repairs, maintenance, installs & replacements, deliveries, deep cleans, inspections and real projects an owner cares about, '
     + '"tracking": [up to 3 objects {"title": short item title, "body": 1 sentence status} from open items worth telling an owner about], '
     + '"planNotes": {optional, one entry PER BUDGET MONTH keyed by the month name in UPPERCASE (e.g. "MAY", "JUNE", "JULY"), value = one short sentence about THAT month only}}'
 
@@ -276,6 +276,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Routine turn work (departure/turnover cleans, unit strips, linen/trash walkthroughs) does not belong on an owner report.
+  const isRoutineTurn = (s: string | null | undefined) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(s || '')
   const weeks: { label: string; groups: { category: string; items: string[] }[] }[] = []
   const aiWeeks: any[] = Array.isArray(ai.projectWeeks) ? ai.projectWeeks : []
   for (const b of buckets) {
@@ -285,11 +287,11 @@ export async function POST(req: NextRequest) {
         label: b.label,
         groups: match.groups.slice(0, 5).map((g: any) => ({
           category: str(g?.category).toUpperCase().slice(0, 40) || 'WORK COMPLETED',
-          items: (Array.isArray(g?.items) ? g.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).slice(0, 6),
-        })).filter((g: any) => g.items.length),
+          items: (Array.isArray(g?.items) ? g.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).filter((x: string) => !isRoutineTurn(x)).slice(0, 6),
+        })).filter((g: any) => g.items.length && !isRoutineTurn(g.category)),
       })
     } else {
-      const inWeek = tasks.completed.filter(t => t.date >= b.start && t.date <= b.endIncl)
+      const inWeek = tasks.completed.filter(t => t.date >= b.start && t.date <= b.endIncl && !isRoutineTurn(t.department) && !isRoutineTurn(t.name))
       const byDept: Record<string, string[]> = {}
       for (const t of inWeek.slice(0, 24)) {
         const k = (t.department || 'work completed').toUpperCase()
