@@ -20,7 +20,11 @@ export function supabaseAdmin(): SupabaseClient<any, any, any> {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!url || !key) throw new Error('Supabase env vars not set')
   _admin = createClient<any, any, any>(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false }
+    auth: { autoRefreshToken: false, persistSession: false },
+    // Next.js caches library fetch() calls in its Data Cache, which can serve
+    // hours-stale rows to server-rendered pages (owner share links). Force
+    // every Supabase request to bypass the cache.
+    global: { fetch: (input: any, init?: any) => fetch(input, { ...(init || {}), cache: 'no-store' }) }
   })
   return _admin
 }
