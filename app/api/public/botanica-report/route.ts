@@ -36,7 +36,7 @@ function daysBetween(a: string, b: string): number {
 // Matches the "Botanica Report" project's methodology (May 2026 workbook): each stay's
 // accommodation + cleaning (+ parking, $0 so far) divided by total stay nights = per-night
 // value; only nights inside the window are summed, which splits cross-month stays correctly.
-const fareOf = (m: any): number => num(m?.fareAccommodation)
+const fareOf = (m: any): number => num(m?.fareAccommodationAdjusted ?? m?.fareAccommodation) // 'Net Accom' — matches sheet to the cent (May $55,911.69 vs $55,911.71)
 const cleaningOf = (m: any): number => num(m?.fareCleaning)
 
 export async function GET(req: NextRequest) {
