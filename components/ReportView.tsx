@@ -487,8 +487,10 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
       })
       const d = await r.json()
       if (d?.ok) { setSavedFlash(true); setTimeout(() => setSavedFlash(false), 2000) }
-    } catch {}
+      else { setAttachMsg(d && d.error === 'unauthorized' ? 'Session expired — refresh and sign in to save.' : 'Could not save — try again.') }
+    } catch { setAttachMsg('Could not save — check your connection.') }
     setSaving(false)
+    setEdit(true) // stay in edit mode after saving
   }
 
   function copyLink() {
@@ -721,8 +723,8 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
           </button>
           {edit && (
-            <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60" style={{ background: t.accent, color: t.card }}>
-              {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {savedFlash ? 'Saved ✓' : 'Save changes'}
+            <button onClick={save} disabled={saving} className="inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60" style={{ background: t.accent, color: t.card, minWidth: 132 }}>
+              {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save changes'}
             </button>
           )}
           <button onClick={() => setEdit(!edit)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={edit ? { background: t.ink, color: t.bg } : { background: t.card, border: '1px solid ' + t.toolbarBorder }}>
@@ -808,6 +810,8 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
         .sb-present > footer { display: none; }
         .sb-present > section > *, .sb-present > header > * { max-width: 1080px; width: 100%; margin-left: auto; margin-right: auto; }
         .sb-present > section > * > .pt-12 { padding-top: 0 !important; }
+        .sb-present header img { height: 58vh !important; max-height: 58vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
+        .sb-present img { object-fit: cover; }
       `}</style>
 
       {/* Present button for owners (no edit toolbar) */}
