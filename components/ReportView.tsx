@@ -6,7 +6,7 @@
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
 import { useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon } from 'lucide-react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download } from 'lucide-react'
 
 type Any = any
 
@@ -36,6 +36,228 @@ const THEMES: Record<string, Any> = {
     trackBg: '#15181d', footA: '#6e6a61', footB: '#4f4b43', barA: '#4a5160', barB: '#C9A227',
     edBg: 'rgba(255,255,255,0.08)', edBorder: '#C9A227',
   },
+}
+
+// ---------- PPTX export (P5): built in the browser from the content JSON + active theme ----------
+const PPTX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.min.js'
+
+function cx(v: string, fb: string): string {
+  return (v && v.indexOf('#') === 0) ? v.slice(1) : fb
+}
+
+async function fetchImageDataUrl(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const blob = await r.blob()
+    return await new Promise<string | null>(resolve => {
+      const fr = new FileReader()
+      fr.onload = () => {
+        const d = String(fr.result || '')
+        resolve(d ? d.replace(/^data:/, '') : null)
+      }
+      fr.onerror = () => resolve(null)
+      fr.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+
+function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
+  const pptx = new P()
+  pptx.layout = 'LAYOUT_WIDE'
+  const BG = cx(t.bg, 'FFFFFF'), INK = cx(t.ink, '111827'), BODY = cx(t.body, '41586e'), SUB = cx(t.sub, '6b7c8d')
+  const MUT = cx(t.muted, '93a3b3'), CARD = cx(t.card, 'FFFFFF'), CB = cx(t.cardBorder, 'e5e7eb'), ACC = cx(t.accent, 'E2725B')
+  const GOLD = cx(t.gold, 'C9A227'), BAND = cx(t.band, '102A43'), GOOD = cx(t.good, '1a7f4f'), GRAY = cx(t.downGray, 'a6b1bc')
+  const CHIP = cx(t.chip, 'f5f5f5'), BARA = cx(t.barA, '102A43'), BARB = cx(t.barB, 'E2725B')
+  const hero = c.hero || {}, snap = c.snapshot || {}, plan = c.plan, ahead = c.ahead || {}, voices = c.voices || {}, projects = c.projects || {}, meta = c.meta || {}
+  const isDown = (v: Any) => String(v || '').trim().indexOf('-') === 0 || String(v || '').trim().indexOf('−') === 0
+  function head(s: Any, eyebrow: string, headline: string, subtitle?: string) {
+    s.background = { color: BG }
+    s.addText(eyebrow, { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontSize: 11, bold: true, color: ACC, charSpacing: 3 })
+    s.addText(String(headline || '').slice(0, 120), { x: 0.6, y: 0.65, w: 12.1, h: 0.65, fontSize: 21, bold: true, color: INK })
+    if (subtitle) s.addText(String(subtitle).slice(0, 160), { x: 0.6, y: 1.28, w: 12.1, h: 0.3, fontSize: 10.5, color: SUB })
+  }
+
+  // hero
+  const s1 = pptx.addSlide()
+  s1.background = { color: BG }
+  s1.addText(String(hero.eyebrow || ''), { x: 0.6, y: 0.85, w: 12.1, h: 0.3, align: 'center', fontSize: 12, bold: true, color: ACC, charSpacing: 4 })
+  s1.addText(String(hero.dateLabel || 'OWNER REVIEW'), { x: 0.6, y: 1.25, w: 12.1, h: 0.3, align: 'center', fontSize: 11, bold: true, color: GOLD, charSpacing: 4 })
+  s1.addText(String(hero.title || ''), { x: 0.6, y: 1.6, w: 12.1, h: 1.05, align: 'center', fontSize: 46, bold: true, color: INK })
+  s1.addText(String(hero.headline || ''), { x: 1.8, y: 2.75, w: 9.7, h: 0.95, align: 'center', fontSize: 16, color: BODY })
+  if (heroData) s1.addImage({ data: heroData, x: 2.9, y: 3.85, w: 7.5, h: 2.8, sizing: { type: 'cover', w: 7.5, h: 2.8 } })
+  s1.addText(String(hero.preparedFor || '') + '  ·  STAY HOSPITALITY', { x: 0.6, y: 6.95, w: 12.1, h: 0.3, align: 'center', fontSize: 9, bold: true, color: MUT, charSpacing: 2 })
+
+  // snapshot
+  const s2 = pptx.addSlide()
+  head(s2, 'SNAPSHOT', snap.headline, snap.subtitle)
+  const cards = (snap.cards || []).slice(0, 4)
+  for (let i = 0; i < cards.length; i++) {
+    const x = 0.6 + i * 3.09
+    s2.addShape('roundRect', { x, y: 1.8, w: 2.94, h: 1.9, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+    s2.addText(String(cards[i].label || ''), { x: x + 0.15, y: 1.95, w: 2.6, h: 0.25, fontSize: 9, bold: true, color: ACC, charSpacing: 2 })
+    s2.addText(String(cards[i].value || ''), { x: x + 0.15, y: 2.25, w: 2.6, h: 0.6, fontSize: 27, bold: true, color: INK })
+    s2.addText(String(cards[i].sub || '').slice(0, 95), { x: x + 0.15, y: 2.9, w: 2.64, h: 0.7, fontSize: 8.5, color: SUB })
+  }
+  if (snap.ytd) {
+    s2.addShape('roundRect', { x: 0.6, y: 4.1, w: 12.13, h: 2.2, fill: { color: BAND }, rectRadius: 0.06 })
+    s2.addText((meta.asOf ? String(meta.asOf).slice(0, 4) : '') + ' YEAR-TO-DATE', { x: 0.9, y: 4.3, w: 6, h: 0.3, fontSize: 9, bold: true, color: GOLD, charSpacing: 2 })
+    s2.addText(String(snap.ytd.text || '').slice(0, 260), { x: 0.9, y: 4.65, w: 6.5, h: 1.45, fontSize: 12, color: 'FFFFFF' })
+    const stats = (snap.ytd.stats || []).slice(0, 3)
+    for (let i = 0; i < stats.length; i++) {
+      const x = 7.8 + i * 1.62
+      s2.addText(String(stats[i].value || ''), { x, y: 4.75, w: 1.55, h: 0.5, align: 'center', fontSize: 20, bold: true, color: 'FFFFFF' })
+      s2.addText(String(stats[i].label || ''), { x, y: 5.3, w: 1.55, h: 0.3, align: 'center', fontSize: 8, bold: true, color: 'CCCCCC', charSpacing: 1 })
+    }
+  }
+
+  // pacing
+  if (c.pacing) {
+    const s = pptx.addSlide()
+    head(s, 'PACING VS. MARKET', c.pacing.headline, c.pacing.subtitle)
+    const rows = (c.pacing.rows || []).slice(0, 4)
+    for (let i = 0; i < rows.length; i++) {
+      const y = 1.85 + i * 1.2
+      const r = rows[i]
+      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: 1.05, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(r.metric || ''), { x: 0.9, y: y + 0.35, w: 2.4, h: 0.35, fontSize: 13, bold: true, color: INK })
+      s.addText(String(r.ours || ''), { x: 3.9, y: y + 0.14, w: 2.4, h: 0.5, align: 'center', fontSize: 20, bold: true, color: INK })
+      s.addText(String(meta.scopeLabel || 'US'), { x: 3.9, y: y + 0.66, w: 2.4, h: 0.25, align: 'center', fontSize: 8, bold: true, color: ACC, charSpacing: 1 })
+      s.addText(String(r.comps || ''), { x: 6.8, y: y + 0.14, w: 2.4, h: 0.5, align: 'center', fontSize: 20, bold: true, color: MUT })
+      s.addText('COMP SET', { x: 6.8, y: y + 0.66, w: 2.4, h: 0.25, align: 'center', fontSize: 8, bold: true, color: MUT, charSpacing: 1 })
+      s.addText(String(r.delta || ''), { x: 10.1, y: y + 0.14, w: 2.3, h: 0.5, align: 'right', fontSize: 16, bold: true, color: isDown(r.delta) ? GRAY : GOOD })
+      s.addText('VS. COMPS', { x: 10.1, y: y + 0.66, w: 2.3, h: 0.25, align: 'right', fontSize: 8, color: MUT, charSpacing: 1 })
+    }
+  }
+
+  // performance vs plan
+  if (plan) {
+    const s = pptx.addSlide()
+    head(s, 'PERFORMANCE VS. PLAN', plan.headline)
+    const months = (plan.months || []).slice(0, 3)
+    for (let mi = 0; mi < months.length; mi++) {
+      const m = months[mi]
+      const y = 1.6 + mi * 1.88
+      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: 1.76, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(m.label || ''), { x: 0.9, y: y + 0.12, w: 2.5, h: 0.3, fontSize: 13, bold: true, color: INK, charSpacing: 2 })
+      s.addText(String(m.status || ''), { x: 3.2, y: y + 0.15, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: ACC, charSpacing: 1 })
+      const rows = (m.rows || []).slice(0, 4)
+      for (let ri = 0; ri < rows.length; ri++) {
+        const r = rows[ri]
+        const x = 0.9 + ri * 2.95
+        s.addShape('roundRect', { x, y: y + 0.48, w: 2.8, h: 0.86, fill: { color: CHIP }, rectRadius: 0.05 })
+        s.addText(String(r.metric || ''), { x: x + 0.1, y: y + 0.52, w: 2.6, h: 0.2, fontSize: 7.5, bold: true, color: MUT, charSpacing: 1 })
+        s.addText(String(r.actual || ''), { x: x + 0.1, y: y + 0.72, w: 1.7, h: 0.35, fontSize: 15, bold: true, color: INK })
+        s.addText(String(r.budget || ''), { x: x + 0.1, y: y + 1.08, w: 1.7, h: 0.22, fontSize: 8, color: MUT })
+        s.addText(String(r.delta || ''), { x: x + 1.6, y: y + 0.78, w: 1.1, h: 0.3, align: 'right', fontSize: 10, bold: true, color: r.good ? GOOD : GRAY })
+      }
+      if (m.note) s.addText(String(m.note).slice(0, 180), { x: 0.9, y: y + 1.4, w: 11.5, h: 0.3, fontSize: 9, color: BODY })
+    }
+  }
+
+  // owner statement
+  if (c.statement && (c.statement.items || []).length) {
+    const s = pptx.addSlide()
+    head(s, 'OWNER STATEMENT', c.statement.headline || 'Owner statement summary.')
+    const items = (c.statement.items || []).slice(0, 4)
+    for (let i = 0; i < items.length; i++) {
+      const y = 1.8 + i * 1.3
+      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: 1.15, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(items[i].title || ''), { x: 0.9, y: y + 0.1, w: 11.5, h: 0.3, fontSize: 12, bold: true, color: INK })
+      s.addText(String(items[i].summary || '').slice(0, 300), { x: 0.9, y: y + 0.42, w: 11.5, h: 0.65, fontSize: 10.5, color: BODY })
+    }
+  }
+
+  // looking ahead
+  const s6 = pptx.addSlide()
+  head(s6, 'LOOKING AHEAD', ahead.headline, ahead.subtitle)
+  const aMonths = (ahead.months || []).slice(0, 2)
+  for (let i = 0; i < aMonths.length; i++) {
+    const m = aMonths[i]
+    const x = 0.6 + i * 6.15
+    s6.addShape('roundRect', { x, y: 1.8, w: 5.98, h: 2.45, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+    s6.addText(String(m.label || ''), { x: x + 0.25, y: 1.95, w: 3, h: 0.3, fontSize: 13, bold: true, color: INK, charSpacing: 2 })
+    s6.addText(String(m.status || ''), { x: x + 3.2, y: 1.98, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: ACC, charSpacing: 1 })
+    s6.addText(String(m.occPct != null ? m.occPct : 0) + '%', { x: x + 0.25, y: 2.3, w: 2.4, h: 0.6, fontSize: 30, bold: true, color: INK })
+    s6.addText('on the books', { x: x + 2.0, y: 2.52, w: 2.4, h: 0.3, fontSize: 10, color: MUT })
+    s6.addText('ADR ' + String(m.adr || '') + '   ·   RevPAR ' + String(m.revpar || ''), { x: x + 0.25, y: 3.0, w: 5.5, h: 0.3, fontSize: 11, bold: true, color: BODY })
+    if (m.note) s6.addText(String(m.note).slice(0, 190), { x: x + 0.25, y: 3.32, w: 5.5, h: 0.8, fontSize: 9, color: SUB })
+  }
+  const strip = (ahead.strip || []).slice(0, 8)
+  if (strip.length) {
+    s6.addText('MONTHS AHEAD  ·  OCCUPANCY %', { x: 0.6, y: 4.55, w: 8, h: 0.25, fontSize: 9, bold: true, color: MUT, charSpacing: 2 })
+    const bw = 12.13 / strip.length
+    for (let i = 0; i < strip.length; i++) {
+      const pct = Number(strip[i].occPct) || 0
+      const bh = Math.max(0.08, (pct / 100) * 1.7)
+      const x = 0.6 + i * bw
+      s6.addShape('rect', { x: x + bw * 0.2, y: 6.75 - bh, w: bw * 0.6, h: bh, fill: { color: i === 1 ? BARB : BARA } })
+      s6.addText(String(pct) + '%', { x, y: 6.75 - bh - 0.3, w: bw, h: 0.25, align: 'center', fontSize: 9, bold: true, color: INK })
+      s6.addText(String(strip[i].month || ''), { x, y: 6.8, w: bw, h: 0.25, align: 'center', fontSize: 9, color: SUB })
+    }
+  }
+
+  // guest voices
+  const quotes = (voices.quotes || []).slice(0, 4)
+  if (quotes.length) {
+    const s = pptx.addSlide()
+    head(s, 'GUEST VOICES', voices.headline, voices.subtitle)
+    for (let i = 0; i < quotes.length; i++) {
+      const q = quotes[i]
+      const x = 0.6 + (i % 2) * 6.15
+      const y = 1.8 + Math.floor(i / 2) * 2.55
+      s.addShape('roundRect', { x, y, w: 5.98, h: 2.4, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText('“' + String(q.text || '').slice(0, 250) + '”', { x: x + 0.25, y: y + 0.15, w: 5.5, h: 1.55, fontSize: 10.5, italic: true, color: BODY })
+      s.addText(String(q.guest || ''), { x: x + 0.25, y: y + 1.85, w: 3, h: 0.3, fontSize: 9, bold: true, color: INK, charSpacing: 1 })
+      s.addText(String(q.unit || '') + (q.br ? ' · ' + q.br : ''), { x: x + 3.0, y: y + 1.85, w: 2.7, h: 0.3, align: 'right', fontSize: 8.5, color: MUT })
+    }
+  }
+
+  // hearing / doing
+  const themes = (voices.themes || []).slice(0, 3)
+  if (themes.length) {
+    const s = pptx.addSlide()
+    s.background = { color: BAND }
+    s.addText("WHAT WE'RE HEARING  ·  AND WHAT WE'RE DOING", { x: 0.6, y: 0.5, w: 12.1, h: 0.35, fontSize: 13, bold: true, color: GOLD, charSpacing: 2 })
+    for (let i = 0; i < themes.length; i++) {
+      const y = 1.3 + i * 1.9
+      s.addShape('rect', { x: 0.6, y: y + 0.05, w: 0.045, h: 1.6, fill: { color: ACC } })
+      s.addText(String(themes[i].title || ''), { x: 0.9, y, w: 11.6, h: 0.35, fontSize: 14, bold: true, color: 'FFFFFF' })
+      s.addText(String(themes[i].body || '').slice(0, 260), { x: 0.9, y: y + 0.4, w: 11.6, h: 0.65, fontSize: 11, color: 'DDDDDD' })
+      s.addText(String(themes[i].action || '').slice(0, 220), { x: 0.9, y: y + 1.1, w: 11.6, h: 0.55, fontSize: 11, color: GOLD })
+    }
+  }
+
+  // projects
+  const weeks = (projects.weeks || []).slice(0, 3)
+  if (weeks.length) {
+    const s = pptx.addSlide()
+    head(s, 'PROJECTS', projects.headline, projects.subtitle)
+    for (let wi = 0; wi < weeks.length; wi++) {
+      const w = weeks[wi]
+      const x = 0.6 + wi * 4.13
+      s.addShape('roundRect', { x, y: 1.75, w: 3.98, h: 4.35, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+      s.addText(String(w.label || ''), { x: x + 0.2, y: 1.9, w: 3.6, h: 0.3, fontSize: 10.5, bold: true, color: ACC, charSpacing: 1 })
+      let body = ''
+      const groups = (w.groups || []).slice(0, 4)
+      for (let gi = 0; gi < groups.length; gi++) {
+        body += String(groups[gi].category || '').toUpperCase() + '\n'
+        const items = (groups[gi].items || []).slice(0, 5)
+        for (let ii = 0; ii < items.length; ii++) body += '• ' + String(items[ii]).slice(0, 90) + '\n'
+        body += '\n'
+      }
+      s.addText(body.slice(0, 900), { x: x + 0.2, y: 2.25, w: 3.62, h: 3.75, fontSize: 8.5, color: BODY, valign: 'top' })
+    }
+    const tracking = (projects.tracking || []).slice(0, 4)
+    if (tracking.length) {
+      s.addShape('roundRect', { x: 0.6, y: 6.35, w: 12.13, h: 0.85, fill: { color: cx(t.trackBg, 'FFFDF7') }, line: { color: GOLD, dashType: 'dash' }, rectRadius: 0.06 })
+      let names = ''
+      for (let i = 0; i < tracking.length; i++) names += (i ? '   ·   ' : '') + String(tracking[i].title || '')
+      s.addText('IN PROGRESS:  ' + names.slice(0, 200), { x: 0.9, y: 6.55, w: 11.6, h: 0.45, fontSize: 10, bold: true, color: GOLD })
+    }
+  }
+
+  return pptx
 }
 
 // ---------- tiny editable primitives (module scope: keeps input focus) ----------
@@ -220,6 +442,30 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
       }).catch(() => setPool([]))
     }
   }
+  async function downloadPptx() {
+    if (busy) return
+    setAttachMsg(''); setBusy('pptx')
+    try {
+      if (!(window as Any).PptxGenJS) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script')
+          s.src = PPTX_CDN
+          s.onload = resolve
+          s.onerror = () => reject(new Error('load failed'))
+          document.head.appendChild(s)
+        })
+      }
+      const h = c.hero || {}
+      let heroData: string | null = null
+      if (h.heroImage) heroData = await fetchImageDataUrl(h.heroImage)
+      const pptx = buildPptx((window as Any).PptxGenJS, c, t, heroData)
+      const name = String(h.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'report'
+      await pptx.writeFile({ fileName: name + '-owner-review.pptx' })
+    } catch (_e) {
+      setAttachMsg('PPTX export failed — try again.')
+    }
+    setBusy('')
+  }
 
   const meta = c.meta || {}
   const hero = c.hero || {}
@@ -260,6 +506,9 @@ export function ReportView({ initial, canEdit }: { initial: Any; canEdit: boolea
               </button>
             </>
           )}
+          <button onClick={downloadPptx} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+            {busy === 'pptx' ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PPTX
+          </button>
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
           </button>
