@@ -9,6 +9,7 @@ export const maxDuration = 30
 
 const KINDS = ['maintenance', 'replace', 'add', 'clean', 'faq', 'inventory', 'tag']
 function slugRoom(x: string): string { return String(x).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) }
+function nrmTitle(x: any): string { return String(x || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim() }
 
 async function carryForwardItems(db: any, listingId: string, newAuditId: string) {
   const prev = await db.from('property_audits').select('id').eq('listing_id', listingId).eq('status', 'completed').order('created_at', { ascending: false }).limit(1)
@@ -273,8 +274,63 @@ export async function POST(req: NextRequest) {
       details: ((): any => { const b: any = (body.ai && typeof body.ai === 'object') ? { brand: body.ai.brand || null, tier: body.ai.tier || null, features: Array.isArray(body.ai.features) ? body.ai.features : null, amenity: !!body.ai.amenity, highlight: !!body.ai.highlight, howTo: body.ai.howTo || null, size: body.ai.size || null } : {}; if (Array.isArray(body.photos) && body.photos.length) b.photos = body.photos.slice(0, 12); return Object.keys(b).length ? b : null })(),
       status: 'open',
     }
+    // DEDUPE ON COLLECT (opt-in via body.dedupe - walkthrough saves use it): before inserting,
+    // check this listing's open items for the same need. Order kinds (replace/add) match by
+    // title across the listing and MERGE by bumping qty (reorder-friendly); task kinds
+    // (maintenance/clean) match title+room and SKIP so the team is not double-dispatched.
+    if (body.dedupe && row.title && ['maintenance', 'replace', 'add', 'clean'].includes(kind)) {
+      try {
+        const orderKind = kind === 'replace' || kind === 'add'
+        const alive = orderKind ? ['open', 'approved', 'ordered', 'arriving'] : ['open', 'task_created']
+        const { data: exRows } = await db.from('audit_items').select('id,room,kind,title,qty,status,details').eq('listing_id', audit.listing_id).eq('kind', kind).in('status', alive).limit(800)
+        const want = nrmTitle(row.title)
+        let hit: any = null
+        for (const e of exRows || []) { if (nrmTitle(e.title) === want && (orderKind || String(e.room || '') === room)) { hit = e; break } }
+        if (hit) {
+          if (orderKind) {
+            const newQty = Math.max(1, Math.min(99, (Number(hit.qty) || 1) + (Number(row.qty) || 1)))
+            const upd = await db.from('audit_items').update({ qty: newQty, updated_at: new Date().toISOString() }).eq('id', hit.id).select('*').limit(1)
+            return NextResponse.json({ ok: true, merged: true, item: (upd.data && upd.data[0]) || hit })
+          }
+          return NextResponse.json({ ok: true, duplicate: true, item: hit })
+        }
+      } catch { /* dedupe is best-effort - fall through to a normal insert */ }
+    }
     const ins = await db.from('audit_items').insert(row).select('*').limit(1)
     if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
+    // REORDER MATCHING: ordering the same product again (this unit, else same building) reuses
+    // the prior product link automatically so the order form stays consistent - no re-hunting.
+    try {
+      const inserted = ins.data && ins.data[0]
+      const hasLink = row.details && (row.details as any).link
+      if (inserted && !hasLink && (kind === 'replace' || kind === 'add')) {
+        const want = nrmTitle(row.title)
+        let link = ''
+        if (want) {
+          const pri = await db.from('audit_items').select('title,details,created_at').eq('listing_id', audit.listing_id).in('kind', ['replace', 'add']).neq('id', inserted.id).order('created_at', { ascending: false }).limit(300)
+          for (const p of pri.data || []) { if (nrmTitle(p.title) === want && p.details && p.details.link) { link = String(p.details.link); break } }
+          const lid = String(audit.listing_id || '')
+          if (!link && lid.indexOf(':') < 0) {
+            const lb = await db.from('guesty_listings').select('building').eq('id', lid).limit(1)
+            const bld = lb.data && lb.data[0] && lb.data[0].building
+            if (bld) {
+              const sib = await db.from('guesty_listings').select('id').eq('building', bld).limit(300)
+              const ids = (sib.data || []).map((x: any) => String(x.id)).filter((x: string) => x !== lid)
+              if (ids.length) {
+                const pr2 = await db.from('audit_items').select('title,details,created_at').in('listing_id', ids).in('kind', ['replace', 'add']).order('created_at', { ascending: false }).limit(500)
+                for (const p of pr2.data || []) { if (nrmTitle(p.title) === want && p.details && p.details.link) { link = String(p.details.link); break } }
+              }
+            }
+          }
+        }
+        if (link) {
+          const d: any = (inserted.details && typeof inserted.details === 'object') ? { ...inserted.details } : {}
+          d.link = link.slice(0, 500); d.reorder = true
+          await db.from('audit_items').update({ details: d }).eq('id', inserted.id)
+          ;(inserted as any).details = d
+        }
+      }
+    } catch { /* link matching is best-effort */ }
     try {
       const _d: any = (row as any).details || {}
       const _ans = kind === 'faq' ? String(row.note || _d.howTo || '') : String(_d.howTo || '')
