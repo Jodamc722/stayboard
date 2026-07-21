@@ -92,6 +92,11 @@ export async function GET(req: NextRequest) {
     // guest's stay now runs past it — i.e. they extended. Surface it so nobody cleans an occupied unit.
     const depSet: Record<string, boolean> = {}
     for (const dp of departures) depSet[dp.listingId + '|' + (dp.cleanDay || dp.checkOut)] = true
+    // Reservation identity (confirmation code, else listing+dates). Only ONE extended row per
+    // reservation: if several stale cleans overlap one extended stay we flag the first and skip the rest,
+    // so a guest can never pile up as 3+ rows. (Real departure + a single extension row IS intended.)
+    const resKeyOf = (r: any) => String(r.confirmation_code || '') || (String(r.listing_id) + '|' + str(r.check_in).slice(0, 10) + '|' + str(r.check_out).slice(0, 10))
+    const extAdded = new Set()
     const { data: bz } = await db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,status').eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', today).lte('scheduled_date', end).limit(1000)
     for (const t of (bz || []) as any[]) {
       const lid = String(t.reference_property_id)
@@ -100,12 +105,15 @@ export async function GET(req: NextRequest) {
       if (depSet[lid + '|' + dd]) continue
       if (/complete|cancel/i.test(str(t.status))) continue
       // guest still in-house on the day the clean is scheduled => the stay was extended past it
-      const stay = live.find((r: any) => String(r.listing_id) === lid && str(r.check_in).slice(0, 10) <= dd && str(r.check_out).slice(0, 10) > dd)
+      const stay = live.find((r: any) => String(r.listing_id) === lid && str(r.check_in).slice(0, 10) < dd && str(r.check_out).slice(0, 10) > dd)
       if (!stay) continue
+      // at most one extended row per reservation, even if several stale cleans overlap the stay
+      if (extAdded.has(resKeyOf(stay))) continue
       const base = row(stay)
       // keep checkIn/checkOut/nights as the ACTUAL (extended) reservation; cleanDay is only where it groups
       departures.push(Object.assign({}, base, { cleanDay: dd, sameDayTurn: false, extended: true, extendedTo: str(stay.check_out).slice(0, 10) }))
       depSet[lid + '|' + dd] = true
+      extAdded.add(resKeyOf(stay))
     }
     departures.sort((a, b) => (a.cleanDay || a.checkOut).localeCompare(b.cleanDay || b.checkOut) || (b.sameDayTurn ? 1 : 0) - (a.sameDayTurn ? 1 : 0) || a.unit.localeCompare(b.unit))
     // ACCESS-CODE POLICY: a code is only revealed on the day of that unit's departure clean.
