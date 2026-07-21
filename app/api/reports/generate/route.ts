@@ -356,6 +356,25 @@ export async function POST(req: NextRequest) {
   // Once we're past the 19th of the current month, look one further month ahead (3rd card).
   const asOfDay = Number(String(asOf).slice(8, 10)) || 1
   const nxt2 = asOfDay > 19 ? mAhead[3] : null
+
+  // Month-by-month breakdown (powers the "view by month" toggle). Reuses the period reservations; each
+  // calendar month in the period gets its own metrics. Only surfaced when the period spans 2+ months.
+  const byMonth: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[] = []
+  {
+    const nextMonthIso = (iso: string) => { const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)); return (m >= 12 ? (y + 1) + '-01' : y + '-' + String(m + 1).padStart(2, '0')) + '-01' }
+    let mIso = periodStart.slice(0, 7) + '-01'
+    let guard = 0
+    while (mIso <= periodEnd && guard++ < 36) {
+      const mNext = nextMonthIso(mIso)
+      const mFrom = mIso < periodStart ? periodStart : mIso
+      const mToExcl = mNext > toExcl ? toExcl : mNext
+      const mm = metricsFor(resv, units, mFrom, mToExcl)
+      const label = new Date(mIso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).toUpperCase()
+      byMonth.push({ label, monthIso: mIso, revenue: fmtK(mm.accomRevenue), grossRevenue: fmtK(mm.grossRevenue), occPct: mm.occupancyPct, adr: '$' + mm.adr, grossAdr: '$' + mm.grossAdr, revpar: '$' + mm.revpar })
+      mIso = mNext
+    }
+  }
+
   const content: ReportContent = {
     meta: {
       scopeLabel, periodStart, periodEnd, asOf,
@@ -410,6 +429,7 @@ export async function POST(req: NextRequest) {
       subtitle: 'Completed work by reporting period  ·  plus open items we’re tracking',
       weeks, tracking,
     },
+    byMonth: byMonth.length >= 2 ? byMonth : undefined,
     omit: [],
   }
 
