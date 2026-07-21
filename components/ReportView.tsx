@@ -419,6 +419,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // ---------- present mode (full-screen slideshow) ----------
   const [present, setPresent] = useState(false)
   const [showMonths, setShowMonths] = useState(false)
+  const [snFrom, setSnFrom] = useState('')
+  const [snTo, setSnTo] = useState('')
+  const [snLabel, setSnLabel] = useState('')
+  const [snBusy, setSnBusy] = useState(false)
   const [slide, setSlide] = useState(0)
   const slideRef = useRef(0)
   slideRef.current = slide
@@ -779,6 +783,23 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     } catch (_e) { setAttachMsg('Could not pull reviews.') }
     setRvBusy(false)
   }
+  // Add an extra snapshot for a custom date range — same metrics engine as the main report.
+  async function addSnapshotRange() {
+    if (!snFrom || !snTo || snBusy) return
+    if (snFrom > snTo) { setAttachMsg('Snapshot start date must be on or before the end date.'); return }
+    setSnBusy(true); setAttachMsg('')
+    try {
+      const q = '/api/reports/snapshot-range?id=' + encodeURIComponent(initial.id) + '&from=' + snFrom + '&to=' + snTo + (snLabel.trim() ? '&label=' + encodeURIComponent(snLabel.trim()) : '')
+      const r = await fetch(q)
+      const d = await r.json()
+      if (d?.ok && d?.snap) {
+        mutate(dr => { dr.snaps = Array.isArray(dr.snaps) ? dr.snaps : []; dr.snaps.push(d.snap) })
+        setSnFrom(''); setSnTo(''); setSnLabel('')
+        setAttachMsg('Added snapshot "' + d.snap.label + '" — review, then Save.')
+      } else { setAttachMsg((d && d.error) || 'Could not build that snapshot.') }
+    } catch (_e) { setAttachMsg('Could not build that snapshot.') }
+    setSnBusy(false)
+  }
 
   const meta = c.meta || {}
   const hero = c.hero || {}
@@ -1092,6 +1113,46 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.adr}</p></div>
                       <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.revpar}</p></div>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---------- MORE SNAPSHOTS (custom date-range snapshots) ---------- */}
+        {(edit || (Array.isArray(c.snaps) && c.snaps.length > 0)) && (
+          <div className="pt-10">
+            <Eyebrow>MORE SNAPSHOTS</Eyebrow>
+            {edit && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+                <span className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Add snapshot</span>
+                <input value={snLabel} onChange={e => setSnLabel(e.target.value)} placeholder="Title (optional)" className="rounded-md px-2 py-1 text-[12px] w-44" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <input type="date" value={snFrom} onChange={e => setSnFrom(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <span style={{ color: t.muted }}>&rarr;</span>
+                <input type="date" value={snTo} onChange={e => setSnTo(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <button onClick={addSnapshotRange} disabled={snBusy || !snFrom || !snTo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.ink, color: t.bg }}>
+                  {snBusy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add snapshot
+                </button>
+              </div>
+            )}
+            {Array.isArray(c.snaps) && c.snaps.length > 0 && (
+              <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {c.snaps.map((s: Any, i: number) => (
+                  <div key={s.key || i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                    {edit && (
+                      <button onClick={() => mutate(d => d.snaps.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                    )}
+                    <p className="text-sm font-black tracking-[0.14em] pr-5" style={{ color: t.accent }}>
+                      <Ed v={s.label || ''} set={v => patch('snaps.' + i + '.label', v)} edit={edit} />
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.revenue}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Occupancy</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.occPct}%</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.adr}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.revpar}</p></div>
+                    </div>
+                    {(s.from && s.to) && <p className="mt-3 text-[11px]" style={{ color: t.muted }}>{s.from} &rarr; {s.to}{s.reservations != null ? ' · ' + s.reservations + ' res' : ''}</p>}
                   </div>
                 ))}
               </div>
