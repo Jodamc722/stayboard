@@ -6,7 +6,7 @@
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
 import { useEffect, useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock } from 'lucide-react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 
 type Any = any
 
@@ -398,6 +398,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
   const [manualLine, setManualLine] = useState('')
   const [manualCat, setManualCat] = useState('')
+  const [manualAiNotes, setManualAiNotes] = useState('')
   const manualFileRef = useRef<HTMLInputElement>(null)
   const [pwMode, setPwMode] = useState<'set' | 'unlock' | null>(null)
   const [pwValue, setPwValue] = useState('')
@@ -578,6 +579,37 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       } catch { setAttachMsg('Could not read that file.') }
     }
     setBusy(''); if (manualFileRef.current) manualFileRef.current.value = ''
+  }
+  // Type rough notes → AI sorts them into type groups and fills COMPLETED WORK.
+  async function autofillFromNotes() {
+    const notes = manualAiNotes.trim(); if (!notes || busy) return
+    setAttachMsg(''); setBusy('completed-ai')
+    try {
+      const r = await fetch('/api/reports/attach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: initial.id, kind: 'completed', text: notes }) })
+      const d = await r.json()
+      const groups: Any[] = Array.isArray(d?.groups) ? d.groups : []
+      const total = groups.reduce((a: number, g: Any) => a + ((Array.isArray(g?.items) ? g.items : []).length), 0)
+      if (d?.ok && total) {
+        mutate(dr => { for (const g of groups) { const cat = String(g?.category || 'COMPLETED WORK'); for (const it of (Array.isArray(g?.items) ? g.items : [])) if (String(it).trim()) addManualToGroup(dr, cat, String(it)) } })
+        setManualAiNotes(''); setAttachMsg('Added ' + total + ' item(s) from your notes — review, then Save.')
+      } else { setAttachMsg((d && d.error) || 'Could not turn those notes into work items.') }
+    } catch { setAttachMsg('Could not process those notes.') }
+    setBusy('')
+  }
+  // Re-pull the latest Breezeway completed work for the period and replace the grouped weeks.
+  async function refreshBreezeway() {
+    if (busy) return
+    setAttachMsg(''); setBusy('refresh-work')
+    try {
+      const r = await fetch('/api/reports/attach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: initial.id, kind: 'refresh-work' }) })
+      const d = await r.json()
+      if (d?.ok && Array.isArray(d.weeks)) {
+        mutate(dr => { dr.projects = dr.projects || {}; dr.projects.weeks = d.weeks })
+        const n = d.weeks.reduce((a: number, w: Any) => a + (w.groups || []).reduce((b: number, g: Any) => b + (g.items || []).length, 0), 0)
+        setAttachMsg('Pulled the latest Breezeway work (' + n + ' item(s)) — review, then Save.')
+      } else { setAttachMsg((d && d.error) || 'Could not refresh from Breezeway.') }
+    } catch { setAttachMsg('Could not refresh from Breezeway.') }
+    setBusy('')
   }
 
   // ---- attachments on an existing report (P3.5) ----
@@ -1308,6 +1340,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
               <Ed v={projects.subtitle || ''} set={v => patch('projects.subtitle', v)} edit={edit} />
             </p>
+            {edit && (
+              <button onClick={refreshBreezeway} disabled={!!busy} className="mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+                {busy === 'refresh-work' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh from Breezeway
+              </button>
+            )}
             <div className="mt-6 grid md:grid-cols-3 gap-4 items-stretch">
               {(projects.weeks || []).map((w: Any, wi: number) => (
                 <div key={wi} className="relative rounded-2xl p-5 shadow-sm border h-full flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
@@ -1389,6 +1426,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
                   )
                 })()}
+                {edit && (
+                  <div className="mt-3 rounded-xl p-3" style={{ background: t.chip, border: '1px solid ' + t.cardBorder }}>
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: t.accent }}><Sparkles size={12} /> Auto-fill from notes</div>
+                    <textarea value={manualAiNotes} onChange={e => setManualAiNotes(e.target.value)} rows={2} placeholder="Type or paste what got done — e.g. 'Fixed AC in 409, replaced Yale lock 404, delivered wine opener to 501' — and AI sorts it into type sections." className="mt-2 w-full rounded-lg px-3 py-2 text-[13px] outline-none resize-y" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                    <button onClick={autofillFromNotes} disabled={!!busy || !manualAiNotes.trim()} className="mt-2 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.accent, color: t.card }}>{busy === 'completed-ai' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Auto-fill with AI</button>
+                  </div>
+                )}
                 {edit && (
                   <div className="mt-3 flex items-center gap-2 flex-wrap">
                     <input value={manualCat} onChange={e => setManualCat(e.target.value)} placeholder="Type (e.g. Maintenance)" className="w-[150px] rounded-lg px-3 py-1.5 text-[13px] outline-none" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
