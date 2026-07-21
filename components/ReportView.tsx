@@ -418,6 +418,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
   // ---------- present mode (full-screen slideshow) ----------
   const [present, setPresent] = useState(false)
+  const [showMonths, setShowMonths] = useState(false)
   const [slide, setSlide] = useState(0)
   const slideRef = useRef(0)
   slideRef.current = slide
@@ -1070,6 +1071,33 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )}
           </div>
         </SectionShell>
+
+        {/* ---------- MONTH-BY-MONTH (toggle, only for multi-month periods) ---------- */}
+        {Array.isArray(c.byMonth) && c.byMonth.length >= 2 && (
+          <div className="pt-10">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <Eyebrow>MONTH BY MONTH</Eyebrow>
+              <button onClick={() => setShowMonths(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: showMonths ? t.accent : t.chip, border: '1px solid ' + (showMonths ? t.accent : t.cardBorder), color: showMonths ? t.card : t.ink }}>
+                {showMonths ? 'Hide monthly view' : 'View by month'}
+              </button>
+            </div>
+            {showMonths && (
+              <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {c.byMonth.map((m: Any, i: number) => (
+                  <div key={i} className="rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                    <p className="text-sm font-black tracking-[0.14em]" style={{ color: t.accent }}>{m.label}</p>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.revenue}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Occupancy</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.occPct}%</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.adr}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.revpar}</p></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ---------- PACING (only when data exists) ---------- */}
         {c.pacing && (
