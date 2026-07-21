@@ -61,6 +61,7 @@ export async function GET(req: NextRequest) {
       adr: '$' + m.adr,
       grossAdr: '$' + m.grossAdr,
       revpar: '$' + m.revpar,
+      grossRevpar: '$' + m.grossRevpar,
       reservations: m.reservations,
       revNum: m.accomRevenue,
     }
