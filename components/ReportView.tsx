@@ -286,6 +286,23 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     }
   }
 
+  // manually-added completed work (grouped by type) — its own clean slide when present
+  const manual = Array.isArray(projects.manual) ? projects.manual : []
+  const manualG: Any[] = (manual.length && typeof manual[0] === 'string')
+    ? [{ category: 'COMPLETED WORK', items: (manual as Any[]).filter(x => typeof x === 'string') }]
+    : (manual as Any[]).filter(g => g && typeof g === 'object' && Array.isArray(g.items) && g.items.length)
+  if (manualG.length) {
+    const s = pptx.addSlide()
+    head(s, 'COMPLETED WORK', projects.headline || 'Work completed this period.')
+    let body = ''
+    for (const g of manualG.slice(0, 8)) {
+      body += String(g.category || 'COMPLETED WORK').toUpperCase() + '\n'
+      for (const it of (g.items || []).slice(0, 12)) body += '• ' + String(it).slice(0, 110) + '\n'
+      body += '\n'
+    }
+    s.addText(body.slice(0, 2200), { x: 0.6, y: CT, w: 12.13, h: CBOT - CT, fontSize: 12, color: BODY, valign: 'top' })
+  }
+
   // custom sections (owner-added) — one clean slide each
   const custom = Array.isArray(c.custom) ? c.custom : []
   for (let ci = 0; ci < custom.length; ci++) {
@@ -380,6 +397,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [picker, setPicker] = useState(false)
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
   const [manualLine, setManualLine] = useState('')
+  const [manualCat, setManualCat] = useState('')
   const manualFileRef = useRef<HTMLInputElement>(null)
   const [pwMode, setPwMode] = useState<'set' | 'unlock' | null>(null)
   const [pwValue, setPwValue] = useState('')
@@ -519,10 +537,28 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     setPwBusy(false)
   }
 
-  // manual "completed work" — typed lines or a parsed file, added on top of the Breezeway pull
+  // manual "completed work" — typed lines or a parsed file, grouped by type, added on top of the Breezeway pull.
+  // Model: projects.manual = [{ category, items[] }]. Legacy reports stored a flat string[]; we migrate on first write.
+  function manualGroups(): Any[] {
+    const arr = Array.isArray(projects.manual) ? projects.manual : []
+    if (arr.length && typeof arr[0] === 'string') return [{ category: 'COMPLETED WORK', items: (arr as Any[]).filter(x => typeof x === 'string') }]
+    return (arr as Any[]).filter(g => g && typeof g === 'object').map(g => ({ category: String(g.category || 'COMPLETED WORK'), items: Array.isArray(g.items) ? g.items.filter((x: Any) => typeof x === 'string') : [] }))
+  }
+  function addManualToGroup(dr: Any, category: string, line: string) {
+    dr.projects = dr.projects || {}
+    let m: Any[] = Array.isArray(dr.projects.manual) ? dr.projects.manual : []
+    if (m.length && typeof m[0] === 'string') m = [{ category: 'COMPLETED WORK', items: m.filter(x => typeof x === 'string') }]
+    const cat = (category || 'COMPLETED WORK').toUpperCase().slice(0, 40)
+    let g = m.find(x => x && String(x.category || '').toUpperCase() === cat)
+    if (!g) { g = { category: cat, items: [] }; m.push(g) }
+    if (!Array.isArray(g.items)) g.items = []
+    g.items.push(line)
+    dr.projects.manual = m
+  }
   function addManualLine() {
     const v = manualLine.trim(); if (!v) return
-    mutate(d => { d.projects = d.projects || {}; d.projects.manual = Array.isArray(d.projects.manual) ? d.projects.manual : []; d.projects.manual.push(v) })
+    const cat = manualCat.trim() || 'COMPLETED WORK'
+    mutate(d => addManualToGroup(d, cat, v))
     setManualLine('')
   }
   async function onManualFilePick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -533,9 +569,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       try {
         const r = await fetch('/api/reports/attach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: initial.id, kind: 'completed', url }) })
         const d = await r.json()
-        if (d?.ok && Array.isArray(d.items) && d.items.length) {
-          mutate(dr => { dr.projects = dr.projects || {}; dr.projects.manual = Array.isArray(dr.projects.manual) ? dr.projects.manual : []; d.items.forEach((it: string) => dr.projects.manual.push(it)) })
-          setAttachMsg('Added ' + d.items.length + ' item(s) from the file — review, then Save.')
+        const groups: Any[] = Array.isArray(d?.groups) ? d.groups : (Array.isArray(d?.items) ? [{ category: 'COMPLETED WORK', items: d.items }] : [])
+        const total = groups.reduce((a: number, g: Any) => a + ((Array.isArray(g?.items) ? g.items : []).length), 0)
+        if (d?.ok && total) {
+          mutate(dr => { for (const g of groups) { const cat = String(g?.category || 'COMPLETED WORK'); for (const it of (Array.isArray(g?.items) ? g.items : [])) if (String(it).trim()) addManualToGroup(dr, cat, String(it)) } })
+          setAttachMsg('Added ' + total + ' item(s) from the file — review, then Save.')
         } else { setAttachMsg((d && d.error) || 'Could not read work items from that file.') }
       } catch { setAttachMsg('Could not read that file.') }
     }
@@ -1310,24 +1348,57 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             {((projects.manual && projects.manual.length) || edit) ? (
               <div className="mt-4 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                 <p className="text-[11px] font-black tracking-[0.16em]" style={{ color: t.accent }}>COMPLETED WORK</p>
-                <ul className="mt-2 space-y-1.5">
-                  {(projects.manual || []).map((it: string, i: number) => (
-                    <li key={i} className="relative text-[12.5px] leading-snug pl-3" style={{ color: t.body }}>
-                      <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
-                      <Ed v={it} set={v => patch('projects.manual.' + i, v)} edit={edit} multiline />
-                      {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(i, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
-                    </li>
-                  ))}
-                </ul>
+                {(() => {
+                  const raw: Any[] = Array.isArray(projects.manual) ? projects.manual : []
+                  const legacy = raw.length > 0 && typeof raw[0] === 'string'
+                  if (legacy) return (
+                    <ul className="mt-2 space-y-1.5">
+                      {raw.map((it: Any, i: number) => (
+                        <li key={i} className="relative text-[12.5px] leading-snug pl-3" style={{ color: t.body }}>
+                          <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
+                          <Ed v={String(it)} set={v => patch('projects.manual.' + i, v)} edit={edit} multiline />
+                          {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(i, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                  return (
+                    <div className="mt-3 space-y-3">
+                      {raw.map((g: Any, gi: number) => (
+                        <div key={gi} className="relative">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black tracking-[0.14em] uppercase" style={{ color: t.muted }}>
+                              <Ed v={String(g.category || 'COMPLETED WORK')} set={v => patch('projects.manual.' + gi + '.category', v)} edit={edit} />
+                            </span>
+                            {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(gi, 1))} style={{ color: t.accent }}><X size={12} /></button>)}
+                          </div>
+                          <ul className="mt-1.5 space-y-1.5">
+                            {(Array.isArray(g.items) ? g.items : []).map((it: Any, ii: number) => (
+                              <li key={ii} className="relative text-[12.5px] leading-snug pl-3" style={{ color: t.body }}>
+                                <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
+                                <Ed v={String(it)} set={v => patch('projects.manual.' + gi + '.items.' + ii, v)} edit={edit} multiline />
+                                {edit && (<button onClick={() => mutate(d => d.projects.manual[gi].items.splice(ii, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
+                              </li>
+                            ))}
+                          </ul>
+                          {edit && (
+                            <button onClick={() => mutate(d => { d.projects.manual[gi].items = Array.isArray(d.projects.manual[gi].items) ? d.projects.manual[gi].items : []; d.projects.manual[gi].items.push('') })} className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: t.accent }}><Plus size={11} /> Add item</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
                 {edit && (
                   <div className="mt-3 flex items-center gap-2 flex-wrap">
-                    <input value={manualLine} onChange={e => setManualLine(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManualLine() } }} placeholder="Add a completed item, press Enter" className="flex-1 min-w-[200px] rounded-lg px-3 py-1.5 text-[13px] outline-none" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                    <input value={manualCat} onChange={e => setManualCat(e.target.value)} placeholder="Type (e.g. Maintenance)" className="w-[150px] rounded-lg px-3 py-1.5 text-[13px] outline-none" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                    <input value={manualLine} onChange={e => setManualLine(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManualLine() } }} placeholder="Add a completed item, press Enter" className="flex-1 min-w-[180px] rounded-lg px-3 py-1.5 text-[13px] outline-none" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
                     <button onClick={addManualLine} disabled={!manualLine.trim()} className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.accent, color: t.card }}><Plus size={12} /> Add</button>
                     <input ref={manualFileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={onManualFilePick} />
                     <button onClick={() => manualFileRef.current && manualFileRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>{busy === 'completed' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Upload file</button>
                   </div>
                 )}
-                {edit && <p className="mt-2 text-[11px] italic" style={{ color: t.muted }}>Added on top of the Breezeway-pulled work above. Upload a PDF or photo and the AI pulls out the completed items.</p>}
+                {edit && <p className="mt-2 text-[11px] italic" style={{ color: t.muted }}>Grouped by type. Add a type + item, or upload a PDF/photo and the AI sorts the completed items into type sections. Added on top of the Breezeway-pulled work above.</p>}
               </div>
             ) : null}
 
