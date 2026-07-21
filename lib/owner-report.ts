@@ -84,6 +84,8 @@ export type ReportContent = {
     weeks: { label: string; groups: { category: string; items: string[] }[] }[]
     tracking: { title: string; body: string }[]
   }
+  // Per-calendar-month breakdown for the "view by month" toggle; only set when the period spans 2+ months.
+  byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
   omit: string[]
 }
 
