@@ -86,8 +86,8 @@ export type ReportContent = {
   }
   // Per-calendar-month breakdown for the "view by month" toggle; only set when the period spans 2+ months.
   byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
-  snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; reservations?: number; units?: number }[]
-  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; reservations: number; revNum: number }[]
+  snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number }[]
+  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number }[]
   omit: string[]
 }
 
@@ -160,7 +160,7 @@ export function metricsFor(resv: Resv[], units: number, from: string, toExcl: st
     resCount++
     occNights += on
     accom += (r.fare / r.nights) * on
-    if (r.check_out > from && r.check_out <= toExcl) cleaning += r.cleaning
+    cleaning += (r.cleaning / r.nights) * on // prorate cleaning by night-fraction (matches 17W methodology)
   }
   const days = daysBetween(from, toExcl)
   const avail = Math.max(0, units * days)
