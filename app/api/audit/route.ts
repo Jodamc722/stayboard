@@ -366,6 +366,8 @@ export async function POST(req: NextRequest) {
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
+    if (typeof f.photoUrl === 'string') upd.photo_url = f.photoUrl.slice(0, 500) || null
+    if (Array.isArray(f.photos)) { const dd: any = (upd.details && typeof upd.details === 'object') ? upd.details : ((item.details && typeof item.details === 'object') ? { ...item.details } : {}); dd.photos = f.photos.slice(0, 12).map((p: any) => String(p || '').slice(0, 500)).filter(Boolean); upd.details = dd }
     if (typeof f.room === 'string' && f.room) upd.room = f.room.slice(0, 80)
     if (['low', 'medium', 'high'].includes(String(f.severity))) upd.severity = String(f.severity)
     if (!audit && ['open', 'approved', 'ordered', 'arriving', 'done', 'dismissed'].includes(String(f.status))) upd.status = String(f.status)
