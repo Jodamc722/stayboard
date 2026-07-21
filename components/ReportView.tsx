@@ -423,6 +423,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [snTo, setSnTo] = useState('')
   const [snLabel, setSnLabel] = useState('')
   const [snBusy, setSnBusy] = useState(false)
+  const [showListings, setShowListings] = useState(false)
+  const [blBusy, setBlBusy] = useState(false)
   const [slide, setSlide] = useState(0)
   const slideRef = useRef(0)
   slideRef.current = slide
@@ -800,6 +802,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     } catch (_e) { setAttachMsg('Could not build that snapshot.') }
     setSnBusy(false)
   }
+  // Pull each listing's own performance for the report period (Revenue/Occ/ADR/RevPAR per unit).
+  async function loadListingBreakdown() {
+    if (blBusy) return
+    setAttachMsg(''); setBlBusy(true)
+    try {
+      const r = await fetch('/api/reports/listing-breakdown?id=' + encodeURIComponent(initial.id))
+      const d = await r.json()
+      if (d?.ok && Array.isArray(d.listings)) {
+        mutate(dr => { dr.byListing = d.listings })
+        setShowListings(true)
+        setAttachMsg('Pulled per-listing performance (' + d.listings.length + ' listing(s)) — review, then Save.')
+      } else { setAttachMsg((d && d.error) || 'Could not pull per-listing performance.') }
+    } catch (_e) { setAttachMsg('Could not pull per-listing performance.') }
+    setBlBusy(false)
+  }
 
   const meta = c.meta || {}
   const hero = c.hero || {}
@@ -1153,6 +1170,43 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.revpar}</p></div>
                     </div>
                     {(s.from && s.to) && <p className="mt-3 text-[11px]" style={{ color: t.muted }}>{s.from} &rarr; {s.to}{s.reservations != null ? ' · ' + s.reservations + ' res' : ''}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---------- PERFORMANCE BY LISTING ---------- */}
+        {(edit || (Array.isArray(c.byListing) && c.byListing.length > 0)) && (
+          <div className="pt-10">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <Eyebrow>PERFORMANCE BY LISTING</Eyebrow>
+              <div className="flex items-center gap-2">
+                {Array.isArray(c.byListing) && c.byListing.length > 0 && (
+                  <button onClick={() => setShowListings(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: showListings ? t.accent : t.chip, border: '1px solid ' + (showListings ? t.accent : t.cardBorder), color: showListings ? t.card : t.ink }}>
+                    {showListings ? 'Hide by listing' : 'View by listing'}
+                  </button>
+                )}
+                {edit && (
+                  <button onClick={loadListingBreakdown} disabled={blBusy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+                    {blBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {Array.isArray(c.byListing) && c.byListing.length ? 'Refresh' : 'Pull per-listing'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {showListings && Array.isArray(c.byListing) && c.byListing.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-2xl border" style={{ borderColor: t.cardBorder }}>
+                <div className="grid gap-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider" style={{ background: t.chip, color: t.muted, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr' }}>
+                  <div>Listing</div><div className="text-right">Revenue</div><div className="text-right">Occ</div><div className="text-right">ADR</div><div className="text-right">RevPAR</div>
+                </div>
+                {c.byListing.map((l: Any, i: number) => (
+                  <div key={l.id || i} className="grid gap-2 px-4 py-3 items-center border-t" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr', background: t.card }}>
+                    <div className="text-[13px] font-semibold truncate" style={{ color: t.ink }}>{l.name}{l.bedrooms != null ? <span className="ml-1.5 text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
+                    <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{l.revenue}</div>
+                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.occPct}%</div>
+                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.adr}</div>
+                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.revpar}</div>
                   </div>
                 ))}
               </div>
