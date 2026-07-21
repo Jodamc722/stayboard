@@ -1,14 +1,15 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
-type TabKey = 'arrivals' | 'departures' | 'active'
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[] }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
+type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'arrivals', label: 'Arrivals' },
   { key: 'departures', label: 'Departure cleans' },
   { key: 'active', label: 'Active reservations' },
+  { key: 'upcoming', label: 'Upcoming' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? (r.cleanDay || r.checkOut) : r.checkIn }
@@ -33,6 +34,11 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [seen, setSeen] = useState<Set<string>>(new Set())
   const seenInit = useRef(false)
   const SEEN_KEY = 'board_seen_' + params.v
+  const [noteText, setNoteText] = useState('')
+  const [noteBy, setNoteBy] = useState('')
+  const [noteBusy, setNoteBusy] = useState(false)
+  const [noteMsg, setNoteMsg] = useState('')
+  useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} }, [])
 
   const load = useCallback(async () => {
     try {
@@ -47,6 +53,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
       for (const r of j.arrivals) ids.push(keyOf(r, 'arrivals'))
       for (const r of j.departures) ids.push(keyOf(r, 'departures'))
       for (const r of j.active) ids.push(keyOf(r, 'active'))
+      for (const r of (j.upcoming || [])) ids.push(keyOf(r, 'upcoming'))
       if (!seenInit.current) { const st = new Set(ids); setSeen(st); seenInit.current = true; try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} }
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [params.v])
@@ -76,6 +83,18 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     setSyncing(false)
   }
   const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
+  const saveNote = async (rid: string) => {
+    if (!noteText.trim()) return
+    setNoteBusy(true); setNoteMsg('')
+    try {
+      const r = await fetch('/api/public/board-note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: rid, note: noteText.trim(), by: noteBy.trim() }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setNoteMsg(j.error || 'Could not save'); setNoteBusy(false); return }
+      setNoteText(''); setNoteMsg('Saved to Guesty'); try { localStorage.setItem('board_note_by', noteBy.trim()) } catch {}
+      await load()
+    } catch (e: any) { setNoteMsg(String(e?.message || e)) }
+    setNoteBusy(false)
+  }
   const submitPw = async (e: any) => {
     e.preventDefault()
     setPwBusy(true); setPwErr('')
@@ -110,6 +129,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   for (const r of data.arrivals) allIds.push(keyOf(r, 'arrivals'))
   for (const r of data.departures) allIds.push(keyOf(r, 'departures'))
   for (const r of data.active) allIds.push(keyOf(r, 'active'))
+  for (const r of (data.upcoming || [])) allIds.push(keyOf(r, 'upcoming'))
   const newCount = seenInit.current ? allIds.filter(id => !seen.has(id)).length : 0
   const markSeen = () => { const st = new Set(allIds); setSeen(st); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(st))) } catch {} }
   const isNew = (r: Row) => seenInit.current && !seen.has(keyOf(r, tab))
@@ -122,7 +142,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
 
   const exportCsv = () => {
     const head = [['Date', 'Unit', 'Guest', 'Bedrooms', 'Code', tab === 'departures' ? 'Checkout' : 'Check-in', 'Same-day turn', 'Notes']]
-    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : '', r.extended ? 'EXTENDED - do not clean (now out ' + (r.extendedTo || '') + ')' : (r.notes || '')])
+    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : '', r.extended ? 'EXTENDED - do not clean (now out ' + (r.extendedTo || '') + ')' : (r.resNotes || r.notes || '')])
     const csv = head.concat(body).map(line => line.map(x => /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -157,7 +177,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
           )})}
         </div>
 
-        {rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">Nothing here this week.</div>}
+        {rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">{tab === 'upcoming' ? 'No upcoming reservations in the next 30 days.' : 'Nothing here this week.'}</div>}
 
         <div className="space-y-5">
           {dayKeys.map(day => (
@@ -165,7 +185,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
               <div className="flex items-baseline gap-2 mb-2 px-1">
                 <h2 className="text-sm font-bold text-neutral-900">{fmtDate(day)}</h2>
                 {relDay(day, data.today || '') && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-neutral-900 text-white">{relDay(day, data.today || '')}</span>}
-                <span className="text-xs text-neutral-400">{byDay[day].length} {tab === 'departures' ? 'cleans' : tab === 'arrivals' ? 'arrivals' : 'staying'}</span>
+                <span className="text-xs text-neutral-400">{byDay[day].length} {tab === 'departures' ? 'cleans' : (tab === 'arrivals' || tab === 'upcoming') ? 'arrivals' : 'staying'}</span>
               </div>
               <div className="space-y-2">
                 {byDay[day].map((r, i) => {
@@ -174,20 +194,20 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                   const open = expanded === id
                   return (
                     <div key={id} className={'rounded-xl border bg-white break-inside-avoid ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
-                      <button onClick={() => setExpanded(open ? '' : id)} className="w-full text-left px-4 py-3 flex items-center gap-3">
+                      <button onClick={() => { setExpanded(open ? '' : id); setNoteText(''); setNoteMsg('') }} className="w-full text-left px-4 py-3 flex items-center gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-semibold truncate">{r.unit}</span>
                             {isNew(r) && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">New</span>}
                             {tab === 'departures' && r.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
                             {r.extended && <span title="Guest extended - this unit is still occupied. Do not clean." className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">Extended {'\u00b7'} do not clean</span>}
-                            {r.notes && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">Note</span>}
+                            {(r.resNotes || r.notes) && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">Note</span>}
                           </div>
                           <div className="text-xs text-neutral-500 truncate">{r.guestName || 'Guest'}{r.guests ? ' · ' + r.guests + ' guests' : ''}{bedLabel(r.bedrooms) ? ' · ' + bedLabel(r.bedrooms) : ''}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.extended && r.extendedTo ? ' · now out ' + fmtDate(r.extendedTo) : ''}</div>
                         </div>
                         <div className="text-right shrink-0">
                           {time && <div className="text-sm font-medium text-emerald-700">{tab === 'departures' ? 'out ' : 'in '}{time}</div>}
-                          {tab === 'active' && <div className="text-xs text-neutral-400">out {fmtDate(r.checkOut)}</div>}
+                          {(tab === 'active' || tab === 'upcoming') && <div className="text-xs text-neutral-400">out {fmtDate(r.checkOut)}</div>}
                         </div>
                         <span className="text-neutral-300 text-xs">{open ? '▲' : '▼'}</span>
                       </button>
@@ -203,7 +223,28 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                           <Field label="Confirmation" value={r.confirmationCode || '—'} />
                           <Field label="Source" value={r.source || '—'} />
                           <Field label="Unit" value={bedLabel(r.bedrooms) || '—'} />
-                          {r.notes && <div className="col-span-2"><div className="text-xs uppercase tracking-wide text-neutral-400">Reservation notes</div><div className="text-neutral-900 whitespace-pre-wrap bg-neutral-50 rounded px-2 py-1 mt-0.5">{r.notes}</div></div>}
+                          {r.customFields && r.customFields.length > 0 && (
+                            <div className="col-span-2 mt-1">
+                              <div className="text-xs uppercase tracking-wide text-neutral-400 mb-1">Details</div>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                                {r.customFields.map((c, ci) => <Field key={ci} label={c.label} value={c.value} />)}
+                              </div>
+                            </div>
+                          )}
+                          <div className="col-span-2 mt-1">
+                            <div className="text-xs uppercase tracking-wide text-neutral-400">Reservation notes</div>
+                            {(r.resNotes || r.notes) ? <div className="text-neutral-900 whitespace-pre-wrap bg-neutral-50 rounded px-2 py-1 mt-0.5 text-[13px]">{r.resNotes || r.notes}</div> : <div className="text-neutral-400 text-[13px] mt-0.5">No notes yet.</div>}
+                            {r.id && (
+                              <div className="mt-2 print:hidden">
+                                <textarea value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Add a note — saves to Guesty…" rows={2} className="w-full text-sm border border-neutral-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                  <input value={noteBy} onChange={e => setNoteBy(e.target.value)} placeholder="Your name" className="text-sm border border-neutral-200 rounded-lg px-2 py-1.5 w-32" />
+                                  <button onClick={() => saveNote(r.id as string)} disabled={noteBusy || !noteText.trim()} className="text-sm font-medium px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{noteBusy ? 'Saving…' : 'Add note'}</button>
+                                  {noteMsg && <span className="text-xs text-neutral-500">{noteMsg}</span>}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
