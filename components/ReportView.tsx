@@ -425,6 +425,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [snBusy, setSnBusy] = useState(false)
   const [showListings, setShowListings] = useState(false)
   const [blBusy, setBlBusy] = useState(false)
+  const [grossMode, setGrossMode] = useState(false)
   const [slide, setSlide] = useState(0)
   const slideRef = useRef(0)
   slideRef.current = slide
@@ -1140,7 +1141,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {/* ---------- MORE SNAPSHOTS (custom date-range snapshots) ---------- */}
         {(edit || (Array.isArray(c.snaps) && c.snaps.length > 0)) && (
           <div className="pt-10">
-            <Eyebrow>MORE SNAPSHOTS</Eyebrow>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <Eyebrow>MORE SNAPSHOTS</Eyebrow>
+              {Array.isArray(c.snaps) && c.snaps.length > 0 && (
+                <button onClick={() => setGrossMode(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+                  {grossMode ? 'Gross · incl. cleaning' : 'Net · accommodation'}
+                </button>
+              )}
+            </div>
             {edit && (
               <div className="mt-3 flex items-center gap-2 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
                 <span className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Add snapshot</span>
@@ -1164,10 +1172,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <Ed v={s.label || ''} set={v => patch('snaps.' + i + '.label', v)} edit={edit} />
                     </p>
                     <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.revenue}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (s.grossRevenue || s.revenue) : s.revenue}</p></div>
                       <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Occupancy</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.occPct}%</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.adr}</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.revpar}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (s.grossAdr || s.adr) : s.adr}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (s.grossRevpar || s.revpar) : s.revpar}</p></div>
                     </div>
                     {(s.from && s.to) && <p className="mt-3 text-[11px]" style={{ color: t.muted }}>{s.from} &rarr; {s.to}{s.reservations != null ? ' · ' + s.reservations + ' res' : ''}</p>}
                   </div>
@@ -1183,6 +1191,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Eyebrow>PERFORMANCE BY LISTING</Eyebrow>
               <div className="flex items-center gap-2">
+                {showListings && Array.isArray(c.byListing) && c.byListing.length > 0 && (
+                  <button onClick={() => setGrossMode(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+                    {grossMode ? 'Gross · incl. cleaning' : 'Net · accommodation'}
+                  </button>
+                )}
                 {Array.isArray(c.byListing) && c.byListing.length > 0 && (
                   <button onClick={() => setShowListings(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: showListings ? t.accent : t.chip, border: '1px solid ' + (showListings ? t.accent : t.cardBorder), color: showListings ? t.card : t.ink }}>
                     {showListings ? 'Hide by listing' : 'View by listing'}
@@ -1203,10 +1216,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 {c.byListing.map((l: Any, i: number) => (
                   <div key={l.id || i} className="grid gap-2 px-4 py-3 items-center border-t" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr', background: t.card }}>
                     <div className="text-[13px] font-semibold truncate" style={{ color: t.ink }}>{l.name}{l.bedrooms != null ? <span className="ml-1.5 text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
-                    <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{l.revenue}</div>
+                    <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (l.grossRevenue || l.revenue) : l.revenue}</div>
                     <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.occPct}%</div>
-                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.adr}</div>
-                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.revpar}</div>
+                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossAdr || l.adr) : l.adr}</div>
+                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossRevpar || l.revpar) : l.revpar}</div>
                   </div>
                 ))}
               </div>
