@@ -261,7 +261,7 @@ export async function POST(req: NextRequest) {
     + '"aheadNotes": {"current": 1-2 sentences on the current month, "next": 1-2 sentences on next month, "third": 1-2 sentences on the month after next (only used when included)}, '
     + '"quotes": [up to 4 objects {"i": review index number, "text": lightly trimmed quote max 220 chars}] pick the most specific, credible, positive quotes across DIFFERENT units, '
     + '"themes": [2-3 objects {"title": short theme name like "Communication - a highlight", "body": 1 sentence on what guests are saying, "action": 1 sentence on what we are doing}], '
-    + '"projectWeeks": [one object per week bucket {"label": the bucket label EXACTLY as given, "groups": [{"category": UPPERCASE grouping like "DEEP CLEAN + PM" or "REPAIRS + MAINTENANCE" or "COMMON AREAS", "items": [concise task lines, merge duplicates, max 6 per group]}]}] -- EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs); only include repairs, maintenance, installs & replacements, deliveries, deep cleans, inspections and real projects an owner cares about, '
+    + '"projectWeeks": [one object per week bucket {"label": the bucket label EXACTLY as given, "groups": [{"category": UPPERCASE grouping like "DEEP CLEAN + PM" or "REPAIRS + MAINTENANCE" or "COMMON AREAS", "items": [concise task lines, merge duplicates, max 6 per group]}]}] -- EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs); ALWAYS include Maintenance-department work (HVAC, plumbing, electrical, appliance, preventive maintenance); include repairs, maintenance, installs & replacements, deliveries, deep cleans, inspections and real projects an owner cares about, '
     + '"tracking": [up to 3 objects {"title": short item title, "body": 1 sentence status} from open items worth telling an owner about], '
     + '"planNotes": {optional, one entry PER BUDGET MONTH keyed by the month name in UPPERCASE (e.g. "MAY", "JUNE", "JULY"), value = one short sentence about THAT month only}}'
 
@@ -316,6 +316,22 @@ export async function POST(req: NextRequest) {
       }
       weeks.push({ label: b.label, groups: Object.keys(byDept).map(k => ({ category: k, items: byDept[k].slice(0, 6) })) })
     }
+  }
+
+  // Maintenance backstop: an owner report must surface real Maintenance-department work. If a week has no
+  // maintenance/repairs group at all (the AI dropped it), inject the completed maintenance tasks for that week.
+  // Only fires when maintenance is entirely absent, so it never duplicates work the AI already grouped. Routine
+  // turns (departure/turnover cleans, strips) stay excluded.
+  for (let wi = 0; wi < weeks.length && wi < buckets.length; wi++) {
+    if (weeks[wi].groups.some(g => /maint|repair|hvac|plumb/i.test(g.category))) continue
+    const b = buckets[wi]
+    const maint = tasks.completed.filter(t => t.date >= b.start && t.date <= b.endIncl && /maint/i.test(t.department || '') && !isRoutineTurn(t.name) && !isRoutineTurn(t.department))
+    if (!maint.length) continue
+    const seen = new Set<string>()
+    for (const g of weeks[wi].groups) for (const it of g.items) seen.add(it.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
+    const fresh: string[] = []
+    for (const t of maint) { const line = ('Unit ' + t.unit + ' — ' + t.name).slice(0, 140); const k = line.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); if (!seen.has(k)) { seen.add(k); fresh.push(line) } }
+    if (fresh.length) weeks[wi].groups.push({ category: 'MAINTENANCE', items: fresh.slice(0, 8) })
   }
 
   const themes: { title: string; body: string; action: string }[] = (Array.isArray(ai.themes) ? ai.themes : []).slice(0, 3).map((t: any) => ({
