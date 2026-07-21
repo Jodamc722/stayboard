@@ -120,7 +120,9 @@ export async function resolveScope(listingIds: string[], buildings: string[]): P
 }
 
 // ---------- reservations pull + metrics ----------
-type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; cleaning: number; created_at: string | null }
+type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; cleaning: number; source: string; created_at: string | null }
+// Expedia-family channels bundle the cleaning fee into accommodation, so ~1/3 arrive with cleaning=0.
+const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
 
 export async function pullReservations(listingIds: string[], from: string, toExcl: string): Promise<Resv[]> {
   const db = supabaseAdmin()
@@ -128,7 +130,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
   for (let i = 0; i < 20; i++) {
     const { data } = await db
       .from('guesty_reservations')
-      .select('listing_id, check_in, check_out, nights, status, created_at, cleaning:raw->money->>fareCleaning, fare:raw->money->>fareAccommodation')
+      .select('listing_id, check_in, check_out, nights, status, source, created_at, cleaning:raw->money->>fareCleaning, fare:raw->money->>fareAccommodation')
       .in('status', CONFIRMED)
       .in('listing_id', listingIds)
       .gt('check_out', from)
@@ -138,15 +140,42 @@ export async function pullReservations(listingIds: string[], from: string, toExc
     all = all.concat(data)
     if (data.length < 1000) break
   }
-  return all
+  const list: Resv[] = all
     .filter((r: any) => r.check_in && r.check_out)
     .map((r: any) => ({
       listing_id: String(r.listing_id || ''),
       check_in: String(r.check_in), check_out: String(r.check_out),
       nights: Math.max(1, num(r.nights) || daysBetween(String(r.check_in), String(r.check_out))),
       fare: num(r.fare), cleaning: num(r.cleaning),
+      source: String(r.source || '').toLowerCase(),
       created_at: r.created_at ? String(r.created_at).slice(0, 10) : null,
     }))
+
+  // Expedia cleaning back-fill: Expedia-family channels bundle the cleaning fee into the
+  // accommodation fare (so it arrives as cleaning=0). Rebuild each unit's typical cleaning fee
+  // from its NON-Expedia bookings (the modal value), then split it out of those bundled fares so
+  // Net (accommodation) and Gross line up with the other channels. Gross total is unchanged.
+  const pool: Record<string, Record<string, number>> = {}
+  for (const r of list) {
+    if (!EXPEDIA_RE.test(r.source) && r.cleaning > 0) {
+      const key = String(Math.round(r.cleaning))
+      ;(pool[r.listing_id] = pool[r.listing_id] || {})[key] = (pool[r.listing_id]?.[key] || 0) + 1
+    }
+  }
+  const modal: Record<string, number> = {}
+  for (const id in pool) {
+    let best = 0, bestN = 0
+    for (const k in pool[id]) { if (pool[id][k] > bestN) { bestN = pool[id][k]; best = Number(k) } }
+    modal[id] = best
+  }
+  for (const r of list) {
+    if (EXPEDIA_RE.test(r.source) && r.cleaning === 0 && modal[r.listing_id] > 0) {
+      const m = Math.min(modal[r.listing_id], r.fare)
+      r.cleaning = m
+      r.fare = r.fare - m
+    }
+  }
+  return list
 }
 
 // Per-night proration: a stay contributes fare/nights for each night inside the window,
