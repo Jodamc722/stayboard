@@ -118,17 +118,26 @@ async function fetchAnyBlock(url: string): Promise<any | null> {
   } catch { return null }
 }
 
-async function parseCompleted(url: string, scopeLabel: string): Promise<string[] | null> {
+async function parseCompleted(url: string, scopeLabel: string): Promise<{ category: string; items: string[] }[] | null> {
   const block = await fetchAnyBlock(url)
   if (!block) return null
   const text = await anthropic({
-    model: DOC_MODEL, max_tokens: 700,
-    system: 'You extract a concise list of completed work items for a property owner report. Output STRICT JSON only.',
-    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This document or photo describes work completed at "' + scopeLabel + '". Extract the completed work as a short list an owner would care about (repairs, installs, replacements, projects, deliveries, inspections). EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs). Return JSON: {"items": [up to 12 concise lines, each <= 140 chars; prefix with the unit like "Unit 405: ..." when the unit is known]}.' }] }],
+    model: DOC_MODEL, max_tokens: 900,
+    system: 'You extract completed work items for a property owner report and sort them into type groups. Output STRICT JSON only.',
+    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This document or photo describes work completed at "' + scopeLabel + '". Extract the completed work an owner would care about and SORT it into type groups. Use clear UPPERCASE type headings such as MAINTENANCE, REPAIRS, INSTALLS & REPLACEMENTS, DELIVERIES, DEEP CLEAN, INSPECTIONS (add others as needed). ALWAYS include maintenance / PM work (HVAC, plumbing, electrical, appliance, preventive maintenance). EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs). Return JSON: {"groups": [{"category": UPPERCASE type, "items": [concise lines, each <= 140 chars; prefix with the unit like "Unit 405: ..." when known, max 8 per group]}]}. Up to 6 groups.' }] }],
   })
   const j = parseJson(text)
-  const items = (Array.isArray(j?.items) ? j.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).slice(0, 12)
-  return items.length ? items : null
+  const isRoutineTurn = (s: any) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(String(s || ''))
+  let groups = (Array.isArray(j?.groups) ? j.groups : []).map((g: any) => ({
+    category: str(g?.category).toUpperCase().slice(0, 40) || 'COMPLETED WORK',
+    items: (Array.isArray(g?.items) ? g.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).filter((x: string) => !isRoutineTurn(x)).slice(0, 8),
+  })).filter((g: any) => g.items.length && !isRoutineTurn(g.category)).slice(0, 6)
+  // Back-compat: if the model returned a flat items array, wrap it into one group.
+  if (!groups.length && Array.isArray(j?.items)) {
+    const items = j.items.map((x: any) => str(x).slice(0, 140)).filter(Boolean).filter((x: string) => !isRoutineTurn(x)).slice(0, 12)
+    if (items.length) groups = [{ category: 'COMPLETED WORK', items }]
+  }
+  return groups.length ? groups : null
 }
 
 async function loadReport(id: string) {
@@ -180,9 +189,11 @@ export async function POST(req: NextRequest) {
   if (kind === 'completed') {
     const url = str(body?.url)
     if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
-    const items = await parseCompleted(url, scopeLabel)
-    if (!items) return NextResponse.json({ error: 'Could not read work items from that file.' }, { status: 422 })
-    return NextResponse.json({ ok: true, items })
+    const groups = await parseCompleted(url, scopeLabel)
+    if (!groups) return NextResponse.json({ error: 'Could not read work items from that file.' }, { status: 422 })
+    // groups[] is the grouped-by-type shape; items[] stays for older clients.
+    const items = groups.flatMap(g => g.items)
+    return NextResponse.json({ ok: true, groups, items })
   }
   if (kind === 'pacing') {
     const url = str(body?.url)
