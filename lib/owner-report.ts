@@ -87,6 +87,7 @@ export type ReportContent = {
   // Per-calendar-month breakdown for the "view by month" toggle; only set when the period spans 2+ months.
   byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
   snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; reservations?: number; units?: number }[]
+  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; reservations: number; revNum: number }[]
   omit: string[]
 }
 
