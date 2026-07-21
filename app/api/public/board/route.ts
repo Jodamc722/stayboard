@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { customFieldNameMap } from '@/lib/custom-fields'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -57,12 +58,9 @@ export async function GET(req: NextRequest) {
     }
     const ids = Object.keys(match)
     if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, arrivals: [], departures: [], active: [], upcoming: [] })
-    // custom-field id -> human name (for the parking / details list). Best-effort.
-    const cfNameById: Record<string, string> = {}
-    try {
-      const { data: defs } = await db.from('guesty_custom_fields').select('id,name')
-      for (const d of (defs || []) as any[]) if (d.id) cfNameById[String(d.id)] = String(d.name || '')
-    } catch { /* names are best-effort */ }
+    // custom-field id -> human name (for the parking / details list). Resolves from the table first,
+    // falls back to Guesty's live definitions, cached 1h — so names work even if the table is unpopulated.
+    const cfNameById = await customFieldNameMap()
     // Pull reservations touching [start, farEnd] (a 30-day horizon so we can also show what's upcoming),
     // paged to clear the 1000-row cap on bigger scopes.
     let resAll: any[] = []
