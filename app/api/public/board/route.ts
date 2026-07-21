@@ -24,6 +24,8 @@ const RES_CODE_FIELD = '693adec2ab73940025856e56'
 const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
 // Any custom field whose NAME contains "code" is an access secret — never dumped in the generic list.
 const isCodeField = (name: string) => /code/i.test(name)
+// Internal/tracking fields (QC flags, OTA ids, sync markers) — not useful to a vendor, kept off the board.
+const isInternalField = (name: string) => /sensitive|verified|booking_call|welcome|_id$|confirmation_number|_email_sent|added_to_app|date_of_last|asana|breezeway|glitch/i.test(name)
 function prettyLabel(s: string): string { return String(s || '').replace(/[_/]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()).trim() }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
         if (!val) continue
         const nm = cfNameById[String(fid)] || String(c?.fieldName || '')
         if (String(fid) === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(nm)) { resNotes = val; continue }
-        if (!nm || isCodeField(nm) || String(fid) === DOOR_CODE_FIELD || String(fid) === RES_CODE_FIELD) continue
+        if (!nm || isCodeField(nm) || isInternalField(nm) || String(fid) === DOOR_CODE_FIELD || String(fid) === RES_CODE_FIELD) continue
         customFields.push({ label: prettyLabel(nm), value: val })
       }
       return {
