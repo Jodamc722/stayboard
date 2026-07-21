@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
+import { resolveScope, pullTasks, weekBuckets, type ReportListing } from '@/lib/owner-report'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -140,6 +141,47 @@ async function parseCompleted(url: string, scopeLabel: string): Promise<{ catego
   return groups.length ? groups : null
 }
 
+// Same grouping as parseCompleted, but from typed notes (no file). Powers the Recent Work "auto-fill" prompt.
+async function parseCompletedText(notes: string, scopeLabel: string): Promise<{ category: string; items: string[] }[] | null> {
+  const text = await anthropic({
+    model: DOC_MODEL, max_tokens: 900,
+    system: 'You turn a property manager\'s rough notes about completed work into a clean owner-report list, sorted into type groups. Output STRICT JSON only.',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'These are rough notes about work completed at "' + scopeLabel + '":\n\n' + notes.slice(0, 4000) + '\n\nRewrite them as concise, owner-facing completed-work items and SORT into type groups. Use clear UPPERCASE type headings such as MAINTENANCE, REPAIRS, INSTALLS & REPLACEMENTS, DELIVERIES, DEEP CLEAN, INSPECTIONS (add others as needed). ALWAYS include maintenance / PM work. EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs). Keep the unit number when given (prefix "Unit 405: ..."). Return JSON: {"groups": [{"category": UPPERCASE type, "items": [concise lines, each <= 140 chars, max 8 per group]}]}. Up to 6 groups.' }] }],
+  })
+  const j = parseJson(text)
+  const isRoutineTurn = (s: any) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(String(s || ''))
+  const groups = (Array.isArray(j?.groups) ? j.groups : []).map((g: any) => ({
+    category: str(g?.category).toUpperCase().slice(0, 40) || 'COMPLETED WORK',
+    items: (Array.isArray(g?.items) ? g.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).filter((x: string) => !isRoutineTurn(x)).slice(0, 8),
+  })).filter((g: any) => g.items.length && !isRoutineTurn(g.category)).slice(0, 6)
+  return groups.length ? groups : null
+}
+
+// Re-pull the latest Breezeway completed work for the report's period and rebuild the grouped weeks (deterministic,
+// no AI): grouped by department, routine departure/turnover cleans excluded, maintenance always surfaced.
+async function refreshWork(rep: any): Promise<{ label: string; groups: { category: string; items: string[] }[] }[]> {
+  const ids: string[] = (Array.isArray(rep.listing_ids) ? rep.listing_ids : []).map((x: any) => String(x)).filter(Boolean).slice(0, 40)
+  const scope = await resolveScope(ids, [])
+  const byId: Record<string, ReportListing> = {}
+  for (const l of scope.listings) byId[l.id] = l
+  const from = str(rep.period_start).slice(0, 10), to = str(rep.period_end).slice(0, 10)
+  const tasks = await pullTasks(scope.listings.map(l => l.id), byId, from, to)
+  const isRoutineTurn = (s: any) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(String(s || ''))
+  const buckets = weekBuckets(from, to)
+  const weeks: { label: string; groups: { category: string; items: string[] }[] }[] = []
+  for (const b of buckets) {
+    const inWeek = tasks.completed.filter(t => t.date >= b.start && t.date <= b.endIncl && !isRoutineTurn(t.department) && !isRoutineTurn(t.name))
+    const byDept: Record<string, string[]> = {}
+    for (const t of inWeek.slice(0, 24)) {
+      const k = (t.department || 'WORK COMPLETED').toUpperCase()
+      ;(byDept[k] = byDept[k] || []).push(('Unit ' + t.unit + ' — ' + t.name).slice(0, 140))
+    }
+    const groups = Object.keys(byDept).map(k => ({ category: k, items: byDept[k].slice(0, 8) }))
+    if (groups.length) weeks.push({ label: b.label, groups })
+  }
+  return weeks
+}
+
 async function loadReport(id: string) {
   const db = supabaseAdmin()
   const { data } = await db.from('owner_reports').select('id, scope_label, listing_ids, period_start, period_end, content').eq('id', id).limit(1)
@@ -180,17 +222,22 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const reportId = str(body?.reportId)
   const kind = str(body?.kind)
-  if (!reportId || (kind !== 'pacing' && kind !== 'statements' && kind !== 'completed')) {
-    return NextResponse.json({ error: 'reportId + kind (pacing|statements|completed) required' }, { status: 400 })
+  if (!reportId || (kind !== 'pacing' && kind !== 'statements' && kind !== 'completed' && kind !== 'refresh-work')) {
+    return NextResponse.json({ error: 'reportId + kind (pacing|statements|completed|refresh-work) required' }, { status: 400 })
   }
   const rep = await loadReport(reportId)
   if (!rep) return NextResponse.json({ error: 'report not found' }, { status: 404 })
   const scopeLabel = str(rep.scope_label) || 'the property'
+  if (kind === 'refresh-work') {
+    const weeks = await refreshWork(rep)
+    return NextResponse.json({ ok: true, weeks })
+  }
   if (kind === 'completed') {
+    const notes = str(body?.text)
     const url = str(body?.url)
-    if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
-    const groups = await parseCompleted(url, scopeLabel)
-    if (!groups) return NextResponse.json({ error: 'Could not read work items from that file.' }, { status: 422 })
+    if (!url && !notes.trim()) return NextResponse.json({ error: 'url or text required' }, { status: 400 })
+    const groups = notes.trim() ? await parseCompletedText(notes, scopeLabel) : await parseCompleted(url, scopeLabel)
+    if (!groups) return NextResponse.json({ error: 'Could not read work items from that ' + (notes.trim() ? 'note.' : 'file.') }, { status: 422 })
     // groups[] is the grouped-by-type shape; items[] stays for older clients.
     const items = groups.flatMap(g => g.items)
     return NextResponse.json({ ok: true, groups, items })
