@@ -7,7 +7,7 @@ import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean }
+type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean ; city?: string | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
@@ -189,6 +189,7 @@ export function TodayInOps() {
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line bg-app/60 flex-wrap">
               <span className="font-semibold text-ink">{u.unit}</span>
               <span className="text-xs text-muted">{u.market}</span>
+              {u.city && <span className="text-xs text-muted">&middot; {u.city}</span>}
               {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
               {u.untracked && <span title="Vendor-cleaned. The vendor doesn't close tasks in Breezeway, so status here isn't reliable and these aren't tracked against 4pm." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line">Vendor clean</span>}
               {u.guestOut && <span className="text-xs text-muted">out: {u.guestOut}</span>}
