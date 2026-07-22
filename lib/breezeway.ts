@@ -142,6 +142,12 @@ export async function updateBreezewayTask(taskId: string | number, body: Record<
   return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }
 
+// Best-effort: mark a Breezeway task complete. The exact completion enum is not documented for our
+// instance, so we attempt a status update and tolerate failure - the app record is the master.
+export async function completeBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code: 'complete' } }) })
+}
+
 // Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway requires
 // a property scope, so the schedule resolves cleans per-property on demand to find the auto-created
 // departure clean for a unit + checkout date (to assign a cleaner + write notes/door code).
