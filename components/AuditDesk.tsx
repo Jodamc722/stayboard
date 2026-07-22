@@ -56,6 +56,8 @@ export function AuditDesk() {
   const [openListing, setOpenListing] = useState<any>(null)
   const [coverCtx, setCoverCtx] = useState<any>(null)
   const [coverBusy, setCoverBusy] = useState('')
+  const [batchBusy, setBatchBusy] = useState('')
+  const [batchMsg, setBatchMsg] = useState('')
 
   async function createAllAudits() {
     if (!confirm('Create an audit link for every active listing that does not have one yet?')) return
@@ -218,6 +220,23 @@ export function AuditDesk() {
     setTaskBusy(b => { const n = { ...b }; n[it.id] = false; return n })
   }
 
+  async function createAllTasks(a: Audit) {
+    const pending = items.filter(x => (x.kind === 'maintenance' || x.kind === 'clean') && x.status === 'open' && !x.breezeway_task_id)
+    if (!pending.length) { alert('No open Fix or Clean items to dispatch on this audit.'); return }
+    if (!confirm('Create ' + pending.length + ' Breezeway task' + (pending.length > 1 ? 's' : '') + ' (Fix → maintenance, Clean → housekeeping) with standardized instructions?')) return
+    setBatchBusy(a.id); setBatchMsg('')
+    try {
+      const r = await fetch('/api/audit/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auditId: a.id }) })
+      const j = await r.json()
+      if (r.ok && j.ok) {
+        // Refresh items so the new task_created chips show.
+        try { const g = await fetch('/api/audit?code=' + encodeURIComponent(a.shareCode)); const gj = await g.json(); setItems((gj && gj.items) || []) } catch {}
+        setBatchMsg((j.created || 0) + ' task' + ((j.created || 0) === 1 ? '' : 's') + ' created' + (j.failed ? ' · ' + j.failed + ' failed' : ''))
+      } else alert(j.error || 'Batch dispatch failed')
+    } catch { alert('Batch dispatch failed - retry') }
+    setBatchBusy('')
+  }
+
   async function setItemStatus(it: Item, status: string) {
     try {
       const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', itemId: it.id, fields: { status } }) })
@@ -314,6 +333,14 @@ export function AuditDesk() {
                   </div>
                 </div>
               ) : null}
+              {(() => { const pending = items.filter(x => (x.kind === 'maintenance' || x.kind === 'clean') && x.status === 'open' && !x.breezeway_task_id); if (!pending.length && !batchMsg) return null; return (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5 flex items-center gap-2 flex-wrap">
+                  <span className="text-[12px] font-semibold text-emerald-900">{pending.length ? (pending.length + ' Fix/Clean item' + (pending.length > 1 ? 's' : '') + ' ready to dispatch') : 'All Fix/Clean items dispatched'}</span>
+                  {batchMsg ? <span className="text-[11px] text-emerald-700">{batchMsg} ✓</span> : null}
+                  <div className="flex-1" />
+                  {pending.length ? <button onClick={() => createAllTasks(a)} disabled={batchBusy === a.id} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-700 text-white disabled:opacity-50">{batchBusy === a.id ? 'Creating…' : ('Create all ' + pending.length + ' tasks')}</button> : null}
+                </div>
+              ) })()}
               {(() => { const cfg: Record<string, any> = {}; for (const rc of openRooms) cfg[rc.room_key] = rc; const rk = (r: string) => String(r).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80); const canon: string[] = []; if (openListing) for (const rr of defaultRooms(openListing.bedrooms, openListing.bathrooms)) if (canon.indexOf(rr) < 0) canon.push(rr); for (const it of items) if (canon.indexOf(it.room) < 0) canon.push(it.room); return (
                 <div className="rounded-lg border border-line bg-white p-2.5">
                   <div className="text-[11px] font-semibold text-muted mb-1.5">Rooms &amp; cover photos</div>
