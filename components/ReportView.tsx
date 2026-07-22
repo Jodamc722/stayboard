@@ -9,6 +9,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 
 type Any = any
+// Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
+function fmtMoney(n: number): string {
+  const a = Math.abs(n)
+  if (a >= 1_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M'
+  if (a >= 1000) return '$' + Math.round(n / 1000) + 'K'
+  return '$' + Math.round(n).toLocaleString()
+}
 
 // ---------- themes (P4): every color in the page comes from the active theme ----------
 const THEMES: Record<string, Any> = {
@@ -425,7 +432,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [snBusy, setSnBusy] = useState(false)
   const [showListings, setShowListings] = useState(false)
   const [blBusy, setBlBusy] = useState(false)
-  const [grossMode, setGrossMode] = useState(false)
+  const [grossMode, setGrossMode] = useState(true) // owner-facing: default to Gross (incl. cleaning)
+  const [fltBld, setFltBld] = useState('')
+  const [fltBr, setFltBr] = useState('')
+  const [fltUnit, setFltUnit] = useState('')
   const [slide, setSlide] = useState(0)
   const slideRef = useRef(0)
   slideRef.current = slide
@@ -1208,22 +1218,84 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 )}
               </div>
             </div>
-            {showListings && Array.isArray(c.byListing) && c.byListing.length > 0 && (
-              <div className="mt-4 overflow-hidden rounded-2xl border" style={{ borderColor: t.cardBorder }}>
-                <div className="grid gap-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider" style={{ background: t.chip, color: t.muted, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr' }}>
-                  <div>Listing</div><div className="text-right">Revenue</div><div className="text-right">Occ</div><div className="text-right">ADR</div><div className="text-right">RevPAR</div>
-                </div>
-                {c.byListing.map((l: Any, i: number) => (
-                  <div key={l.id || i} className="grid gap-2 px-4 py-3 items-center border-t" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr', background: t.card }}>
-                    <div className="text-[13px] font-semibold truncate" style={{ color: t.ink }}>{l.name}{l.bedrooms != null ? <span className="ml-1.5 text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
-                    <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (l.grossRevenue || l.revenue) : l.revenue}</div>
-                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.occPct}%</div>
-                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossAdr || l.adr) : l.adr}</div>
-                    <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossRevpar || l.revpar) : l.revpar}</div>
+            {showListings && Array.isArray(c.byListing) && c.byListing.length > 0 && (() => {
+              const allL: Any[] = c.byListing
+              const buildings: string[] = Array.from(new Set(allL.map((l: Any) => String(l.building || '')).filter(Boolean))).sort()
+              const brs: number[] = Array.from(new Set(allL.map((l: Any) => l.bedrooms).filter((v: Any) => v != null))).sort((a: Any, b: Any) => a - b)
+              const rows: Any[] = allL.filter((l: Any) => (!fltBld || String(l.building || '') === fltBld) && (fltBr === '' || String(l.bedrooms) === fltBr) && (!fltUnit || l.id === fltUnit))
+              const filtered = !!(fltBld || fltBr || fltUnit)
+              const hasRaw = rows.length > 0 && rows.every((l: Any) => l.accomNum != null && l.availNights != null)
+              const occN = rows.reduce((s: number, l: Any) => s + (l.occNights || 0), 0)
+              const avN = rows.reduce((s: number, l: Any) => s + (l.availNights || 0), 0)
+              const accom = rows.reduce((s: number, l: Any) => s + (l.accomNum || 0), 0)
+              const grossV = rows.reduce((s: number, l: Any) => s + (l.grossNum || 0), 0)
+              const val = grossMode ? grossV : accom
+              const selStyle = { background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }
+              const kpi = [
+                { label: 'Revenue', value: fmtMoney(val) },
+                { label: 'Occupancy', value: (avN ? Math.round((occN / avN) * 100) : 0) + '%' },
+                { label: 'ADR', value: '$' + (occN ? Math.round(val / occN) : 0) },
+                { label: 'RevPAR', value: '$' + (avN ? Math.round(val / avN) : 0) },
+              ]
+              return (
+                <div>
+                  {/* live filter bar */}
+                  <div className="mt-4 flex items-center gap-2 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px solid ' + t.cardBorder }}>
+                    <span className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Filter</span>
+                    {buildings.length > 1 && (
+                      <select value={fltBld} onChange={e => setFltBld(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={selStyle}>
+                        <option value="">All buildings</option>
+                        {buildings.map((b: string) => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                    )}
+                    {brs.length > 1 && (
+                      <select value={fltBr} onChange={e => setFltBr(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={selStyle}>
+                        <option value="">All room types</option>
+                        {brs.map((b: number) => <option key={b} value={String(b)}>{b}BR</option>)}
+                      </select>
+                    )}
+                    <select value={fltUnit} onChange={e => setFltUnit(e.target.value)} className="rounded-md px-2 py-1 text-[12px] max-w-[12rem]" style={selStyle}>
+                      <option value="">All listings</option>
+                      {allL.map((l: Any) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                    {filtered && (
+                      <button onClick={() => { setFltBld(''); setFltBr(''); setFltUnit('') }} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }}><X size={11} /> Clear</button>
+                    )}
+                    <span className="text-[11px]" style={{ color: t.muted }}>{rows.length} of {allL.length} listing{allL.length === 1 ? '' : 's'}</span>
                   </div>
-                ))}
-              </div>
-            )}
+                  {/* live KPI strip for the current slice */}
+                  {hasRaw && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.accent }}>{filtered ? 'Filtered slice' : 'All listings'} · {grossMode ? 'Gross (incl. cleaning)' : 'Net (accommodation)'}</p>
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        {kpi.map((k: Any) => (
+                          <div key={k.label} className="rounded-2xl p-4 border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                            <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>{k.label}</p>
+                            <p className="mt-1 text-2xl font-black tabular-nums" style={{ color: t.ink }}>{k.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* per-listing table (filtered) */}
+                  <div className="mt-4 overflow-hidden rounded-2xl border" style={{ borderColor: t.cardBorder }}>
+                    <div className="grid gap-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider" style={{ background: t.chip, color: t.muted, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr' }}>
+                      <div>Listing</div><div className="text-right">Revenue</div><div className="text-right">Occ</div><div className="text-right">ADR</div><div className="text-right">RevPAR</div>
+                    </div>
+                    {rows.map((l: Any, i: number) => (
+                      <div key={l.id || i} className="grid gap-2 px-4 py-3 items-center border-t" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr', background: t.card }}>
+                        <div className="text-[13px] font-semibold truncate" style={{ color: t.ink }}>{l.name}{l.bedrooms != null ? <span className="ml-1.5 text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
+                        <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (l.grossRevenue || l.revenue) : l.revenue}</div>
+                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.occPct}%</div>
+                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossAdr || l.adr) : l.adr}</div>
+                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossRevpar || l.revpar) : l.revpar}</div>
+                      </div>
+                    ))}
+                    {rows.length === 0 && <div className="px-4 py-6 text-center text-[13px]" style={{ color: t.muted }}>No listings match this filter.</div>}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
 
