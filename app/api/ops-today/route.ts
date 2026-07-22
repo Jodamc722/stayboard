@@ -59,18 +59,19 @@ export async function GET(req: NextRequest) {
     const nowMin = etMinutes(now)
     const minsLeft = DEADLINE_MIN - nowMin
     const [lRes, tRes, qRes, rRes] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
+      db.from('guesty_listings').select('id,nickname,title,building,address_city,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
       db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
       db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
     ])
     // NOTE: compare status EXACTLY — /active/i also matches 'inactive', which silently counted all
     // 48 inactive listings (e.g. every Waves unit) as vacant.
-    const lmap: Record<string, { name: string; market: string; active: boolean }> = {}
+    const lmap: Record<string, { name: string; market: string; active: boolean; city: string | null; lat: number | null; lng: number | null }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
       const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
-      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active' }
+      const lat = Number(l.lat), lng = Number(l.lng)
+      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
@@ -151,6 +152,9 @@ export async function GET(req: NextRequest) {
         unitMap[t.listingId] = {
           listingId: t.listingId, unit: t.unit, market: t.market,
           guestOut: outToday[t.listingId] || null,
+          city: (lmap[t.listingId] && lmap[t.listingId].city) || null,
+          lat: (lmap[t.listingId] && lmap[t.listingId].lat) || null,
+          lng: (lmap[t.listingId] && lmap[t.listingId].lng) || null,
           sameDayTurn: !!(outToday[t.listingId] && inToday[t.listingId]),
           qc: qcByListing[t.listingId] || [], tasks: [],
         }
