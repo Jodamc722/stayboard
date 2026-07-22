@@ -199,6 +199,10 @@ export function AuditDesk() {
     const url = location.origin + '/audit/' + a.shareCode
     try { navigator.clipboard.writeText(url); setCopied(a.id); setTimeout(() => setCopied(''), 2000) } catch { prompt('Copy the link:', url) }
   }
+  function copyFieldLink(a: Audit) {
+    const url = location.origin + '/field/' + a.shareCode
+    try { navigator.clipboard.writeText(url); setCopied('field-' + a.id); setTimeout(() => setCopied(''), 2000) } catch { prompt('Copy the team worklist link:', url) }
+  }
 
   function setCfg(it: Item, patch: Partial<Cfg>) {
     setTaskCfg(c => { const cur = c[it.id] || defCfg(it); const n = { ...c }; n[it.id] = { ...cur, ...patch }; return n })
@@ -317,6 +321,7 @@ export function AuditDesk() {
             <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
             <button onClick={() => markComplete(a, a.status === 'completed')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{a.status === 'completed' ? 'Reopen' : 'Mark complete'}</button>
             <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>
+            <button onClick={() => copyFieldLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 shrink-0">{copied === 'field-' + a.id ? 'Copied ✓' : 'Team link'}</button>
             <button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{openId === a.id ? 'Close' : 'Review'}</button>
           </div>
           {openId === a.id ? (
