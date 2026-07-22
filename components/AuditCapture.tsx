@@ -61,6 +61,8 @@ export default function AuditCapture({ code }: { code: string }) {
   const bulkRef = useRef<HTMLInputElement | null>(null)
   const camRef = useRef<HTMLInputElement | null>(null)
   const wkCamRef = useRef<HTMLInputElement | null>(null)
+  const flagCamRef = useRef<HTMLInputElement | null>(null)
+  const itemCamRef = useRef<HTMLInputElement | null>(null)
   const [orgRoom, setOrgRoom] = useState('')
   const [orgBusy, setOrgBusy] = useState(false)
   const [orgItems, setOrgItems] = useState<any[]>([])
@@ -105,6 +107,14 @@ export default function AuditCapture({ code }: { code: string }) {
   const [wkShotIdx, setWkShotIdx] = useState(-1)
   const [wkMsg, setWkMsg] = useState('')
   const [basicsOpen, setBasicsOpen] = useState(false)
+  // Guided quality walk: per-checkpoint OK marks (local progress) + the flag editor for issues.
+  const [walkOK, setWalkOK] = useState<Record<string, boolean>>({})
+  const [walkFlag, setWalkFlag] = useState('')
+  const [flagKind, setFlagKind] = useState('maintenance')
+  const [flagNote, setFlagNote] = useState('')
+  const [flagPhoto, setFlagPhoto] = useState('')
+  const [flagBusy, setFlagBusy] = useState(false)
+  const [photoItemId, setPhotoItemId] = useState('')
 
   async function load() {
     try {
@@ -119,9 +129,9 @@ export default function AuditCapture({ code }: { code: string }) {
   const items = data ? data.items : []
   const done = !!(data && data.audit && data.audit.status === 'completed')
   const rooms: string[] = []
-  // Quality audits start ROOM-LESS - the dictation names the rooms and the parse builds the
-  // categories. Only onboarding (and building scope) seed a default room list.
-  if (data) { const base = (data as any).scope === 'building' ? COMMON_AREAS : ((data.audit && data.audit.auditType === 'onboarding') ? defaultRooms(data.listing.bedrooms, data.listing.bathrooms) : []); for (const r of base) rooms.push(r) }
+  // Quality + onboarding unit audits seed the standard room list so the walk is guided room by
+  // room; the dictation shortcut can still add any spoken room on top. Building scope = common areas.
+  if (data) { const base = (data as any).scope === 'building' ? COMMON_AREAS : defaultRooms(data.listing.bedrooms, data.listing.bathrooms); for (const r of base) rooms.push(r) }
   for (const r of customRooms) if (rooms.indexOf(r) < 0) rooms.push(r)
   for (const it of items) if (rooms.indexOf(it.room) < 0) rooms.push(it.room)
   const roomDepth = (r: string): number => r.split(' — ').length - 1
@@ -182,6 +192,40 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch {}
     setEssBusy(false)
     await load()
+  }
+  function wkKey(room: string, label: string) { return room + '|||' + label }
+  function walkItemFor(room: string, label: string) { const l = label.toLowerCase(); return items.find(it => it.room === room && it.kind !== 'tag' && it.kind !== 'inventory' && String(it.title || '').toLowerCase().indexOf(l) >= 0) }
+  function markGood(room: string, label: string) { setWalkOK(m => { const n = { ...m }; n[wkKey(room, label)] = true; return n }) }
+  function openFlag(room: string, label: string, dflt: string) { setWalkFlag(wkKey(room, label)); setFlagKind(dflt); setFlagNote(label); setFlagPhoto('') }
+  function flagShoot() { if (flagCamRef.current) { flagCamRef.current.value = ''; flagCamRef.current.click() } }
+  async function onFlagPhoto(e: any) {
+    const f = e.target.files && e.target.files[0]; if (!f) return
+    setFlagBusy(true)
+    try { const fd = new FormData(); fd.append('code', code); fd.append('file', f); fd.append('noai', '1'); const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json(); if (j && j.url) setFlagPhoto(j.url) } catch {}
+    setFlagBusy(false)
+  }
+  async function saveFlag(room: string, label: string) {
+    if (flagBusy) return
+    setFlagBusy(true)
+    try {
+      const title = (flagNote.trim() || label).slice(0, 160)
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: flagKind, title, note: '', photoUrl: flagPhoto || '', dedupe: 1 }) })
+      markGood(room, label)
+      setWalkFlag(''); setFlagPhoto(''); setFlagNote('')
+      await load()
+    } catch { alert('Failed - retry') }
+    setFlagBusy(false)
+  }
+  function shootItemPhoto(id: string) { setPhotoItemId(id); if (itemCamRef.current) { itemCamRef.current.value = ''; itemCamRef.current.click() } }
+  async function onItemPhoto(e: any) {
+    const f = e.target.files && e.target.files[0]; const id = photoItemId
+    if (!f || !id) { setPhotoItemId(''); return }
+    try {
+      const fd = new FormData(); fd.append('code', code); fd.append('file', f)
+      const r = await fetch('/api/audit/photo', { method: 'POST', body: fd }); const j = await r.json()
+      if (j && j.url) { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: id, fields: { photoUrl: j.url } }) }); await load() }
+    } catch { alert('Photo failed - retry') }
+    setPhotoItemId('')
   }
   async function runWalkthrough() {
     if (wkBusy || !wkText.trim()) return
@@ -549,11 +593,13 @@ function quickTags(r: string): string[] {
       <input ref={coverRef} type="file" accept="image/*" capture="environment" onChange={onCoverPhoto} className="hidden" />
       <input ref={bulkRef} type="file" accept="image/*" multiple onChange={onStage} className="hidden" /><input ref={camRef} type="file" accept="image/*" capture="environment" onChange={onStage} className="hidden" />
       <input ref={wkCamRef} type="file" accept="image/*" capture="environment" onChange={onWkPhoto} className="hidden" />
+      <input ref={flagCamRef} type="file" accept="image/*" capture="environment" onChange={onFlagPhoto} className="hidden" />
+      <input ref={itemCamRef} type="file" accept="image/*" capture="environment" onChange={onItemPhoto} className="hidden" />
       <div className="mb-4">
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
         {data.listing.building ? <div className="text-xs text-neutral-500 mt-0.5">{data.listing.building}</div> : null}
-        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Talk the walk. Dictate what needs to be fixed, replaced, added or cleaned - the AI organizes it by room, asks for the photos it needs, and tags the unit. Photos can always be added later.'}</div>
+        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. In each room, tap Good on what checks out or flag anything to fix, replace, add or clean, and add a photo on any item. Prefer talking? Dictate the whole list up top.'}</div>
       </div>
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
       {!done ? (
@@ -663,6 +709,65 @@ function quickTags(r: string): string[] {
             ) : null}
             {open ? (
               <div className="px-3.5 pb-3.5 space-y-2">
+                {!isOnboarding && !done ? (() => {
+                  const maint = pmFor(room)
+                  const inv = essFor(room)
+                  const all = maint.concat(inv)
+                  const total = all.length
+                  const doneN = all.filter(l => walkOK[wkKey(room, l)] || !!walkItemFor(room, l)).length
+                  const chk = (label: string, dflt: string, tone: string) => {
+                    const key = wkKey(room, label)
+                    const flagged = walkItemFor(room, label)
+                    const resolved = walkOK[key] || !!flagged
+                    const flagging = walkFlag === key
+                    return (
+                      <div key={key} className="rounded-lg border border-neutral-100 bg-white">
+                        <div className="flex items-center gap-2 px-2 py-1.5">
+                          <span className={'flex-1 text-[13px] ' + (resolved ? 'text-neutral-400' : 'text-neutral-800')}>{flagged ? '⚠️ ' : ''}{label}</span>
+                          {resolved && !flagging ? (
+                            <button onClick={() => { setWalkOK(m => { const n = { ...m }; delete n[key]; return n }) }} className="text-[11px] font-semibold text-emerald-600 px-1">{flagged ? 'flagged' : 'Good ✓'}</button>
+                          ) : (
+                            <>
+                              <button onClick={() => markGood(room, label)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-emerald-300 text-emerald-700">Good</button>
+                              <button onClick={() => openFlag(room, label, dflt)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (tone === 'inv' ? 'border-sky-300 text-sky-700' : 'border-amber-300 text-amber-700')}>{tone === 'inv' ? 'Missing / issue' : 'Flag'}</button>
+                            </>
+                          )}
+                        </div>
+                        {flagging ? (
+                          <div className="px-2 pb-2 pt-1.5 space-y-1.5 border-t border-neutral-100">
+                            <div className="flex gap-1">
+                              {['maintenance', 'replace', 'add', 'clean'].map(k => <button key={k} onClick={() => setFlagKind(k)} className={'text-[10px] font-semibold px-1.5 py-1 rounded border ' + (flagKind === k ? KIND_META[k].cls : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k].label}</button>)}
+                            </div>
+                            <input value={flagNote} onChange={e => setFlagNote(e.target.value)} placeholder="What is wrong or needed?" className="w-full text-[13px] border border-neutral-200 rounded-lg px-2 py-1.5" />
+                            <div className="flex items-center gap-2">
+                              <button onClick={flagShoot} disabled={flagBusy} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagPhoto ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-neutral-300 text-neutral-600')}>{flagBusy ? '…' : (flagPhoto ? '📷 Photo ✓ retake' : '📷 Add photo')}</button>
+                              {flagPhoto ? <img src={flagPhoto} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="text-[10px] text-neutral-400">optional</span>}
+                              <div className="flex-1" />
+                              <button onClick={() => setWalkFlag('')} className="text-[11px] px-2 py-1 rounded-md border border-neutral-200 text-neutral-500">Cancel</button>
+                              <button onClick={() => saveFlag(room, label)} disabled={flagBusy} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-neutral-900 text-white disabled:opacity-50">Save</button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  }
+                  return (
+                    <div className="mb-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-2">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="text-[11px] font-semibold text-indigo-800">Guided walk &middot; {doneN}/{total} checked</div>
+                        <span className="text-[10px] text-indigo-400">Good, or flag what needs work</span>
+                      </div>
+                      <div className="mb-1 text-[10px] uppercase tracking-wide text-indigo-400 font-semibold">Condition &amp; maintenance</div>
+                      <div className="space-y-1">{maint.map(l => chk(l, 'maintenance', 'maint'))}</div>
+                      {inv.length ? (
+                        <div className="mt-2">
+                          <div className="mb-1 text-[10px] uppercase tracking-wide text-indigo-400 font-semibold">Inventory &mdash; here &amp; in good shape?</div>
+                          <div className="space-y-1">{inv.map(l => chk(l, 'add', 'inv'))}</div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })() : null}
                 <div className="mb-2">
                   {orgRoom === room && orgPhotos.length ? <div className="flex gap-1 flex-wrap mb-1.5">{orgPhotos.map((p, i) => <img key={i} src={p} alt="" className="w-11 h-11 rounded object-cover" />)}</div> : null}
                   {isOnboarding ? <div className="mb-2">
@@ -801,7 +906,7 @@ function quickTags(r: string): string[] {
                       {it.note ? <div className="text-[11px] text-neutral-500 mt-0.5">{it.note}</div> : null}
                       <div className="text-[10px] text-neutral-400 mt-0.5">{it.status === 'task_created' ? 'Task created in Breezeway \u2713' : it.status}</div>
                     </div>
-                    {!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}{iedId === it.id ? (<div className="w-full mt-1 space-y-1"><input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><div className="flex gap-1"><button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button><button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button></div></div>) : null}
+                    {!done ? <button onClick={() => shootItemPhoto(it.id)} className="text-[11px] font-semibold text-indigo-600 px-1">{it.photo_url ? '📷 Redo' : '📷 Photo'}</button> : null}{!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}{iedId === it.id ? (<div className="w-full mt-1 space-y-1"><input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><div className="flex gap-1"><button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button><button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button></div></div>) : null}
                   </div>
                 ))}
                 <div>
