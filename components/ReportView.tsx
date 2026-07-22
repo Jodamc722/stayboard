@@ -16,6 +16,12 @@ function fmtMoney(n: number): string {
   if (a >= 1000) return '$' + Math.round(n / 1000) + 'K'
   return '$' + Math.round(n).toLocaleString()
 }
+// The gross figure for a snapshot card: prefer the structured field, else parse it from the sub-line.
+function cardGross(card: Any): string {
+  if (card && card.gross) return String(card.gross)
+  const m = /Gross[^:]*:\s*(\$?[\d.,]+\s*[KM]?)/i.exec((card && card.sub) || '')
+  return m ? m[1].trim() : ''
+}
 
 // ---------- themes (P4): every color in the page comes from the active theme ----------
 const THEMES: Record<string, Any> = {
@@ -432,7 +438,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [snBusy, setSnBusy] = useState(false)
   const [showListings, setShowListings] = useState(false)
   const [blBusy, setBlBusy] = useState(false)
-  const [grossMode, setGrossMode] = useState(true) // owner-facing: default to Gross (incl. cleaning)
+  const grossMode = !!c.showGross // persisted per-report; owners see this, only edit mode can flip it
   const [fltBld, setFltBld] = useState('')
   const [fltBr, setFltBr] = useState('')
   const [fltUnit, setFltUnit] = useState('')
@@ -1094,6 +1100,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <p className="mt-2 text-4xl font-black tabular-nums" style={{ color: t.ink }}>
                     <Ed v={card.value || ''} set={v => patch('snapshot.cards.' + i + '.value', v)} edit={edit} />
                   </p>
+                  {grossMode && cardGross(card) && (
+                    <p className="mt-1 text-[13px] font-bold tabular-nums" style={{ color: t.accent }}>Gross {cardGross(card)}</p>
+                  )}
                   <p className="mt-auto pt-2 text-[11px] leading-snug" style={{ color: t.sub }}>
                     <Ed v={card.sub || ''} set={v => patch('snapshot.cards.' + i + '.sub', v)} edit={edit} multiline />
                   </p>
@@ -1153,9 +1162,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           <div className="pt-10">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Eyebrow>MORE SNAPSHOTS</Eyebrow>
-              {Array.isArray(c.snaps) && c.snaps.length > 0 && (
-                <button onClick={() => setGrossMode(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>
-                  {grossMode ? 'Gross · incl. cleaning' : 'Net · accommodation'}
+              {edit && (
+                <button onClick={() => mutate((d: Any) => { d.showGross = !d.showGross })} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: grossMode ? t.accent : t.chip, border: '1px solid ' + (grossMode ? t.accent : t.cardBorder), color: grossMode ? t.card : t.ink }}>
+                  {grossMode ? 'Basis: Net + Gross' : 'Basis: Net only'}
                 </button>
               )}
             </div>
@@ -1201,9 +1210,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Eyebrow>PERFORMANCE BY LISTING</Eyebrow>
               <div className="flex items-center gap-2">
-                {showListings && Array.isArray(c.byListing) && c.byListing.length > 0 && (
-                  <button onClick={() => setGrossMode(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>
-                    {grossMode ? 'Gross · incl. cleaning' : 'Net · accommodation'}
+                {edit && (
+                  <button onClick={() => mutate((d: Any) => { d.showGross = !d.showGross })} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: grossMode ? t.accent : t.chip, border: '1px solid ' + (grossMode ? t.accent : t.cardBorder), color: grossMode ? t.card : t.ink }}>
+                    {grossMode ? 'Basis: Net + Gross' : 'Basis: Net only'}
                   </button>
                 )}
                 {Array.isArray(c.byListing) && c.byListing.length > 0 && (
