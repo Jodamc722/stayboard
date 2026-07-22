@@ -392,10 +392,10 @@ export async function POST(req: NextRequest) {
       headline: str(ai.snapshotHeadline) || 'Where the period stands today.',
       subtitle: 'On-the-books as of ' + prettyDate(asOf) + '  ·  ' + units + ' active listings' + (daysRemaining ? '  ·  ' + daysRemaining + ' days remaining' : ''),
       cards: [
-        { key: 'revenue', label: 'REVENUE', value: fmtK(period.accomRevenue), sub: 'Accommodation only · Gross (incl. cleaning): ' + fmtK(period.grossRevenue) },
+        { key: 'revenue', label: 'REVENUE', value: fmtK(period.accomRevenue), sub: 'Accommodation only · Gross (incl. cleaning): ' + fmtK(period.grossRevenue), gross: fmtK(period.grossRevenue) },
         { key: 'occupancy', label: 'OCCUPANCY', value: period.occupancyPct + '%', sub: 'Occupied ÷ available nights' },
-        { key: 'adr', label: 'ADR', value: '$' + period.adr, sub: 'Accommodation ÷ occupied nights · Gross ADR: $' + period.grossAdr },
-        { key: 'revpar', label: 'REVPAR', value: '$' + period.revpar, sub: 'Accommodation ÷ available nights' },
+        { key: 'adr', label: 'ADR', value: '$' + period.adr, sub: 'Accommodation ÷ occupied nights · Gross ADR: $' + period.grossAdr, gross: '$' + period.grossAdr },
+        { key: 'revpar', label: 'REVPAR', value: '$' + period.revpar, sub: 'Accommodation ÷ available nights · Gross RevPAR: $' + period.grossRevpar, gross: '$' + period.grossRevpar },
       ],
       ytd: ytd.reservations > 0 ? {
         text: ytd.reservations + ' reservations booked YTD with an average stay of ' + ytd.avgStay + ' nights and a ' + ytd.avgWindow + '-day booking window.',
