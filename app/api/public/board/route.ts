@@ -115,7 +115,9 @@ export async function GET(req: NextRequest) {
     const arrivals = all.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || byUnitDate(a, b))
     const seen: Record<string, boolean> = {}
     const departures = all.filter(r => {
-      if (!(r.checkOut >= today && r.checkOut <= end)) return false
+      // ALL upcoming departure cleans (today out to the 30-day horizon), not just this week —
+      // otherwise a checkout a day past the week (e.g. Salato Briana 07-29) silently disappears.
+      if (!(r.checkOut >= today && r.checkOut <= farEnd)) return false
       const k = r.unit + '|' + r.checkOut
       if (seen[k]) return false
       seen[k] = true
