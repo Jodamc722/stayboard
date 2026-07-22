@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
       name,
       unit: l.unit || '',
       bedrooms: l.bedrooms,
+      building: l.building || '',
       revenue: fmtK(m.accomRevenue),
       grossRevenue: fmtK(m.grossRevenue),
       occPct: m.occupancyPct,
@@ -64,6 +65,11 @@ export async function GET(req: NextRequest) {
       grossRevpar: '$' + m.grossRevpar,
       reservations: m.reservations,
       revNum: m.accomRevenue,
+      // raw numbers so the client can re-aggregate any filtered slice correctly
+      accomNum: m.accomRevenue,
+      grossNum: m.grossRevenue,
+      occNights: m.occupiedNights,
+      availNights: m.availableNights,
     }
   }).sort((a, b) => b.revNum - a.revNum)
 
