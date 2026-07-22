@@ -366,6 +366,7 @@ export async function POST(req: NextRequest) {
     if (typeof f.title === 'string') upd.title = f.title.slice(0, 160)
     if (typeof f.note === 'string') upd.note = f.note.slice(0, 1200)
     if (typeof f.itemType === 'string') upd.item_type = f.itemType.slice(0, 120)
+    if (typeof f.approval === 'string' && ['none', 'gm_approved', 'owner_pending', 'owner_approved', 'declined'].includes(f.approval)) { const d: any = (upd.details && typeof upd.details === 'object') ? upd.details : ((item.details && typeof item.details === 'object') ? { ...item.details } : {}); d.approval = f.approval === 'none' ? null : f.approval; if (typeof f.approvedBy === 'string') d.approvedBy = f.approvedBy.slice(0, 120) || null; upd.details = d }
     if (typeof f.photoUrl === 'string') upd.photo_url = f.photoUrl.slice(0, 500) || null
     if (Array.isArray(f.photos)) { const dd: any = (upd.details && typeof upd.details === 'object') ? upd.details : ((item.details && typeof item.details === 'object') ? { ...item.details } : {}); dd.photos = f.photos.slice(0, 12).map((p: any) => String(p || '').slice(0, 500)).filter(Boolean); upd.details = dd }
     if (typeof f.room === 'string' && f.room) upd.room = f.room.slice(0, 80)
