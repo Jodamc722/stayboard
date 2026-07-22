@@ -60,7 +60,7 @@ export type ReportContent = {
   hero: { eyebrow: string; title: string; headline: string; preparedFor: string; dateLabel: string; heroImage: string | null }
   snapshot: {
     headline: string; subtitle: string
-    cards: { key: string; label: string; value: string; sub: string }[]
+    cards: { key: string; label: string; value: string; sub: string; gross?: string }[]
     ytd: { text: string; stats: { value: string; label: string }[] } | null
   }
   pacing: { headline: string; subtitle: string; rows: { metric: string; ours: string; comps: string; delta: string }[] } | null
@@ -88,6 +88,8 @@ export type ReportContent = {
   byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
   snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number }[]
   byListing?: { id: string; name: string; unit: string; bedrooms: number | null; building?: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number; accomNum?: number; grossNum?: number; occNights?: number; availNights?: number }[]
+  // When true (owner-facing, e.g. 17WEST), sections show Gross and the snapshot cards show Net + Gross. Set in edit mode.
+  showGross?: boolean
   omit: string[]
 }
 
