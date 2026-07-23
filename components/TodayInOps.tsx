@@ -124,13 +124,13 @@ export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: numb
   const srcUnits: Unit[] = Array.isArray(data.units) ? data.units : []
   const totals = data.totals || {}
   const inFilter = (t: Task) => tf === 'all'
-    || (tf === 'cleans' && t.type === 'departure_clean')
-    || (tf === 'strips' && t.type === 'strip')
+    || (tf === 'cleans' && (t.type === 'departure_clean' || t.type === 'strip'))
     || (tf === 'maintenance' && t.dept === 'maintenance')
     || (tf === 'inspection' && t.dept === 'inspection')
     || (tf === 'unassigned' && t.assignees.length === 0 && !t.done)
     || (tf === 'running' && t.running && !t.done)
     || (tf === 'notstarted' && !t.done && !t.running)
+    || (tf === 'other' && t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip')
   const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
   const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
@@ -226,10 +226,10 @@ export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: numb
       {/* stat cards double as filters — click Maintenance to see only maintenance, etc. */}
       <div className="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-9 gap-2 mb-5">
         <Stat label="All work" value={srcUnits.length + ''} sub={(totals.tasks || 0) + ' tasks'} active={tf === 'all'} onClick={() => setTf('all')} />
-        <Stat label="Cleans" value={d.cleans + ''} sub={d.done + ' done'} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
-        <Stat label="Strips" value={(totals.strips || 0) + ''} active={tf === 'strips'} onClick={() => setTf('strips')} />
+        <Stat label="Departure cleans" value={d.cleans + ''} sub={d.done + ' done · ' + (totals.strips || 0) + ' strips'} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
         <Stat label="Maintenance" value={(totals.maintenance || 0) + ''} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
         <Stat label="Inspections" value={(totals.inspection || 0) + ''} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
+        <Stat label="Other" value={srcUnits.reduce((a, u) => a + u.tasks.filter(t => t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip').length, 0) + ''} active={tf === 'other'} onClick={() => setTf('other')} />
         <Stat label="In progress" value={(totals.running || 0) + ''} active={tf === 'running'} onClick={() => setTf('running')} />
         <Stat label="Not started" value={(totals.notStarted || 0) + ''} sub={(totals.done || 0) + ' done'} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
         <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
@@ -271,8 +271,6 @@ export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: numb
         )}
       </div>
 
-      <AuditsDue market={market} />
-
       <div className="space-y-3">
         {units.map(u => (
           <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
@@ -309,7 +307,7 @@ export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: numb
                   <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
                   {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0">report</a>}
                   {!t.done && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50')}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
-                  {!t.done && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1">\u2715</button>}
+                  {!t.done && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1">✕</button>}
                 </div>
               ))}
             </div>
@@ -445,6 +443,12 @@ function UnitItems({ listingId, unit, people, onDone, onClose }: { listingId: st
         <span>Last batteries: <span className="text-ink font-medium">{fmtShort(h.lastBattery)}</span></span>
         {h.lastAcFilter && <span>Last A/C filter: <span className="text-ink font-medium">{fmtShort(h.lastAcFilter)}</span></span>}
       </div>
+      {(() => { const la = h.lastAudit; const due = !la || ((Date.now() - new Date(la + 'T12:00:00').getTime()) / 86400000) > 365; if (!due) return null; return (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">Annual audit due &middot; {la ? 'last ' + fmtShort(la) : 'never audited'}</span>
+          <button onClick={() => addToToday('Annual Quality Audit', 'inspection')} disabled={busy === 'Annual Quality Audit'} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy === 'Annual Quality Audit' ? 'Creating\u2026' : 'Create annual audit'}</button>
+        </div>
+      ) })()}
       {rec && rec.inspection && (rec.reasons || []).length > 0 && (
         <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">Inspection recommended &middot; {(rec.reasons || []).join(' &middot; ')}</div>
       )}
