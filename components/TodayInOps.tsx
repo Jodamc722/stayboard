@@ -158,12 +158,10 @@ export function TodayInOps() {
 
   return (
     <div>
-      {/* searchable assignee options, one datalist per department (shared by every row) */}
-      {['housekeeping', 'maintenance', 'inspection', 'other'].map(dep => (
-        <datalist key={dep} id={'ppl-' + dep}>
-          {people.filter(p => !p.departments || !p.departments.length || p.departments.indexOf(dep) >= 0).map(p => <option key={p.id} value={p.name} />)}
-        </datalist>
-      ))}
+      {/* searchable assignee options — the FULL roster, so search finds anyone regardless of the task's department */}
+      <datalist id="ppl-all">
+        {people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}
+      </datalist>
       <div className="flex items-center gap-2 flex-wrap mb-4">
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
@@ -362,7 +360,7 @@ function UnitItems({ listingId, unit, people, onDone }: { listingId: string; uni
               <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line shrink-0">{it.type}</span>
               <span className="flex-1 min-w-0 truncate text-ink">{it.title}</span>
               <span className="text-[11px] text-muted shrink-0">{it.onToday ? 'today' : fmtShort(it.scheduledDate)}</span>
-              <input list={'ppl-' + it.dept} defaultValue="" placeholder={it.assignees.length ? it.assignees.join(', ') : 'assign\u2026'} onChange={e => { const inp = e.target as HTMLInputElement; const p = people.find(x => x.name === inp.value.trim()); if (p) { inp.value = ''; assign(it.id, p.id) } }} className="text-xs border border-line rounded px-1 py-0.5 w-[110px] shrink-0" />
+              <input list="ppl-all" defaultValue="" placeholder={it.assignees.length ? it.assignees.join(', ') : 'assign\u2026'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(it.id, p.id) } }} className="text-xs border border-line rounded px-1 py-0.5 w-[110px] shrink-0" />
               {!it.onToday && <button onClick={() => doToday(it.id)} disabled={busy === it.id} className="text-xs font-medium px-2 py-1 rounded bg-ink text-white disabled:opacity-40 shrink-0">{busy === it.id ? '\u2026' : 'Do today'}</button>}
             </div>
           ))}
@@ -480,11 +478,11 @@ function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone
   return (
     <span className="inline-flex items-center gap-1">
       <input
-        list={'ppl-' + task.dept}
+        list="ppl-all"
         defaultValue=""
         disabled={busy}
         placeholder={busy ? 'Saving…' : cur}
-        onChange={e => { const inp = e.target as HTMLInputElement; const p = opts.find(x => x.name === inp.value.trim()); if (p) { inp.value = ''; assign(p.id) } }}
+        onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(p.id) } }}
         title={'Search a name to assign this ' + task.dept + ' task'}
         className={'text-xs rounded border px-1 py-0.5 bg-white w-[132px] ' + (task.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-amber-300 text-amber-800 placeholder:text-amber-800 font-medium')}
       />
