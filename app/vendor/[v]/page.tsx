@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[] }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; bannerImage?: string | null; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming'
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -158,8 +158,10 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-900 print:bg-white">
       <div className="max-w-2xl mx-auto px-4 py-6">
-        <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
-          <div className="p-5">
+        <div className="relative rounded-2xl bg-neutral-900 shadow-lg overflow-hidden mb-4" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
+          {data.bannerImage ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + data.bannerImage + '")' }} aria-hidden="true" /> : null}
+          <div className={'absolute inset-0 ' + (data.bannerImage ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
+          <div className="relative p-5">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <div className="flex items-center gap-2.5">
