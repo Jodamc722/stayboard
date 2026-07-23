@@ -31,10 +31,19 @@ const aggregate = (rows: Day[]): Agg => {
 }
 
 const Tile = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
-  <div className="rounded-xl border border-neutral-200 bg-white p-4">
+  <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
     <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">{label}</div>
-    <div className="text-2xl font-bold text-neutral-900 mt-1">{value}</div>
+    <div className="text-2xl font-bold text-neutral-900 mt-1 tabular-nums">{value}</div>
     {sub ? <div className="text-xs text-neutral-500 mt-0.5">{sub}</div> : null}
+  </div>
+)
+
+// Headline stat inside the dark banner — the three numbers Margaux checks first.
+const HeroStat = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
+  <div className="rounded-xl bg-white/[0.06] border border-white/10 px-4 py-3">
+    <div className="text-[10px] uppercase tracking-widest text-amber-300/90 font-semibold">{label}</div>
+    <div className="text-2xl sm:text-3xl font-bold text-white mt-0.5 tabular-nums leading-tight">{value}</div>
+    {sub ? <div className="text-[11px] text-neutral-400 mt-0.5">{sub}</div> : null}
   </div>
 )
 
@@ -158,16 +167,18 @@ export default function BotanicaReportPage() {
   }
 
   if (needsPw) return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50">
-      <form onSubmit={submitPw} className="w-full max-w-xs bg-white border border-neutral-200 rounded-xl p-5 space-y-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">Stay Hospitality</div>
-          <h1 className="text-lg font-bold">Enter password</h1>
-          <p className="text-xs text-neutral-500 mt-1">This report is password protected.</p>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-100">
+      <form onSubmit={submitPw} className="w-full max-w-sm bg-white border border-neutral-200 rounded-2xl shadow-lg overflow-hidden">
+        <div className="bg-gradient-to-br from-neutral-900 to-neutral-800 px-6 pt-6 pb-7">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</div>
+          <h1 className="text-2xl font-bold text-white mt-1">Botanica</h1>
+          <p className="text-xs text-neutral-400 mt-1">Performance report · password protected</p>
         </div>
-        <input type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="Password" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
-        {pwErr && <div className="text-xs text-red-600">{pwErr}</div>}
-        <button type="submit" disabled={pwBusy || !pw} className="w-full text-sm font-medium px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{pwBusy ? 'Checking…' : 'View report'}</button>
+        <div className="p-6 space-y-3">
+          <input type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="Enter password" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400" />
+          {pwErr && <div className="text-xs text-red-600">{pwErr}</div>}
+          <button type="submit" disabled={pwBusy || !pw} className="w-full text-sm font-semibold px-3 py-2.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 transition-colors">{pwBusy ? 'Checking…' : 'View report'}</button>
+        </div>
       </form>
     </div>
   )
@@ -175,31 +186,46 @@ export default function BotanicaReportPage() {
   if (loading || !data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading…</div>
 
   return (
-    <div className="min-h-screen bg-neutral-50 print:bg-white">
-      <div className="max-w-4xl mx-auto p-4 sm:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">Stay Hospitality</div>
-            <h1 className="text-xl sm:text-2xl font-bold text-neutral-900">Botanica — Performance Report</h1>
-            <p className="text-xs text-neutral-500 mt-1">
-              Nightly ADR (includes cleaning), room nights sold, occupancy &amp; cleaning revenue · live from booking data
-              {data.lastSync ? ' · last synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}
-              {lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 print:hidden">
-            <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-100 disabled:opacity-40">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
-            <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-100 disabled:opacity-40">{syncing ? 'Syncing…' : 'Resync'}</button>
-            <button onClick={downloadCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-100">CSV</button>
-            <button onClick={() => window.print()} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-100">Print</button>
+    <div className="min-h-screen bg-neutral-100 print:bg-white">
+      <div className="max-w-5xl mx-auto p-4 sm:p-6">
+        <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
+          <div className="p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300 print:hidden">
+                    <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span></span>
+                    LIVE
+                  </span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight">Botanica</h1>
+                <p className="text-xs text-neutral-400 mt-1.5 max-w-xl">
+                  Nightly ADR (incl. cleaning), room nights sold, occupancy &amp; cleaning revenue · always live
+                  {data.lastSync ? ' · synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}
+                  {lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 print:hidden">
+                <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
+                <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{syncing ? 'Syncing…' : 'Resync'}</button>
+                <button onClick={downloadCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">CSV</button>
+                <button onClick={() => window.print()} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">Print</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
+              <HeroStat label="Total revenue" value={money0(total.rev)} sub={fmtDate(range.from) + ' – ' + fmtDate(range.to)} />
+              <HeroStat label="Average ADR" value={total.rns > 0 ? money(total.adr) : '—'} sub="includes cleaning" />
+              <HeroStat label="Occupancy" value={total.inv > 0 ? pct1(total.occ) : '—'} sub={total.rns + ' of ' + total.inv + ' room nights'} />
+            </div>
           </div>
         </div>
-        {syncMsg && <div className="text-xs text-neutral-500 mt-1 print:hidden">{syncMsg}</div>}
+        {syncMsg && <div className="text-xs text-neutral-500 mt-2 print:hidden">{syncMsg}</div>}
 
         <div className="flex flex-wrap items-center gap-2 mt-4 print:hidden">
           {PRESETS.map(p => (
             <button key={p.key} onClick={() => { setPreset(p.key); if (p.key === 'custom' && !fromD) { setFromD(firstOfMonth(today)); setToD(today) } }}
-              className={'text-xs font-medium px-3 py-1.5 rounded-full border ' + (preset === p.key ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100')}>
+              className={'text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ' + (preset === p.key ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100')}>
               {p.label}
             </button>
           ))}
@@ -213,18 +239,15 @@ export default function BotanicaReportPage() {
         </div>
         <div className="text-xs text-neutral-500 mt-2">{fmtDate(range.from)} – {fmtDate(range.to)} · {rows.length} nights</div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-3">
           <Tile label="Active units" value={String(rows.length ? rows[rows.length - 1].inv : 0)} sub={rows.length ? 'avg ' + Math.round(total.inv / rows.length) + ' across range' : 'units live'} />
-          <Tile label="Occupancy" value={total.inv > 0 ? pct1(total.occ) : '—'} sub={total.rns + ' of ' + total.inv + ' room nights'} />
-          <Tile label="ADR" value={total.rns > 0 ? money(total.adr) : '—'} sub="includes cleaning" />
           <Tile label="RevPAR" value={total.inv > 0 ? money(total.rev / total.inv) : '—'} sub="per available night" />
-          <Tile label="Total revenue" value={money0(total.rev)} sub={'room ' + money0(total.rev - total.cleaning)} />
           <Tile label="Cleaning revenue" value={money0(total.cleaning)} sub={'of ' + money0(total.rev) + ' total'} />
           <Tile label="Avg length of stay" value={total.arr > 0 ? total.los.toFixed(1) + ' nights' : '—'} sub={total.arr + ' arrivals in range'} />
           <Tile label="Booking window" value={total.arr > 0 ? Math.round(total.bookWin) + ' days' : '—'} sub="avg lead time to check-in" />
         </div>
 
-        <div className="mt-4 rounded-xl border border-neutral-200 bg-white overflow-hidden">
+        <div className="mt-4 rounded-2xl border border-neutral-200 bg-white overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-xs sm:text-sm">
               <thead>
