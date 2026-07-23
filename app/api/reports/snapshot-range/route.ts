@@ -66,6 +66,12 @@ export async function GET(req: NextRequest) {
     grossRevpar: '$' + m.grossRevpar,
     reservations: m.reservations,
     units,
+    // raw components for the 3-basis model (client renders net / net+fees / gross)
+    accomNum: m.accomRevenue,
+    accomGrossNum: m.accomGrossRevenue,
+    cleaningNum: m.cleaningRevenue,
+    occNights: m.occupiedNights,
+    availNights: m.availableNights,
   }
   return NextResponse.json({ ok: true, snap })
 }
