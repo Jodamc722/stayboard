@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     const to = addDays(today, 14)
     const [lRes, tRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city'),
-      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,created_at').ilike('name', '%guest reported%').gte('scheduled_date', from).lte('scheduled_date', to).limit(1000),
+      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,created_at').gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date', { ascending: false }).limit(4000),
     ])
     const lmap: Record<string, { name: string; market: string }> = {}
     for (const l of (lRes.data || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
         }
       })
       .sort((a, b) => (a.unassigned ? 0 : 1) - (b.unassigned ? 0 : 1) || (b.ageDays || 0) - (a.ageDays || 0) || a.unit.localeCompare(b.unit))
-    return NextResponse.json({ ok: true, today, count: glitches.length, unassigned: glitches.filter(g => g.unassigned).length, glitches })
+    return NextResponse.json({ ok: true, today, from, to, _rawRows: ((tRes.data || []) as any[]).length, count: glitches.length, unassigned: glitches.filter(g => g.unassigned).length, glitches })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
