@@ -82,7 +82,7 @@ function sortByArea(list: Unit[]): Unit[] {
   return out
 }
 
-export function TodayInOps() {
+export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: number; onShowGlitches?: () => void } = {}) {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -224,7 +224,7 @@ export function TodayInOps() {
       </div>
 
       {/* stat cards double as filters — click Maintenance to see only maintenance, etc. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-9 gap-2 mb-5">
         <Stat label="All work" value={srcUnits.length + ''} sub={(totals.tasks || 0) + ' tasks'} active={tf === 'all'} onClick={() => setTf('all')} />
         <Stat label="Cleans" value={d.cleans + ''} sub={d.done + ' done'} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
         <Stat label="Strips" value={(totals.strips || 0) + ''} active={tf === 'strips'} onClick={() => setTf('strips')} />
@@ -233,6 +233,7 @@ export function TodayInOps() {
         <Stat label="In progress" value={(totals.running || 0) + ''} active={tf === 'running'} onClick={() => setTf('running')} />
         <Stat label="Not started" value={(totals.notStarted || 0) + ''} sub={(totals.done || 0) + ' done'} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
         <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
+        <Stat label="Glitches" value={(glitchCount || 0) + ''} sub="guest-reported" warn={(glitchCount || 0) > 0} onClick={onShowGlitches} />
       </div>
 
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
