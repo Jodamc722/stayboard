@@ -65,9 +65,11 @@ export async function GET(req: NextRequest) {
       grossRevpar: '$' + m.grossRevpar,
       reservations: m.reservations,
       revNum: m.accomRevenue,
-      // raw numbers so the client can re-aggregate any filtered slice correctly
+      // raw numbers so the client can re-aggregate any filtered slice in any basis
       accomNum: m.accomRevenue,
       grossNum: m.grossRevenue,
+      accomGrossNum: m.accomGrossRevenue,
+      cleaningNum: m.cleaningRevenue,
       occNights: m.occupiedNights,
       availNights: m.availableNights,
     }
