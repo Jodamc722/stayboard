@@ -32,7 +32,9 @@ export async function GET(req: NextRequest) {
   const { data } = await db.from('owner_reports').select('listing_ids, period_start, period_end').eq('id', id).limit(1)
   const rep = (data || [])[0] as any
   if (!rep) return NextResponse.json({ error: 'report not found' }, { status: 404 })
-  const ids: string[] = (Array.isArray(rep.listing_ids) ? rep.listing_ids : []).map((x: any) => String(x)).filter(Boolean).slice(0, 80)
+  // Optionally drop blocked/off-market listings so occupancy & availability aren't inflated by them.
+  const exclude = str(sp.get('exclude')).split(',').map(s => s.trim()).filter(Boolean)
+  const ids: string[] = (Array.isArray(rep.listing_ids) ? rep.listing_ids : []).map((x: any) => String(x)).filter(Boolean).filter((id: string) => exclude.indexOf(id) < 0).slice(0, 80)
   if (!ids.length) return NextResponse.json({ error: 'this report has no listings to break down' }, { status: 400 })
 
   const from = str(sp.get('from')) || str(rep.period_start)
