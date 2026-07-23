@@ -3,7 +3,7 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
@@ -92,6 +92,7 @@ export function TodayInOps() {
   const [people, setPeople] = useState<Person[]>([])
   const [showVacant, setShowVacant] = useState(false)
   const [groupBy, setGroupBy] = useState<'urgency' | 'area'>('urgency')
+  const [taskOrder, setTaskOrder] = useState<Record<string, string[]>>({})
   const [addVacant, setAddVacant] = useState('')
 
   const load = useCallback(async () => {
@@ -108,6 +109,8 @@ export function TodayInOps() {
   // roster for assigning — fetched once, filtered per task department
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 5 * 60 * 1000); return () => clearInterval(t) }, [load])
+  // manual task order (up/down arrows), persisted per day in the browser
+  useEffect(() => { try { const raw = localStorage.getItem('ops_taskorder_' + (data && data.today ? data.today : '')); if (raw) setTaskOrder(JSON.parse(raw)) } catch {} }, [data && data.today])
 
   if (loading && !data) return <div className="text-sm text-muted py-10 text-center">Loading today&rsquo;s operations&hellip;</div>
   if (err) return <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>
@@ -133,6 +136,24 @@ export function TodayInOps() {
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
   const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
   const behind = d.late > 0 || d.atRisk > 0
+  // apply the saved manual order to a unit's tasks (falls back to the API order)
+  const orderedTasks = (u: Unit): Task[] => {
+    const ids = taskOrder[u.listingId]
+    if (!ids || !ids.length) return u.tasks
+    const pos: Record<string, number> = {}
+    ids.forEach((id, i) => { pos[id] = i })
+    return u.tasks.slice().sort((a, b) => (pos[a.id] == null ? 999 : pos[a.id]) - (pos[b.id] == null ? 999 : pos[b.id]))
+  }
+  const moveTask = (u: Unit, taskId: string, dir: number) => {
+    const cur = orderedTasks(u).map(t => t.id)
+    const i = cur.indexOf(taskId)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= cur.length) return
+    const tmp = cur[i]; cur[i] = cur[j]; cur[j] = tmp
+    const next = Object.assign({}, taskOrder, { [u.listingId]: cur })
+    setTaskOrder(next)
+    try { localStorage.setItem('ops_taskorder_' + (data && data.today ? data.today : ''), JSON.stringify(next)) } catch {}
+  }
 
   return (
     <div>
@@ -230,8 +251,12 @@ export function TodayInOps() {
               <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
             </div>
             <div className="divide-y divide-line">
-              {u.tasks.map(t => (
+              {orderedTasks(u).map((t, ti, arr) => (
                 <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                  <div className="flex flex-col shrink-0 -my-1 text-muted">
+                    <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none"><ChevronUp size={13} /></button>
+                    <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none"><ChevronDown size={13} /></button>
+                  </div>
                   <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-28 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-ink truncate">{t.name}</div>
