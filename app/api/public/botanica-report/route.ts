@@ -48,16 +48,24 @@ export async function GET(req: NextRequest) {
     const today = ymd(new Date())
 
     // Botanica unit listings only — no "Full" combo listings, no retired listings.
-    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,status')
+    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,status,pictures')
     const ids: string[] = []
+    const bannerCands: { name: string; url: string; count: number; full: boolean }[] = []
     for (const l of (listings || []) as any[]) {
       const name = str(l.nickname || l.title)
       if (!/botanica/i.test(str(l.building)) && !/botanica/i.test(name)) continue
-      if (/\bfull\b/i.test(name)) continue
       if (/inactive|disabled|archived|deleted/i.test(str(l.status))) continue
-      ids.push(String(l.id))
+      const isFull = /\bfull\b/i.test(name)
+      if (!isFull) ids.push(String(l.id))
+      // Photos live on the mirror as an array of URL strings (see lib/guesty pictures map).
+      const pics = Array.isArray(l.pictures) ? l.pictures.filter((p: any) => typeof p === 'string' && p.indexOf('https://') === 0) : []
+      if (pics.length) bannerCands.push({ name, url: str(pics[0]), count: pics.length, full: isFull })
     }
     if (!ids.length) return NextResponse.json({ ok: false, error: 'No Botanica listings found' }, { status: 500 })
+    // Banner photo: prefer a "Full"/building hero (usually the exterior), then the listing with the most photos.
+    bannerCands.sort((a, b) => (a.full === b.full ? 0 : a.full ? -1 : 1) || b.count - a.count || a.name.localeCompare(b.name))
+    const bannerImage = bannerCands.length ? bannerCands[0].url : null
+    const bannerOptions = bannerCands.slice(0, 10).map(c => ({ name: c.name, url: c.url }))
 
     // All confirmed stays that touch [opening, today]. Paged — .in() + range like owner-report.
     let resv: any[] = []
@@ -68,7 +76,7 @@ export async function GET(req: NextRequest) {
         .in('status', CONFIRMED)
         .in('listing_id', ids)
         .gt('check_out', OPEN_DATE)
-        .lte('check_in', today)
+        .lte('check_in', addDays(today, 400))
         .range(i * 1000, i * 1000 + 999)
       if (!data || data.length === 0) break
       resv = resv.concat(data)
@@ -86,6 +94,16 @@ export async function GET(req: NextRequest) {
     const arrNts: Record<string, number> = {}
     const arrLead: Record<string, number> = {}
     const arrLeadCnt: Record<string, number> = {}
+    // How far forward we show on-the-books nights: the last booked night, capped ~90 days out.
+    // Nights past today are confirmed reservations that haven't arrived yet ("on the books").
+    const FUTURE_CAP = 90
+    const capDay = addDays(today, FUTURE_CAP)
+    let lastDay = today
+    for (const r of resv) {
+      const co = str(r.check_out).slice(0, 10)
+      if (co) { const ln = addDays(co, -1); if (ln > lastDay && ln <= capDay) lastDay = ln }
+    }
+
     for (const r of resv) {
       const ci = str(r.check_in).slice(0, 10)
       const co = str(r.check_out).slice(0, 10)
@@ -93,16 +111,16 @@ export async function GET(req: NextRequest) {
       const nights = Math.max(1, num(r.nights) || daysBetween(ci, co))
       const perNight = fareOf(r.money) / nights
       const perNightClean = cleaningOf(r.money) / nights
-      // count LOS + booking window only for stays that CHECK IN inside the report window
-      if (ci >= OPEN_DATE && ci <= today) {
+      // count LOS + booking window for stays that CHECK IN inside the shown window (incl. upcoming)
+      if (ci >= OPEN_DATE && ci <= lastDay) {
         arrCnt[ci] = (arrCnt[ci] || 0) + 1
         arrNts[ci] = (arrNts[ci] || 0) + nights
         const cr = str(r.created_at).slice(0, 10)
         if (cr && cr <= ci) { arrLead[ci] = (arrLead[ci] || 0) + daysBetween(cr, ci); arrLeadCnt[ci] = (arrLeadCnt[ci] || 0) + 1 }
       }
-      // walk the stay's nights, clipped to [opening, today]
+      // walk the stay's nights, clipped to [opening, lastDay]
       let d = ci < OPEN_DATE ? OPEN_DATE : ci
-      const stop = co <= today ? co : addDays(today, 1)
+      const stop = co <= lastDay ? co : addDays(lastDay, 1)
       while (d < stop) {
         rns[d] = (rns[d] || 0) + 1
         rev[d] = (rev[d] || 0) + perNight + perNightClean
@@ -112,7 +130,7 @@ export async function GET(req: NextRequest) {
     }
 
     const days: { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr: number; arrNights: number; arrLead: number; arrLeadCnt: number }[] = []
-    for (let d = OPEN_DATE; d <= today; d = addDays(d, 1)) {
+    for (let d = OPEN_DATE; d <= lastDay; d = addDays(d, 1)) {
       days.push({ date: d, dow: dow(d), inv: unitsOn(d), rns: rns[d] || 0, rev: rev[d] || 0, cleaning: cln[d] || 0, arr: arrCnt[d] || 0, arrNights: arrNts[d] || 0, arrLead: arrLead[d] || 0, arrLeadCnt: arrLeadCnt[d] || 0 })
     }
 
@@ -149,7 +167,7 @@ export async function GET(req: NextRequest) {
         for (const k of Object.keys(mo)) mo[k] = Math.round(mo[k] * 100) / 100
       }
     }
-    return NextResponse.json({ ok: true, label: 'Botanica', openedOn: PHASES[0].from, today, lastSync, phases: PHASES, days, reconcile })
+    return NextResponse.json({ ok: true, label: 'Botanica', openedOn: PHASES[0].from, today, through: lastDay, bannerImage, bannerOptions, lastSync, phases: PHASES, days, reconcile })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
