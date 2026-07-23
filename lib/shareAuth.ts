@@ -24,3 +24,22 @@ export async function shareCookieValid(cookieVal: string | undefined | null): Pr
   if (!cur) return false
   return cookieVal === tokenFor(cur)
 }
+
+// ADMIN password — gates destructive actions (e.g. deleting a clean from Breezeway).
+// Stored as share_settings row id=2. FAIL CLOSED: while no admin password is set,
+// destructive actions are simply locked.
+export async function currentAdminPassword(): Promise<string> {
+  try {
+    const db = supabaseAdmin()
+    const { data, error } = await db.from('share_settings').select('password').eq('id', 2).maybeSingle()
+    if (error) { console.error('admin_settings read', error.message); return '' }
+    return data && data.password ? String(data.password) : ''
+  } catch (e) { console.error('admin_settings read', e); return '' }
+}
+
+export async function adminPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string }> {
+  const cur = await currentAdminPassword()
+  if (!cur) return { ok: false, reason: 'Delete is locked. Set the admin password in Users \u2192 Share links & security first.' }
+  if (!pw || String(pw) !== cur) return { ok: false, reason: 'Wrong admin password.' }
+  return { ok: true, reason: '' }
+}
