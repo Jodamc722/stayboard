@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < 10; i++) {
       const { data } = await db
         .from('guesty_reservations')
-        .select('listing_id, check_in, check_out, nights, status, money:raw->money')
+        .select('listing_id, check_in, check_out, nights, status, created_at, money:raw->money')
         .in('status', CONFIRMED)
         .in('listing_id', ids)
         .gt('check_out', OPEN_DATE)
@@ -80,6 +80,12 @@ export async function GET(req: NextRequest) {
     const rns: Record<string, number> = {}
     const rev: Record<string, number> = {}
     const cln: Record<string, number> = {}
+    // Arrival-keyed metrics, bucketed by CHECK-IN date: LOS (avg nights per stay) and booking
+    // window (avg days between when a stay was booked and its check-in). Standard hotel convention.
+    const arrCnt: Record<string, number> = {}
+    const arrNts: Record<string, number> = {}
+    const arrLead: Record<string, number> = {}
+    const arrLeadCnt: Record<string, number> = {}
     for (const r of resv) {
       const ci = str(r.check_in).slice(0, 10)
       const co = str(r.check_out).slice(0, 10)
@@ -87,6 +93,13 @@ export async function GET(req: NextRequest) {
       const nights = Math.max(1, num(r.nights) || daysBetween(ci, co))
       const perNight = fareOf(r.money) / nights
       const perNightClean = cleaningOf(r.money) / nights
+      // count LOS + booking window only for stays that CHECK IN inside the report window
+      if (ci >= OPEN_DATE && ci <= today) {
+        arrCnt[ci] = (arrCnt[ci] || 0) + 1
+        arrNts[ci] = (arrNts[ci] || 0) + nights
+        const cr = str(r.created_at).slice(0, 10)
+        if (cr && cr <= ci) { arrLead[ci] = (arrLead[ci] || 0) + daysBetween(cr, ci); arrLeadCnt[ci] = (arrLeadCnt[ci] || 0) + 1 }
+      }
       // walk the stay's nights, clipped to [opening, today]
       let d = ci < OPEN_DATE ? OPEN_DATE : ci
       const stop = co <= today ? co : addDays(today, 1)
@@ -98,9 +111,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const days: { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number }[] = []
+    const days: { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr: number; arrNights: number; arrLead: number; arrLeadCnt: number }[] = []
     for (let d = OPEN_DATE; d <= today; d = addDays(d, 1)) {
-      days.push({ date: d, dow: dow(d), inv: unitsOn(d), rns: rns[d] || 0, rev: rev[d] || 0, cleaning: cln[d] || 0 })
+      days.push({ date: d, dow: dow(d), inv: unitsOn(d), rns: rns[d] || 0, rev: rev[d] || 0, cleaning: cln[d] || 0, arr: arrCnt[d] || 0, arrNights: arrNts[d] || 0, arrLead: arrLead[d] || 0, arrLeadCnt: arrLeadCnt[d] || 0 })
     }
 
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
