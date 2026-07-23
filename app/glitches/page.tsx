@@ -4,6 +4,7 @@
 // what's still open regardless of age, what got resolved, and which units keep glitching.
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Shell } from '@/components/Shell'
+import { GlitchBoard } from '@/components/GlitchBoard'
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react'
 
 type Person = { id: number; name: string; departments: string[] }
@@ -14,7 +15,7 @@ function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 
 export default function GlitchesPage() {
-  const [tab, setTab] = useState<'open' | 'history'>('open')
+  const [tab, setTab] = useState<'board' | 'open' | 'history'>('board')
   const [data, setData] = useState<Data | null>(null)
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -25,6 +26,7 @@ export default function GlitchesPage() {
   const load = useCallback(async () => {
     try {
       setErr('')
+      if (tab === 'board') { setLoading(false); return }
       const r = await fetch('/api/ops-today/glitches?' + (tab === 'history' ? 'history=1' : 'all=1'), { cache: 'no-store' })
       const j: Data = await r.json()
       if (!r.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
@@ -70,9 +72,12 @@ export default function GlitchesPage() {
 
       <div className="flex items-center gap-2 flex-wrap mb-4">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
+          <button onClick={() => setTab('board')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'board' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Board</button>
           <button onClick={() => setTab('open')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'open' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Open</button>
-          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Full history</button>
+          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Breezeway history</button>
         </span>
+        {tab === 'board' && <span className="text-xs text-muted">Escalation board &mdash; Breezeway guest-reported tasks live in the other tabs.</span>}
+        {tab !== 'board' && (<>
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
@@ -81,12 +86,14 @@ export default function GlitchesPage() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit or issue…" className="text-sm border border-line rounded-lg pl-7 pr-2 py-1.5 bg-white w-56 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </span>
         <button onClick={() => { setLoading(true); load() }} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
+        </>)}
       </div>
 
-      {loading && !data && <div className="text-sm text-muted py-10 text-center">Loading glitches…</div>}
+      {tab === 'board' && <GlitchBoard />}
+      {tab !== 'board' && loading && !data && <div className="text-sm text-muted py-10 text-center">Loading glitches…</div>}
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
 
-      {data && (
+      {tab !== 'board' && data && (
         <>
           <div className={'rounded-2xl border p-4 mb-4 flex items-center gap-2 flex-wrap ' + (openCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-line bg-white')}>
             <AlertTriangle size={16} className={openCount > 0 ? 'text-rose-700' : 'text-muted'} />
