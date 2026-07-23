@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { currentSharePassword } from '@/lib/shareAuth'
+import { currentSharePassword, currentAdminPassword } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +20,8 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const password = await currentSharePassword()
-  return NextResponse.json({ ok: true, password, links: LINKS })
+  const adminSet = !!(await currentAdminPassword())
+  return NextResponse.json({ ok: true, password, adminSet, links: LINKS })
 }
 
 export async function POST(req: NextRequest) {
@@ -29,9 +30,17 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const body = await req.json().catch(() => ({}))
+    const db = supabaseAdmin()
+    // ADMIN password (row id=2) — gates destructive actions like Delete
+    if (body.adminPassword !== undefined) {
+      const ap = String(body.adminPassword || '').trim()
+      if (ap.length < 4) return NextResponse.json({ ok: false, error: 'Admin password must be at least 4 characters.' }, { status: 400 })
+      const { error } = await db.from('share_settings').upsert({ id: 2, password: ap, updated_at: new Date().toISOString() })
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, adminSet: true })
+    }
     const password = String(body.password || '').trim()
     if (password.length < 4) return NextResponse.json({ ok: false, error: 'Password must be at least 4 characters.' }, { status: 400 })
-    const db = supabaseAdmin()
     const { error } = await db.from('share_settings').upsert({ id: 1, password, updated_at: new Date().toISOString() })
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true, password })
