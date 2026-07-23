@@ -3,7 +3,7 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
@@ -252,6 +252,8 @@ export function TodayInOps() {
         )}
       </div>
 
+      <AuditsDue market={market} />
+
       <div className="space-y-3">
         {units.map(u => (
           <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
@@ -295,6 +297,63 @@ export function TodayInOps() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ANNUAL AUDITS DUE — units whose last completed quality audit is >1 year old (or never).
+// One click files the Annual Quality Audit in Breezeway (explicit click only, never automatic).
+function AuditsDue({ market }: { market: string }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<any>(null)
+  const [busy, setBusy] = useState('')
+  const [created, setCreated] = useState<Record<string, boolean>>({})
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    if (!open || data) return
+    fetch('/api/ops-today/audits-due', { cache: 'no-store' }).then(r => r.json()).then(setData).catch(() => {})
+  }, [open, data])
+  const rows = ((data && data.due) || []).filter((x: any) => market === 'all' || x.market === market)
+  const createAudit = async (listingId: string, unit: string) => {
+    setBusy(listingId); setMsg('')
+    try {
+      const description = 'Annual quality audit (done once per year): score the unit against the standard checklist, log any damage or wear, confirm inventory counts, and photograph anything below standard.'
+      const r = await fetch('/api/ops-today/add-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, title: 'Annual Quality Audit', department: 'inspection', priority: 'normal', description }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setMsg(j.error || 'Could not create for ' + unit); setBusy(''); return }
+      setCreated(prev => Object.assign({}, prev, { [listingId]: true }))
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy('')
+  }
+  const count = data ? rows.filter((x: any) => !created[x.listingId]).length : null
+  return (
+    <div className="rounded-2xl border border-line bg-white mb-3 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left">
+        <ClipboardCheck size={15} className="text-muted" />
+        <span className="font-semibold text-ink text-sm">Annual audits due</span>
+        <span className="text-xs text-muted">{data ? count + ' unit' + (count === 1 ? '' : 's') + ' past 1 year (or never audited)' : 'quality audit once a year per unit'}</span>
+        <span className="ml-auto text-muted text-xs">{open ? '\u25b2' : '\u25bc'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-line">
+          {!data && <div className="px-4 py-4 text-sm text-muted">Checking audit history\u2026</div>}
+          {data && rows.length === 0 && <div className="px-4 py-4 text-sm text-muted">Every unit{market === 'all' ? '' : ' in ' + market} has been audited within the last year. Nice.</div>}
+          <div className="divide-y divide-line">
+            {rows.map((x: any) => (
+              <div key={x.listingId} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-ink truncate">{x.unit}</div>
+                  <div className="text-xs text-muted">{x.market} &middot; {x.lastAudit ? 'last audit ' + fmtShort(x.lastAudit) + ' (' + Math.round((x.ageDays || 0) / 30) + ' months ago)' : 'never audited'}</div>
+                </div>
+                {created[x.listingId]
+                  ? <span className="text-xs font-medium text-emerald-700 shrink-0">Created in Breezeway \u2713</span>
+                  : <button onClick={() => createAudit(x.listingId, x.unit)} disabled={busy === x.listingId} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40 shrink-0">{busy === x.listingId ? 'Creating\u2026' : 'Create audit'}</button>}
+              </div>
+            ))}
+          </div>
+          {msg && <div className="px-4 py-2 text-xs text-rose-700">{msg}</div>}
+        </div>
+      )}
     </div>
   )
 }
