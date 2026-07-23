@@ -99,6 +99,8 @@ export type ReportContent = {
   // Per-section revenue basis (see lib/basis.ts). default flows to every section unless overridden.
   // Snapshot cards show a big primary number with a secondary number beneath ('none' hides it).
   basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis }
+  // Listing ids blocked/off-market for the period — dropped from revenue and the occupancy denominator.
+  excludeListings?: string[]
   // Legacy (pre-basis) flag; superseded by `basis` above. Kept so old reports still parse.
   showGross?: boolean
   omit: string[]
