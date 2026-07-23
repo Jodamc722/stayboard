@@ -9,11 +9,12 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const GLITCH = /glitch|guest\s*reported/i
-const DONE = /complete|finish|cancel|closed/i
+const DONE = /complete|finish|cancel|closed|delete|approv/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
 const COLS = 'id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,raw'
+const RECENT_DAYS = 60  // glitches older than this are almost always resolved-but-never-closed cruft
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
@@ -61,7 +62,12 @@ export async function GET(req: NextRequest) {
         }
       })
       .sort((a, b) => (a.unassigned ? 0 : 1) - (b.unassigned ? 0 : 1) || (b.ageDays || 0) - (a.ageDays || 0) || a.unit.localeCompare(b.unit))
-    return NextResponse.json({ ok: true, today, _dbg: { nfCount, nfErr, scanCount }, count: glitches.length, unassigned: glitches.filter(g => g.unassigned).length, glitches })
+    // Default to recent, actionable glitches; expose the older backlog as a count (and via ?all=1).
+    const showAll = req.nextUrl.searchParams.get('all') === '1'
+    const recent = glitches.filter(g => g.ageDays == null || g.ageDays <= RECENT_DAYS)
+    const older = glitches.filter(g => g.ageDays != null && g.ageDays > RECENT_DAYS)
+    const shown = showAll ? glitches : recent
+    return NextResponse.json({ ok: true, today, _dbg: { nfCount, nfErr, scanCount }, count: shown.length, unassigned: shown.filter(g => g.unassigned).length, olderOpen: older.length, windowDays: RECENT_DAYS, glitches: shown })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
