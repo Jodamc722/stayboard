@@ -45,8 +45,12 @@ function typeOf(name: any, dept: string): string {
   if (dept === 'inspection') return 'inspection'
   return 'other'
 }
-const isDone = (s: string) => /complete|finish/.test(s)
+// Breezeway statuses seen in the wild: created, in_progress/started, completed/finished,
+// closed, approved, deleted, cancelled. "Closed"/"approved" ARE done; deleted/cancelled tasks
+// must not appear on the board at all (they linger in the mirror and used to show as Not started).
+const isDone = (s: string) => /complete|finish|close|approv/.test(s)
 const isRunning = (s: string) => /progress|started/.test(s)
+const isGone = (s: string) => /delete|cancel/.test(s)
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
@@ -88,14 +92,16 @@ export async function GET(req: NextRequest) {
       if (!qcByListing[id]) qcByListing[id] = []
       qcByListing[id].push({ issue: q.issue_type || 'Issue', status: str(q.status), reportUrl: q.report_url || null })
     }
-    const tasks = ((tRes.data || []) as any[]).map(t => {
+    const tasks = ((tRes.data || []) as any[]).filter(t => !isGone(str(t.status).toLowerCase())).map(t => {
       const lid = String(t.reference_property_id)
       const li = lmap[lid]
       const dept = deptOf(t.type_department)
       const type = typeOf(t.name, dept)
       const status = str(t.status).toLowerCase()
-      const done = isDone(status)
-      const running = isRunning(status)
+      // deleted/cancelled rows are filtered out above — not real work.
+      // finished_at is set by the field app even when the status label is unusual — trust it
+      const done = isDone(status) || !!t.finished_at
+      const running = !done && (isRunning(status) || !!t.started_at)
       const ppl = Array.isArray(t.assignees) ? t.assignees : []
       // the 4pm clock applies to DEPARTURE CLEANS only, and only where Breezeway completion is real
       const untracked = UNTRACKED_RE.test(li ? li.name : '')
@@ -209,6 +215,9 @@ export async function GET(req: NextRequest) {
       maintenance: tasks.filter(t => t.dept === 'maintenance').length,
       inspection: tasks.filter(t => t.dept === 'inspection').length,
       unassigned: tasks.filter(t => t.assignees.length === 0 && !t.done).length,
+      running: tasks.filter(t => t.running && !t.done).length,
+      notStarted: tasks.filter(t => !t.done && !t.running).length,
+      done: tasks.filter(t => t.done).length,
       openQc: (qRes.data || []).length,
       vacant: vacants.length,
     }
