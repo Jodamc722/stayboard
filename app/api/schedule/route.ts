@@ -59,14 +59,14 @@ db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,che
 db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
 // PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
 // check-in/out times) instead of the full multi-MB raw blob for every listing.
-db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,cfRaw:raw->customFields,ciRaw:raw->>defaultCheckInTime,coRaw:raw->>defaultCheckOutTime'),
+db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,cfRaw:raw->customFields,ciRaw:raw->>defaultCheckInTime,coRaw:raw->>defaultCheckOutTime,lat:raw->address->>lat,lng:raw->address->>lng'),
 ])
 
 // HARD GUARD: if the listings query hiccups, ABORT instead of caching a garbage snapshot
 // (rows would render with hub 'Other', no bedrooms/door codes - worse than an error).
 if (!listings || !listings.length) throw new Error('Listing data unavailable - hit Sync to retry.')
 
-type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null }
+type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null; city: string | null; lat: number | null; lng: number | null }
 const meta: Record<string, Meta> = {}
 const units: { id: string; name: string }[] = []
 for (const l of (listings || [])) {
@@ -85,6 +85,9 @@ checkIn: raw?.defaultCheckInTime || null,
 checkOut: raw?.defaultCheckOutTime || null,
 is17: IS_17WEST(building) || IS_17WEST(name),
 vendor: VENDOR_OF(building) || VENDOR_OF(name),
+city: (l as any).address_city || null,
+lat: Number.isFinite(Number((l as any).lat)) ? Number((l as any).lat) : null,
+lng: Number.isFinite(Number((l as any).lng)) ? Number((l as any).lng) : null,
 }
 if (!/inactive|disabled|archived|deleted/i.test(str((l as any).status))) units.push({ id, name })
 }
@@ -98,7 +101,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null; cleaningFee?: number | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -118,6 +121,7 @@ listingId: id,
 unit: m?.name || (r as any).listing_name || 'Unit',
 market: m?.market || 'Miami',
 hub: m?.hub || 'Other',
+city: m?.city || null, lat: m?.lat ?? null, lng: m?.lng ?? null,
 date,
 guestOut: (r as any).guest_name || null, reservationId: String((r as any).id || '') || null,
 nights: (r as any).nights ?? null,
@@ -220,6 +224,7 @@ if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0
             const id = String(b.listing_id); const m = meta[id]
             cleans.push({
               listingId: id, unit: m?.name || r?.listing_name || 'Unit', market: m?.market || 'Miami', hub: m?.hub || 'Other',
+              city: m?.city || null, lat: m?.lat ?? null, lng: m?.lng ?? null,
               date: String(b.blocked_until), guestOut: r?.guest_name || null, nights: r?.nights ?? null, bedrooms: m?.bedrooms ?? null,
               checkInTime: m?.checkIn || null, checkOutTime: m?.checkOut || null, sameDayTurn: false, nextArrival: null,
               doorCode: m?.doorCode || null, cleaningTime: m?.cleaningTime || null,
