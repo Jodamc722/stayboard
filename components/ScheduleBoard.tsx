@@ -350,10 +350,12 @@ await load(view, date)
 async function deleteClean(c: Clean) {
 if (!c.breezewayTaskId) return
 if (!window.confirm('Delete ' + c.unit + "'s clean from Breezeway? Housekeeping will no longer see it.")) return
+const adminPassword = window.prompt('Admin password required to delete:')
+if (!adminPassword) return
 const k = keyOf(c)
 setTaskAct(prev => ({ ...prev, [k]: true }))
 try {
-const r = await fetch('/api/breezeway/create-clean', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskIds: [c.breezewayTaskId] }) })
+const r = await fetch('/api/breezeway/create-clean', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskIds: [c.breezewayTaskId], adminPassword }) })
 const j = await r.json().catch(() => null)
 if (!r.ok || !j || !j.deleted) throw new Error((j && j.results && j.results[0] && j.results[0].error) || (j && j.error) || 'Could not delete the clean.')
 await load(view, date)
