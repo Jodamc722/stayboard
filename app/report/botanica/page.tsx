@@ -4,11 +4,12 @@
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react'
 
 type Day = { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr?: number; arrNights?: number; arrLead?: number; arrLeadCnt?: number }
-type Data = { ok: boolean; label?: string; openedOn?: string; today?: string; lastSync?: string | null; days: Day[]; error?: string }
-type PresetKey = 'mtd' | 'lastMonth' | 'last30' | 'all' | 'custom'
+type Data = { ok: boolean; label?: string; openedOn?: string; today?: string; through?: string; bannerImage?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; days: Day[]; error?: string }
+type PresetKey = 'mtd' | 'upcoming' | 'lastMonth' | 'last30' | 'all' | 'custom'
 
 const PRESETS: { key: PresetKey; label: string }[] = [
   { key: 'mtd', label: 'This month' },
+  { key: 'upcoming', label: 'Upcoming' },
   { key: 'lastMonth', label: 'Last month' },
   { key: 'last30', label: 'Last 30 days' },
   { key: 'all', label: 'Since opening' },
@@ -40,19 +41,20 @@ const Tile = ({ label, value, sub }: { label: string; value: string; sub?: strin
 
 // Headline stat inside the dark banner — the three numbers Margaux checks first.
 const HeroStat = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
-  <div className="rounded-xl bg-white/[0.06] border border-white/10 px-4 py-3">
-    <div className="text-[10px] uppercase tracking-widest text-amber-300/90 font-semibold">{label}</div>
+  <div className="rounded-xl bg-black/30 backdrop-blur-sm border border-white/15 px-4 py-3">
+    <div className="text-[10px] uppercase tracking-widest text-amber-300 font-semibold">{label}</div>
     <div className="text-2xl sm:text-3xl font-bold text-white mt-0.5 tabular-nums leading-tight">{value}</div>
     {sub ? <div className="text-[11px] text-neutral-400 mt-0.5">{sub}</div> : null}
   </div>
 )
 
-const RowCells = ({ d }: { d: Day }) => {
+const RowCells = ({ d, today }: { d: Day; today: string }) => {
   const noInv = d.inv <= 0
   const weekend = d.dow === 'Fri' || d.dow === 'Sat'
+  const future = !!today && d.date > today
   return (
-    <tr className={weekend ? 'bg-amber-50/60' : ''}>
-      <td className="px-3 py-1.5 whitespace-nowrap text-neutral-700">{fmtDate(d.date)} <span className="text-neutral-400">{d.dow}</span></td>
+    <tr className={future ? 'bg-sky-50/50' : (weekend ? 'bg-amber-50/60' : '')}>
+      <td className="px-3 py-1.5 whitespace-nowrap text-neutral-700">{fmtDate(d.date)} <span className="text-neutral-400">{d.dow}</span>{future ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-sky-500 font-semibold">soon</span> : null}</td>
       <td className="px-3 py-1.5 text-right text-neutral-500">{noInv ? '—' : d.inv}</td>
       <td className="px-3 py-1.5 text-right font-medium text-neutral-900">{noInv ? '—' : d.rns}</td>
       <td className="px-3 py-1.5 text-right text-neutral-700">{noInv ? '—' : pct1(d.rns / d.inv)}</td>
@@ -129,15 +131,17 @@ export default function BotanicaReportPage() {
 
   const today = data?.today || ''
   const openedOn = data?.openedOn || '2026-05-01'
+  const through = data?.through || today
 
   const range = useMemo((): { from: string; to: string } => {
     if (!today) return { from: openedOn, to: today }
     if (preset === 'mtd') return { from: firstOfMonth(today), to: today }
+    if (preset === 'upcoming') return { from: today, to: through }
     if (preset === 'last30') return { from: addDaysIso(today, -29), to: today }
     if (preset === 'lastMonth') { const lastM = addDaysIso(firstOfMonth(today), -1); return { from: firstOfMonth(lastM), to: lastM } }
     if (preset === 'custom' && fromD && toD) return { from: fromD <= toD ? fromD : toD, to: fromD <= toD ? toD : fromD }
     return { from: openedOn, to: today }
-  }, [preset, fromD, toD, today, openedOn])
+  }, [preset, fromD, toD, today, openedOn, through])
 
   const rows = useMemo(() => (data?.days || []).filter(d => d.date >= range.from && d.date <= range.to), [data, range])
   const total = useMemo(() => aggregate(rows), [rows])
@@ -188,8 +192,10 @@ export default function BotanicaReportPage() {
   return (
     <div className="min-h-screen bg-neutral-100 print:bg-white">
       <div className="max-w-5xl mx-auto p-4 sm:p-6">
-        <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
-          <div className="p-5 sm:p-6">
+        <div className="relative rounded-2xl bg-neutral-900 shadow-lg overflow-hidden" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
+          {data.bannerImage ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + data.bannerImage + '")' }} aria-hidden="true" /> : null}
+          <div className={'absolute inset-0 ' + (data.bannerImage ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
+          <div className="relative p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2.5">
@@ -231,13 +237,13 @@ export default function BotanicaReportPage() {
           ))}
           {preset === 'custom' && (
             <span className="flex items-center gap-1 text-xs text-neutral-600">
-              <input type="date" value={fromD} min={openedOn} max={today} onChange={e => setFromD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1 bg-white" />
+              <input type="date" value={fromD} min={openedOn} max={through} onChange={e => setFromD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1 bg-white" />
               <span>to</span>
-              <input type="date" value={toD} min={openedOn} max={today} onChange={e => setToD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1 bg-white" />
+              <input type="date" value={toD} min={openedOn} max={through} onChange={e => setToD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1 bg-white" />
             </span>
           )}
         </div>
-        <div className="text-xs text-neutral-500 mt-2">{fmtDate(range.from)} – {fmtDate(range.to)} · {rows.length} nights</div>
+        <div className="text-xs text-neutral-500 mt-2">{fmtDate(range.from)} – {fmtDate(range.to)} · {rows.length} nights{range.to > today ? <span className="ml-1.5 text-sky-600 font-medium">· includes upcoming (on the books)</span> : null}</div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-3">
           <Tile label="Active units" value={String(rows.length ? rows[rows.length - 1].inv : 0)} sub={rows.length ? 'avg ' + Math.round(total.inv / rows.length) + ' across range' : 'units live'} />
@@ -269,7 +275,7 @@ export default function BotanicaReportPage() {
                         <td colSpan={7} className="px-3 py-1.5 text-[11px] uppercase tracking-wide font-semibold text-neutral-500">{monthLabel(m.key)}</td>
                       </tr>
                     )}
-                    {m.rows.map(d => <RowCells key={d.date} d={d} />)}
+                    {m.rows.map(d => <RowCells key={d.date} d={d} today={today} />)}
                     {months.length > 1 && (
                       <tr className="bg-neutral-50 font-semibold text-neutral-900 border-t border-neutral-200">
                         <td className="px-3 py-2">{monthLabel(m.key)} total</td>
@@ -296,7 +302,7 @@ export default function BotanicaReportPage() {
             </table>
           </div>
         </div>
-        <p className="text-[11px] text-neutral-400 mt-3">Inventory phased: 32 units from May 4, 50 from Jun 17 · ADR includes cleaning · today&apos;s night is still in progress.</p>
+        <p className="text-[11px] text-neutral-400 mt-3">Inventory phased: 32 units from May 4, 50 from Jun 17 · ADR includes cleaning · today&apos;s night is still in progress · <span className="text-sky-600">shaded &ldquo;soon&rdquo; rows</span> are upcoming reservations on the books, not yet arrived.</p>
       </div>
     </div>
   )
