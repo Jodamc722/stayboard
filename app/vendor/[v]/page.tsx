@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[] }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; bannerImage?: string | null; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; bannerImage?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming'
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -40,7 +40,12 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [noteBy, setNoteBy] = useState('')
   const [noteBusy, setNoteBusy] = useState(false)
   const [noteMsg, setNoteMsg] = useState('')
-  useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} }, [])
+  // Banner photo the viewer picked (saved to their browser only). null = auto-pick from the API.
+  const [bannerChoice, setBannerChoice] = useState<string | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const BANNER_KEY = 'board_banner_' + params.v
+  useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} ; try { const s = localStorage.getItem(BANNER_KEY); if (s) setBannerChoice(s) } catch {} }, [BANNER_KEY])
+  const chooseBanner = (url: string | null) => { setBannerChoice(url); setPickerOpen(false); try { if (url) localStorage.setItem(BANNER_KEY, url); else localStorage.removeItem(BANNER_KEY) } catch {} }
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +133,8 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6 bg-neutral-100">{err}</div>
   if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm bg-neutral-100">Loading…</div>
 
+  const effBanner = bannerChoice || data.bannerImage || null
+  const bannerOpts = data.bannerOptions || []
   const rows: Row[] = (data as any)[tab] || []
   const allIds: string[] = []
   for (const r of data.arrivals) allIds.push(keyOf(r, 'arrivals'))
@@ -159,8 +166,8 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     <div className="min-h-screen bg-neutral-100 text-neutral-900 print:bg-white">
       <div className="max-w-2xl mx-auto px-4 py-6">
         <div className="relative rounded-2xl bg-neutral-900 shadow-lg overflow-hidden mb-4" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
-          {data.bannerImage ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + data.bannerImage + '")' }} aria-hidden="true" /> : null}
-          <div className={'absolute inset-0 ' + (data.bannerImage ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
+          {effBanner ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + effBanner + '")' }} aria-hidden="true" /> : null}
+          <div className={'absolute inset-0 ' + (effBanner ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
           <div className="relative p-5">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
@@ -176,9 +183,21 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                 <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{syncing ? 'Syncing…' : 'Resync'}</button>
                 <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
                 <button onClick={exportCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">CSV</button>
+                {bannerOpts.length > 0 && <button onClick={() => setPickerOpen(v => !v)} className={'text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ' + (pickerOpen ? 'border-amber-400 bg-amber-400/20 text-amber-200' : 'border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20')}>Photo</button>}
                 <button onClick={() => window.print()} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">Print</button>
               </div>
             </div>
+            {pickerOpen && bannerOpts.length > 0 && (
+              <div className="mt-4 print:hidden">
+                <div className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold mb-1.5">Banner photo · saved to this device</div>
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={() => chooseBanner(null)} className={'h-14 w-20 rounded-lg border-2 flex items-center justify-center text-[10px] font-semibold ' + (!bannerChoice ? 'border-amber-400 bg-white/10 text-amber-200' : 'border-white/20 bg-white/5 text-neutral-300 hover:border-white/40')}>Auto</button>
+                  {bannerOpts.map(o => (
+                    <button key={o.url} onClick={() => chooseBanner(o.url)} title={o.name} className={'h-14 w-20 rounded-lg bg-cover bg-center border-2 transition-colors ' + (bannerChoice === o.url ? 'border-amber-400' : 'border-white/20 hover:border-white/50')} style={{ backgroundImage: 'url("' + o.url + '")' }} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
         {syncMsg && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-3 inline-block print:hidden">{syncMsg}</div>}
