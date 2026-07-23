@@ -51,7 +51,7 @@ export default function OpsPlanPage() {
         ))}
       </div>
 
-      {tab === 'today' && <TodayInOps />}
+      {tab === 'today' && <TodayInOps glitchCount={glitchCount} onShowGlitches={() => setTab('glitches')} />}
 
       {tab === 'glitches' && <GlitchesBoard />}
 
