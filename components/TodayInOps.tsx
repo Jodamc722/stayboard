@@ -127,6 +127,8 @@ export function TodayInOps() {
     || (tf === 'maintenance' && t.dept === 'maintenance')
     || (tf === 'inspection' && t.dept === 'inspection')
     || (tf === 'unassigned' && t.assignees.length === 0 && !t.done)
+    || (tf === 'running' && t.running && !t.done)
+    || (tf === 'notstarted' && !t.done && !t.running)
   const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
   const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
@@ -195,12 +197,14 @@ export function TodayInOps() {
       </div>
 
       {/* stat cards double as filters — click Maintenance to see only maintenance, etc. */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 mb-5">
         <Stat label="All work" value={srcUnits.length + ''} sub={(totals.tasks || 0) + ' tasks'} active={tf === 'all'} onClick={() => setTf('all')} />
         <Stat label="Cleans" value={d.cleans + ''} sub={d.done + ' done'} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
         <Stat label="Strips" value={(totals.strips || 0) + ''} active={tf === 'strips'} onClick={() => setTf('strips')} />
         <Stat label="Maintenance" value={(totals.maintenance || 0) + ''} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
         <Stat label="Inspections" value={(totals.inspection || 0) + ''} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
+        <Stat label="In progress" value={(totals.running || 0) + ''} active={tf === 'running'} onClick={() => setTf('running')} />
+        <Stat label="Not started" value={(totals.notStarted || 0) + ''} sub={(totals.done || 0) + ' done'} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
         <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
       </div>
 
