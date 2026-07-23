@@ -110,21 +110,23 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   }
 
   if (needsPw) return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50">
-      <form onSubmit={submitPw} className="w-full max-w-xs bg-white border border-neutral-200 rounded-xl p-5 space-y-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">Stay Hospitality</div>
-          <h1 className="text-lg font-bold">Enter password</h1>
-          <p className="text-xs text-neutral-500 mt-1">This schedule is password protected.</p>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-100">
+      <form onSubmit={submitPw} className="w-full max-w-sm bg-white border border-neutral-200 rounded-2xl shadow-lg overflow-hidden">
+        <div className="bg-gradient-to-br from-neutral-900 to-neutral-800 px-6 pt-6 pb-7">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</div>
+          <h1 className="text-2xl font-bold text-white mt-1">Vendor schedule</h1>
+          <p className="text-xs text-neutral-400 mt-1">Password protected</p>
         </div>
-        <input type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="Password" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
-        {pwErr && <div className="text-xs text-red-600">{pwErr}</div>}
-        <button type="submit" disabled={pwBusy || !pw} className="w-full text-sm font-medium px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{pwBusy ? 'Checking…' : 'View schedule'}</button>
+        <div className="p-6 space-y-3">
+          <input type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="Enter password" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400" />
+          {pwErr && <div className="text-xs text-red-600">{pwErr}</div>}
+          <button type="submit" disabled={pwBusy || !pw} className="w-full text-sm font-semibold px-3 py-2.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 transition-colors">{pwBusy ? 'Checking…' : 'View schedule'}</button>
+        </div>
       </form>
     </div>
   )
-  if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6">{err}</div>
-  if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading…</div>
+  if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6 bg-neutral-100">{err}</div>
+  if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm bg-neutral-100">Loading…</div>
 
   const rows: Row[] = (data as any)[tab] || []
   const allIds: string[] = []
@@ -154,28 +156,34 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900">
+    <div className="min-h-screen bg-neutral-100 text-neutral-900 print:bg-white">
       <div className="max-w-2xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
-          <div>
-            <div className="text-[11px] uppercase tracking-widest text-neutral-400 font-semibold">This week</div>
-            <h1 className="text-2xl font-bold">{data.label}</h1>
-          </div>
-          <div className="flex items-center gap-2 print:hidden">
-            {newCount > 0 && <button onClick={markSeen} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-800 border border-amber-200">{newCount} new</button>}
-            <button onClick={resync} disabled={syncing} className="text-sm px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700 font-medium disabled:opacity-50">{syncing ? 'Syncing…' : 'Resync'}</button>
-            <button onClick={doRefresh} disabled={refreshing} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium disabled:opacity-50">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
-            <button onClick={exportCsv} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">CSV</button>
-            <button onClick={() => window.print()} className="text-sm px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 font-medium">Print</button>
+        <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
+          <div className="p-5">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300 print:hidden"><span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span></span>LIVE</span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight">{data.label}</h1>
+                <p className="text-xs text-neutral-400 mt-1.5">This week · {data.unitCount} units · {data.today ? fmtDate(data.today) : ''} – {data.end ? fmtDate(data.end) : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}{data.lastSync ? ' · synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</p>
+              </div>
+              <div className="flex items-center gap-2 print:hidden">
+                {newCount > 0 && <button onClick={markSeen} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors">{newCount} new</button>}
+                <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{syncing ? 'Syncing…' : 'Resync'}</button>
+                <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
+                <button onClick={exportCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">CSV</button>
+                <button onClick={() => window.print()} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">Print</button>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="text-xs text-neutral-400 mb-1">{data.unitCount} units · {data.today ? fmtDate(data.today) : ''} – {data.end ? fmtDate(data.end) : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}{data.lastSync ? ' · last synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</div>
-        {syncMsg && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-3 inline-block print:hidden">{syncMsg}</div>}
-        <div className="mb-3" />
+        {syncMsg && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-3 inline-block print:hidden">{syncMsg}</div>}
 
-        <div className="flex gap-1 mb-4 bg-neutral-100 rounded-xl p-1 print:hidden">
+        <div className="flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm print:hidden">
           {TABS.map(t => { const n = ((data as any)[t.key] || []).length; return (
-            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition ' + (tab === t.key ? 'bg-white shadow-sm text-neutral-900' : 'text-neutral-500 hover:text-neutral-700')}>{t.label}<span className="ml-1.5 text-xs text-neutral-400">{n}</span></button>
+            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
           )})}
         </div>
 
@@ -195,7 +203,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                   const id = keyOf(r, tab) + i
                   const open = expanded === id
                   return (
-                    <div key={id} className={'rounded-xl border bg-white break-inside-avoid ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
+                    <div key={id} className={'rounded-2xl border bg-white shadow-sm break-inside-avoid ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
                       <button onClick={() => { setExpanded(open ? '' : id); setNoteText(''); setNoteMsg('') }} className="w-full text-left px-4 py-3 flex items-center gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
