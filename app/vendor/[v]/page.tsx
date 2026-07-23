@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[] }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; bannerImage?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming'
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -40,12 +40,10 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [noteBy, setNoteBy] = useState('')
   const [noteBusy, setNoteBusy] = useState(false)
   const [noteMsg, setNoteMsg] = useState('')
-  // Banner photo the viewer picked (saved to their browser only). null = auto-pick from the API.
-  const [bannerChoice, setBannerChoice] = useState<string | null>(null)
+  // Banner photo pick — saved on the server (app_settings) so it sticks for everyone on the link.
   const [pickerOpen, setPickerOpen] = useState(false)
-  const BANNER_KEY = 'board_banner_' + params.v
-  useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} ; try { const s = localStorage.getItem(BANNER_KEY); if (s) setBannerChoice(s) } catch {} }, [BANNER_KEY])
-  const chooseBanner = (url: string | null) => { setBannerChoice(url); setPickerOpen(false); try { if (url) localStorage.setItem(BANNER_KEY, url); else localStorage.removeItem(BANNER_KEY) } catch {} }
+  const [savingBanner, setSavingBanner] = useState(false)
+  useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} }, [])
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +88,12 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     setSyncing(false)
   }
   const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
+  const chooseBanner = async (url: string | null) => {
+    setSavingBanner(true)
+    try { await fetch('/api/public/banner-set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ surface: 'board:' + params.v.toLowerCase(), url: url || '' }) }) } catch {}
+    await load()
+    setSavingBanner(false); setPickerOpen(false)
+  }
   const saveNote = async (rid: string) => {
     if (!noteText.trim()) return
     setNoteBusy(true); setNoteMsg('')
@@ -133,8 +137,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6 bg-neutral-100">{err}</div>
   if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm bg-neutral-100">Loading…</div>
 
-  const effBanner = bannerChoice || data.bannerImage || null
+  const effBanner = data.bannerImage || null
   const bannerOpts = data.bannerOptions || []
+  const bannerOverride = data.bannerOverride || null
   const rows: Row[] = (data as any)[tab] || []
   const allIds: string[] = []
   for (const r of data.arrivals) allIds.push(keyOf(r, 'arrivals'))
@@ -189,11 +194,11 @@ export default function VendorPage({ params }: { params: { v: string } }) {
             </div>
             {pickerOpen && bannerOpts.length > 0 && (
               <div className="mt-4 print:hidden">
-                <div className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold mb-1.5">Banner photo · saved to this device</div>
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={() => chooseBanner(null)} className={'h-14 w-20 rounded-lg border-2 flex items-center justify-center text-[10px] font-semibold ' + (!bannerChoice ? 'border-amber-400 bg-white/10 text-amber-200' : 'border-white/20 bg-white/5 text-neutral-300 hover:border-white/40')}>Auto</button>
+                <div className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold mb-1.5">Banner photo{savingBanner ? ' · saving…' : ' · saved for everyone on this link'}</div>
+                <div className={'flex gap-2 flex-wrap' + (savingBanner ? ' opacity-50 pointer-events-none' : '')}>
+                  <button onClick={() => chooseBanner(null)} className={'h-14 w-20 rounded-lg border-2 flex items-center justify-center text-[10px] font-semibold ' + (!bannerOverride ? 'border-amber-400 bg-white/10 text-amber-200' : 'border-white/20 bg-white/5 text-neutral-300 hover:border-white/40')}>Auto</button>
                   {bannerOpts.map(o => (
-                    <button key={o.url} onClick={() => chooseBanner(o.url)} title={o.name} className={'h-14 w-20 rounded-lg bg-cover bg-center border-2 transition-colors ' + (bannerChoice === o.url ? 'border-amber-400' : 'border-white/20 hover:border-white/50')} style={{ backgroundImage: 'url("' + o.url + '")' }} />
+                    <button key={o.url} onClick={() => chooseBanner(o.url)} title={o.name} className={'h-14 w-20 rounded-lg bg-cover bg-center border-2 transition-colors ' + (bannerOverride === o.url ? 'border-amber-400' : 'border-white/20 hover:border-white/50')} style={{ backgroundImage: 'url("' + o.url + '")' }} />
                   ))}
                 </div>
               </div>
