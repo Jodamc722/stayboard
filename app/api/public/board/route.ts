@@ -64,12 +64,20 @@ export async function GET(req: NextRequest) {
     }
     // Banner photo for this scope: prefer a "Full"/building hero, then the listing with the most photos.
     bannerCands.sort((a, b) => (a.full === b.full ? 0 : a.full ? -1 : 1) || b.count - a.count)
-    const bannerImage = bannerCands.length ? bannerCands[0].url : null
+    const autoBanner = bannerCands.length ? bannerCands[0].url : null
     const seenBanner = new Set<string>()
     const bannerOptions: { name: string; url: string }[] = []
     for (const c of bannerCands) { if (seenBanner.has(c.url)) continue; seenBanner.add(c.url); bannerOptions.push({ name: c.name, url: c.url }); if (bannerOptions.length >= 12) break }
+    // A saved pick (app_settings key 'banner_overrides') wins over the auto-pick, for everyone on the link.
+    let bannerOverride: string | null = null
+    try {
+      const { data: bo } = await db.from('app_settings').select('value').eq('key', 'banner_overrides').limit(1)
+      const row: any = Array.isArray(bo) ? bo[0] : null
+      if (row && row.value) { const j = JSON.parse(row.value); const u = j && typeof j === 'object' ? j['board:' + v] : null; if (typeof u === 'string' && u) bannerOverride = u }
+    } catch {}
+    const bannerImage = bannerOverride || autoBanner
     const ids = Object.keys(match)
-    if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, bannerImage, bannerOptions, arrivals: [], departures: [], active: [], upcoming: [] })
+    if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, bannerImage, bannerOverride, bannerOptions, arrivals: [], departures: [], active: [], upcoming: [] })
     // custom-field id -> human name (for the parking / details list). Resolves from the table first,
     // falls back to Guesty's live definitions, cached 1h — so names work even if the table is unpopulated.
     const cfNameById = await customFieldNameMap()
@@ -176,7 +184,7 @@ export async function GET(req: NextRequest) {
     // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, bannerImage, bannerOptions, lastSync, arrivals, departures, active, upcoming })
+    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
