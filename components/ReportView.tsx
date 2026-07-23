@@ -7,6 +7,7 @@
 // scope (never inline in render) so inputs keep focus while typing.
 import { useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
+import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 
 type Any = any
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
@@ -21,6 +22,29 @@ function cardGross(card: Any): string {
   if (card && card.gross) return String(card.gross)
   const m = /Gross[^:]*:\s*(\$?[\d.,]+\s*[KM]?)/i.exec((card && card.sub) || '')
   return m ? m[1].trim() : ''
+}
+// Does an object carry the raw numbers needed to compute any basis?
+function hasBasisRaw(o: Any): boolean {
+  return o && o.accomNum != null && o.accomGrossNum != null && o.cleaningNum != null
+}
+// Formatted Revenue / ADR / RevPAR strings for a basis, from a raw-carrying object (snap / listing / metrics).
+function basisStrings(o: Any, b: Basis): { rev: string; adr: string; revpar: string } {
+  const t = basisTriple({ accomNum: o.accomNum || 0, accomGrossNum: o.accomGrossNum || 0, cleaningNum: o.cleaningNum || 0, occNights: o.occNights || 0, availNights: o.availNights || 0 }, b)
+  return { rev: fmtMoney(t.revenue), adr: '$' + t.adr, revpar: '$' + t.revpar }
+}
+// Edit-mode segmented control for choosing a section's revenue basis.
+function BasisPicker({ label, value, withNone, onPick, t }: Any) {
+  const opts: { val: string; name: string }[] = (withNone ? [{ val: 'none', name: 'None' }] : []).concat(BASES.map((b: Basis) => ({ val: b, name: BASIS_SHORT[b] })))
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {label && <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{label}</span>}
+      <span className="inline-flex rounded-full p-0.5" style={{ background: t.chip, border: '1px solid ' + t.cardBorder }}>
+        {opts.map((o) => (
+          <button key={o.val} onClick={() => onPick(o.val)} className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider" style={{ background: value === o.val ? t.accent : 'transparent', color: value === o.val ? t.card : t.ink }}>{o.name}</button>
+        ))}
+      </span>
+    </span>
+  )
 }
 
 // ---------- themes (P4): every color in the page comes from the active theme ----------
@@ -438,7 +462,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [snBusy, setSnBusy] = useState(false)
   const [showListings, setShowListings] = useState(false)
   const [blBusy, setBlBusy] = useState(false)
-  const grossMode = !!c.showGross // persisted per-report; owners see this, only edit mode can flip it
+  const grossMode = !!c.showGross // legacy flag; superseded by the basis config below
+  // ---- revenue basis (see lib/basis.ts): per-section, falling back to the report default ----
+  const bcfg: Any = c.basis || {}
+  const bDefault: Basis = bcfg.default || 'netota'
+  const bSection = (k: 'snaps' | 'byListing'): Basis => (bcfg[k] || bDefault)
+  const snapPrimary: Basis = bcfg.snapshotPrimary || bDefault
+  const snapSecondary: Basis | 'none' = (bcfg.snapshotSecondary === undefined ? 'gross' : bcfg.snapshotSecondary)
+  const setBasis = (field: string, val: string) => mutate((d: Any) => { d.basis = { ...(d.basis || {}), [field]: val } })
   const [fltBld, setFltBld] = useState('')
   const [fltBr, setFltBr] = useState('')
   const [fltUnit, setFltUnit] = useState('')
@@ -1088,8 +1119,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
               <Ed v={snap.subtitle || ''} set={v => patch('snapshot.subtitle', v)} edit={edit} />
             </p>
+            {edit && hasBasisRaw(snap.metrics) && (
+              <div className="mt-4 flex items-center gap-3 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+                <BasisPicker label="Big number" value={snapPrimary} onPick={(v: string) => setBasis('snapshotPrimary', v)} t={t} />
+                <BasisPicker label="Below it" value={snapSecondary} withNone onPick={(v: string) => setBasis('snapshotSecondary', v)} t={t} />
+              </div>
+            )}
             <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {(snap.cards || []).map((card: Any, i: number) => (
+              {(snap.cards || []).map((card: Any, i: number) => {
+                const M = snap.metrics
+                const canBasis = hasBasisRaw(M) && (card.key === 'revenue' || card.key === 'adr' || card.key === 'revpar')
+                const pick = (b: Basis) => { const s = basisStrings(M, b); return card.key === 'revenue' ? s.rev : card.key === 'adr' ? s.adr : s.revpar }
+                const primaryVal = canBasis ? pick(snapPrimary) : null
+                const secondaryVal = canBasis && snapSecondary !== 'none' ? pick(snapSecondary as Basis) : null
+                return (
                 <div key={card.key || i} className="relative rounded-2xl p-5 shadow-sm border flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
                     <button onClick={() => mutate(d => d.snapshot.cards.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
@@ -1098,16 +1141,19 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <Ed v={card.label || ''} set={v => patch('snapshot.cards.' + i + '.label', v)} edit={edit} />
                   </p>
                   <p className="mt-2 text-4xl font-black tabular-nums" style={{ color: t.ink }}>
-                    <Ed v={card.value || ''} set={v => patch('snapshot.cards.' + i + '.value', v)} edit={edit} />
+                    {primaryVal != null ? primaryVal : <Ed v={card.value || ''} set={v => patch('snapshot.cards.' + i + '.value', v)} edit={edit} />}
                   </p>
-                  {grossMode && cardGross(card) && (
+                  {secondaryVal != null ? (
+                    <p className="mt-1 text-[13px] font-bold tabular-nums" style={{ color: t.accent }}>{BASIS_SHORT[snapSecondary as Basis]} {secondaryVal}</p>
+                  ) : (grossMode && cardGross(card) && (
                     <p className="mt-1 text-[13px] font-bold tabular-nums" style={{ color: t.accent }}>Gross {cardGross(card)}</p>
-                  )}
+                  ))}
                   <p className="mt-auto pt-2 text-[11px] leading-snug" style={{ color: t.sub }}>
                     <Ed v={card.sub || ''} set={v => patch('snapshot.cards.' + i + '.sub', v)} edit={edit} multiline />
                   </p>
                 </div>
-              ))}
+                )
+              })}
             </div>
             {snap.ytd && (
               <div className="mt-5 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-5" style={{ background: t.band, color: 'white' }}>
@@ -1163,9 +1209,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Eyebrow>MORE SNAPSHOTS</Eyebrow>
               {edit && (
-                <button onClick={() => mutate((d: Any) => { d.showGross = !d.showGross })} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: grossMode ? t.accent : t.chip, border: '1px solid ' + (grossMode ? t.accent : t.cardBorder), color: grossMode ? t.card : t.ink }}>
-                  {grossMode ? 'Basis: Net + Gross' : 'Basis: Net only'}
-                </button>
+                <BasisPicker label="Basis" value={bSection('snaps')} onPick={(v: string) => setBasis('snaps', v)} t={t} />
               )}
             </div>
             {edit && (
@@ -1182,7 +1226,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )}
             {Array.isArray(c.snaps) && c.snaps.length > 0 && (
               <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {c.snaps.map((s: Any, i: number) => (
+                {c.snaps.map((s: Any, i: number) => {
+                  const sb = bSection('snaps')
+                  const sv = hasBasisRaw(s) ? basisStrings(s, sb) : { rev: sb === 'net' ? s.revenue : (s.grossRevenue || s.revenue), adr: sb === 'net' ? s.adr : (s.grossAdr || s.adr), revpar: sb === 'net' ? s.revpar : (s.grossRevpar || s.revpar) }
+                  return (
                   <div key={s.key || i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                     {edit && (
                       <button onClick={() => mutate(d => d.snaps.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
@@ -1191,14 +1238,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <Ed v={s.label || ''} set={v => patch('snaps.' + i + '.label', v)} edit={edit} />
                     </p>
                     <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (s.grossRevenue || s.revenue) : s.revenue}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{sv.rev}</p></div>
                       <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Occupancy</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{s.occPct}%</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (s.grossAdr || s.adr) : s.adr}</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (s.grossRevpar || s.revpar) : s.revpar}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{sv.adr}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{sv.revpar}</p></div>
                     </div>
                     {(s.from && s.to) && <p className="mt-3 text-[11px]" style={{ color: t.muted }}>{s.from} &rarr; {s.to}{s.reservations != null ? ' · ' + s.reservations + ' res' : ''}</p>}
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1211,9 +1259,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <Eyebrow>PERFORMANCE BY LISTING</Eyebrow>
               <div className="flex items-center gap-2">
                 {edit && (
-                  <button onClick={() => mutate((d: Any) => { d.showGross = !d.showGross })} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ background: grossMode ? t.accent : t.chip, border: '1px solid ' + (grossMode ? t.accent : t.cardBorder), color: grossMode ? t.card : t.ink }}>
-                    {grossMode ? 'Basis: Net + Gross' : 'Basis: Net only'}
-                  </button>
+                  <BasisPicker label="Basis" value={bSection('byListing')} onPick={(v: string) => setBasis('byListing', v)} t={t} />
                 )}
                 {Array.isArray(c.byListing) && c.byListing.length > 0 && (
                   <button onClick={() => setShowListings(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: showListings ? t.accent : t.chip, border: '1px solid ' + (showListings ? t.accent : t.cardBorder), color: showListings ? t.card : t.ink }}>
@@ -1233,12 +1279,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               const brs: number[] = Array.from(new Set(allL.map((l: Any) => l.bedrooms).filter((v: Any) => v != null))).sort((a: Any, b: Any) => a - b)
               const rows: Any[] = allL.filter((l: Any) => (!fltBld || String(l.building || '') === fltBld) && (fltBr === '' || String(l.bedrooms) === fltBr) && (!fltUnit || l.id === fltUnit))
               const filtered = !!(fltBld || fltBr || fltUnit)
+              const lb = bSection('byListing')
               const hasRaw = rows.length > 0 && rows.every((l: Any) => l.accomNum != null && l.availNights != null)
               const occN = rows.reduce((s: number, l: Any) => s + (l.occNights || 0), 0)
               const avN = rows.reduce((s: number, l: Any) => s + (l.availNights || 0), 0)
               const accom = rows.reduce((s: number, l: Any) => s + (l.accomNum || 0), 0)
+              const accomGrossV = rows.reduce((s: number, l: Any) => s + (l.accomGrossNum != null ? l.accomGrossNum : (l.accomNum || 0)), 0)
               const grossV = rows.reduce((s: number, l: Any) => s + (l.grossNum || 0), 0)
-              const val = grossMode ? grossV : accom
+              const val = lb === 'net' ? accom : lb === 'gross' ? grossV : accomGrossV
               const selStyle = { background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }
               const kpi = [
                 { label: 'Revenue', value: fmtMoney(val) },
@@ -1275,7 +1323,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   {/* live KPI strip for the current slice */}
                   {hasRaw && (
                     <div className="mt-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.accent }}>{filtered ? 'Filtered slice' : 'All listings'} · {grossMode ? 'Gross (incl. cleaning + channel fees)' : 'Net (accommodation)'}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.accent }}>{filtered ? 'Filtered slice' : 'All listings'} · {BASIS_LABEL[lb]}</p>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                         {kpi.map((k: Any) => (
                           <div key={k.label} className="rounded-2xl p-4 border" style={{ background: t.card, borderColor: t.cardBorder }}>
@@ -1291,15 +1339,18 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <div className="grid gap-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider" style={{ background: t.chip, color: t.muted, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr' }}>
                       <div>Listing</div><div className="text-right">Revenue</div><div className="text-right">Occ</div><div className="text-right">ADR</div><div className="text-right">RevPAR</div>
                     </div>
-                    {rows.map((l: Any, i: number) => (
+                    {rows.map((l: Any, i: number) => {
+                      const lv = hasBasisRaw(l) ? basisStrings(l, lb) : { rev: lb === 'net' ? l.revenue : (l.grossRevenue || l.revenue), adr: lb === 'net' ? l.adr : (l.grossAdr || l.adr), revpar: lb === 'net' ? l.revpar : (l.grossRevpar || l.revpar) }
+                      return (
                       <div key={l.id || i} className="grid gap-2 px-4 py-3 items-center border-t" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr', background: t.card }}>
                         <div className="text-[13px] font-semibold truncate" style={{ color: t.ink }}>{l.name}{l.bedrooms != null ? <span className="ml-1.5 text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
-                        <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{grossMode ? (l.grossRevenue || l.revenue) : l.revenue}</div>
+                        <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{lv.rev}</div>
                         <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.occPct}%</div>
-                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossAdr || l.adr) : l.adr}</div>
-                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{grossMode ? (l.grossRevpar || l.revpar) : l.revpar}</div>
+                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{lv.adr}</div>
+                        <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{lv.revpar}</div>
                       </div>
-                    ))}
+                      )
+                    })}
                     {rows.length === 0 && <div className="px-4 py-6 text-center text-[13px]" style={{ color: t.muted }}>No listings match this filter.</div>}
                   </div>
                 </div>
