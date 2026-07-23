@@ -29,13 +29,9 @@ export async function GET(req: NextRequest) {
     const lRes = await db.from('guesty_listings').select('id,nickname,title,building,address_city')
     let rows: any[] = []
     const nf = await db.from('breezeway_tasks_sync').select(COLS).or('name.ilike.%glitch%,name.ilike.%guest reported%').limit(2000)
-    const nfCount = (nf.data || []).length
-    const nfErr = nf.error ? String(nf.error.message || nf.error).slice(0, 120) : null
     rows = (nf.data || []) as any[]
-    let scanCount = -1
     if (!rows.length) {
       const scan = await db.from('breezeway_tasks_sync').select(COLS).order('synced_at', { ascending: false }).limit(6000)
-      scanCount = (scan.data || []).length
       rows = ((scan.data || []) as any[]).filter(t => GLITCH.test(str(t.name)))
     }
     const lmap: Record<string, { name: string; market: string }> = {}
@@ -67,7 +63,7 @@ export async function GET(req: NextRequest) {
     const recent = glitches.filter(g => g.ageDays == null || g.ageDays <= RECENT_DAYS)
     const older = glitches.filter(g => g.ageDays != null && g.ageDays > RECENT_DAYS)
     const shown = showAll ? glitches : recent
-    return NextResponse.json({ ok: true, today, _dbg: { nfCount, nfErr, scanCount }, count: shown.length, unassigned: shown.filter(g => g.unassigned).length, olderOpen: older.length, windowDays: RECENT_DAYS, glitches: shown })
+    return NextResponse.json({ ok: true, today, count: shown.length, unassigned: shown.filter(g => g.unassigned).length, olderOpen: older.length, windowDays: RECENT_DAYS, glitches: shown })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
