@@ -122,7 +122,10 @@ export async function resolveScope(listingIds: string[], buildings: string[]): P
 }
 
 // ---------- reservations pull + metrics ----------
-type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; cleaning: number; source: string; created_at: string | null }
+// fare = fareAccommodation (room revenue NET of the OTA/channel host fee — what we're paid on the room).
+// grossFare = fareAccommodationAdjusted (room revenue the guest paid, GROSS of the OTA host fee).
+// The gap between them is the OTA host fee; Gross adds it back so the top line matches PriceLabs.
+type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; grossFare: number; cleaning: number; source: string; created_at: string | null }
 // Expedia-family channels bundle the cleaning fee into accommodation, so ~1/3 arrive with cleaning=0.
 const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
 
@@ -132,7 +135,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
   for (let i = 0; i < 20; i++) {
     const { data } = await db
       .from('guesty_reservations')
-      .select('listing_id, check_in, check_out, nights, status, source, created_at, cleaning:raw->money->>fareCleaning, fare:raw->money->>fareAccommodation')
+      .select('listing_id, check_in, check_out, nights, status, source, created_at, cleaning:raw->money->>fareCleaning, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted')
       .in('status', CONFIRMED)
       .in('listing_id', listingIds)
       .gt('check_out', from)
@@ -148,7 +151,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
       listing_id: String(r.listing_id || ''),
       check_in: String(r.check_in), check_out: String(r.check_out),
       nights: Math.max(1, num(r.nights) || daysBetween(String(r.check_in), String(r.check_out))),
-      fare: num(r.fare), cleaning: num(r.cleaning),
+      fare: num(r.fare), grossFare: num(r.grossFare), cleaning: num(r.cleaning),
       source: String(r.source || '').toLowerCase(),
       created_at: r.created_at ? String(r.created_at).slice(0, 10) : null,
     }))
@@ -175,6 +178,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
       const m = Math.min(modal[r.listing_id], r.fare)
       r.cleaning = m
       r.fare = r.fare - m
+      r.grossFare = Math.max(0, r.grossFare - m) // cleaning is bundled into the gross fare too
     }
   }
   return list
@@ -184,18 +188,22 @@ export async function pullReservations(listingIds: string[], from: string, toExc
 // so month boundaries and partial ranges attribute revenue correctly. Cleaning fees are
 // whole-stay and attributed when the CHECKOUT falls inside the window.
 export function metricsFor(resv: Resv[], units: number, from: string, toExcl: string): MetricSet {
-  let accom = 0, cleaning = 0, occNights = 0, resCount = 0
+  let accom = 0, grossAccom = 0, cleaning = 0, occNights = 0, resCount = 0
   for (const r of resv) {
     const on = overlapNights(r.check_in, r.check_out, from, toExcl)
     if (on <= 0) continue
     resCount++
     occNights += on
     accom += (r.fare / r.nights) * on
+    // Gross accommodation = room revenue BEFORE the OTA host fee (guest-paid). Use the larger of the
+    // net fare and the adjusted (gross) fare so Gross is always ≥ Net even on channels that pass the
+    // OTA fee to the guest (VRBO/direct), where the "adjusted" value can dip below the net fare.
+    grossAccom += (Math.max(r.fare, r.grossFare) / r.nights) * on
     cleaning += (r.cleaning / r.nights) * on // prorate cleaning by night-fraction (matches 17W methodology)
   }
   const days = daysBetween(from, toExcl)
   const avail = Math.max(0, units * days)
-  const gross = accom + cleaning
+  const gross = grossAccom + cleaning // accommodation (gross of OTA fees) + cleaning
   return {
     accomRevenue: Math.round(accom), grossRevenue: Math.round(gross),
     occupiedNights: occNights, availableNights: avail,
