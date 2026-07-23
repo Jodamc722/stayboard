@@ -243,7 +243,7 @@ export async function POST(req: NextRequest) {
     'Property: ' + scopeLabel,
     'Period: ' + prettyDate(periodStart) + ' to ' + prettyDate(periodEnd) + ', as of ' + prettyDate(asOf) + (daysRemaining ? ' (' + daysRemaining + ' days remaining)' : ''),
     'Active listings: ' + units,
-    'Accommodation revenue: ' + fmtK(period.accomRevenue) + ' | Gross (incl cleaning): ' + fmtK(period.grossRevenue),
+    'Accommodation revenue: ' + fmtK(period.accomRevenue) + ' | Gross (incl cleaning + channel fees): ' + fmtK(period.grossRevenue),
     'Occupancy: ' + period.occupancyPct + '% | ADR: $' + period.adr + ' (gross $' + period.grossAdr + ') | RevPAR: $' + period.revpar,
     'Months ahead (OTB occupancy): ' + mAhead.map(m => m.short + ' ' + m.m.occupancyPct + '%').join(', '),
   ].join('\n')
@@ -392,7 +392,7 @@ export async function POST(req: NextRequest) {
       headline: str(ai.snapshotHeadline) || 'Where the period stands today.',
       subtitle: 'On-the-books as of ' + prettyDate(asOf) + '  ·  ' + units + ' active listings' + (daysRemaining ? '  ·  ' + daysRemaining + ' days remaining' : ''),
       cards: [
-        { key: 'revenue', label: 'REVENUE', value: fmtK(period.accomRevenue), sub: 'Accommodation only · Gross (incl. cleaning): ' + fmtK(period.grossRevenue), gross: fmtK(period.grossRevenue) },
+        { key: 'revenue', label: 'REVENUE', value: fmtK(period.accomRevenue), sub: 'Net accommodation payout · Gross (incl. cleaning + channel fees): ' + fmtK(period.grossRevenue), gross: fmtK(period.grossRevenue) },
         { key: 'occupancy', label: 'OCCUPANCY', value: period.occupancyPct + '%', sub: 'Occupied ÷ available nights' },
         { key: 'adr', label: 'ADR', value: '$' + period.adr, sub: 'Accommodation ÷ occupied nights · Gross ADR: $' + period.grossAdr, gross: '$' + period.grossAdr },
         { key: 'revpar', label: 'REVPAR', value: '$' + period.revpar, sub: 'Accommodation ÷ available nights · Gross RevPAR: $' + period.grossRevpar, gross: '$' + period.grossRevpar },
