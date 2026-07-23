@@ -7,7 +7,7 @@ import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean ; city?: string | null }
+type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean ; city?: string | null; lat?: number | null; lng?: number | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
@@ -54,6 +54,33 @@ function statusText(t: Task) {
   return 'Not started'
 }
 
+// Order units by LOCATION: group by city (Pompano vs Fort Lauderdale), and within each city put
+// the properties closest to each other next to each other (nearest-neighbour chain on lat/lng).
+function dist2(a: Unit, b: Unit) { const dx = Number(a.lat) - Number(b.lat); const dy = Number(a.lng) - Number(b.lng); return dx * dx + dy * dy }
+function sortByArea(list: Unit[]): Unit[] {
+  const byCity: Record<string, Unit[]> = {}
+  for (const u of list) { const c = u.city || 'Other'; if (!byCity[c]) byCity[c] = []; byCity[c].push(u) }
+  const cities = Object.keys(byCity).sort()
+  const out: Unit[] = []
+  for (const c of cities) {
+    const geo = byCity[c].filter(u => u.lat != null && u.lng != null)
+    const rest = byCity[c].filter(u => u.lat == null || u.lng == null)
+    if (geo.length) {
+      const ordered: Unit[] = [geo[0]]
+      const remaining = geo.slice(1)
+      while (remaining.length) {
+        const last = ordered[ordered.length - 1]
+        let bi = 0, bd = Infinity
+        for (let i = 0; i < remaining.length; i++) { const dd = dist2(last, remaining[i]); if (dd < bd) { bd = dd; bi = i } }
+        ordered.push(remaining.splice(bi, 1)[0])
+      }
+      for (const u of ordered) out.push(u)
+    }
+    for (const u of rest) out.push(u)
+  }
+  return out
+}
+
 export function TodayInOps() {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
@@ -64,6 +91,7 @@ export function TodayInOps() {
   const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
   const [people, setPeople] = useState<Person[]>([])
   const [showVacant, setShowVacant] = useState(false)
+  const [groupBy, setGroupBy] = useState<'urgency' | 'area'>('urgency')
   const [addVacant, setAddVacant] = useState('')
 
   const load = useCallback(async () => {
@@ -99,7 +127,8 @@ export function TodayInOps() {
   const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
   const all = tf === 'all' ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
-  const units = showDone ? all : all.filter(u => !u.allDone)
+  const baseUnits = showDone ? all : all.filter(u => !u.allDone)
+  const units = groupBy === 'area' ? sortByArea(baseUnits) : baseUnits
   const doneCount = all.filter(u => u.allDone).length
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
   const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
@@ -112,6 +141,7 @@ export function TodayInOps() {
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
         <button onClick={() => setShowDone(!showDone)} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white text-muted hover:bg-app">{showDone ? 'Hide finished' : 'Show finished (' + doneCount + ')'}</button>
+        <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-sm font-medium px-3 py-1.5 rounded-lg border ' + (groupBy === 'area' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{groupBy === 'area' ? 'By area' : 'Sort by area'}</button>
         <button onClick={() => { setLoading(true); load() }} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
       </div>
 
