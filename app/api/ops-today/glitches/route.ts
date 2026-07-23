@@ -14,7 +14,7 @@ function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Ame
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
 const COLS = 'id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,raw'
-const RECENT_DAYS = 60  // glitches older than this are almost always resolved-but-never-closed cruft
+const RECENT_DAYS = 14  // Today-in-Ops shows only CURRENT guest glitches; older ones are stale/closed. A full historical glitch page is separate future work.
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
