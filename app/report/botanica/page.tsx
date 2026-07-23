@@ -5,10 +5,11 @@ import { Fragment, useEffect, useMemo, useState, useCallback } from 'react'
 
 type Day = { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr?: number; arrNights?: number; arrLead?: number; arrLeadCnt?: number }
 type Data = { ok: boolean; label?: string; openedOn?: string; today?: string; through?: string; bannerImage?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; days: Day[]; error?: string }
-type PresetKey = 'mtd' | 'upcoming' | 'lastMonth' | 'last30' | 'all' | 'custom'
+type PresetKey = 'month' | 'mtd' | 'upcoming' | 'lastMonth' | 'last30' | 'all' | 'custom'
 
 const PRESETS: { key: PresetKey; label: string }[] = [
-  { key: 'mtd', label: 'This month' },
+  { key: 'month', label: 'This month' },
+  { key: 'mtd', label: 'MTD' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'lastMonth', label: 'Last month' },
   { key: 'last30', label: 'Last 30 days' },
@@ -77,7 +78,7 @@ export default function BotanicaReportPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [preset, setPreset] = useState<PresetKey>('mtd')
+  const [preset, setPreset] = useState<PresetKey>('month')
   const [fromD, setFromD] = useState('')
   const [toD, setToD] = useState('')
 
@@ -135,6 +136,7 @@ export default function BotanicaReportPage() {
 
   const range = useMemo((): { from: string; to: string } => {
     if (!today) return { from: openedOn, to: today }
+    if (preset === 'month') { const eom = addDaysIso(firstOfMonth(addDaysIso(firstOfMonth(today), 32)), -1); return { from: firstOfMonth(today), to: eom <= through ? eom : through } }
     if (preset === 'mtd') return { from: firstOfMonth(today), to: today }
     if (preset === 'upcoming') return { from: today, to: through }
     if (preset === 'last30') return { from: addDaysIso(today, -29), to: today }
