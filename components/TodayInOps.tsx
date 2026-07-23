@@ -3,7 +3,7 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
@@ -88,6 +88,7 @@ export function TodayInOps() {
   const [market, setMarket] = useState('all')
   const [showDone, setShowDone] = useState(false)
   const [addFor, setAddFor] = useState('')
+  const [itemsFor, setItemsFor] = useState('')
   const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
   const [people, setPeople] = useState<Person[]>([])
   const [showVacant, setShowVacant] = useState(false)
@@ -254,6 +255,7 @@ export function TodayInOps() {
                 <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
               ))}
               <span className="ml-auto text-xs text-muted">{u.allDone ? 'All done' : u.openTasks + ' open'}</span>
+              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><ListChecks size={12} /> Open items</button>
               <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
             </div>
             <div className="divide-y divide-line">
@@ -278,6 +280,7 @@ export function TodayInOps() {
               ))}
             </div>
             {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} onDone={() => { setAddFor(''); load() }} />}
+            {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} />}
           </div>
         ))}
       </div>
@@ -297,6 +300,88 @@ const TEMPLATES: { key: string; label: string; department: string; priority: str
   { key: 'acfilter', label: 'A/C filter', department: 'maintenance', priority: 'normal', title: 'Change A/C filter', base: 'Change the central A/C filter. Note the filter size used and log the date.' },
   { key: 'pm', label: 'PM check', department: 'maintenance', priority: 'normal', title: 'Preventative Maintenance Task', base: 'Preventative maintenance pass: A/C, plumbing under sinks, water heater, smoke / CO detectors, light bulbs, door hardware.' },
 ]
+
+function fmtShort(iso: string | null) { if (!iso) return '\u2014'; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
+function UnitItems({ listingId, unit, people, onDone }: { listingId: string; unit: string; people: Person[]; onDone: () => void }) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState('')
+  const reload = () => { fetch('/api/ops-today/unit-items?listingId=' + encodeURIComponent(listingId), { cache: 'no-store' }).then(r => r.json()).then(j => { setData(j); setLoading(false) }).catch(e => { setMsg(String(e)); setLoading(false) }) }
+  useEffect(() => { reload() }, [listingId])
+  const doToday = async (taskId: string) => {
+    setBusy(taskId); setMsg('')
+    try {
+      const r = await fetch('/api/ops-today/reschedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId, listingId, date: data.today }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setMsg(j.error || 'Could not move'); setBusy(''); return }
+      setMsg('Moved to today'); onDone(); reload()
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy('')
+  }
+  const assign = async (taskId: string, personId: number) => {
+    try {
+      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId, assigneeIds: [personId] }) })
+      const j = await r.json(); if (!r.ok || !j.ok) { setMsg(j.error || 'Assign failed'); return }
+      onDone(); reload()
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+  }
+  const addToToday = async (title: string, department: string) => {
+    setBusy(title); setMsg('')
+    try {
+      const r = await fetch('/api/ops-today/add-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, title, department, date: data.today }) })
+      const j = await r.json(); if (!r.ok || !j.ok) { setMsg(j.error || 'Could not add'); setBusy(''); return }
+      setMsg('Added to today'); onDone(); reload()
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy('')
+  }
+  if (loading) return <div className="px-4 py-3 bg-app border-t border-line text-xs text-muted">Loading open items for {unit}…</div>
+  const h = (data && data.history) || {}
+  const open = (data && data.open) || []
+  const suggested: { title: string; dept: string; kind: string }[] = []
+  for (const q of (data && data.qc) || []) suggested.push({ title: 'QC: ' + q.issue, dept: q.dept || 'inspection', kind: 'QC' })
+  for (const a of (data && data.audits) || []) suggested.push({ title: (a.kind ? a.kind[0].toUpperCase() + a.kind.slice(1) + ': ' : '') + a.title + (a.room ? ' (' + a.room + ')' : ''), dept: 'maintenance', kind: 'Audit' })
+  const rec = data && data.recommended
+  return (
+    <div className="px-4 py-3 bg-app border-t border-line space-y-3">
+      <div className="text-[11px] text-muted flex flex-wrap gap-x-4 gap-y-1">
+        <span>Last audit: <span className="text-ink font-medium">{fmtShort(h.lastAudit)}</span></span>
+        <span>Last PM: <span className="text-ink font-medium">{fmtShort(h.lastPM)}</span></span>
+        <span>Last batteries: <span className="text-ink font-medium">{fmtShort(h.lastBattery)}</span></span>
+        {h.lastAcFilter && <span>Last A/C filter: <span className="text-ink font-medium">{fmtShort(h.lastAcFilter)}</span></span>}
+      </div>
+      {rec && rec.inspection && (rec.reasons || []).length > 0 && (
+        <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">Inspection recommended &middot; {(rec.reasons || []).join(' &middot; ')}</div>
+      )}
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Open non-clean work</div>
+        {open.length === 0 && <div className="text-xs text-muted">Nothing open besides the clean.</div>}
+        <div className="space-y-1">
+          {open.map((it: any) => (
+            <div key={it.id} className="flex items-center gap-2 text-sm bg-white border border-line rounded-lg px-2 py-1.5">
+              <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line shrink-0">{it.type}</span>
+              <span className="flex-1 min-w-0 truncate text-ink">{it.title}</span>
+              <span className="text-[11px] text-muted shrink-0">{it.onToday ? 'today' : fmtShort(it.scheduledDate)}</span>
+              <input list={'ppl-' + it.dept} defaultValue="" placeholder={it.assignees.length ? it.assignees.join(', ') : 'assign\u2026'} onChange={e => { const inp = e.target as HTMLInputElement; const p = people.find(x => x.name === inp.value.trim()); if (p) { inp.value = ''; assign(it.id, p.id) } }} className="text-xs border border-line rounded px-1 py-0.5 w-[110px] shrink-0" />
+              {!it.onToday && <button onClick={() => doToday(it.id)} disabled={busy === it.id} className="text-xs font-medium px-2 py-1 rounded bg-ink text-white disabled:opacity-40 shrink-0">{busy === it.id ? '\u2026' : 'Do today'}</button>}
+            </div>
+          ))}
+        </div>
+      </div>
+      {suggested.length > 0 && (
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Suggested — add to today</div>
+          <div className="flex flex-wrap gap-1.5">
+            {suggested.map((sg, i) => (
+              <button key={i} onClick={() => addToToday(sg.title, sg.dept)} disabled={busy === sg.title} className="text-xs px-2 py-1 rounded-lg border border-line bg-white hover:bg-app disabled:opacity-40 inline-flex items-center gap-1"><Plus size={11} />{sg.title}</button>
+            ))}
+          </div>
+        </div>
+      )}
+      {msg && <div className="text-xs text-emerald-700">{msg}</div>}
+    </div>
+  )
+}
 
 function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string; onDone: () => void }) {
   const [title, setTitle] = useState('')
