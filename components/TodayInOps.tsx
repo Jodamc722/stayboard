@@ -11,7 +11,7 @@ type Unit = { listingId: string; unit: string; market: string; guestOut: string 
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
-type Data = { ok: boolean; today: string; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
+type Data = { ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
 
 const TYPE_LABEL: Record<string, string> = {
   departure_clean: 'Departure clean', strip: 'Strip', deep_clean: 'Deep clean', inspection: 'Inspection',
@@ -36,6 +36,7 @@ const PRIOS = [['normal', 'Normal'], ['high', 'High'], ['urgent', 'Urgent'], ['l
 function adminUrl(taskId: string) { return 'https://app.breezeway.io/task/' + taskId }
 function hhmm(iso: string | null) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d.getTime())) return ''; return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) }
 function fmtDay(iso: string) { const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
+function shiftDay(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function fmtLeft(m: number) { const a = Math.abs(m); const h = Math.floor(a / 60); const mm = a % 60; return (h ? h + 'h ' : '') + mm + 'm' }
 function statusCls(t: Task) {
   if (t.untracked && !t.done) return 'bg-app text-muted border-line'
@@ -95,16 +96,17 @@ export function TodayInOps() {
   const [groupBy, setGroupBy] = useState<'urgency' | 'area'>('urgency')
   const [taskOrder, setTaskOrder] = useState<Record<string, string[]>>({})
   const [addVacant, setAddVacant] = useState('')
+  const [dateSel, setDateSel] = useState('')  // '' = today
 
   const load = useCallback(async () => {
     try {
       setErr('')
-      const r = await fetch('/api/ops-today', { cache: 'no-store' })
+      const r = await fetch('/api/ops-today' + (dateSel ? '?date=' + dateSel : ''), { cache: 'no-store' })
       const j: Data = await r.json()
       if (!r.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setData(j)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
-  }, [])
+  }, [dateSel])
 
   useEffect(() => { load() }, [load])
   // roster for assigning — fetched once, filtered per task department
@@ -142,7 +144,8 @@ export function TodayInOps() {
   // apply the saved manual order to a unit's tasks (falls back to the API order)
   const orderedTasks = (u: Unit): Task[] => {
     const ids = taskOrder[u.listingId]
-    if (!ids || !ids.length) return u.tasks
+    // Default: not-completed work on top, finished sinks (stable). Manual arrows override.
+    if (!ids || !ids.length) return u.tasks.slice().sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0))
     const pos: Record<string, number> = {}
     ids.forEach((id, i) => { pos[id] = i })
     return u.tasks.slice().sort((a, b) => (pos[a.id] == null ? 999 : pos[a.id]) - (pos[b.id] == null ? 999 : pos[b.id]))
@@ -170,7 +173,13 @@ export function TodayInOps() {
         ))}
         <button onClick={() => setShowDone(!showDone)} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white text-muted hover:bg-app">{showDone ? 'Hide finished' : 'Show finished (' + doneCount + ')'}</button>
         <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-sm font-medium px-3 py-1.5 rounded-lg border ' + (groupBy === 'area' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{groupBy === 'area' ? 'By area' : 'Sort by area'}</button>
-        <button onClick={() => { setLoading(true); load() }} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
+        <span className="ml-auto inline-flex items-center gap-1">
+          <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-sm font-medium px-2 py-1.5 rounded-lg border border-line bg-white hover:bg-app">&lsaquo;</button>
+          <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white" />
+          <button onClick={() => { setDateSel(shiftDay(data.today, 1)); setLoading(true) }} title="Next day" className="text-sm font-medium px-2 py-1.5 rounded-lg border border-line bg-white hover:bg-app">&rsaquo;</button>
+          {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-sm font-medium px-2.5 py-1.5 rounded-lg border border-ink bg-ink text-white">Back to today</button>}
+        </span>
+        <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
       </div>
 
       {/* THE CLOCK: departure cleans must be finished by 4pm (next check-in) */}
@@ -179,7 +188,7 @@ export function TodayInOps() {
           <div className="flex items-center gap-2">
             <Clock size={16} className={d.late > 0 ? 'text-rose-700' : d.atRisk > 0 ? 'text-amber-700' : 'text-muted'} />
             <span className="font-semibold text-ink">Departure cleans &middot; due by {d.dueBy}</span>
-            <span className="text-sm text-muted">{d.passed ? fmtLeft(d.minsLeft) + ' past deadline' : fmtLeft(d.minsLeft) + ' left'}</span>
+            <span className="text-sm text-muted">{data.isToday === false ? 'planning ' + fmtDay(data.today) : d.passed ? fmtLeft(d.minsLeft) + ' past deadline' : fmtLeft(d.minsLeft) + ' left'}</span>
           </div>
           <div className="text-sm font-medium text-ink">{d.done} of {d.cleans} done{d.running ? ' · ' + d.running + ' in progress' : ''}{d.remaining ? ' · ' + d.remaining + ' to go' : ''}</div>
         </div>
@@ -235,7 +244,7 @@ export function TodayInOps() {
                     <div className="text-xs text-muted shrink-0">{vu.nextArrival ? 'next in ' + fmtDay(vu.nextArrival) : 'no upcoming booking'}</div>
                     <button onClick={() => setAddVacant(addVacant === vu.listingId ? '' : vu.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1 shrink-0"><Plus size={12} /> Add task</button>
                   </div>
-                  {addVacant === vu.listingId && <AddTask listingId={vu.listingId} unit={vu.unit} onDone={() => { setAddVacant(''); load() }} />}
+                  {addVacant === vu.listingId && <AddTask listingId={vu.listingId} unit={vu.unit} date={data.today} onDone={() => { setAddVacant(''); load() }} />}
                 </div>
               ))}
             </div>
@@ -257,15 +266,15 @@ export function TodayInOps() {
                 <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
               ))}
               <span className={'ml-auto text-xs font-medium ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length + ' done'}</span>
-              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2 py-1 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
-              <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
+              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
+              <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
             </div>
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className={'flex items-center gap-3 px-4 py-2.5 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
+                <div key={t.id} className={'flex items-center gap-3 px-4 py-3 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
                   <div className="flex flex-col shrink-0 -my-1 text-muted">
-                    <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none"><ChevronUp size={13} /></button>
-                    <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none"><ChevronDown size={13} /></button>
+                    <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
+                    <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
                   </div>
                   <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-28 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
                   <div className="flex-1 min-w-0">
@@ -281,7 +290,7 @@ export function TodayInOps() {
                 </div>
               ))}
             </div>
-            {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} onDone={() => { setAddFor(''); load() }} />}
+            {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} date={data.today} onDone={() => { setAddFor(''); load() }} />}
             {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} onClose={() => setItemsFor('')} />}
           </div>
         ))}
@@ -368,7 +377,7 @@ function UnitItems({ listingId, unit, people, onDone, onClose }: { listingId: st
               <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line shrink-0">{it.type}</span>
               <span className="flex-1 min-w-0 truncate text-ink">{it.title}</span>
               <span className="text-[11px] text-muted shrink-0">{it.onToday ? 'today' : fmtShort(it.scheduledDate)}</span>
-              <input list="ppl-all" defaultValue="" placeholder={it.assignees.length ? it.assignees.join(', ') : 'assign\u2026'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(it.id, p.id) } }} className="text-xs border border-line rounded px-1 py-0.5 w-[110px] shrink-0" />
+              <input list="ppl-all" defaultValue="" placeholder={it.assignees.length ? it.assignees.join(', ') : 'assign\u2026'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(it.id, p.id) } }} className="text-xs border border-line rounded px-2 py-1.5 w-[130px] shrink-0" />
               {!it.onToday && <button onClick={() => doToday(it.id)} disabled={busy === it.id} className="text-xs font-medium px-2 py-1 rounded bg-ink text-white disabled:opacity-40 shrink-0">{busy === it.id ? '\u2026' : 'Do today'}</button>}
             </div>
           ))}
@@ -389,7 +398,7 @@ function UnitItems({ listingId, unit, people, onDone, onClose }: { listingId: st
   )
 }
 
-function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string; onDone: () => void }) {
+function AddTask({ listingId, unit, date, onDone }: { listingId: string; unit: string; date?: string; onDone: () => void }) {
   const [title, setTitle] = useState('')
   const [department, setDepartment] = useState('maintenance')
   const [priority, setPriority] = useState('normal')
@@ -424,7 +433,7 @@ function AddTask({ listingId, unit, onDone }: { listingId: string; unit: string;
     if (!t) return
     setBusy(true); setErr(''); setOk('')
     try {
-      const r = await fetch('/api/ops-today/add-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, title: t, department, priority, description }) })
+      const r = await fetch('/api/ops-today/add-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, title: t, department, priority, description, date }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Could not create the task'); setBusy(false); return }
       setOk('Created in Breezeway')
@@ -492,7 +501,7 @@ function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone
         placeholder={busy ? 'Saving…' : cur}
         onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(p.id) } }}
         title={'Search a name to assign this ' + task.dept + ' task'}
-        className={'text-xs rounded border px-1 py-0.5 bg-white w-[132px] ' + (task.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-amber-300 text-amber-800 placeholder:text-amber-800 font-medium')}
+        className={'text-xs rounded border px-2 py-1.5 bg-white w-[150px] ' + (task.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-amber-300 text-amber-800 placeholder:text-amber-800 font-medium')}
       />
       {err && <span className="text-[10px] text-rose-700">{err}</span>}
     </span>
