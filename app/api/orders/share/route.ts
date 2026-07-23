@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const scope = String(req.nextUrl.searchParams.get('scope') || '')
-  if (!/^(b|u):.+/.test(scope)) return NextResponse.json({ error: 'scope must be b:building or u:listingId' }, { status: 400 })
+  if (!/^(b|u|m):.+/.test(scope)) return NextResponse.json({ error: 'scope must be b:building, u:listingId, or m:id,id (multi)' }, { status: 400 })
   const url = req.nextUrl.origin + '/owner-orders?s=' + encodeURIComponent(scope) + '&k=' + ownerOrderSig(scope)
   return NextResponse.json({ ok: true, url })
 }
