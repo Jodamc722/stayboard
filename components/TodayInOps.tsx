@@ -157,6 +157,12 @@ export function TodayInOps() {
 
   return (
     <div>
+      {/* searchable assignee options, one datalist per department (shared by every row) */}
+      {['housekeeping', 'maintenance', 'inspection', 'other'].map(dep => (
+        <datalist key={dep} id={'ppl-' + dep}>
+          {people.filter(p => !p.departments || !p.departments.length || p.departments.indexOf(dep) >= 0).map(p => <option key={p.id} value={p.name} />)}
+        </datalist>
+      ))}
       <div className="flex items-center gap-2 flex-wrap mb-4">
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
@@ -388,16 +394,15 @@ function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone
   const cur = task.assignees.length ? task.assignees.join(', ') : 'Unassigned'
   return (
     <span className="inline-flex items-center gap-1">
-      <select
-        value=""
-        disabled={busy || opts.length === 0}
-        onChange={e => assign(Number(e.target.value))}
-        title={'Assign this ' + task.dept + ' task'}
-        className={'text-xs rounded border px-1 py-0.5 bg-white max-w-[150px] ' + (task.assignees.length ? 'border-line text-ink' : 'border-amber-300 text-amber-800 font-medium')}
-      >
-        <option value="">{busy ? 'Saving…' : cur}</option>
-        {opts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
+      <input
+        list={'ppl-' + task.dept}
+        defaultValue=""
+        disabled={busy}
+        placeholder={busy ? 'Saving…' : cur}
+        onChange={e => { const inp = e.target as HTMLInputElement; const p = opts.find(x => x.name === inp.value.trim()); if (p) { inp.value = ''; assign(p.id) } }}
+        title={'Search a name to assign this ' + task.dept + ' task'}
+        className={'text-xs rounded border px-1 py-0.5 bg-white w-[132px] ' + (task.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-amber-300 text-amber-800 placeholder:text-amber-800 font-medium')}
+      />
       {err && <span className="text-[10px] text-rose-700">{err}</span>}
     </span>
   )
