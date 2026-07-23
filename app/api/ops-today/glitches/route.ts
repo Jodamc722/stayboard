@@ -24,9 +24,11 @@ export async function GET(req: NextRequest) {
     const today = ymd(new Date())
     const from = addDays(today, -45)
     const to = addDays(today, 14)
+    const dateList: string[] = []
+    for (let i = -45; i <= 14; i++) dateList.push(addDays(today, i))
     const [lRes, tRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city'),
-      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,created_at').gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date', { ascending: false }).limit(4000),
+      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,created_at').in('scheduled_date', dateList).limit(4000),
     ])
     const lmap: Record<string, { name: string; market: string }> = {}
     for (const l of (lRes.data || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
