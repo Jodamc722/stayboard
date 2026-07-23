@@ -8,6 +8,7 @@ import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, bzApi, createBreezewayTask, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
+import { adminPasswordOk } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -54,6 +55,9 @@ export async function DELETE(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const body = await req.json().catch(() => ({} as any))
+  // Destructive: deleting tasks from Breezeway requires the ADMIN password (set in /users).
+  const gate = await adminPasswordOk(body?.adminPassword)
+  if (!gate.ok) return NextResponse.json({ error: gate.reason }, { status: 403 })
   const ids = (Array.isArray(body?.taskIds) ? body.taskIds : []).map((x: any) => String(x)).filter(Boolean).slice(0, 40)
   if (!ids.length) return NextResponse.json({ error: 'No taskIds.' }, { status: 400 })
   const results: any[] = []
