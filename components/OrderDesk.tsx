@@ -73,6 +73,8 @@ export function OrderDesk() {
   const [ownerCopied, setOwnerCopied] = useState(false)
   const [estBusy, setEstBusy] = useState(false)
   const [estMsg, setEstMsg] = useState('')
+  const [owners, setOwners] = useState<{ id: string; name: string; listingIds: string[] }[]>([])
+  const [ownerId, setOwnerId] = useState('')
 
   async function load() {
     try {
@@ -83,7 +85,7 @@ export function OrderDesk() {
     } catch { setErr('Network error - reload to retry.') }
     setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); fetch('/api/orders/owners').then(r => r.json()).then(j => setOwners((j && Array.isArray(j.owners)) ? j.owners : [])).catch(() => {}) }, [])
 
   // Optimistic local patch so the desk feels instant; the POST is fire-and-forget.
   function patchLocal(ids: string[], fn: (it: Row) => Row) { const s = new Set(ids); setRows(list => list.map(x => s.has(x.id) ? fn(x) : x)) }
@@ -165,12 +167,17 @@ export function OrderDesk() {
   }
 
   const nrm = (s: any) => String(s || '').toLowerCase()
+  // Owner filter (real Guesty owner -> their listing ids). Selecting an owner scopes the whole desk
+  // to their units and drives the owner-scoped share link.
+  const selOwner = owners.find(o => o.id === ownerId) || null
+  const ownerSet = selOwner ? new Set(selOwner.listingIds.map(String)) : null
   const visible = rows.filter(it => {
     const st = stageOf(it)
     if (st === 'installed' && !showDone && tf !== 'installed') return false
     const f = FILTERS.find(x => x.key === tf)
     if (f && tf !== 'all' && f.stages.indexOf(st) < 0) return false
     if (tf === 'all' && st === 'installed') return false
+    if (ownerSet && !ownerSet.has(String(it.listing_id))) return false
     if (q && nrm(it.unit + ' ' + it.building + ' ' + it.title).indexOf(nrm(q)) < 0) return false
     return true
   })
@@ -287,6 +294,8 @@ export function OrderDesk() {
   }
   function copyPlanLink() { try { navigator.clipboard.writeText(window.location.origin + '/delivery'); setPlanCopied(true); setTimeout(() => setPlanCopied(false), 1600) } catch {} }
   function ownerScope(): string {
+    // A picked owner wins: share exactly their listings (multi-listing scope).
+    if (selOwner && selOwner.listingIds.length) return 'm:' + selOwner.listingIds.join(',')
     if (xlUnit !== 'all') { const row = rows.find(it => it.unit === xlUnit); return row ? 'u:' + row.listing_id : '' }
     if (xlBldg !== 'all') return 'b:' + xlBldg
     return ''
@@ -397,6 +406,11 @@ export function OrderDesk() {
           <button onClick={() => setView('unit')} className={'text-xs font-semibold px-3 py-1.5 ' + (view === 'unit' ? 'bg-ink text-white' : 'bg-white text-muted')}>By unit</button>
         </div>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit / building / item" className="text-xs border border-line rounded-lg px-2.5 py-1.5 w-52" />
+        <select value={ownerId} onChange={e => setOwnerId(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white max-w-[220px]" title="Filter to one owner's units and share their link">
+          <option value="">All owners</option>
+          {owners.slice().sort((a, b) => a.name.localeCompare(b.name)).map(o => <option key={o.id} value={o.id}>{o.name} ({o.listingIds.length})</option>)}
+        </select>
+        {selOwner ? <button onClick={copyOwnerLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Share owner link'}</button> : null}
         <label className="text-xs text-muted flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> show installed</label>
         <button onClick={() => setToolsOpen(o => !o)} className="ml-auto text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Tools {toolsOpen ? '▴' : '▾'}</button>
       </div>
