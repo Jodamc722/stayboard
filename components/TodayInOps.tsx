@@ -504,3 +504,5 @@ function Stat({ label, value, sub, warn, active, onClick }: { label: string; val
     </button>
   )
 }
+
+// redeploy-nudge 2026-07-23
