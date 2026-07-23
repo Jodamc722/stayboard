@@ -405,6 +405,7 @@ export async function POST(req: NextRequest) {
           { value: ytd.avgWindow + ' d', label: 'BOOK WINDOW' },
         ],
       } : null,
+      metrics: { accomNum: period.accomRevenue, accomGrossNum: period.accomGrossRevenue, cleaningNum: period.cleaningRevenue, occNights: period.occupiedNights, availNights: period.availableNights, reservations: period.reservations, units, occPct: period.occupancyPct },
     },
     pacing: pacingSection,
     plan,
@@ -430,6 +431,9 @@ export async function POST(req: NextRequest) {
       weeks, tracking,
     },
     byMonth: byMonth.length >= 2 ? byMonth : undefined,
+    // Default revenue basis: big number = accommodation before channel fees (matches PriceLabs),
+    // with Gross written beneath on the snapshot. Editable per section in the report UI.
+    basis: { default: 'netota', snapshotPrimary: 'netota', snapshotSecondary: 'gross', snaps: 'netota', byListing: 'netota' },
     omit: [],
   }
 
