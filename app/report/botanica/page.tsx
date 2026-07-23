@@ -4,7 +4,7 @@
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react'
 
 type Day = { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr?: number; arrNights?: number; arrLead?: number; arrLeadCnt?: number }
-type Data = { ok: boolean; label?: string; openedOn?: string; today?: string; through?: string; bannerImage?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; days: Day[]; error?: string }
+type Data = { ok: boolean; label?: string; openedOn?: string; today?: string; through?: string; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; days: Day[]; error?: string }
 type PresetKey = 'month' | 'mtd' | 'upcoming' | 'lastMonth' | 'last30' | 'all' | 'custom'
 
 const PRESETS: { key: PresetKey; label: string }[] = [
@@ -81,11 +81,9 @@ export default function BotanicaReportPage() {
   const [preset, setPreset] = useState<PresetKey>('month')
   const [fromD, setFromD] = useState('')
   const [toD, setToD] = useState('')
-  // Banner photo the viewer picked (saved to their browser only). null = auto-pick from the API.
-  const [bannerChoice, setBannerChoice] = useState<string | null>(null)
+  // Banner photo pick — saved on the server (app_settings) so it sticks for everyone on the link.
   const [pickerOpen, setPickerOpen] = useState(false)
-  useEffect(() => { try { const s = localStorage.getItem('botanica_report_banner'); if (s) setBannerChoice(s) } catch {} }, [])
-  const chooseBanner = (url: string | null) => { setBannerChoice(url); setPickerOpen(false); try { if (url) localStorage.setItem('botanica_report_banner', url); else localStorage.removeItem('botanica_report_banner') } catch {} }
+  const [savingBanner, setSavingBanner] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +107,12 @@ export default function BotanicaReportPage() {
   }, [load])
 
   const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
+  const chooseBanner = async (url: string | null) => {
+    setSavingBanner(true)
+    try { await fetch('/api/public/banner-set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ surface: 'report:botanica', url: url || '' }) }) } catch {}
+    await load()
+    setSavingBanner(false); setPickerOpen(false)
+  }
   const resync = async () => {
     setSyncing(true); setSyncMsg('')
     try {
@@ -196,8 +200,9 @@ export default function BotanicaReportPage() {
   if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6">{err}</div>
   if (loading || !data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading…</div>
 
-  const effBanner = bannerChoice || data.bannerImage || null
+  const effBanner = data.bannerImage || null
   const bannerOpts = data.bannerOptions || []
+  const bannerOverride = data.bannerOverride || null
 
   return (
     <div className="min-h-screen bg-neutral-100 print:bg-white">
@@ -237,11 +242,11 @@ export default function BotanicaReportPage() {
             </div>
             {pickerOpen && bannerOpts.length > 0 && (
               <div className="mt-4 print:hidden">
-                <div className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold mb-1.5">Banner photo · saved to this device</div>
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={() => chooseBanner(null)} className={'h-14 w-20 rounded-lg border-2 flex items-center justify-center text-[10px] font-semibold ' + (!bannerChoice ? 'border-amber-400 bg-white/10 text-amber-200' : 'border-white/20 bg-white/5 text-neutral-300 hover:border-white/40')}>Auto</button>
+                <div className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold mb-1.5">Banner photo{savingBanner ? ' · saving…' : ' · saved for everyone on this link'}</div>
+                <div className={'flex gap-2 flex-wrap' + (savingBanner ? ' opacity-50 pointer-events-none' : '')}>
+                  <button onClick={() => chooseBanner(null)} className={'h-14 w-20 rounded-lg border-2 flex items-center justify-center text-[10px] font-semibold ' + (!bannerOverride ? 'border-amber-400 bg-white/10 text-amber-200' : 'border-white/20 bg-white/5 text-neutral-300 hover:border-white/40')}>Auto</button>
                   {bannerOpts.map(o => (
-                    <button key={o.url} onClick={() => chooseBanner(o.url)} title={o.name} className={'h-14 w-20 rounded-lg bg-cover bg-center border-2 transition-colors ' + (bannerChoice === o.url ? 'border-amber-400' : 'border-white/20 hover:border-white/50')} style={{ backgroundImage: 'url("' + o.url + '")' }} />
+                    <button key={o.url} onClick={() => chooseBanner(o.url)} title={o.name} className={'h-14 w-20 rounded-lg bg-cover bg-center border-2 transition-colors ' + (bannerOverride === o.url ? 'border-amber-400' : 'border-white/20 hover:border-white/50')} style={{ backgroundImage: 'url("' + o.url + '")' }} />
                   ))}
                 </div>
               </div>
