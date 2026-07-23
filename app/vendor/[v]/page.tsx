@@ -12,6 +12,8 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'upcoming', label: 'Upcoming' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
+// 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
+function fmtTime(t: string | null | undefined) { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(String(t)); if (!m) return String(t); let h = parseInt(m[1], 10); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + m[2] + ' ' + ap }
 function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? (r.cleanDay || r.checkOut) : r.checkIn }
 function bedLabel(n: number | null) { if (n == null) return ''; return n === 0 ? 'Studio' : n + 'BR' }
 function keyOf(r: Row, tab: TabKey) { return tab.charAt(0) + r.unit + '|' + dateFor(r, tab) }
@@ -142,7 +144,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
 
   const exportCsv = () => {
     const head = [['Date', 'Unit', 'Guest', 'Bedrooms', 'Code', tab === 'departures' ? 'Checkout' : 'Check-in', 'Same-day turn', 'Notes']]
-    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', (tab === 'departures' ? r.checkOutTime : r.checkInTime) || '', r.sameDayTurn ? 'YES' : '', r.extended ? 'EXTENDED - do not clean (now out ' + (r.extendedTo || '') + ')' : (r.resNotes || r.notes || '')])
+    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', fmtTime(tab === 'departures' ? r.checkOutTime : r.checkInTime), r.sameDayTurn ? 'YES' : '', r.extended ? 'EXTENDED - do not clean (now out ' + (r.extendedTo || '') + ')' : (r.resNotes || r.notes || '')])
     const csv = head.concat(body).map(line => line.map(x => /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -206,7 +208,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                           <div className="text-xs text-neutral-500 truncate">{r.guestName || 'Guest'}{r.guests ? ' · ' + r.guests + ' guests' : ''}{bedLabel(r.bedrooms) ? ' · ' + bedLabel(r.bedrooms) : ''}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.extended && r.extendedTo ? ' · now out ' + fmtDate(r.extendedTo) : ''}</div>
                         </div>
                         <div className="text-right shrink-0">
-                          {time && <div className="text-sm font-medium text-emerald-700">{tab === 'departures' ? 'out ' : 'in '}{time}</div>}
+                          {time && <div className="text-sm font-medium text-emerald-700">{tab === 'departures' ? 'out ' : 'in '}{fmtTime(time)}</div>}
                           {(tab === 'active' || tab === 'upcoming') && <div className="text-xs text-neutral-400">out {fmtDate(r.checkOut)}</div>}
                         </div>
                         <span className="text-neutral-300 text-xs">{open ? '▲' : '▼'}</span>
@@ -215,8 +217,8 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                         <div className="px-4 pb-4 pt-1 border-t border-neutral-100 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                           <Field label="Guest" value={r.guestName || '—'} />
                           <Field label="Phone" value={r.phone || '—'} />
-                          <Field label="Check-in" value={fmtDate(r.checkIn) + (r.checkInTime ? ' · ' + r.checkInTime : '')} />
-                          <Field label="Check-out" value={fmtDate(r.checkOut) + (r.checkOutTime ? ' · ' + r.checkOutTime : '')} />
+                          <Field label="Check-in" value={fmtDate(r.checkIn) + (r.checkInTime ? ' · ' + fmtTime(r.checkInTime) : '')} />
+                          <Field label="Check-out" value={fmtDate(r.checkOut) + (r.checkOutTime ? ' · ' + fmtTime(r.checkOutTime) : '')} />
                           <Field label="Nights" value={r.nights != null ? String(r.nights) : '—'} />
                           <Field label="Guests" value={r.guests != null ? String(r.guests) : '—'} />
                           <Field label="Door code" value={r.doorCode || '—'} />
