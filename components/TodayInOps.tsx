@@ -187,13 +187,15 @@ export function TodayInOps() {
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
-        <button onClick={() => setShowDone(!showDone)} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white text-muted hover:bg-app">{showDone ? 'Hide finished' : 'Show finished (' + doneCount + ')'}</button>
-        <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-sm font-medium px-3 py-1.5 rounded-lg border ' + (groupBy === 'area' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{groupBy === 'area' ? 'By area' : 'Sort by area'}</button>
-        <span className="ml-auto inline-flex items-center gap-1">
-          <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-sm font-medium px-2 py-1.5 rounded-lg border border-line bg-white hover:bg-app">&lsaquo;</button>
-          <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white" />
-          <button onClick={() => { setDateSel(shiftDay(data.today, 1)); setLoading(true) }} title="Next day" className="text-sm font-medium px-2 py-1.5 rounded-lg border border-line bg-white hover:bg-app">&rsaquo;</button>
-          {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-sm font-medium px-2.5 py-1.5 rounded-lg border border-ink bg-ink text-white">Back to today</button>}
+        <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
+          <button onClick={() => setShowDone(!showDone)} className="text-sm font-medium px-3 py-1.5 bg-white text-muted hover:bg-app">{showDone ? 'Hide finished' : 'Finished (' + doneCount + ')'}</button>
+          <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-sm font-medium px-3 py-1.5 ' + (groupBy === 'area' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{groupBy === 'area' ? 'By area \u2713' : 'By area'}</button>
+        </span>
+        <span className="ml-auto inline-flex items-center rounded-lg border border-line overflow-hidden divide-x divide-line">
+          <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-sm font-medium px-2.5 py-1.5 bg-white hover:bg-app">&lsaquo;</button>
+          <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-sm px-2 py-1.5 bg-white border-0 focus:outline-none" />
+          <button onClick={() => { setDateSel(shiftDay(data.today, 1)); setLoading(true) }} title="Next day" className="text-sm font-medium px-2.5 py-1.5 bg-white hover:bg-app">&rsaquo;</button>
+          {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-sm font-medium px-2.5 py-1.5 bg-ink text-white">Today</button>}
         </span>
         <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
       </div>
@@ -587,7 +589,7 @@ function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone
 
 function Stat({ label, value, sub, warn, active, onClick }: { label: string; value: string; sub?: string; warn?: boolean; active?: boolean; onClick?: () => void }) {
   return (
-    <button onClick={onClick} className={'text-left w-full rounded-2xl border p-3 transition ' + (active ? 'border-ink ring-1 ring-ink/20 bg-white' : warn ? 'border-amber-200 bg-amber-50 hover:border-amber-300' : 'border-line bg-white hover:border-ink/30')}>
+    <button onClick={onClick} title="Click to filter the board" className={'text-left w-full rounded-2xl border p-3 transition cursor-pointer hover:shadow-soft hover:-translate-y-px ' + (active ? 'border-ink ring-1 ring-ink/20 bg-white' : warn ? 'border-amber-200 bg-amber-50 hover:border-amber-300' : 'border-line bg-white hover:border-ink/30')}>
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
       <div className={'text-2xl font-bold ' + (warn ? 'text-amber-800' : 'text-ink')}>{value}</div>
       {sub && <div className="text-[11px] text-muted">{sub}</div>}
