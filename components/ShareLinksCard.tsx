@@ -13,12 +13,17 @@ export function ShareLinksCard() {
   const [err, setErr] = useState('')
   const [origin, setOrigin] = useState('')
   const [copied, setCopied] = useState('')
+  const [adminSet, setAdminSet] = useState(false)
+  const [adminDraft, setAdminDraft] = useState('')
+  const [adminMsg, setAdminMsg] = useState('')
+  const [adminErr, setAdminErr] = useState('')
+  const [adminBusy, setAdminBusy] = useState(false)
 
   useEffect(() => { setOrigin(window.location.origin) }, [])
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || '') } })
+      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet) } })
       .catch(() => {})
   }, [])
 
@@ -31,6 +36,17 @@ export function ShareLinksCard() {
       setPassword(j.password); setMsg('Password updated. Anyone using the old one will be asked to sign in again.')
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
+  }
+
+  const saveAdmin = async () => {
+    setAdminBusy(true); setAdminErr(''); setAdminMsg('')
+    try {
+      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminPassword: adminDraft.trim() }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setAdminErr(j.error || 'Could not save'); setAdminBusy(false); return }
+      setAdminSet(true); setAdminDraft(''); setAdminMsg('Admin password saved. Deleting a clean from the scheduler now requires it.')
+    } catch (e: any) { setAdminErr(String(e?.message || e)) }
+    setAdminBusy(false)
   }
 
   const copy = (v: string, url: string) => { try { navigator.clipboard.writeText(url); setCopied(v); setTimeout(() => setCopied(''), 1500) } catch {} }
@@ -57,6 +73,16 @@ export function ShareLinksCard() {
         </div>
         {msg && <div className="text-xs text-emerald-700 mt-2">{msg}</div>}
         {err && <div className="text-xs text-red-600 mt-2">{err}</div>}
+      </div>
+      <div className="border-t border-line pt-4 mt-4">
+        <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>
+        <p className="text-xs text-muted mt-0.5 mb-1">Required to delete a clean from Breezeway on the scheduler. {adminSet ? 'Currently SET.' : 'Not set yet \u2014 Delete is locked until you set one.'}</p>
+        <div className="flex gap-2 mt-1 max-w-md">
+          <input type="password" value={adminDraft} onChange={e => setAdminDraft(e.target.value)} placeholder={adminSet ? 'New admin password' : 'Create admin password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <button onClick={saveAdmin} disabled={adminBusy || adminDraft.trim().length < 4} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{adminBusy ? 'Saving\u2026' : adminSet ? 'Change' : 'Set'}</button>
+        </div>
+        {adminMsg && <div className="text-xs text-emerald-700 mt-2">{adminMsg}</div>}
+        {adminErr && <div className="text-xs text-red-600 mt-2">{adminErr}</div>}
       </div>
     </div>
   )
