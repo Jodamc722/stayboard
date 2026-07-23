@@ -6,6 +6,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { rollupBuilding } from './optimize-score'
+import type { Basis } from './basis'
 
 const CONFIRMED = ['confirmed', 'checked_in', 'checked_out']
 
@@ -49,6 +50,11 @@ export type MetricSet = {
   accomRevenue: number; grossRevenue: number; occupiedNights: number; availableNights: number
   occupancyPct: number; adr: number; grossAdr: number; revpar: number; grossRevpar: number
   reservations: number
+  // Raw components for the 3-basis model (see lib/basis.ts):
+  // accomRevenue    = accommodation after channel fees (net)
+  // accomGrossRevenue = accommodation before channel fees (netota)
+  // cleaningRevenue = prorated cleaning; gross = accomGrossRevenue + cleaningRevenue
+  accomGrossRevenue: number; cleaningRevenue: number
 }
 export type ReportListing = { id: string; name: string; unit: string; bedrooms: number | null; building: string }
 
@@ -62,6 +68,8 @@ export type ReportContent = {
     headline: string; subtitle: string
     cards: { key: string; label: string; value: string; sub: string; gross?: string }[]
     ytd: { text: string; stats: { value: string; label: string }[] } | null
+    // Raw period metrics so the snapshot can render Revenue/ADR/RevPAR in any basis (see lib/basis.ts).
+    metrics?: { accomNum: number; accomGrossNum: number; cleaningNum: number; occNights: number; availNights: number; reservations: number; units: number; occPct: number }
   }
   pacing: { headline: string; subtitle: string; rows: { metric: string; ours: string; comps: string; delta: string }[] } | null
   plan: {
@@ -86,9 +94,12 @@ export type ReportContent = {
   }
   // Per-calendar-month breakdown for the "view by month" toggle; only set when the period spans 2+ months.
   byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
-  snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number }[]
-  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; building?: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number; accomNum?: number; grossNum?: number; occNights?: number; availNights?: number }[]
-  // When true (owner-facing, e.g. 17WEST), sections show Gross and the snapshot cards show Net + Gross. Set in edit mode.
+  snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number; accomNum?: number; accomGrossNum?: number; cleaningNum?: number; occNights?: number; availNights?: number }[]
+  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; building?: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number; accomNum?: number; grossNum?: number; accomGrossNum?: number; cleaningNum?: number; occNights?: number; availNights?: number }[]
+  // Per-section revenue basis (see lib/basis.ts). default flows to every section unless overridden.
+  // Snapshot cards show a big primary number with a secondary number beneath ('none' hides it).
+  basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis }
+  // Legacy (pre-basis) flag; superseded by `basis` above. Kept so old reports still parse.
   showGross?: boolean
   omit: string[]
 }
@@ -206,6 +217,7 @@ export function metricsFor(resv: Resv[], units: number, from: string, toExcl: st
   const gross = grossAccom + cleaning // accommodation (gross of OTA fees) + cleaning
   return {
     accomRevenue: Math.round(accom), grossRevenue: Math.round(gross),
+    accomGrossRevenue: Math.round(grossAccom), cleaningRevenue: Math.round(cleaning),
     occupiedNights: occNights, availableNights: avail,
     occupancyPct: avail > 0 ? Math.round((occNights / avail) * 100) : 0,
     adr: occNights > 0 ? Math.round(accom / occNights) : 0,
