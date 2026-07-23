@@ -59,9 +59,14 @@ export async function GET(req: NextRequest) {
   try {
     const db = supabaseAdmin()
     const now = new Date()
-    const today = ymd(now)
+    // Optional ?date=YYYY-MM-DD lets the coordinator plan ahead; defaults to today (ET).
+    const qd = String(req.nextUrl.searchParams.get('date') || '')
+    const today = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : ymd(now)
+    const isToday = today === ymd(now)
     const nowMin = etMinutes(now)
-    const minsLeft = DEADLINE_MIN - nowMin
+    // For a future (or past) date the 4pm countdown is meaningless — treat as a full day left
+    // so nothing gets falsely flagged late/at-risk.
+    const minsLeft = isToday ? DEADLINE_MIN - nowMin : DEADLINE_MIN
     const [lRes, tRes, qRes, rRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
@@ -224,7 +229,7 @@ export async function GET(req: NextRequest) {
     // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, today, nowMin, lastSync, deadline, totals, byMarket, units, vacants })
+    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, deadline, totals, byMarket, units, vacants })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
