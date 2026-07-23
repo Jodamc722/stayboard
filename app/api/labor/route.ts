@@ -113,7 +113,7 @@ export async function GET(req: NextRequest) {
     const to = /^\d{4}-\d{2}-\d{2}$/.test(str(req.nextUrl.searchParams.get('to'))) ? str(req.nextUrl.searchParams.get('to')) : today
     const from = /^\d{4}-\d{2}-\d{2}$/.test(str(req.nextUrl.searchParams.get('from'))) ? str(req.nextUrl.searchParams.get('from')) : addDays(to, -13)
     const [tRes, bRes] = await Promise.all([
-      db.from('labor_timesheets').select('employee,work_date,hours,wage,cost').gte('work_date', from).lte('work_date', to).limit(5000),
+      db.from('labor_timesheets').select('employee,work_date,hours,wage,cost').neq('source', '__synthetic_test.csv').gte('work_date', from).lte('work_date', to).limit(5000),
       db.from('breezeway_tasks_sync').select('name,status,scheduled_date,finished_at,assignees,total_minutes').gte('scheduled_date', from).lte('scheduled_date', to).limit(8000),
     ])
     const sheets = (tRes.data || []) as any[]
