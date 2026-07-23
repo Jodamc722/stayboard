@@ -6,7 +6,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react'
 
 type Person = { id: number; name: string; departments: string[] }
 type Glitch = { id: string; unit: string; market: string; issue: string; rawName: string; status: string; scheduledDate: string; ageDays: number | null; running: boolean; unassigned: boolean; assignees: string[]; reportUrl: string | null }
-type Data = { ok: boolean; today: string; count: number; unassigned: number; glitches: Glitch[]; error?: string }
+type Data = { ok: boolean; today: string; count: number; unassigned: number; olderOpen?: number; windowDays?: number; glitches: Glitch[]; error?: string }
 
 function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 
@@ -16,16 +16,17 @@ export function GlitchesBoard() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [market, setMarket] = useState('all')
+  const [showAll, setShowAll] = useState(false)
 
   const load = useCallback(async () => {
     try {
       setErr('')
-      const r = await fetch('/api/ops-today/glitches', { cache: 'no-store' })
+      const r = await fetch('/api/ops-today/glitches' + (showAll ? '?all=1' : ''), { cache: 'no-store' })
       const j: Data = await r.json()
       if (!r.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setData(j)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
-  }, [])
+  }, [showAll])
   useEffect(() => { load() }, [load])
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 5 * 60 * 1000); return () => clearInterval(t) }, [load])
@@ -62,6 +63,11 @@ export function GlitchesBoard() {
         <span className="font-semibold text-ink">{data.count} open glitch{data.count === 1 ? '' : 'es'}</span>
         {data.unassigned > 0 && <span className="text-sm font-medium text-rose-700">· {data.unassigned} unassigned</span>}
         <span className="text-sm text-muted">— guest-reported issues in Breezeway</span>
+        {(showAll || (data.olderOpen || 0) > 0) && (
+          <button onClick={() => { setShowAll(v => !v); setLoading(true) }} className="ml-auto text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app text-muted shrink-0">
+            {showAll ? 'Hide older backlog' : 'Show ' + (data.olderOpen || 0) + ' older (60d+)'}
+          </button>
+        )}
       </div>
 
       {rows.length === 0 && <div className="text-sm text-muted py-10 text-center">No open glitches{market === 'all' ? '' : ' in ' + market}. Nice.</div>}
