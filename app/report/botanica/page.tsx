@@ -3,7 +3,7 @@
 // High-level tiles for the selected date range + per-night detail, always live from the mirror.
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react'
 
-type Day = { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number }
+type Day = { date: string; dow: string; inv: number; rns: number; rev: number; cleaning: number; arr?: number; arrNights?: number; arrLead?: number; arrLeadCnt?: number }
 type Data = { ok: boolean; label?: string; openedOn?: string; today?: string; lastSync?: string | null; days: Day[]; error?: string }
 type PresetKey = 'mtd' | 'lastMonth' | 'last30' | 'all' | 'custom'
 
@@ -23,11 +23,11 @@ const monthLabel = (ym: string) => new Date(ym + '-15T12:00:00').toLocaleDateStr
 const firstOfMonth = (iso: string) => iso.slice(0, 8) + '01'
 const addDaysIso = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 
-type Agg = { inv: number; rns: number; rev: number; cleaning: number; occ: number; adr: number }
+type Agg = { inv: number; rns: number; rev: number; cleaning: number; occ: number; adr: number; arr: number; arrNights: number; los: number; bookWin: number }
 const aggregate = (rows: Day[]): Agg => {
-  let inv = 0, rns = 0, rev = 0, cleaning = 0
-  for (const r of rows) { inv += r.inv; rns += r.rns; rev += r.rev; cleaning += r.cleaning }
-  return { inv, rns, rev, cleaning, occ: inv > 0 ? rns / inv : 0, adr: rns > 0 ? rev / rns : 0 }
+  let inv = 0, rns = 0, rev = 0, cleaning = 0, arr = 0, arrNights = 0, arrLead = 0, arrLeadCnt = 0
+  for (const r of rows) { inv += r.inv; rns += r.rns; rev += r.rev; cleaning += r.cleaning; arr += (r.arr || 0); arrNights += (r.arrNights || 0); arrLead += (r.arrLead || 0); arrLeadCnt += (r.arrLeadCnt || 0) }
+  return { inv, rns, rev, cleaning, occ: inv > 0 ? rns / inv : 0, adr: rns > 0 ? rev / rns : 0, arr, arrNights, los: arr > 0 ? arrNights / arr : 0, bookWin: arrLeadCnt > 0 ? arrLead / arrLeadCnt : 0 }
 }
 
 const Tile = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
@@ -147,6 +147,9 @@ export default function BotanicaReportPage() {
       lines.push([d.date, d.dow, d.inv, d.rns, occ, d.rev.toFixed(2), d.cleaning.toFixed(2), adr].join(','))
     }
     lines.push(['TOTAL', '', total.inv, total.rns, (Math.round(total.occ * 1000) / 10) + '%', total.rev.toFixed(2), total.cleaning.toFixed(2), total.adr.toFixed(2)].join(','))
+    lines.push('')
+    lines.push('Avg length of stay (nights) - arrivals in range,' + (total.arr > 0 ? total.los.toFixed(1) : ''))
+    lines.push('Booking window (days) - avg lead to check-in,' + (total.arr > 0 ? String(Math.round(total.bookWin)) : ''))
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -210,13 +213,15 @@ export default function BotanicaReportPage() {
         </div>
         <div className="text-xs text-neutral-500 mt-2">{fmtDate(range.from)} – {fmtDate(range.to)} · {rows.length} nights</div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
           <Tile label="Active units" value={String(rows.length ? rows[rows.length - 1].inv : 0)} sub={rows.length ? 'avg ' + Math.round(total.inv / rows.length) + ' across range' : 'units live'} />
           <Tile label="Occupancy" value={total.inv > 0 ? pct1(total.occ) : '—'} sub={total.rns + ' of ' + total.inv + ' room nights'} />
           <Tile label="ADR" value={total.rns > 0 ? money(total.adr) : '—'} sub="includes cleaning" />
           <Tile label="RevPAR" value={total.inv > 0 ? money(total.rev / total.inv) : '—'} sub="per available night" />
           <Tile label="Total revenue" value={money0(total.rev)} sub={'room ' + money0(total.rev - total.cleaning)} />
           <Tile label="Cleaning revenue" value={money0(total.cleaning)} sub={'of ' + money0(total.rev) + ' total'} />
+          <Tile label="Avg length of stay" value={total.arr > 0 ? total.los.toFixed(1) + ' nights' : '—'} sub={total.arr + ' arrivals in range'} />
+          <Tile label="Booking window" value={total.arr > 0 ? Math.round(total.bookWin) + ' days' : '—'} sub="avg lead time to check-in" />
         </div>
 
         <div className="mt-4 rounded-xl border border-neutral-200 bg-white overflow-hidden">
