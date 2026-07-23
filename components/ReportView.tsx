@@ -1275,7 +1275,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   {/* live KPI strip for the current slice */}
                   {hasRaw && (
                     <div className="mt-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.accent }}>{filtered ? 'Filtered slice' : 'All listings'} · {grossMode ? 'Gross (incl. cleaning)' : 'Net (accommodation)'}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.accent }}>{filtered ? 'Filtered slice' : 'All listings'} · {grossMode ? 'Gross (incl. cleaning + channel fees)' : 'Net (accommodation)'}</p>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                         {kpi.map((k: Any) => (
                           <div key={k.label} className="rounded-2xl p-4 border" style={{ background: t.card, borderColor: t.cardBorder }}>
