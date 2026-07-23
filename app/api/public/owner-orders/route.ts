@@ -21,6 +21,16 @@ async function scopeListings(db: any, scope: string): Promise<{ ids: string[]; l
     const ids = (data || []).map((x: any) => String(x.id))
     return ids.length ? { ids, label: b } : null
   }
+  if (scope.startsWith('m:')) {
+    // Multi-listing (owner-scoped) share: an explicit set of listing ids.
+    const want = scope.slice(2).split(',').map((x: string) => x.trim()).filter(Boolean).slice(0, 300)
+    if (!want.length) return null
+    const { data } = await db.from('guesty_listings').select('id,building').in('id', want).limit(300)
+    const ids = (data || []).map((x: any) => String(x.id))
+    const bset: string[] = Array.from(new Set((data || []).map((x: any) => String(x.building || '')).filter(Boolean))) as string[]
+    const label = bset.length === 1 ? bset[0] : (bset.length ? bset.slice(0, 2).join(' + ') + (bset.length > 2 ? ' +' : '') : ids.length + ' units')
+    return ids.length ? { ids, label } : null
+  }
   return null
 }
 
