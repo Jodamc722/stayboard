@@ -10,7 +10,28 @@ import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Upl
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
 
-type Clean = { extended?: boolean; extendedFrom?: string | null; listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkOutTime: string | null; sameDayTurn: boolean; doorCode: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: string; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; blocked?: boolean; blockedFrom?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null; cleaningFee?: number | null }
+// Order cleans by LOCATION: group by city, then nearest-neighbour within each city (lat/lng).
+function schedDist2(a: Clean, b: Clean) { const dx = Number(a.lat) - Number(b.lat); const dy = Number(a.lng) - Number(b.lng); return dx * dx + dy * dy }
+function sortByArea(list: Clean[]): Clean[] {
+  const byCity: Record<string, Clean[]> = {}
+  for (const c of list) { const k = c.city || 'Other'; if (!byCity[k]) byCity[k] = []; byCity[k].push(c) }
+  const cities = Object.keys(byCity).sort()
+  const out: Clean[] = []
+  for (const ct of cities) {
+    const geo = byCity[ct].filter(c => c.lat != null && c.lng != null)
+    const rest = byCity[ct].filter(c => c.lat == null || c.lng == null)
+    if (geo.length) {
+      const ordered: Clean[] = [geo[0]]
+      const rem = geo.slice(1)
+      while (rem.length) { const last = ordered[ordered.length - 1]; let bi = 0, bd = Infinity; for (let i = 0; i < rem.length; i++) { const dd = schedDist2(last, rem[i]); if (dd < bd) { bd = dd; bi = i } } ordered.push(rem.splice(bi, 1)[0]) }
+      for (const c of ordered) out.push(c)
+    }
+    for (const c of rest) out.push(c)
+  }
+  return out
+}
+
+type Clean = { extended?: boolean; extendedFrom?: string | null; listingId: string; unit: string; market: string; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkOutTime: string | null; sameDayTurn: boolean; doorCode: string | null; vendor?: string | null; assignedIds?: number[]; assignedNames?: string[] ; syncStatus?: string; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: string; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; blocked?: boolean; blockedFrom?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
 type Day = { date: string; dow: string; count: number; markets: Record<string, Clean[]> }
 type Person = { id: number; name: string; region: string | null }
 type Data = { ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; feeTotal?: number; byMarket: { market: string; count: number; fee?: number }[] }; days: Day[]; housekeepers: Person[]; units?: { id: string; name: string }[]; breezeway: boolean; syncedAt?: string; error?: string }
@@ -68,7 +89,7 @@ export function ScheduleBoard() {
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [market, setMarket] = useState<'all' | 'vendor' | typeof MARKETS[number]>('all')
-  const [sortBy, setSortBy] = useState<'building' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
+  const [sortBy, setSortBy] = useState<'building' | 'area' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
   const [tab, setTab] = useState<'board' | 'planner'>('board')
   const [fc, setFc] = useState<Fc | null>(null)
@@ -235,6 +256,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       case 'checkout': return a.sort((x, y) => String(x.checkOutTime || '11:00').localeCompare(String(y.checkOutTime || '11:00')) || byBuilding(x, y))
       case 'nights': return a.sort((x, y) => (x.nights ?? 0) - (y.nights ?? 0) || byBuilding(x, y))
       case 'cleaner': return a.sort((x, y) => { const lx = effective(x).label, ly = effective(y).label; if (!lx && ly) return 1; if (lx && !ly) return -1; return lx.localeCompare(ly) || byBuilding(x, y) })
+      case 'area': return sortByArea(a)
       default: return a.sort(byBuilding)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -503,6 +525,7 @@ async function pushBlocks() {
             <ArrowDownUp size={13} /> Sort
             <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} className="text-[12px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 outline-none">
               <option value="building">Building</option>
+              <option value="area">Area (location)</option>
               <option value="cleaner">Cleaner</option>
               <option value="unit">Listing</option>
               <option value="checkout">Check-out time</option>
@@ -545,7 +568,7 @@ async function pushBlocks() {
                 <tbody>
                   {rows.map((c, i) => {
                     const e = effective(c)
-                    const newBuilding = sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))
+                    const newBuilding = (sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))) || (sortBy === 'area' && (i === 0 || (rows[i - 1].city || '') !== (c.city || '')))
                     return (
                       <tr key={keyOf(c)} className={`group hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : ''}`}>
                         <td className="px-2.5 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />{c.syncStatus === 'guesty-only' && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}</td>
