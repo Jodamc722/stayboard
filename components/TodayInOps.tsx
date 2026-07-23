@@ -3,7 +3,7 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
@@ -252,13 +252,13 @@ export function TodayInOps() {
               {u.qc.map((q, i) => (
                 <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
               ))}
-              <span className="ml-auto text-xs text-muted">{u.allDone ? 'All done' : u.openTasks + ' open'}</span>
-              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><ListChecks size={12} /> Open items</button>
+              <span className={'ml-auto text-xs font-medium ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length + ' done'}</span>
+              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2 py-1 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
               <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
             </div>
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <div key={t.id} className={'flex items-center gap-3 px-4 py-2.5 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
                   <div className="flex flex-col shrink-0 -my-1 text-muted">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none"><ChevronUp size={13} /></button>
                     <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none"><ChevronDown size={13} /></button>
@@ -278,7 +278,7 @@ export function TodayInOps() {
               ))}
             </div>
             {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} onDone={() => { setAddFor(''); load() }} />}
-            {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} />}
+            {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} onClose={() => setItemsFor('')} />}
           </div>
         ))}
       </div>
@@ -292,7 +292,7 @@ export function TodayInOps() {
 type Intel = { inspection?: { recommended: boolean; reasons: string[] }; lastFeedback?: { rating: number | null; guest: string | null; date: string | null; excerpt: string | null } | null; checklist?: string[] }
 const TEMPLATES: { key: string; label: string; department: string; priority: string; title: string; base: string; useIntel?: boolean }[] = [
   { key: 'inspection', label: 'Inspection', department: 'inspection', priority: 'high', title: 'Unit Check', useIntel: true, base: 'Standard unit inspection: cleanliness vs. the photos, damage / wear, all amenities present and working, consumables restocked, photos still match reality.' },
-  { key: 'audit', label: 'Quality audit', department: 'inspection', priority: 'normal', title: 'Quality Audit', useIntel: true, base: 'Full quality audit: score the unit against the standard checklist, log any damage or wear, confirm inventory counts.' },
+  { key: 'audit', label: 'Quality audit', department: 'inspection', priority: 'normal', title: 'Annual Quality Audit', useIntel: true, base: 'Annual quality audit (done once per year): score the unit against the standard checklist, log any damage or wear, confirm inventory counts, and photograph anything below standard.' },
   { key: 'feedback', label: 'Audit from guest feedback', department: 'inspection', priority: 'high', title: 'Guest-feedback inspection', useIntel: true, base: 'Inspection raised from guest feedback. Verify and fix what guests reported.' },
   { key: 'batteries', label: 'Lock batteries', department: 'maintenance', priority: 'normal', title: 'Replace lock batteries', base: 'Annual lock battery replacement. Replace batteries in every door lock, re-test the lock and codes afterwards, and log the date.' },
   { key: 'acfilter', label: 'A/C filter', department: 'maintenance', priority: 'normal', title: 'Change A/C filter', base: 'Change the central A/C filter. Note the filter size used and log the date.' },
@@ -300,7 +300,7 @@ const TEMPLATES: { key: string; label: string; department: string; priority: str
 ]
 
 function fmtShort(iso: string | null) { if (!iso) return '\u2014'; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
-function UnitItems({ listingId, unit, people, onDone }: { listingId: string; unit: string; people: Person[]; onDone: () => void }) {
+function UnitItems({ listingId, unit, people, onDone, onClose }: { listingId: string; unit: string; people: Person[]; onDone: () => void; onClose: () => void }) {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
@@ -342,6 +342,10 @@ function UnitItems({ listingId, unit, people, onDone }: { listingId: string; uni
   const rec = data && data.recommended
   return (
     <div className="px-4 py-3 bg-app border-t border-line space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] uppercase tracking-wide text-muted font-medium">Open items — {unit}</div>
+        <button onClick={onClose} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1 text-muted"><X size={12} /> Close</button>
+      </div>
       <div className="text-[11px] text-muted flex flex-wrap gap-x-4 gap-y-1">
         <span>Last audit: <span className="text-ink font-medium">{fmtShort(h.lastAudit)}</span></span>
         <span>Last PM: <span className="text-ink font-medium">{fmtShort(h.lastPM)}</span></span>
