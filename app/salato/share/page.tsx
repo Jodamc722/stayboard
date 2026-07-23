@@ -99,11 +99,20 @@ export default function SalatoShare() {
                     {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
                     {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200'>Same-day turn</span>}
                   </div>
-                  <div className='text-xs text-neutral-500'>{r.guests ? r.guests + ' guests' : ''}{r.source ? (r.guests ? ' · ' : '') + r.source : ''}{tab === 'active' ? ' · out ' + fmtDate(r.checkOut) : ''}</div>
+                  <div className='text-xs text-neutral-500'>{r.guests ? r.guests + ' guests' : ''}{r.source ? (r.guests ? ' · ' : '') + r.source : ''}</div>
                 </div>
                 <div className='text-right shrink-0'>
-                  <div className='text-sm font-medium'>{fmtDate(dateIso)}</div>
-                  {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{fmtTime(time)}</div>}
+                  {tab === 'active' ? (
+                    <>
+                      <div className='text-xs text-neutral-500'>in {fmtDate(r.checkIn)}</div>
+                      <div className='text-sm font-semibold'>out {fmtDate(r.checkOut)}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className='text-sm font-medium'>{fmtDate(dateIso)}</div>
+                      {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{fmtTime(time)}</div>}
+                    </>
+                  )}
                 </div>
               </div>
             )
