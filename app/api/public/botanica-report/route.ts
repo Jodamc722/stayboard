@@ -64,8 +64,16 @@ export async function GET(req: NextRequest) {
     if (!ids.length) return NextResponse.json({ ok: false, error: 'No Botanica listings found' }, { status: 500 })
     // Banner photo: prefer a "Full"/building hero (usually the exterior), then the listing with the most photos.
     bannerCands.sort((a, b) => (a.full === b.full ? 0 : a.full ? -1 : 1) || b.count - a.count || a.name.localeCompare(b.name))
-    const bannerImage = bannerCands.length ? bannerCands[0].url : null
+    const autoBanner = bannerCands.length ? bannerCands[0].url : null
     const bannerOptions = bannerCands.slice(0, 10).map(c => ({ name: c.name, url: c.url }))
+    // A saved pick (app_settings key 'banner_overrides') wins over the auto-pick, for everyone on the link.
+    let bannerOverride: string | null = null
+    try {
+      const { data: bo } = await db.from('app_settings').select('value').eq('key', 'banner_overrides').limit(1)
+      const row: any = Array.isArray(bo) ? bo[0] : null
+      if (row && row.value) { const j = JSON.parse(row.value); const u = j && typeof j === 'object' ? j['report:botanica'] : null; if (typeof u === 'string' && u) bannerOverride = u }
+    } catch {}
+    const bannerImage = bannerOverride || autoBanner
 
     // All confirmed stays that touch [opening, today]. Paged — .in() + range like owner-report.
     let resv: any[] = []
@@ -167,7 +175,7 @@ export async function GET(req: NextRequest) {
         for (const k of Object.keys(mo)) mo[k] = Math.round(mo[k] * 100) / 100
       }
     }
-    return NextResponse.json({ ok: true, label: 'Botanica', openedOn: PHASES[0].from, today, through: lastDay, bannerImage, bannerOptions, lastSync, phases: PHASES, days, reconcile })
+    return NextResponse.json({ ok: true, label: 'Botanica', openedOn: PHASES[0].from, today, through: lastDay, bannerImage, bannerOverride, bannerOptions, lastSync, phases: PHASES, days, reconcile })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
