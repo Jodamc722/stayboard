@@ -81,6 +81,11 @@ export default function BotanicaReportPage() {
   const [preset, setPreset] = useState<PresetKey>('month')
   const [fromD, setFromD] = useState('')
   const [toD, setToD] = useState('')
+  // Banner photo the viewer picked (saved to their browser only). null = auto-pick from the API.
+  const [bannerChoice, setBannerChoice] = useState<string | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  useEffect(() => { try { const s = localStorage.getItem('botanica_report_banner'); if (s) setBannerChoice(s) } catch {} }, [])
+  const chooseBanner = (url: string | null) => { setBannerChoice(url); setPickerOpen(false); try { if (url) localStorage.setItem('botanica_report_banner', url); else localStorage.removeItem('botanica_report_banner') } catch {} }
 
   const load = useCallback(async () => {
     try {
@@ -191,12 +196,15 @@ export default function BotanicaReportPage() {
   if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6">{err}</div>
   if (loading || !data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading…</div>
 
+  const effBanner = bannerChoice || data.bannerImage || null
+  const bannerOpts = data.bannerOptions || []
+
   return (
     <div className="min-h-screen bg-neutral-100 print:bg-white">
       <div className="max-w-5xl mx-auto p-4 sm:p-6">
         <div className="relative rounded-2xl bg-neutral-900 shadow-lg overflow-hidden" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
-          {data.bannerImage ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + data.bannerImage + '")' }} aria-hidden="true" /> : null}
-          <div className={'absolute inset-0 ' + (data.bannerImage ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
+          {effBanner ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + effBanner + '")' }} aria-hidden="true" /> : null}
+          <div className={'absolute inset-0 ' + (effBanner ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
           <div className="relative p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -218,6 +226,7 @@ export default function BotanicaReportPage() {
                 <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
                 <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{syncing ? 'Syncing…' : 'Resync'}</button>
                 <button onClick={downloadCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">CSV</button>
+                {bannerOpts.length > 0 && <button onClick={() => setPickerOpen(v => !v)} className={'text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ' + (pickerOpen ? 'border-amber-400 bg-amber-400/20 text-amber-200' : 'border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20')}>Photo</button>}
                 <button onClick={() => window.print()} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">Print</button>
               </div>
             </div>
@@ -226,6 +235,17 @@ export default function BotanicaReportPage() {
               <HeroStat label="Average ADR" value={total.rns > 0 ? money(total.adr) : '—'} sub="includes cleaning" />
               <HeroStat label="Occupancy" value={total.inv > 0 ? pct1(total.occ) : '—'} sub={total.rns + ' of ' + total.inv + ' room nights'} />
             </div>
+            {pickerOpen && bannerOpts.length > 0 && (
+              <div className="mt-4 print:hidden">
+                <div className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold mb-1.5">Banner photo · saved to this device</div>
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={() => chooseBanner(null)} className={'h-14 w-20 rounded-lg border-2 flex items-center justify-center text-[10px] font-semibold ' + (!bannerChoice ? 'border-amber-400 bg-white/10 text-amber-200' : 'border-white/20 bg-white/5 text-neutral-300 hover:border-white/40')}>Auto</button>
+                  {bannerOpts.map(o => (
+                    <button key={o.url} onClick={() => chooseBanner(o.url)} title={o.name} className={'h-14 w-20 rounded-lg bg-cover bg-center border-2 transition-colors ' + (bannerChoice === o.url ? 'border-amber-400' : 'border-white/20 hover:border-white/50')} style={{ backgroundImage: 'url("' + o.url + '")' }} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
         {syncMsg && <div className="text-xs text-neutral-500 mt-2 print:hidden">{syncMsg}</div>}
