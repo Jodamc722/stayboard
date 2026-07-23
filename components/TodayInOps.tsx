@@ -150,6 +150,22 @@ export function TodayInOps() {
     ids.forEach((id, i) => { pos[id] = i })
     return u.tasks.slice().sort((a, b) => (pos[a.id] == null ? 999 : pos[a.id]) - (pos[b.id] == null ? 999 : pos[b.id]))
   }
+  const vendorFlag = async (t: Task) => {
+    const on = !/vendor needed/i.test(t.name)
+    try {
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, action: 'vendor', on }) })
+      const j = await r.json(); if (!r.ok || !j.ok) { setErr(j.error || 'Could not update'); return }
+      load()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+  }
+  const delTask = async (t: Task) => {
+    if (!window.confirm('Delete \u201c' + t.name + '\u201d on ' + t.unit + ' from Breezeway?')) return
+    try {
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, action: 'delete' }) })
+      const j = await r.json(); if (!r.ok || !j.ok) { setErr(j.error || 'Could not delete'); return }
+      load()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+  }
   const moveTask = (u: Unit, taskId: string, dir: number) => {
     const cur = orderedTasks(u).map(t => t.id)
     const i = cur.indexOf(taskId)
@@ -289,6 +305,8 @@ export function TodayInOps() {
                   <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
                   <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
                   {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0">report</a>}
+                  {!t.done && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50')}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
+                  {!t.done && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1">\u2715</button>}
                 </div>
               ))}
             </div>
