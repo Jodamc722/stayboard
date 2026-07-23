@@ -10,10 +10,12 @@ export const maxDuration = 30
 
 const GLITCH = /glitch|guest\s*reported/i
 const DONE = /complete|finish|cancel|closed|delete|approv/i
+const RESOLVED = /complete|finish|close|approv/i
+const GONE = /delete|cancel/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
-const COLS = 'id,reference_property_id,name,status,scheduled_date,assignees,report_url,type_department,raw'
+const COLS = 'id,reference_property_id,name,status,scheduled_date,finished_at,assignees,report_url,type_department,raw'
 const RECENT_DAYS = 14  // Today-in-Ops shows only CURRENT guest glitches; older ones are stale/closed. A full historical glitch page is separate future work.
 
 export async function GET(req: NextRequest) {
@@ -36,8 +38,11 @@ export async function GET(req: NextRequest) {
     }
     const lmap: Record<string, { name: string; market: string }> = {}
     for (const l of (lRes.data || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
+    // ?history=1 → the FULL record including resolved glitches (for the /glitches page);
+    // default → open ones only (Today-in-Ops tab). Deleted/cancelled never show anywhere.
+    const history = req.nextUrl.searchParams.get('history') === '1'
     const glitches = rows
-      .filter(t => GLITCH.test(str(t.name)) && !DONE.test(str(t.status)))
+      .filter(t => GLITCH.test(str(t.name)) && !GONE.test(str(t.status)) && (history || !DONE.test(str(t.status))))
       .map(t => {
         const li = lmap[String(t.reference_property_id)]
         const ppl = Array.isArray(t.assignees) ? t.assignees : []
@@ -48,8 +53,10 @@ export async function GET(req: NextRequest) {
         const sd = str(t.scheduled_date).slice(0, 10) || reported
         // strip the "Guest Reported / Glitch -" prefix so the issue reads cleanly
         const issue = str(t.name).replace(/^\s*guest\s*reported\s*\/?\s*(glitch)?\s*[-:]?\s*/i, '').trim() || str(t.name)
+        const doneFlag = RESOLVED.test(status) || !!t.finished_at
         return {
-          id: String(t.id), unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other',
+          id: String(t.id), unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', done: doneFlag,
+          resolvedDate: doneFlag ? (str(t.finished_at).slice(0, 10) || null) : null,
           issue, rawName: str(t.name), status, scheduledDate: str(t.scheduled_date).slice(0, 10) || null,
           reportedDate: reported || null,
           ageDays: sd ? daysBetween(sd, today) : null,
@@ -62,7 +69,8 @@ export async function GET(req: NextRequest) {
     const showAll = req.nextUrl.searchParams.get('all') === '1'
     const recent = glitches.filter(g => g.ageDays == null || g.ageDays <= RECENT_DAYS)
     const older = glitches.filter(g => g.ageDays != null && g.ageDays > RECENT_DAYS)
-    const shown = showAll ? glitches : recent
+    let shown = showAll || history ? glitches : recent
+    if (history) shown = shown.slice().sort((a, b) => str(b.reportedDate || b.scheduledDate).localeCompare(str(a.reportedDate || a.scheduledDate)))
     return NextResponse.json({ ok: true, today, count: shown.length, unassigned: shown.filter(g => g.unassigned).length, olderOpen: older.length, windowDays: RECENT_DAYS, glitches: shown })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
