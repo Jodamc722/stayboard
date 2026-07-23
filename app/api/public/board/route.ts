@@ -50,16 +50,23 @@ export async function GET(req: NextRequest) {
     const start = addDays(today, -1)
     const end = addDays(today, 6)
     const farEnd = addDays(today, 30)
-    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,bedrooms,cfRaw:raw->customFields,coRaw:raw->>defaultCheckOutTime,ciRaw:raw->>defaultCheckInTime')
+    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,bedrooms,pictures,cfRaw:raw->customFields,coRaw:raw->>defaultCheckOutTime,ciRaw:raw->>defaultCheckInTime')
     const match: Record<string, { name: string; bedrooms: number | null; doorCode: string | null; checkOutTime: string | null; checkInTime: string | null }> = {}
+    const bannerCands: { url: string; count: number; full: boolean }[] = []
     for (const l of (listings || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
       if (scope.re.test(str(l.building)) || scope.re.test(name)) {
         match[String(l.id)] = { name, bedrooms: l.bedrooms ?? null, doorCode: cfValue({ customFields: l.cfRaw }, DOOR_CODE_FIELD), checkOutTime: l.coRaw || null, checkInTime: l.ciRaw || null }
+        // Photos live on the mirror as an array of URL strings (see lib/guesty pictures map).
+        const pics = Array.isArray(l.pictures) ? l.pictures.filter((p: any) => typeof p === 'string' && p.indexOf('https://') === 0) : []
+        if (pics.length) bannerCands.push({ url: str(pics[0]), count: pics.length, full: /\bfull\b/i.test(name) })
       }
     }
+    // Banner photo for this scope: prefer a "Full"/building hero, then the listing with the most photos.
+    bannerCands.sort((a, b) => (a.full === b.full ? 0 : a.full ? -1 : 1) || b.count - a.count)
+    const bannerImage = bannerCands.length ? bannerCands[0].url : null
     const ids = Object.keys(match)
-    if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, arrivals: [], departures: [], active: [], upcoming: [] })
+    if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, bannerImage, arrivals: [], departures: [], active: [], upcoming: [] })
     // custom-field id -> human name (for the parking / details list). Resolves from the table first,
     // falls back to Guesty's live definitions, cached 1h — so names work even if the table is unpopulated.
     const cfNameById = await customFieldNameMap()
@@ -166,7 +173,7 @@ export async function GET(req: NextRequest) {
     // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, lastSync, arrivals, departures, active, upcoming })
+    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, bannerImage, lastSync, arrivals, departures, active, upcoming })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
