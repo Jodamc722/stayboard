@@ -11,6 +11,8 @@ const TABS: { key: 'arrivals' | 'departures' | 'active'; label: string }[] = [
   { key: 'active', label: 'In-house' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
+// 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
+function fmtTime(t: string | null | undefined) { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(String(t)); if (!m) return String(t); let h = parseInt(m[1], 10); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + m[2] + ' ' + ap }
 function keyOf(r: Row, mode: string) { return r.unit + '|' + (mode === 'departures' ? r.checkOut : r.checkIn) }
 
 export default function SalatoShare() {
@@ -54,24 +56,31 @@ export default function SalatoShare() {
   const markSeen = () => { const s = new Set(allIds); setSeen(s); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s))) } catch {} }
 
   return (
-    <div className='min-h-screen bg-neutral-50 text-neutral-900'>
+    <div className='min-h-screen bg-neutral-100 text-neutral-900'>
       <div className='max-w-2xl mx-auto px-4 py-6'>
-        <div className='flex items-center justify-between gap-3 flex-wrap mb-1'>
-          <div>
-            <div className='text-[11px] uppercase tracking-widest text-neutral-400 font-semibold'>Front desk</div>
-            <h1 className='text-2xl font-bold'>Salato</h1>
-          </div>
-          <div className='flex items-center gap-2'>
-            {newCount > 0 && <button onClick={markSeen} className='text-xs font-medium px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-800 border border-amber-200'>{newCount} new</button>}
-            <button onClick={resync} disabled={syncing} className='text-sm font-medium px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-50'>{syncing ? 'Syncing…' : 'Resync'}</button>
-            <button onClick={() => { setLoading(true); load() }} className='text-sm font-medium px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100'>Refresh</button>
+        <div className='rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4'>
+          <div className='p-5'>
+            <div className='flex items-start justify-between gap-3 flex-wrap'>
+              <div>
+                <div className='flex items-center gap-2.5'>
+                  <span className='text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold'>Stay Hospitality</span>
+                  <span className='inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300'><span className='relative flex h-1.5 w-1.5'><span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75'></span><span className='relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400'></span></span>LIVE</span>
+                </div>
+                <h1 className='text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight'>Salato</h1>
+                <p className='text-xs text-neutral-400 mt-1.5'>Front desk{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''} · auto-refreshes every 30 min</p>
+              </div>
+              <div className='flex items-center gap-2'>
+                {newCount > 0 && <button onClick={markSeen} className='text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors'>{newCount} new</button>}
+                <button onClick={resync} disabled={syncing} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors'>{syncing ? 'Syncing…' : 'Resync'}</button>
+                <button onClick={() => { setLoading(true); load() }} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors'>Refresh</button>
+              </div>
+            </div>
           </div>
         </div>
-        <div className='text-xs text-neutral-400 mb-4'>{lastUpdated ? 'Updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' · auto-refreshes every 30 min' : 'Loading…'}</div>
 
-        <div className='flex gap-1 mb-4 bg-neutral-100 rounded-xl p-1'>
+        <div className='flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm'>
           {TABS.map(t => { const n = data ? data[t.key].length : 0; return (
-            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition ' + (tab === t.key ? 'bg-white shadow-sm text-neutral-900' : 'text-neutral-500 hover:text-neutral-700')}>{t.label}<span className='ml-1.5 text-xs text-neutral-400'>{n}</span></button>
+            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
           )})}
         </div>
 
@@ -83,7 +92,7 @@ export default function SalatoShare() {
             const dateIso = tab === 'departures' ? r.checkOut : r.checkIn
             const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
             return (
-              <div key={i} className={'rounded-xl border bg-white px-4 py-3 flex items-center gap-3 ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
+              <div key={i} className={'rounded-2xl border bg-white shadow-sm px-4 py-3 flex items-center gap-3 ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
                 <div className='flex-1 min-w-0'>
                   <div className='flex items-center gap-2 flex-wrap'>
                     <span className='font-semibold truncate'>{r.unit}</span>
@@ -94,7 +103,7 @@ export default function SalatoShare() {
                 </div>
                 <div className='text-right shrink-0'>
                   <div className='text-sm font-medium'>{fmtDate(dateIso)}</div>
-                  {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{time}</div>}
+                  {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{fmtTime(time)}</div>}
                 </div>
               </div>
             )
