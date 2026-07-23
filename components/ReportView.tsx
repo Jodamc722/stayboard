@@ -470,6 +470,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const snapPrimary: Basis = bcfg.snapshotPrimary || bDefault
   const snapSecondary: Basis | 'none' = (bcfg.snapshotSecondary === undefined ? 'gross' : bcfg.snapshotSecondary)
   const setBasis = (field: string, val: string) => mutate((d: Any) => { d.basis = { ...(d.basis || {}), [field]: val } })
+  // Listings blocked/off-market for the period — dropped from revenue AND the occupancy denominator.
+  const excluded: string[] = Array.isArray(c.excludeListings) ? c.excludeListings : []
+  const toggleExclude = (id: string) => mutate((d: Any) => { d.excludeListings = Array.isArray(d.excludeListings) ? d.excludeListings : []; const i = d.excludeListings.indexOf(id); if (i >= 0) d.excludeListings.splice(i, 1); else d.excludeListings.push(id) })
   const [fltBld, setFltBld] = useState('')
   const [fltBr, setFltBr] = useState('')
   const [fltUnit, setFltUnit] = useState('')
@@ -532,6 +535,40 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     return () => { window.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', onFs) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [present])
+
+  // In edit mode, back-fill the raw basis numbers on older reports (generated before the 3-basis
+  // model) so the per-section basis tabs immediately drive Revenue/ADR/RevPAR. Fetches the snapshot
+  // metrics for the report's own period and re-pulls per-listing raw if it's missing the new fields.
+  const exKey = (Array.isArray(c.excludeListings) ? c.excludeListings : []).join(',')
+  useEffect(() => {
+    if (!edit) return
+    let cancelled = false
+    const exQ = exKey ? '&exclude=' + encodeURIComponent(exKey) : ''
+    ;(async () => {
+      const m = c.meta || {}
+      // Refresh snapshot metrics whenever the exclusion set changes (occupancy/availability depend on it),
+      // or when the report predates the 3-basis model and has no raw numbers yet.
+      if ((!hasBasisRaw(c.snapshot?.metrics) || exKey) && m.periodStart && m.periodEnd) {
+        try {
+          const r = await fetch('/api/reports/snapshot-range?id=' + encodeURIComponent(initial.id) + '&from=' + m.periodStart + '&to=' + m.periodEnd + exQ)
+          const d = await r.json()
+          if (!cancelled && d?.ok && d?.snap) {
+            const s = d.snap
+            mutate((dr: Any) => { dr.snapshot = dr.snapshot || {}; dr.snapshot.metrics = { accomNum: s.accomNum, accomGrossNum: s.accomGrossNum, cleaningNum: s.cleaningNum, occNights: s.occNights, availNights: s.availNights, reservations: s.reservations, units: s.units, occPct: s.occPct } })
+          }
+        } catch (_e) { /* keep the stored (single-basis) values */ }
+      }
+      if (Array.isArray(c.byListing) && c.byListing.length > 0 && c.byListing.some((l: Any) => l.accomGrossNum == null)) {
+        try {
+          const r = await fetch('/api/reports/listing-breakdown?id=' + encodeURIComponent(initial.id))
+          const d = await r.json()
+          if (!cancelled && d?.ok && Array.isArray(d.listings)) mutate((dr: Any) => { dr.byListing = d.listings })
+        } catch (_e) { /* keep the stored per-listing values */ }
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit, exKey])
 
   // path setter: patch('voices.quotes.0.text', v)
   function patch(path: string, value: Any) {
@@ -1130,7 +1167,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 const M = snap.metrics
                 const canBasis = hasBasisRaw(M) && (card.key === 'revenue' || card.key === 'adr' || card.key === 'revpar')
                 const pick = (b: Basis) => { const s = basisStrings(M, b); return card.key === 'revenue' ? s.rev : card.key === 'adr' ? s.adr : s.revpar }
-                const primaryVal = canBasis ? pick(snapPrimary) : null
+                const primaryVal = canBasis ? pick(snapPrimary) : (hasBasisRaw(M) && card.key === 'occupancy' && M.occPct != null ? (M.occPct + '%') : null)
                 const secondaryVal = canBasis && snapSecondary !== 'none' ? pick(snapSecondary as Basis) : null
                 return (
                 <div key={card.key || i} className="relative rounded-2xl p-5 shadow-sm border flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
@@ -1274,7 +1311,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </div>
             </div>
             {showListings && Array.isArray(c.byListing) && c.byListing.length > 0 && (() => {
-              const allL: Any[] = c.byListing
+              const allL: Any[] = (c.byListing as Any[]).filter((l: Any) => excluded.indexOf(l.id) < 0)
+              const excludedRows: Any[] = (c.byListing as Any[]).filter((l: Any) => excluded.indexOf(l.id) >= 0)
               const buildings: string[] = Array.from(new Set(allL.map((l: Any) => String(l.building || '')).filter(Boolean))).sort()
               const brs: number[] = Array.from(new Set(allL.map((l: Any) => l.bedrooms).filter((v: Any) => v != null))).sort((a: Any, b: Any) => a - b)
               const rows: Any[] = allL.filter((l: Any) => (!fltBld || String(l.building || '') === fltBld) && (fltBr === '' || String(l.bedrooms) === fltBr) && (!fltUnit || l.id === fltUnit))
@@ -1320,6 +1358,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     )}
                     <span className="text-[11px]" style={{ color: t.muted }}>{rows.length} of {allL.length} listing{allL.length === 1 ? '' : 's'}</span>
                   </div>
+                  {edit && excludedRows.length > 0 && (
+                    <div className="mt-3 flex items-center gap-2 flex-wrap text-[11px]">
+                      <span className="font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>Excluded (blocked)</span>
+                      {excludedRows.map((l: Any) => (
+                        <button key={l.id} onClick={() => toggleExclude(l.id)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>{l.name} <span style={{ color: t.accent }}>restore</span></button>
+                      ))}
+                    </div>
+                  )}
                   {/* live KPI strip for the current slice */}
                   {hasRaw && (
                     <div className="mt-4">
@@ -1343,7 +1389,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       const lv = hasBasisRaw(l) ? basisStrings(l, lb) : { rev: lb === 'net' ? l.revenue : (l.grossRevenue || l.revenue), adr: lb === 'net' ? l.adr : (l.grossAdr || l.adr), revpar: lb === 'net' ? l.revpar : (l.grossRevpar || l.revpar) }
                       return (
                       <div key={l.id || i} className="grid gap-2 px-4 py-3 items-center border-t" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr', background: t.card }}>
-                        <div className="text-[13px] font-semibold truncate" style={{ color: t.ink }}>{l.name}{l.bedrooms != null ? <span className="ml-1.5 text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
+                        <div className="text-[13px] font-semibold truncate flex items-center gap-1.5" style={{ color: t.ink }}>{edit && <button onClick={() => toggleExclude(l.id)} title="Exclude — blocked/off-market this period" style={{ color: t.muted }}><X size={12} /></button>}<span className="truncate">{l.name}</span>{l.bedrooms != null ? <span className="text-[11px] font-normal" style={{ color: t.muted }}>{l.bedrooms}BR</span> : null}</div>
                         <div className="text-right text-[13px] font-black tabular-nums" style={{ color: t.ink }}>{lv.rev}</div>
                         <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{l.occPct}%</div>
                         <div className="text-right text-[13px] tabular-nums" style={{ color: t.sub }}>{lv.adr}</div>
