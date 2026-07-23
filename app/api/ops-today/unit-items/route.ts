@@ -73,6 +73,24 @@ export async function GET(req: NextRequest) {
     for (const a of (data || []) as any[]) { if (/done|complete|dismiss|resolved|ordered/i.test(str(a.status))) continue; audits.push({ id: String(a.id), room: a.room || null, kind: a.kind || 'fix', title: a.title || 'Item', status: str(a.status || 'open'), taskId: a.breezeway_task_id ? String(a.breezeway_task_id) : null }) }
   } catch (e) { console.error('unit-items audits', e) }
 
+  // 4) service history — last time each recurring job was DONE (from completed Breezeway tasks)
+  const history: { lastAudit: string | null; lastPM: string | null; lastBattery: string | null; lastAcFilter: string | null } = { lastAudit: null, lastPM: null, lastBattery: null, lastAcFilter: null }
+  try {
+    const back = addDays(today, -420)
+    const { data } = await db.from('breezeway_tasks_sync').select('name,finished_at,scheduled_date,status').eq('reference_property_id', listingId).gte('scheduled_date', back).limit(600)
+    const most = (cur: string | null, when: string) => (when && (!cur || when > cur) ? when : cur)
+    for (const t of (data || []) as any[]) {
+      if (!/complete|finish/i.test(str(t.status))) continue
+      const nm = str(t.name).toLowerCase()
+      const when = str(t.finished_at || t.scheduled_date).slice(0, 10)
+      if (!when) continue
+      if (/audit/.test(nm)) history.lastAudit = most(history.lastAudit, when)
+      if (/preventative|preventive|\bpm\b/.test(nm)) history.lastPM = most(history.lastPM, when)
+      if (/batter/.test(nm)) history.lastBattery = most(history.lastBattery, when)
+      if (/a\/?c filter|air filter|hvac filter|filter change|change.*filter/.test(nm)) history.lastAcFilter = most(history.lastAcFilter, when)
+    }
+  } catch (e) { console.error('unit-items history', e) }
+
   // 4) recommended inspection from recent low guest reviews
   let recommended: { inspection: boolean; reasons: string[] } = { inspection: false, reasons: [] }
   try {
@@ -90,5 +108,5 @@ export async function GET(req: NextRequest) {
     recommended = { inspection: reasons.length > 0, reasons }
   } catch (e) { console.error('unit-items reviews', e) }
 
-  return NextResponse.json({ ok: true, today, listingId, open, qc, audits, recommended })
+  return NextResponse.json({ ok: true, today, listingId, open, qc, audits, recommended, history })
 }
