@@ -72,13 +72,17 @@ export async function GET(req: NextRequest) {
     const taskIds = ((rows || []) as any[]).map(g => str(g.breezeway_task_id)).filter(Boolean)
     const tmap: Record<string, string> = {}
     if (taskIds.length) {
-      const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status,finished_at').in('id', taskIds)
+      const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status,finished_at,report_url').in('id', taskIds)
       for (const t of (ts || []) as any[]) {
         const st = str(t.status)
         tmap[String(t.id)] = (/complete|finish|close|approv/i.test(st) || t.finished_at) ? 'completed' : /progress|started/i.test(st) ? 'in_progress' : 'created'
+        ;(tmap as any)[String(t.id) + ':report'] = t.report_url || null
       }
     }
-    for (const g of (rows || []) as any[]) (g as any).task_status = g.breezeway_task_id ? (tmap[str(g.breezeway_task_id)] || null) : null
+    for (const g of (rows || []) as any[]) {
+      ;(g as any).task_status = g.breezeway_task_id ? (tmap[str(g.breezeway_task_id)] || null) : null
+      ;(g as any).task_report_url = g.breezeway_task_id ? ((tmap as any)[str(g.breezeway_task_id) + ':report'] || null) : null
+    }
     const counts: Record<string, number> = {}
     for (const s of STATUSES) counts[s] = 0
     for (const g of (rows || []) as any[]) counts[str(g.status)] = (counts[str(g.status)] || 0) + 1
