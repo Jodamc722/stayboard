@@ -15,6 +15,8 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
+// YTD pulls ~3 ranges of reservations incl. raw money JSON - needs more than the default fn timeout.
+export const maxDuration = 60
 
 const CONFIRMED = ['confirmed', 'checked_in', 'checked_out']
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
