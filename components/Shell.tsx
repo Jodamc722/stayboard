@@ -36,32 +36,37 @@ const SECTIONS: {
     ],
   },
   {
-    title: 'Portfolio',
+    title: 'Operations',
     items: [
-      { to: '/buildings', label: 'Portfolio', Icon: Building2 },
+      { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
+      { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
+      { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },
+      { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
+      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart },
+      { to: '/requests', label: 'Requests',  Icon: ClipboardList },
+      { to: '/salato',   label: 'Salato Desk', Icon: CalendarDays },
     ],
   },
   {
-    title: 'Performance',
+    title: 'Portfolio',
     items: [
-      { to: '/health',   label: 'Health Score', Icon: Activity },
-      { to: '/cleaners', label: 'Cleaners', Icon: Users },
-      { to: '/labor', label: 'Labor', Icon: Timer },
-      { to: '/channels', label: 'Channels',     Icon: Share2 },
+      { to: '/buildings', label: 'Properties', Icon: Building2 },
+      { to: '/health',    label: 'Health Score', Icon: Activity },
+    ],
+  },
+  {
+    title: 'Money',
+    items: [
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
+      { to: '/channels', label: 'Channels',     Icon: Share2 },
       { to: '/reports',  label: 'Owner Reports', Icon: FileText },
     ],
   },
   {
-    title: 'Ops',
+    title: 'Team',
     items: [
-      { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
-      { to: '/salato', label: 'Salato', Icon: CalendarDays },
-      { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
-      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart },
-      { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
-      { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },
-      { to: '/requests', label: 'Requests',  Icon: ClipboardList },
+      { to: '/cleaners', label: 'Cleaners', Icon: Users },
+      { to: '/labor',    label: 'Labor', Icon: Timer },
     ],
   },
   {
