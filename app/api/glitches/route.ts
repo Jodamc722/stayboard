@@ -23,13 +23,20 @@ export async function GET(req: NextRequest) {
     const guest = str(req.nextUrl.searchParams.get('guest')).trim()
 
     if (guest) {
-      // reservation search: latest stays matching the guest name
+      // Reservation search. DEFAULT = guests IN-HOUSE today (most glitches are live stays);
+      // ?scope=all searches past/upcoming too. Inquiries / canceled / declined (never booked)
+      // are ALWAYS excluded — only real stays attach to glitches.
+      const scope = str(req.nextUrl.searchParams.get('scope')) === 'all' ? 'all' : 'active'
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
       const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city')
       const lmap: Record<string, { name: string; market: string }> = {}
       for (const l of (lRows || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
-      const { data: rows, error } = await db.from('guesty_reservations')
+      let qy = db.from('guesty_reservations')
         .select('id,listing_id,guest_name,guest_phone,guest_email,notes,check_in,check_out,status,source,confirmation_code,total:raw->money->>hostPayout,fare:raw->money->>fareAccommodationAdjusted,cleaning:raw->money->>fareCleaning')
         .ilike('guest_name', '%' + guest + '%')
+        .in('status', ['confirmed', 'closed'])
+      if (scope === 'active') qy = qy.lte('check_in', today).gte('check_out', today)
+      const { data: rows, error } = await qy
         .order('check_in', { ascending: false })
         .limit(12)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
@@ -55,7 +62,7 @@ export async function GET(req: NextRequest) {
           guestyUrl: 'https://app.guesty.com/reservations/' + String(r.id) + '/summary',
         }
       })
-      return NextResponse.json({ ok: true, matches })
+      return NextResponse.json({ ok: true, scope, today, matches })
     }
 
     const { data: rows, error } = await db.from('glitches').select('*').order('created_at', { ascending: false }).limit(500)
