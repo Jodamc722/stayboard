@@ -186,7 +186,7 @@ export default async function ChannelsPage() {
     <Shell>
       <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Network size={13} /> Distribution</p>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Network size={13} /> Money</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Channels</h1>
           <p className="text-sm text-muted mt-1">Every OTA we sell on, scored and ranked from the booking <span className="font-medium text-ink">source</span> on each reservation. Revenue, volume, ADR, cancellation and (where we have it) review health — folded into one performance score.</p>
         </div>
