@@ -84,7 +84,12 @@ export async function POST(req: NextRequest) {
       // from task 159116755) so pushed tasks carry the template's checklist/settings.
       const GLITCH_TEMPLATE_ID = 356707
       const payload: Record<string, any> = { template_id: GLITCH_TEMPLATE_ID, name: title, type_department: deptFor(category), type_priority: 'urgent', scheduled_date: ymd(new Date()), description: lines.join('\n') }
-      if (g.listing_id) {
+      // Optional BUILDING-level property override picked in the app (e.g. "Rustic Exterior"
+      // for common-area glitches). Falls back to the glitch's unit listing.
+      const overrideHome = Number(b.homeId)
+      if (Number.isFinite(overrideHome) && overrideHome > 0) {
+        payload.home_id = overrideHome
+      } else if (g.listing_id) {
         const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', String(g.listing_id)).limit(1)
         const homeId = Number(((props || [])[0] || {}).home_id)
         if (Number.isFinite(homeId)) payload.home_id = homeId
@@ -101,7 +106,7 @@ export async function POST(req: NextRequest) {
       // optional assignee picked at push time
       const ids = (Array.isArray(b.assigneeIds) ? b.assigneeIds : []).map((x: any) => Number(x)).filter((x: any) => Number.isFinite(x))
       if (ids.length) { try { await updateBreezewayTask(taskId, { assignments: ids }) } catch { /* assign best-effort */ } }
-      const { error } = await db.from('glitches').update({ breezeway_task_id: taskId, status: g.status === 'pool' ? 'ops' : g.status, history: stamp('pushed_to_breezeway', { taskId }), updated_at: new Date().toISOString() }).eq('id', id)
+      const { error } = await db.from('glitches').update({ breezeway_task_id: taskId, status: g.status === 'pool' ? 'ops' : g.status, history: stamp('pushed_to_breezeway', Number.isFinite(overrideHome) && overrideHome > 0 ? { taskId, homeId: overrideHome, property: str(b.homeName) || undefined } : { taskId }), updated_at: new Date().toISOString() }).eq('id', id)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true, taskId, reportUrl: r.data.report_url || null })
     }
