@@ -57,6 +57,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
   const [q, setQ] = useState('')
   const [bld, setBld] = useState('all')
   const [mkt, setMkt] = useState('all')
+  const [own, setOwn] = useState('all')
   const [onlyFlagged, setOnlyFlagged] = useState(false)
   const [sortKey, setSortKey] = useState('rev')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -78,6 +79,12 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     return s.sort()
   }, [d.units])
 
+  const owners = useMemo(() => {
+    const s: string[] = []
+    for (const u of d.units) if (s.indexOf(u.owner) < 0) s.push(u.owner)
+    return s.sort()
+  }, [d.units])
+
   const flagged = useMemo(() => d.units.filter(u => u.flags.length >= 2).sort((a, b) => b.flags.length - a.flags.length || a.total - b.total), [d.units])
   const vacant = useMemo(() => d.units.filter(u => u.nightsSold === 0), [d.units])
 
@@ -86,9 +93,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     if (q.trim()) { const t = q.trim().toLowerCase(); r = r.filter(u => u.name.toLowerCase().includes(t) || u.building.toLowerCase().includes(t)) }
     if (bld !== 'all') r = r.filter(u => u.building === bld)
     if (mkt !== 'all') r = r.filter(u => u.market === mkt)
+    if (own !== 'all') r = r.filter(u => u.owner === own)
     if (onlyFlagged) r = r.filter(u => u.flags.length >= 2)
     return r
-  }, [d.units, q, bld, mkt, onlyFlagged])
+  }, [d.units, q, bld, mkt, own, onlyFlagged])
 
   type BRow = UnitRow & { unitCount: number }
   const bRows: BRow[] = useMemo(() => {
@@ -112,6 +120,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     const val = (u: UnitRow): number | string => {
       if (sortKey === 'name') return u.name.toLowerCase()
       if (sortKey === 'building') return u.building.toLowerCase()
+      if (sortKey === 'owner') return u.owner.toLowerCase()
       if (sortKey === 'occ') return u.occ
       if (sortKey === 'nights') return u.nightsSold
       if (sortKey === 'adr') return u.nightsSold > 0 ? lensOf(u, lens) / u.nightsSold : 0
@@ -319,6 +328,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
             <option value="Broward">Broward</option>
             <option value="North">North</option>
           </select>
+          <select value={own} onChange={e => setOwn(e.target.value)} className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink focus:outline-none max-w-[180px]">
+            <option value="all">All owners</option>
+            {owners.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
           <button onClick={() => setOnlyFlagged(v => !v)}
             className={`text-[12px] font-medium rounded-lg px-2.5 py-1.5 border inline-flex items-center gap-1 ${onlyFlagged ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-line text-muted hover:text-ink'}`}>
             <AlertTriangle size={12} /> Struggling only
@@ -338,6 +351,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
               <tr>
                 {th('name', view === 'units' ? 'Unit' : 'Building')}
                 {view === 'units' && th('building', 'Building')}
+                {view === 'units' && th('owner', 'Owner')}
                 {th('occ', 'Occ', true)}
                 {th('nights', 'Nights', true)}
                 {th('adr', 'ADR', true)}
@@ -363,6 +377,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                   <tr key={u.id} className={`border-t border-line/70 hover:bg-app/40 ${struggling ? 'bg-amber-50/40' : ''}`}>
                     <td className="px-2.5 py-2 font-medium text-ink whitespace-nowrap max-w-[220px] truncate">{u.name}{view === 'buildings' && <span className="text-muted font-normal"> · {(u as any).unitCount} units</span>}</td>
                     {view === 'units' && <td className="px-2.5 py-2 text-muted whitespace-nowrap">{u.building}</td>}
+                    {view === 'units' && <td className="px-2.5 py-2 text-muted whitespace-nowrap max-w-[160px] truncate">{u.owner}</td>}
                     <td className={`px-2.5 py-2 text-right tabular-nums font-semibold ${u.occ < 0.5 ? 'text-amber-700' : 'text-ink'}`}>{pct(u.occ)}</td>
                     <td className="px-2.5 py-2 text-right tabular-nums text-muted">{u.nightsSold}</td>
                     <td className="px-2.5 py-2 text-right tabular-nums text-ink">{uAdr > 0 ? fmtExact(uAdr) : '—'}</td>
