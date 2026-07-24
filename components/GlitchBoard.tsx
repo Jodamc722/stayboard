@@ -12,7 +12,8 @@ type Glitch = {
   reservation_id: string | null; guest_name: string | null; guest_phone: string | null
   channel: string | null; check_in: string | null; check_out: string | null
   reservation_total: number | null; incident_date: string | null; overview: string | null
-  recovery_cost: number | null; breezeway_task_id: string | null; photos: string[] | null
+  recovery_cost: number | null; refund_approved: number | null; reported_by: string | null; guest_email: string | null
+  breezeway_task_id: string | null; photos: string[] | null; task_status: string | null
   created_at: string
 }
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null }
@@ -42,6 +43,8 @@ export function GlitchBoard() {
   const [market, setMarket] = useState('all')
   const [showNew, setShowNew] = useState(false)
   const [open, setOpen] = useState<string>('')
+  const [people, setPeople] = useState<{ id: number; name: string; departments: string[] }[]>([])
+  const [panel, setPanel] = useState<string>('')  // '<id>:edit' | '<id>:push'
 
   const load = useCallback(async () => {
     try {
@@ -53,6 +56,7 @@ export function GlitchBoard() {
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
 
   const act = async (id: string, body: Record<string, any>, confirmMsg?: string) => {
     if (confirmMsg && !window.confirm(confirmMsg)) return
@@ -95,12 +99,12 @@ export function GlitchBoard() {
                 <span className="text-xs font-semibold uppercase tracking-wide text-ink">{col.label}</span>
                 <span className="text-[11px] font-semibold text-muted">{cards.length}</span>
               </div>
-              <div className="p-2 space-y-2 min-h-[60px]">
+              <div className="p-2 space-y-2 min-h-[60px]" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) act(id, { action: 'move', status: col.key }) }}>
                 {cards.map(g => {
                   const ci = COLS.findIndex(c => c.key === g.status)
                   const isOpen = open === g.id
                   return (
-                    <div key={g.id} className="rounded-xl border border-line bg-white shadow-soft">
+                    <div key={g.id} draggable onDragStart={e => e.dataTransfer.setData('text/plain', g.id)} className="rounded-xl border border-line bg-white shadow-soft cursor-grab active:cursor-grabbing">
                       <button onClick={() => setOpen(isOpen ? '' : g.id)} className="w-full text-left px-3 py-2.5">
                         <div className="text-sm font-semibold text-ink leading-snug">{g.guest_name ? g.guest_name + ' · ' : ''}{g.unit || 'No unit'}</div>
                         <div className="text-xs text-muted mt-0.5 line-clamp-2">{g.overview}</div>
@@ -112,7 +116,8 @@ export function GlitchBoard() {
                           {g.incident_date && <span className="text-[9px] text-muted">{fmtShort(g.incident_date)}</span>}
                           {(g.recovery_cost || 0) > 0 && <span className="text-[9px] font-bold text-rose-700">{money(g.recovery_cost)}</span>}
                           {(g.photos || []).length > 0 && <span className="text-[9px] text-muted inline-flex items-center gap-0.5"><Camera size={9} />{(g.photos || []).length}</span>}
-                          {g.breezeway_task_id && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">BZ task</span>}
+                          {g.breezeway_task_id && <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200')}>{g.task_status === 'completed' ? 'Task completed' : g.task_status === 'in_progress' ? 'Task in progress' : 'Task not started'}</span>}
+                          {(g.refund_approved || 0) > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refund {money(g.refund_approved)}</span>}
                         </div>
                       </button>
                       {isOpen && (
@@ -126,11 +131,14 @@ export function GlitchBoard() {
                             {ci < COLS.length - 1 && <button onClick={() => act(g.id, { action: 'move', status: COLS[ci + 1].key })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-ink bg-ink text-white">{COLS[ci + 1].label} &rarr;</button>}
                           </div>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {!g.breezeway_task_id && <button onClick={() => act(g.id, { action: 'push' }, 'Create a Breezeway task for operations on ' + (g.unit || 'this unit') + '?')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100">Push to Breezeway</button>}
+                            {!g.breezeway_task_id && <button onClick={() => setPanel(panel === g.id + ':push' ? '' : g.id + ':push')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100">Push to Breezeway</button>}
+                            <button onClick={() => setPanel(panel === g.id + ':edit' ? '' : g.id + ':edit')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Edit</button>
                             {g.breezeway_task_id && <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-brand-600 hover:underline">Task {g.breezeway_task_id}</a>}
                             {g.breezeway_task_id && <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Check status</button>}
                             <button onClick={() => act(g.id, { action: 'delete' }, 'Delete this glitch record? (The Breezeway task, if any, stays.)')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-muted hover:text-rose-700 hover:border-rose-300">Delete</button>
                           </div>
+                          {panel === g.id + ':push' && <PushPanel g={g} people={people} onDone={() => { setPanel(''); load() }} act={act} />}
+                          {panel === g.id + ':edit' && <EditGlitch g={g} onDone={() => { setPanel(''); load() }} />}
                         </div>
                       )}
                     </div>
@@ -159,6 +167,8 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
   const [photos, setPhotos] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [reportedBy, setReportedBy] = useState('')
+  const [guestEmail, setGuestEmail] = useState('')
 
   const search = async () => {
     if (!q.trim()) return
@@ -190,7 +200,7 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     setBusy(true); setErr('')
     try {
       const body: Record<string, any> = {
-        glitchType, category, incidentDate, overview, recoveryCost: recovery, photos,
+        glitchType, category, incidentDate, overview, recoveryCost: recovery, photos, reportedBy, guestEmail,
       }
       if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total })
       const r = await fetch('/api/glitches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -238,17 +248,92 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
       )}
       <div className="flex gap-2 flex-wrap items-center mb-2">
         <select value={glitchType} onChange={e => setGlitchType(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-2 bg-white">{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
-        <select value={category} onChange={e => setCategory(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-2 bg-white"><option value="">Category…</option>{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
-        <label className="text-sm text-muted inline-flex items-center gap-1.5">Incident date <input type="date" value={incidentDate} onChange={e => setIncidentDate(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white" /></label>
+        <select value={category} onChange={e => setCategory(e.target.value)} className={'text-sm border rounded-lg px-2 py-2 bg-white ' + (category ? 'border-line' : 'border-amber-300')}><option value="">Category * …</option>{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
+        <label className="text-sm text-muted inline-flex items-center gap-1.5">Incident date * <input type="date" value={incidentDate} onChange={e => setIncidentDate(e.target.value)} className={'text-sm border rounded-lg px-2 py-1.5 bg-white ' + (incidentDate ? 'border-line' : 'border-amber-300')} /></label>
         <label className="text-sm text-muted inline-flex items-center gap-1.5">Recovery $ <input value={recovery} onChange={e => setRecovery(e.target.value)} placeholder="0" className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-20" /></label>
       </div>
-      <textarea value={overview} onChange={e => setOverview(e.target.value)} rows={3} placeholder="What happened? (overview the team + Breezeway will see)" className="w-full text-sm border border-line rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+      <div className="flex gap-2 flex-wrap items-center mb-2">
+        <input value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="Who called / reported (e.g. CCS, Amna)" className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-64" />
+        <input value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="Guest email (optional)" className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-64" />
+      </div>
+      <textarea value={overview} onChange={e => setOverview(e.target.value)} rows={3} placeholder="What happened? * (overview the team + Breezeway will see)" className="w-full text-sm border border-line rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
       <div className="flex items-center gap-2 flex-wrap mt-2">
         <label className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line cursor-pointer hover:bg-app"><Camera size={13} /> Add photo<input type="file" accept="image/*" multiple className="hidden" onChange={e => { const fs = Array.from(e.target.files || []); fs.forEach(addPhoto); e.currentTarget.value = '' }} /></label>
         {photos.map((u, i) => <span key={i} className="relative inline-block"><img src={u} alt="" className="w-10 h-10 object-cover rounded border border-line" /><button onClick={() => setPhotos(photos.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-0.5"><X size={9} /></button></span>)}
-        <button onClick={create} disabled={busy || !overview.trim()} className="ml-auto text-sm font-medium px-4 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating…' : 'Create glitch'}</button>
+        <button onClick={create} disabled={busy || !overview.trim() || !category || !incidentDate} className="ml-auto text-sm font-medium px-4 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating…' : 'Create glitch'}</button>
       </div>
       {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
+    </div>
+  )
+}
+
+
+// Push panel — issue text uses the Breezeway template naming ("Guest Reported / Glitch - <issue>")
+// and an assignee can be picked right here. Pushes are URGENT: guest glitches are priority field issues.
+function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number; name: string; departments: string[] }[]; onDone: () => void; act: (id: string, body: Record<string, any>, c?: string) => Promise<void> }) {
+  const [issue, setIssue] = useState((g.overview || '').split('\n')[0].slice(0, 70))
+  const [assignee, setAssignee] = useState('')
+  const [busy, setBusy] = useState(false)
+  const doPush = async () => {
+    setBusy(true)
+    const nm = assignee.trim().replace(/\s*\([^)]*\)\s*$/, '')
+    const p = people.find(x => x.name === nm)
+    await act(g.id, { action: 'push', issue: issue.trim(), assigneeIds: p ? [p.id] : [] })
+    setBusy(false); onDone()
+  }
+  return (
+    <div className="mt-1.5 rounded-lg border border-violet-200 bg-violet-50/50 p-2 space-y-1.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">Push to Breezeway (urgent)</div>
+      <div className="text-[11px] text-muted">Task: <span className="text-ink">Guest Reported / Glitch - {issue || '…'}</span></div>
+      <input value={issue} onChange={e => setIssue(e.target.value)} placeholder="Short issue (e.g. Hot water issue.)" className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
+      <input list="glitch-board-ppl" value={assignee} onChange={e => setAssignee(e.target.value)} placeholder="Assignee (optional)…" className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
+      <datalist id="glitch-board-ppl">{people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}</datalist>
+      <button onClick={doPush} disabled={busy || !issue.trim()} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-violet-600 text-white disabled:opacity-40">{busy ? 'Pushing…' : 'Create task'}</button>
+    </div>
+  )
+}
+
+// Edit panel — every field editable after creation.
+function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
+  const [f, setF] = useState({
+    glitchType: g.glitch_type || TYPES[0], category: g.category || '', incidentDate: g.incident_date || '',
+    overview: g.overview || '', recoveryCost: String(g.recovery_cost || ''), refundApproved: String(g.refund_approved || ''),
+    reportedBy: g.reported_by || '', guestName: g.guest_name || '', guestPhone: g.guest_phone || '', guestEmail: g.guest_email || '', unit: g.unit || '', channel: g.channel || '',
+  })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const set = (k: string, v: string) => setF(prev => ({ ...prev, [k]: v }))
+  const save = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'update', ...f }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Save failed'); setBusy(false); return }
+      onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="mt-1.5 rounded-lg border border-line bg-app/60 p-2 space-y-1.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Edit glitch</div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <select value={f.glitchType} onChange={e => set('glitchType', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white">{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
+        <select value={f.category} onChange={e => set('category', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white"><option value="">Category…</option>{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
+        <input type="date" value={f.incidentDate} onChange={e => set('incidentDate', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.unit} onChange={e => set('unit', e.target.value)} placeholder="Unit" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.guestName} onChange={e => set('guestName', e.target.value)} placeholder="Guest name" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.guestPhone} onChange={e => set('guestPhone', e.target.value)} placeholder="Guest phone" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.guestEmail} onChange={e => set('guestEmail', e.target.value)} placeholder="Guest email" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.channel} onChange={e => set('channel', e.target.value)} placeholder="Channel (Airbnb…)" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.recoveryCost} onChange={e => set('recoveryCost', e.target.value)} placeholder="Recovery cost $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.refundApproved} onChange={e => set('refundApproved', e.target.value)} placeholder="Refund approved $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
+        <input value={f.reportedBy} onChange={e => set('reportedBy', e.target.value)} placeholder="Reported by" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white col-span-2" />
+      </div>
+      <textarea value={f.overview} onChange={e => set('overview', e.target.value)} rows={3} className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
+      <div className="flex items-center gap-1.5">
+        <button onClick={save} disabled={busy} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
+        {err && <span className="text-[10px] text-rose-700">{err}</span>}
+      </div>
     </div>
   )
 }
