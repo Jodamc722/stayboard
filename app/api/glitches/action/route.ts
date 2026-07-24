@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createBreezewayTask, retrieveBreezewayTask, normalizeTaskStatus, breezewayConfigured } from '@/lib/breezeway'
+import { createBreezewayTask, retrieveBreezewayTask, updateBreezewayTask, normalizeTaskStatus, breezewayConfigured } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -49,6 +49,13 @@ export async function POST(req: NextRequest) {
       if (b.glitchType !== undefined) patch.glitch_type = str(b.glitchType) || null
       if (b.recoveryCost !== undefined) patch.recovery_cost = num(b.recoveryCost) || 0
       if (b.incidentDate !== undefined) patch.incident_date = str(b.incidentDate) || null
+      if (b.refundApproved !== undefined) patch.refund_approved = num(b.refundApproved) || 0
+      if (b.reportedBy !== undefined) patch.reported_by = str(b.reportedBy) || null
+      if (b.guestEmail !== undefined) patch.guest_email = str(b.guestEmail) || null
+      if (b.unit !== undefined) patch.unit = str(b.unit) || null
+      if (b.guestName !== undefined) patch.guest_name = str(b.guestName) || null
+      if (b.guestPhone !== undefined) patch.guest_phone = str(b.guestPhone) || null
+      if (b.channel !== undefined) patch.channel = str(b.channel) || null
       if (Array.isArray(b.photos)) patch.photos = b.photos.filter((x: any) => typeof x === 'string').slice(0, 20)
       patch.history = stamp('updated')
       patch.updated_at = new Date().toISOString()
@@ -61,7 +68,10 @@ export async function POST(req: NextRequest) {
       if (!breezewayConfigured()) return NextResponse.json({ ok: false, error: 'Breezeway not configured.' }, { status: 503 })
       if (g.breezeway_task_id) return NextResponse.json({ ok: false, error: 'Already pushed (task ' + g.breezeway_task_id + ').' }, { status: 400 })
       const category = str(g.category) || 'Other'
-      const title = 'Glitch: ' + category + (g.unit ? ' - ' + g.unit : '')
+      // Breezeway template naming: "Guest Reported / Glitch - <issue>" (matches the built template
+      // and the Today-in-Ops Glitches tab matcher, so pushed tasks show up there automatically).
+      const issue = str(b.issue).trim() || str(g.overview).split('\n')[0].slice(0, 70) || category
+      const title = 'Guest Reported / Glitch - ' + issue
       const lines = [
         'GUEST-REPORTED GLITCH (from the StayBoard glitch board)',
         g.guest_name ? 'Guest: ' + g.guest_name + (g.guest_phone ? ' · ' + g.guest_phone : '') : '',
@@ -70,7 +80,7 @@ export async function POST(req: NextRequest) {
         '',
         str(g.overview),
       ].filter(x => x !== '')
-      const payload: Record<string, any> = { name: title, type_department: deptFor(category), type_priority: 'high', scheduled_date: ymd(new Date()), description: lines.join('\n') }
+      const payload: Record<string, any> = { name: title, type_department: deptFor(category), type_priority: 'urgent', scheduled_date: ymd(new Date()), description: lines.join('\n') }
       if (g.listing_id) {
         const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', String(g.listing_id)).limit(1)
         const homeId = Number(((props || [])[0] || {}).home_id)
@@ -80,6 +90,9 @@ export async function POST(req: NextRequest) {
       const r = await createBreezewayTask(payload)
       if (!r.ok || !r.data?.id) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
       const taskId = String(r.data.id)
+      // optional assignee picked at push time
+      const ids = (Array.isArray(b.assigneeIds) ? b.assigneeIds : []).map((x: any) => Number(x)).filter((x: any) => Number.isFinite(x))
+      if (ids.length) { try { await updateBreezewayTask(taskId, { assignments: ids }) } catch { /* assign best-effort */ } }
       const { error } = await db.from('glitches').update({ breezeway_task_id: taskId, status: g.status === 'pool' ? 'ops' : g.status, history: stamp('pushed_to_breezeway', { taskId }), updated_at: new Date().toISOString() }).eq('id', id)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true, taskId, reportUrl: r.data.report_url || null })
