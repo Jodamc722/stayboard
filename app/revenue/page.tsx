@@ -42,20 +42,34 @@ function addDays(iso: string, d: number): string {
 
 type RawResv = {
   listing_id: string; check_in: string; check_out: string; nights: number
-  source: string; money_total: number; money: any
+  source: string; money_total: number; fare: number; grossFare: number; cleaningFee: number; items: any[]
 }
 
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
+
+// Pull confirmed reservations overlapping [from, toExcl). ROBUST: checks the Supabase error on
+// every page, retries transient failures, and THROWS if a page keeps failing - so a bad pull
+// can never be silently cached as "$0 revenue". Selects flat money fields + invoiceItems only
+// (much lighter than the whole raw->money object).
 async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv[]> {
   let all: any[] = []
   for (let i = 0; i < 30; i++) {
-    const { data } = await sb
-      .from('guesty_reservations')
-      .select('listing_id, check_in, check_out, nights, status, source, money_total, money:raw->money')
-      .in('status', CONFIRMED)
-      .gt('check_out', from)
-      .lt('check_in', toExcl)
-      .range(i * 1000, i * 1000 + 999)
-    if (!data || data.length === 0) break
+    let data: any[] | null = null
+    let lastErr: any = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await sb
+        .from('guesty_reservations')
+        .select('listing_id, check_in, check_out, nights, status, source, money_total, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted, cleaningFee:raw->money->>fareCleaning, items:raw->money->invoiceItems')
+        .in('status', CONFIRMED)
+        .gt('check_out', from)
+        .lt('check_in', toExcl)
+        .range(i * 1000, i * 1000 + 999)
+      if (!res.error) { data = res.data || []; break }
+      lastErr = res.error
+      await sleep(500 * (attempt + 1))
+    }
+    if (data === null) throw new Error('revenue pull failed (' + from + '..' + toExcl + ' page ' + i + '): ' + String(lastErr && (lastErr.message || lastErr.code) || 'unknown'))
+    if (data.length === 0) break
     all = all.concat(data)
     if (data.length < 1000) break
   }
@@ -68,21 +82,20 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
       nights: Math.max(1, num(r.nights) || daysBetween(String(r.check_in).slice(0, 10), String(r.check_out).slice(0, 10))),
       source: String(r.source || 'other'),
       money_total: num(r.money_total),
-      money: (r.money && typeof r.money === 'object') ? r.money : {},
+      fare: num(r.fare), grossFare: num(r.grossFare), cleaningFee: num(r.cleaningFee),
+      items: Array.isArray(r.items) ? r.items : [],
     }))
 }
 
 // Per-reservation revenue components. netAccom = fareAccommodation (after channel/OTA host fee),
-// grossAccom = fareAccommodationAdjusted (before the fee — matches PriceLabs / guest-paid room rate).
+// grossAccom = fareAccommodationAdjusted (before the fee - matches PriceLabs / guest-paid room rate).
 type Comp = { grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number }
 function componentsOf(r: RawResv): Comp {
-  const m = r.money || {}
-  const netAccom = num(m.fareAccommodation)
-  const grossAccom = num(m.fareAccommodationAdjusted) || netAccom
-  const cleaning = num(m.fareCleaning)
+  const netAccom = r.fare
+  const grossAccom = r.grossFare || netAccom
+  const cleaning = r.cleaningFee
   let parking = 0, other = 0
-  const items = Array.isArray(m.invoiceItems) ? m.invoiceItems : []
-  for (const it of items) {
+  for (const it of r.items) {
     const t = String((it && (it.title || it.name)) || '').trim()
     if (!t || STD_ITEM_RE.test(t)) continue
     const amt = num(it && it.amount)
@@ -419,7 +432,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       },
       channels, buildingAvg, units, recs,
     }
-  }, ['revenue-center-v4'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v5'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 
