@@ -8,14 +8,14 @@ import { GlitchBoard } from '@/components/GlitchBoard'
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react'
 
 type Person = { id: number; name: string; departments: string[] }
-type Glitch = { id: string; unit: string; market: string; issue: string; rawName: string; status: string; done: boolean; resolvedDate: string | null; scheduledDate: string | null; reportedDate: string | null; ageDays: number | null; running: boolean; unassigned: boolean; assignees: string[]; reportUrl: string | null }
+type Glitch = { id: string; unit: string; market: string; building?: string | null; issue: string; rawName: string; status: string; done: boolean; resolvedDate: string | null; scheduledDate: string | null; reportedDate: string | null; ageDays: number | null; running: boolean; unassigned: boolean; assignees: string[]; reportUrl: string | null }
 type Data = { ok: boolean; today: string; count: number; unassigned: number; glitches: Glitch[]; error?: string }
 
 function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 
 export default function GlitchesPage() {
-  const [tab, setTab] = useState<'board' | 'history'>('board')
+  const [tab, setTab] = useState<'board' | 'history' | 'patterns'>('board')
   const [data, setData] = useState<Data | null>(null)
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -76,10 +76,11 @@ export default function GlitchesPage() {
       <div className="flex items-center gap-2 flex-wrap mb-4">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
           <button onClick={() => setTab('board')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'board' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Board</button>
-          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>History &amp; insights</button>
+          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>History</button>
+          <button onClick={() => setTab('patterns')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'patterns' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Patterns</button>
         </span>
-        {tab === 'board' && <span className="text-xs text-muted">Escalation board &mdash; every Breezeway guest-reported task ever is under History &amp; insights.</span>}
-        {tab !== 'board' && (<>
+        {tab === 'board' && <span className="text-xs text-muted">Escalation board &mdash; every Breezeway guest-reported task ever is under History; recurring issues live in Patterns.</span>}
+        {tab === 'history' && (<>
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
@@ -95,7 +96,9 @@ export default function GlitchesPage() {
       {tab !== 'board' && loading && !data && <div className="text-sm text-muted py-10 text-center">Loading glitches…</div>}
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
 
-      {tab !== 'board' && data && (
+      {tab === 'patterns' && data && <PatternsView all={all} board={board} onDrill={(u: string) => { setTab('history'); setQ(u) }} />}
+
+      {tab === 'history' && data && (
         <>
           <div className={'rounded-2xl border p-4 mb-4 flex items-center gap-2 flex-wrap ' + (openCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-line bg-white')}>
             <AlertTriangle size={16} className={openCount > 0 ? 'text-rose-700' : 'text-muted'} />
@@ -154,5 +157,146 @@ export default function GlitchesPage() {
         </>
       )}
     </Shell>
+  )
+}
+
+
+// PATTERNS — the learning layer: recurring issues by theme, building and unit, plus the
+// monthly trend, computed from the full Breezeway guest-reported history (and board $ once logged).
+const THEMES: { key: string; label: string; re: RegExp }[] = [
+  { key: 'ac', label: 'A/C & cooling', re: /\ba\/?c\b|air ?cond|cooling|not cooling|thermostat/i },
+  { key: 'hotwater', label: 'Hot water / heater', re: /hot ?water|water ?heater|no ?heat/i },
+  { key: 'plumbing', label: 'Plumbing & leaks', re: /leak|plumb|toilet|drain|clog|sink|shower|faucet|flood/i },
+  { key: 'appliance', label: 'Appliances', re: /washer|dryer|dishwasher|fridge|refrigerator|freezer|oven|stove|microwave|ice ?maker/i },
+  { key: 'clean', label: 'Cleanliness', re: /clean|dirty|hair|stain|smell|odor|trash|linen|towel/i },
+  { key: 'pest', label: 'Pests', re: /roach|pest|bug|ant\b|rodent|mice|mouse|bed ?bug/i },
+  { key: 'access', label: 'Locks & access', re: /lock|code|key\b|door|access|get ?in|locked ?out/i },
+  { key: 'electrical', label: 'Electrical & lights', re: /power|outlet|light|breaker|electric|bulb/i },
+  { key: 'wifi', label: 'Wifi / TV', re: /wi-?fi|internet|tv\b|television|remote|cable/i },
+  { key: 'furniture', label: 'Furniture & beds', re: /bed\b|mattress|sofa|couch|chair|table|furniture|blind|curtain|screen/i },
+]
+function buildingOf(g: Glitch): string {
+  if (g.building) return g.building
+  const head = (g.unit || '').split(' - ')[0].trim()
+  const stripped = head.replace(/[\s-]*\d+[\d\/-]*$/, '').trim()
+  return stripped || head || 'Unknown'
+}
+function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDrill: (u: string) => void }) {
+  const stats = useMemo(() => {
+    const open = all.filter(g => !g.done)
+    const now = new Date()
+    const monthKey = (iso: string) => iso.slice(0, 7)
+    const months: { key: string; label: string; n: number }[] = []
+    for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push({ key: d.toISOString().slice(0, 7), label: d.toLocaleDateString('en-US', { month: 'short' }), n: 0 }) }
+    const byB: Record<string, { total: number; open: number; recent: number }> = {}
+    const byUnit: Record<string, number> = {}
+    const themeCount: Record<string, number> = {}
+    const cutoff90 = new Date(now.getTime() - 90 * 86400000).toISOString().slice(0, 10)
+    for (const g of all) {
+      const d = g.reportedDate || g.scheduledDate || ''
+      const mk = d ? monthKey(d) : ''
+      const m = months.find(x => x.key === mk); if (m) m.n++
+      const bld = buildingOf(g)
+      if (!byB[bld]) byB[bld] = { total: 0, open: 0, recent: 0 }
+      byB[bld].total++; if (!g.done) byB[bld].open++; if (d && d >= cutoff90) byB[bld].recent++
+      byUnit[g.unit] = (byUnit[g.unit] || 0) + 1
+      let matched = false
+      for (const t of THEMES) if (t.re.test(g.issue)) { themeCount[t.key] = (themeCount[t.key] || 0) + 1; matched = true }
+      if (!matched) themeCount.other = (themeCount.other || 0) + 1
+    }
+    const buildings = Object.keys(byB).map(k => ({ b: k, ...byB[k] })).sort((a, b) => b.total - a.total).slice(0, 12)
+    const units = Object.keys(byUnit).map(u => ({ u, n: byUnit[u] })).sort((a, b) => b.n - a.n).slice(0, 10)
+    const themes = THEMES.map(t => ({ label: t.label, n: themeCount[t.key] || 0 })).concat([{ label: 'Other', n: themeCount.other || 0 }]).filter(x => x.n > 0).sort((a, b) => b.n - a.n)
+    const maxM = Math.max(1, ...months.map(m => m.n))
+    const maxT = Math.max(1, ...themes.map(t => t.n))
+    return { open: open.length, months, maxM, buildings, units, themes, maxT }
+  }, [all])
+  const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
+  const rec = bg.reduce((s, g) => s + (Number(g.recovery_cost) || 0), 0)
+  const ref = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">On record</div><div className="text-2xl font-bold text-ink">{all.length}</div></div>
+        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Still open</div><div className="text-2xl font-bold text-rose-700">{stats.open}</div></div>
+        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Recovery cost (board)</div><div className="text-2xl font-bold text-ink">${Math.round(rec).toLocaleString()}</div></div>
+        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Refunds approved (board)</div><div className="text-2xl font-bold text-ink">${Math.round(ref).toLocaleString()}</div></div>
+      </div>
+
+      <div className="rounded-2xl border border-line bg-white p-4">
+        <div className="text-sm font-semibold text-ink mb-3">Glitches per month (last 12)</div>
+        <div className="flex items-end gap-1.5 h-28">
+          {stats.months.map(m => (
+            <div key={m.key} className="flex-1 flex flex-col items-center gap-1">
+              <span className="text-[10px] text-muted tabular-nums">{m.n || ''}</span>
+              <div className="w-full rounded-t bg-brand-600/80" style={{ height: Math.max(2, Math.round((m.n / stats.maxM) * 80)) + 'px' }} />
+              <span className="text-[10px] text-muted">{m.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="text-sm font-semibold text-ink mb-2">Recurring issue themes</div>
+          <div className="space-y-1.5">
+            {stats.themes.map(t => (
+              <div key={t.label} className="flex items-center gap-2 text-[12px]">
+                <span className="w-36 shrink-0 text-muted">{t.label}</span>
+                <div className="flex-1 h-3 rounded bg-app overflow-hidden"><div className="h-full bg-amber-500/70" style={{ width: Math.max(2, Math.round((t.n / stats.maxT) * 100)) + '%' }} /></div>
+                <span className="w-8 text-right tabular-nums font-semibold text-ink">{t.n}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted mt-2">Keyword match on the task issue text; one glitch can hit multiple themes.</div>
+        </div>
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="text-sm font-semibold text-ink mb-2">Repeat-offender units</div>
+          <div className="divide-y divide-line">
+            {stats.units.map(x => (
+              <button key={x.u} onClick={() => onDrill(x.u)} className="w-full flex items-center gap-2 py-1.5 text-left text-[12px] hover:bg-app/50 rounded px-1">
+                <span className="flex-1 text-ink">{x.u}</span>
+                <span className="tabular-nums font-semibold text-rose-700">×{x.n}</span>
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted mt-2">Click a unit to see its full history.</div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-line bg-white p-4">
+        <div className="text-sm font-semibold text-ink mb-2">By building</div>
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 gap-y-1 text-[12px]">
+          <div className="text-[10px] uppercase tracking-wide text-muted">Building</div>
+          <div className="text-[10px] uppercase tracking-wide text-muted text-right">Total</div>
+          <div className="text-[10px] uppercase tracking-wide text-muted text-right">Open</div>
+          <div className="text-[10px] uppercase tracking-wide text-muted text-right">Last 90d</div>
+          {stats.buildings.map(b => (
+            <FragmentRow key={b.b} b={b} />
+          ))}
+        </div>
+      </div>
+
+      {bg.length > 0 && (
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="text-sm font-semibold text-ink mb-2">Board categories</div>
+          <div className="flex flex-wrap gap-1.5 text-[11px]">
+            {Object.entries(bg.reduce((m: Record<string, number>, g: any) => { if (g.category) m[g.category] = (m[g.category] || 0) + 1; return m }, {})).sort((a: any, b: any) => b[1] - a[1]).map(([k, n]: any) => (
+              <span key={k} className="px-2 py-1 rounded-full border border-line bg-app text-muted">{k.replace('Maintenance - ', '')} <span className="font-semibold text-ink">{n}</span></span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+function FragmentRow({ b }: { b: { b: string; total: number; open: number; recent: number } }) {
+  return (
+    <>
+      <div className="text-ink">{b.b}</div>
+      <div className="text-right tabular-nums font-semibold text-ink">{b.total}</div>
+      <div className={'text-right tabular-nums font-semibold ' + (b.open > 0 ? 'text-rose-700' : 'text-muted')}>{b.open}</div>
+      <div className="text-right tabular-nums text-muted">{b.recent}</div>
+    </>
   )
 }
