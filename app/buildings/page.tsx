@@ -92,7 +92,7 @@ export default async function PortfolioPage() {
       <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Building2 size={13} /> Portfolio</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Portfolio</h1>
+          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Properties</h1>
           <p className="text-sm text-muted mt-1">
             {buildings.length} buildings · {totalUnits} units
             {portfolioAvg != null && <> · portfolio Optimize Score <b className="text-ink">{portfolioAvg}</b></>}
