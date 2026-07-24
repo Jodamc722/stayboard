@@ -75,7 +75,7 @@ export default async function CleanersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 inline-flex items-center gap-1.5"><Sparkles size={13} /> Performance</div>
+        <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 inline-flex items-center gap-1.5"><Sparkles size={13} /> Team</div>
         <h1 className="text-3xl font-extrabold text-ink mt-1">Cleaner KPIs</h1>
         <p className="text-sm text-muted mt-1">Rolling 90 days from live Breezeway tasks (since {since}). Multi-assigned cleans count for every person on the task.</p>
       </div>
