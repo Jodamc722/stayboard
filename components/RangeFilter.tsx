@@ -12,8 +12,15 @@ export function RangeFilter({ from, to }: { from: string; to: string }) {
     router.push(`${pathname}?from=${f}&to=${t}`)
   }
   const iso = (d: Date) => d.toISOString().slice(0, 10)
-  function preset(kind: 'mtd' | 'd30' | 'd90' | 'ytd') {
+  function preset(kind: 'mtd' | 'd30' | 'd90' | 'ytd' | 'nextm') {
     const now = new Date()
+    if (kind === 'nextm') {
+      // Full NEXT calendar month - forward-looking: on-the-books revenue and occupancy.
+      const f = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+      const t = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 0))
+      go(iso(f), iso(t))
+      return
+    }
     let f: Date
     if (kind === 'mtd') f = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
     else if (kind === 'ytd') f = new Date(Date.UTC(now.getUTCFullYear(), 0, 1))
@@ -21,8 +28,8 @@ export function RangeFilter({ from, to }: { from: string; to: string }) {
     go(iso(f), iso(now))
   }
 
-  const presets: { k: 'mtd' | 'd30' | 'd90' | 'ytd'; label: string }[] = [
-    { k: 'd30', label: '30d' }, { k: 'd90', label: '90d' }, { k: 'mtd', label: 'Month' }, { k: 'ytd', label: 'YTD' },
+  const presets: { k: 'mtd' | 'd30' | 'd90' | 'ytd' | 'nextm'; label: string }[] = [
+    { k: 'mtd', label: 'MTD' }, { k: 'nextm', label: 'Next month' }, { k: 'ytd', label: 'YTD' }, { k: 'd30', label: '30d' }, { k: 'd90', label: '90d' },
   ]
 
   return (
