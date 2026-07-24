@@ -13,19 +13,23 @@ import {
   Minus, Users, ClipboardCheck, X, Filter
 } from 'lucide-react'
 
-type Lens = 'total' | 'gross' | 'net' | 'cleaning' | 'parking' | 'other'
+type Lens = 'total' | 'gross' | 'net' | 'cleaning' | 'parking' | 'other' | 'commission' | 'payout'
 const LENSES: { key: Lens; label: string; note: string }[] = [
   { key: 'total', label: 'Total revenue', note: 'Accommodation + cleaning + parking + other fees' },
-  { key: 'gross', label: 'Gross accom', note: 'Room revenue before channel fees (guest-paid)' },
-  { key: 'net', label: 'Net accom', note: 'Room revenue after channel/OTA fees' },
+  { key: 'gross', label: 'Gross accom', note: 'Room revenue including OTA fees (guest-paid)' },
+  { key: 'net', label: 'Net accom', note: 'Room revenue minus actual OTA fees — owner-statement basis' },
+  { key: 'commission', label: 'Our commission', note: 'PMC commission per reservation (each owner’s business-model %)' },
+  { key: 'payout', label: 'Owner payout', note: 'Net accom minus our commission · before expenses & fee reimbursements' },
   { key: 'cleaning', label: 'Cleaning fees', note: 'Cleaning fees collected (Expedia bundles split out)' },
   { key: 'parking', label: 'Parking fees', note: 'Parking add-ons from reservation invoices' },
   { key: 'other', label: 'Other fees', note: 'Pets, early check-in, resort & misc add-on fees' },
 ]
 
-function lensOf(u: { grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; total: number }, l: Lens): number {
+function lensOf(u: { grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; total: number }, l: Lens): number {
   if (l === 'gross') return u.grossAccom
   if (l === 'net') return u.netAccom
+  if (l === 'commission') return u.commission
+  if (l === 'payout') return u.netAccom - u.commission
   if (l === 'cleaning') return u.cleaning
   if (l === 'parking') return u.parking
   if (l === 'other') return u.other
@@ -111,16 +115,16 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
 
   // ---- KPIs computed from the filtered scope ----
   const k = useMemo(() => {
-    let nights = 0, gross = 0, net = 0, cleaning = 0, parking = 0, other = 0, total = 0, prevTotal = 0, prevNights = 0, otbN = 0
+    let nights = 0, gross = 0, net = 0, cleaning = 0, parking = 0, other = 0, commission = 0, total = 0, prevTotal = 0, prevNights = 0, otbN = 0
     for (const u of filtered) {
-      nights += u.nightsSold; gross += u.grossAccom; net += u.netAccom; cleaning += u.cleaning
+      nights += u.nightsSold; gross += u.grossAccom; net += u.netAccom; cleaning += u.cleaning; commission += u.commission
       parking += u.parking; other += u.other; total += u.total
       prevTotal += u.prevTotal; prevNights += u.prevOcc * d.days; otbN += u.otb30 * 30
     }
     const avail = filtered.length * d.days
-    const lensRev = lens === 'gross' ? gross : lens === 'net' ? net : lens === 'cleaning' ? cleaning : lens === 'parking' ? parking : lens === 'other' ? other : total
+    const lensRev = lens === 'gross' ? gross : lens === 'net' ? net : lens === 'commission' ? commission : lens === 'payout' ? net - commission : lens === 'cleaning' ? cleaning : lens === 'parking' ? parking : lens === 'other' ? other : total
     return {
-      nights, gross, net, cleaning, parking, other, total, avail,
+      nights, gross, net, cleaning, parking, other, commission, total, avail,
       occ: avail > 0 ? nights / avail : 0,
       prevOcc: avail > 0 ? prevNights / avail : 0,
       lensRev,
@@ -143,10 +147,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     const m: Record<string, GRow> = {}
     for (const u of filtered) {
       const key = keyOf(u)
-      const g = m[key] = m[key] || { ...u, id: key, name: key, unitCount: 0, nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, total: 0, prevTotal: 0, occ: 0, prevOcc: 0, otb30: 0, flags: [] as string[] }
+      const g = m[key] = m[key] || { ...u, id: key, name: key, unitCount: 0, nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, total: 0, prevTotal: 0, occ: 0, prevOcc: 0, otb30: 0, flags: [] as string[] }
       g.unitCount += 1
       g.nightsSold += u.nightsSold; g.bookings += u.bookings
-      g.grossAccom += u.grossAccom; g.netAccom += u.netAccom; g.cleaning += u.cleaning; g.parking += u.parking; g.other += u.other
+      g.grossAccom += u.grossAccom; g.netAccom += u.netAccom; g.cleaning += u.cleaning; g.parking += u.parking; g.other += u.other; g.commission += u.commission
       g.total += u.total; g.prevTotal += u.prevTotal
       g.occ += u.occ; g.prevOcc += u.prevOcc; g.otb30 += u.otb30
       if (u.flags.length >= 2) g.flags = g.flags.concat([u.name])
@@ -171,6 +175,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
       if (sortKey === 'delta') return u.prevTotal > 0 ? (u.total - u.prevTotal) / u.prevTotal : -Infinity
       if (sortKey === 'gross') return u.grossAccom
       if (sortKey === 'net') return u.netAccom
+      if (sortKey === 'commission') return u.commission
+      if (sortKey === 'payout') return u.netAccom - u.commission
       if (sortKey === 'cleaning') return u.cleaning
       if (sortKey === 'parking') return u.parking
       if (sortKey === 'other') return u.other
@@ -274,6 +280,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
       <div className="grid grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-5">
         <Kpi small label="Gross accom" value={fmtMoney(k.gross)} Icon={DollarSign} />
         <Kpi small label="Net accom" value={fmtMoney(k.net)} Icon={Wallet} sub={`${fmtMoney(k.gross - k.net)} channel fees`} />
+        <Kpi small label="Our commission" value={fmtMoney(k.commission)} Icon={DollarSign} sub={k.net > 0 ? `${Math.round((k.commission / k.net) * 100)}% of net accom` : undefined} />
+        <Kpi small label="Owner payout" value={fmtMoney(k.net - k.commission)} Icon={Users} sub="before expenses & reimbursements" />
         <Kpi small label="Cleaning" value={fmtMoney(k.cleaning)} Icon={Sparkles} />
         <Kpi small label="Parking" value={fmtMoney(k.parking)} Icon={CarFront} />
         <Kpi small label="Other fees" value={fmtMoney(k.other)} Icon={Layers} />
@@ -422,6 +430,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                 {th('revpar', 'RevPAR', true)}
                 {showFees && th('gross', 'Gross', true)}
                 {showFees && th('net', 'Net', true)}
+                {showFees && th('commission', 'Comm', true)}
+                {showFees && th('payout', 'Payout', true)}
                 {showFees && th('cleaning', 'Cleaning', true)}
                 {showFees && th('parking', 'Parking', true)}
                 {showFees && th('other', 'Other', true)}
@@ -448,6 +458,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                     <td className="px-2.5 py-2 text-right tabular-nums text-ink">{fmtExact(uRevpar)}</td>
                     {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{fmtMoney(u.grossAccom)}</td>}
                     {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{fmtMoney(u.netAccom)}</td>}
+                    {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{fmtMoney(u.commission)}</td>}
+                    {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{fmtMoney(u.netAccom - u.commission)}</td>}
                     {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{fmtMoney(u.cleaning)}</td>}
                     {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{u.parking !== 0 ? fmtMoney(u.parking) : '—'}</td>}
                     {showFees && <td className="px-2.5 py-2 text-right tabular-nums text-muted">{u.other !== 0 ? fmtMoney(u.other) : '—'}</td>}
@@ -469,7 +481,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                 )
               })}
               {sorted.length === 0 && (
-                <tr><td colSpan={17} className="px-4 py-8 text-center text-sm text-muted italic">No listings match this scope.</td></tr>
+                <tr><td colSpan={19} className="px-4 py-8 text-center text-sm text-muted italic">No listings match this scope.</td></tr>
               )}
             </tbody>
           </table>
