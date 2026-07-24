@@ -44,7 +44,6 @@ const SECTIONS: {
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
       { to: '/orders',   label: 'Orders',   Icon: ShoppingCart },
       { to: '/requests', label: 'Requests',  Icon: ClipboardList },
-      { to: '/salato',   label: 'Salato Desk', Icon: CalendarDays },
     ],
   },
   {
