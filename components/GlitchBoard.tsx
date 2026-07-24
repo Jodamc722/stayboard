@@ -183,15 +183,27 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
   const [reportedBy, setReportedBy] = useState('')
   const [guestEmail, setGuestEmail] = useState('')
 
-  const search = async () => {
+  // DEFAULT search = guests in-house today (most glitches are live stays). "All stays"
+  // reaches past/upcoming bookings; inquiries & canceled never show (server-filtered).
+  const [scope, setScope] = useState<'active' | 'all'>('active')
+  const [searched, setSearched] = useState(false)
+  const search = async (sc?: 'active' | 'all') => {
     if (!q.trim()) return
+    const useScope = sc || scope
+    if (sc) setScope(sc)
     setSearching(true); setErr('')
     try {
-      const r = await fetch('/api/glitches?guest=' + encodeURIComponent(q.trim()), { cache: 'no-store' })
+      const r = await fetch('/api/glitches?guest=' + encodeURIComponent(q.trim()) + '&scope=' + useScope, { cache: 'no-store' })
       const j = await r.json()
-      if (!r.ok || !j.ok) { setErr(j.error || 'Search failed') } else setMatches(j.matches || [])
+      if (!r.ok || !j.ok) { setErr(j.error || 'Search failed') } else { setMatches(j.matches || []); setSearched(true) }
     } catch (e: any) { setErr(String(e?.message || e)) }
     setSearching(false)
+  }
+  const stayTag = (m: ResMatch) => {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    if (m.checkIn && m.checkIn <= today && m.checkOut && m.checkOut >= today) return { label: 'In-house', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    if (m.checkIn && m.checkIn > today) return { label: 'Upcoming', cls: 'bg-sky-50 text-sky-700 border-sky-200' }
+    return { label: 'Past stay', cls: 'bg-app text-muted border-line' }
   }
 
   const addPhoto = async (f: File) => {
@@ -237,7 +249,11 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
               <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
               <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder="Search guest name…" className="w-full text-sm border border-line rounded-lg pl-7 pr-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </span>
-            <button onClick={search} disabled={searching || !q.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{searching ? 'Searching…' : 'Find reservation'}</button>
+            <button onClick={() => search()} disabled={searching || !q.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{searching ? 'Searching…' : 'Find reservation'}</button>
+            <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shrink-0">
+              <button onClick={() => search('active')} className={'text-[12px] font-medium px-2.5 py-2 ' + (scope === 'active' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>In-house now</button>
+              <button onClick={() => search('all')} className={'text-[12px] font-medium px-2.5 py-2 ' + (scope === 'all' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>All stays</button>
+            </span>
           </div>
           {matches.length > 0 && (
             <div className="mt-2 space-y-1 max-w-xl">
@@ -245,11 +261,19 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
                 <button key={m.reservationId} onClick={() => { setRes(m); if (m.guestEmail) setGuestEmail(m.guestEmail) }} className="w-full text-left text-sm border border-line rounded-lg px-3 py-2 bg-white hover:bg-app flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-ink">{m.guestName}</span>
                   <span className="text-xs text-muted">{m.unit} · {fmtShort(m.checkIn)} &rarr; {fmtShort(m.checkOut)}{m.channel ? ' · ' + m.channel : ''}{m.total ? ' · ' + money(m.total) : ''}</span>
+                  {(() => { const t = stayTag(m); return <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + t.cls}>{t.label}</span> })()}
                   <SentimentChip s={m.sentiment} />
                 </button>
               ))}
             </div>
           )}
+          {searched && !searching && matches.length === 0 && scope === 'active' && q.trim() !== '' && (
+            <div className="mt-2 text-sm text-muted flex items-center gap-2 flex-wrap">
+              No guest in-house matches &ldquo;{q.trim()}&rdquo;.
+              <button onClick={() => search('all')} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app text-ink">Search past &amp; upcoming stays</button>
+            </div>
+          )}
+          {searched && !searching && matches.length === 0 && scope === 'all' && <div className="mt-2 text-sm text-muted">No booked reservation matches &ldquo;{q.trim()}&rdquo; (inquiries and canceled bookings never show).</div>}
           <div className="text-[11px] text-muted mt-1.5">Or skip the reservation and just describe the glitch below.</div>
         </div>
       )}
