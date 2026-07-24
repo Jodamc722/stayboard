@@ -15,7 +15,7 @@ function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 
 export default function GlitchesPage() {
-  const [tab, setTab] = useState<'board' | 'open' | 'history'>('board')
+  const [tab, setTab] = useState<'board' | 'history'>('board')
   const [data, setData] = useState<Data | null>(null)
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -27,7 +27,7 @@ export default function GlitchesPage() {
     try {
       setErr('')
       if (tab === 'board') { setLoading(false); return }
-      const r = await fetch('/api/ops-today/glitches?' + (tab === 'history' ? 'history=1' : 'all=1'), { cache: 'no-store' })
+      const r = await fetch('/api/ops-today/glitches?history=1', { cache: 'no-store' })
       const j: Data = await r.json()
       if (!r.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setData(j)
@@ -35,6 +35,9 @@ export default function GlitchesPage() {
   }, [tab])
   useEffect(() => { setLoading(true); load() }, [load])
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  // board glitches (with category + $) power the insights strip on History
+  const [board, setBoard] = useState<any>(null)
+  useEffect(() => { fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(setBoard).catch(() => {}) }, [])
 
   const assign = async (taskId: string, personId: number) => {
     try {
@@ -73,10 +76,9 @@ export default function GlitchesPage() {
       <div className="flex items-center gap-2 flex-wrap mb-4">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
           <button onClick={() => setTab('board')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'board' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Board</button>
-          <button onClick={() => setTab('open')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'open' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Open</button>
-          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Breezeway history</button>
+          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>History &amp; insights</button>
         </span>
-        {tab === 'board' && <span className="text-xs text-muted">Escalation board &mdash; Breezeway guest-reported tasks live in the other tabs.</span>}
+        {tab === 'board' && <span className="text-xs text-muted">Escalation board &mdash; every Breezeway guest-reported task ever is under History &amp; insights.</span>}
         {tab !== 'board' && (<>
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
@@ -97,8 +99,25 @@ export default function GlitchesPage() {
         <>
           <div className={'rounded-2xl border p-4 mb-4 flex items-center gap-2 flex-wrap ' + (openCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-line bg-white')}>
             <AlertTriangle size={16} className={openCount > 0 ? 'text-rose-700' : 'text-muted'} />
-            <span className="font-semibold text-ink">{tab === 'history' ? all.length + ' glitches on record · ' + openCount + ' still open' : openCount + ' open glitch' + (openCount === 1 ? '' : 'es')}</span>
-            {data.unassigned > 0 && tab === 'open' && <span className="text-sm font-medium text-rose-700">· {data.unassigned} unassigned</span>}
+            <span className="font-semibold text-ink">{all.length + ' glitches on record · ' + openCount + ' still open'}</span>
+            {(() => {
+              const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
+              if (!bg.length) return null
+              const rec = bg.reduce((s, g) => s + (Number(g.recovery_cost) || 0), 0)
+              const ref = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
+              const byCat: Record<string, number> = {}
+              for (const g of bg) if (g.category) byCat[g.category] = (byCat[g.category] || 0) + 1
+              const top = Object.keys(byCat).map(k => ({ k, n: byCat[k] })).sort((a, b) => b.n - a.n).slice(0, 3)
+              return (
+                <span className="text-sm text-muted w-full mt-1 flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-ink">Board:</span>
+                  <span>{bg.filter(g => g.status !== 'closed').length} in play</span>
+                  {rec > 0 && <span>· ${Math.round(rec).toLocaleString()} recovery cost</span>}
+                  {ref > 0 && <span>· ${Math.round(ref).toLocaleString()} refunds approved</span>}
+                  {top.length > 0 && <span>· top: {top.map(t => t.k.replace('Maintenance - ', '') + ' ×' + t.n).join(', ')}</span>}
+                </span>
+              )
+            })()}
             {repeats.length > 0 && (
               <span className="text-sm text-muted w-full mt-1">
                 Repeat units: {repeats.map((r, i) => <button key={r.unit} onClick={() => setQ(r.unit)} className="underline decoration-dotted hover:text-ink">{r.unit} ×{r.n}{i < repeats.length - 1 ? '' : ''}</button>).reduce((acc: any[], el, i) => acc.concat(i ? [<span key={'s' + i}> · </span>, el] : [el]), [])}
