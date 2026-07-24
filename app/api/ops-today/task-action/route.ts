@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bzApi, updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
+import { adminPasswordOk } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -29,6 +30,9 @@ export async function POST(req: NextRequest) {
     const name = str(row && row.name)
 
     if (action === 'delete') {
+      // NOTHING gets deleted without the embedded admin password (set in Users & access).
+      const gate = await adminPasswordOk(str(body.adminPassword))
+      if (!gate.ok) return NextResponse.json({ ok: false, error: 'Admin password required to delete tasks' + (gate.reason ? ' (' + gate.reason + ')' : '') + '.' }, { status: 403 })
       if (CLEAN.test(name)) return NextResponse.json({ ok: false, error: 'Departure cleans can only be deleted from the scheduler (admin password required).' }, { status: 403 })
       const r = await bzApi('/task/' + encodeURIComponent(taskId), { method: 'DELETE' })
       if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
