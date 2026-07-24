@@ -36,8 +36,8 @@ export async function GET(req: NextRequest) {
       const scan = await db.from('breezeway_tasks_sync').select(COLS).order('synced_at', { ascending: false }).limit(6000)
       rows = ((scan.data || []) as any[]).filter(t => GLITCH.test(str(t.name)))
     }
-    const lmap: Record<string, { name: string; market: string }> = {}
-    for (const l of (lRes.data || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
+    const lmap: Record<string, { name: string; market: string; building: string | null }> = {}
+    for (const l of (lRes.data || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), building: l.building || null } }
     // ?history=1 → the FULL record including resolved glitches (for the /glitches page);
     // default → open ones only (Today-in-Ops tab). Deleted/cancelled never show anywhere.
     const history = req.nextUrl.searchParams.get('history') === '1'
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
         const issue = str(t.name).replace(/^\s*guest\s*reported\s*\/?\s*(glitch)?\s*[-:]?\s*/i, '').trim() || str(t.name)
         const doneFlag = RESOLVED.test(status) || !!t.finished_at
         return {
-          id: String(t.id), unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', done: doneFlag,
+          id: String(t.id), unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', building: li ? li.building : null, done: doneFlag,
           resolvedDate: doneFlag ? (str(t.finished_at).slice(0, 10) || null) : null,
           issue, rawName: str(t.name), status, scheduledDate: str(t.scheduled_date).slice(0, 10) || null,
           reportedDate: reported || null,
