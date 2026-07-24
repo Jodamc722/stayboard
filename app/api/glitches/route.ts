@@ -28,20 +28,31 @@ export async function GET(req: NextRequest) {
       const lmap: Record<string, { name: string; market: string }> = {}
       for (const l of (lRows || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
       const { data: rows, error } = await db.from('guesty_reservations')
-        .select('id,listing_id,guest_name,guest_phone,check_in,check_out,status,source,confirmation_code,total:raw->money->>hostPayout,fare:raw->money->>fareAccommodationAdjusted,cleaning:raw->money->>fareCleaning')
+        .select('id,listing_id,guest_name,guest_phone,guest_email,notes,check_in,check_out,status,source,confirmation_code,total:raw->money->>hostPayout,fare:raw->money->>fareAccommodationAdjusted,cleaning:raw->money->>fareCleaning')
         .ilike('guest_name', '%' + guest + '%')
         .order('check_in', { ascending: false })
         .limit(12)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      // message sentiment for these reservations (guest_sentiment scan results) — best effort
+      const smap: Record<string, any> = {}
+      try {
+        const rids = ((rows || []) as any[]).map(r => String(r.id))
+        if (rids.length) {
+          const { data: sr } = await db.from('guest_sentiment').select('reservation_id,score,band,dissatisfied,top_issue,guest_excerpt').in('reservation_id', rids)
+          for (const x of (sr || []) as any[]) if (x.reservation_id) smap[String(x.reservation_id)] = { score: x.score, band: x.band, dissatisfied: !!x.dissatisfied, topIssue: x.top_issue || null, excerpt: x.guest_excerpt || null }
+        }
+      } catch { /* sentiment table optional */ }
       const matches = ((rows || []) as any[]).filter(r => !/cancel|inquiry/i.test(str(r.status))).map(r => {
         const li = lmap[String(r.listing_id)]
         const total = num(r.total) ?? (((num(r.fare) || 0) + (num(r.cleaning) || 0)) || null)
         return {
           reservationId: String(r.id), listingId: String(r.listing_id),
           unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other',
-          guestName: r.guest_name || '', guestPhone: r.guest_phone || null,
+          guestName: r.guest_name || '', guestPhone: r.guest_phone || null, guestEmail: r.guest_email || null,
           checkIn: r.check_in, checkOut: r.check_out, channel: r.source || null,
           confirmationCode: r.confirmation_code || null, total,
+          notes: (str(r.notes).trim() || null), sentiment: smap[String(r.id)] || null,
+          guestyUrl: 'https://app.guesty.com/reservations/' + String(r.id) + '/summary',
         }
       })
       return NextResponse.json({ ok: true, matches })
@@ -100,13 +111,21 @@ export async function POST(req: NextRequest) {
       refund_approved: num(b.refundApproved) || 0,
       reported_by: str(b.reportedBy) || null,
       guest_email: str(b.guestEmail) || null,
+      reservation_notes: str(b.reservationNotes) || null,
+      sentiment: (b.sentiment && typeof b.sentiment === 'object') ? b.sentiment : null,
       photos: Array.isArray(b.photos) ? b.photos.filter((x: any) => typeof x === 'string').slice(0, 20) : [],
       created_by: user.email || 'team',
       history: [{ at: new Date().toISOString(), by: user.email || 'team', action: 'created' }],
     }
     const db = supabaseAdmin()
-    const { data, error } = await db.from('glitches').insert(row).select('id').single()
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    let ins = await db.from('glitches').insert(row).select('id').single()
+    if (ins.error && /column|schema/i.test(ins.error.message)) {
+      // snapshot columns not migrated yet — save the core record rather than failing
+      delete row.reservation_notes; delete row.sentiment
+      ins = await db.from('glitches').insert(row).select('id').single()
+    }
+    const { data, error } = ins
+    if (error || !data) return NextResponse.json({ ok: false, error: (error && error.message) || 'Insert failed' }, { status: 500 })
     return NextResponse.json({ ok: true, id: data.id })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
