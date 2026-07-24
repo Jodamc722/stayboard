@@ -129,6 +129,14 @@ export type UnitRow = {
   flags: string[] // struggling reasons
 }
 
+// A daily check for the rev team: what to look at, why, and the concrete action.
+export type Rec = {
+  severity: 'red' | 'amber' | 'info'
+  title: string
+  action: string
+  units: { id: string; name: string }[]
+}
+
 export type RevenueData = {
   from: string; to: string; days: number; currency: string
   activeUnits: number; inactiveUnits: number
@@ -139,6 +147,7 @@ export type RevenueData = {
   channels: { name: string; revenue: number; count: number }[]
   buildingAvg: Record<string, { occ: number; adr: number }>
   units: UnitRow[]
+  recs: Rec[]
 }
 
 function prettyChannel(s: string): string {
@@ -332,6 +341,69 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       .map(k => ({ name: k, revenue: byChannel[k].revenue, count: byChannel[k].count }))
       .sort((a, b) => b.revenue - a.revenue)
 
+    // ---- daily checks / recommendations for the rev team ----
+    const recs: Rec[] = []
+    const chip = (u: UnitRow) => ({ id: u.id, name: u.name })
+    const adrOf = (u: UnitRow) => (u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0)
+    const dead = units.filter(u => u.nightsSold === 0 && u.otb30 === 0)
+    if (dead.length > 0) recs.push({
+      severity: 'red',
+      title: dead.length + ' unit' + (dead.length > 1 ? 's' : '') + ' earned $0 in this range and have nothing on the books',
+      action: 'Confirm each is live and bookable (calendar blocks, listing status, min-stay). If deliberately offline, ignore. Otherwise restart momentum: intro rate about -15% and a relaxed min-stay for the next 14 days.',
+      units: dead.map(chip),
+    })
+    const noOtb = units.filter(u => u.nightsSold > 0 && u.otb30 === 0)
+    if (noOtb.length > 0) recs.push({
+      severity: 'red',
+      title: noOtb.length + ' selling unit' + (noOtb.length > 1 ? 's have' : ' has') + ' ZERO nights booked for the next 30 days',
+      action: 'These sold recently but the forward calendar is empty. Check for new blocks and stale pricing; refresh near-term rates today before they go dark.',
+      units: noOtb.map(chip),
+    })
+    const tooHigh = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && bl.occ > 0.05 && u.occ < bl.occ - 0.10 && a > bl.adr * 1.05 })
+    if (tooHigh.length > 0) recs.push({
+      severity: 'amber',
+      title: tooHigh.length + ' unit' + (tooHigh.length > 1 ? 's are' : ' is') + ' priced above building peers but filling less',
+      action: 'Same building is outselling them at lower rates. Trim about 10% or add value (parking credit, flexible check-in) and re-check next week.',
+      units: tooHigh.map(chip),
+    })
+    const raise = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && u.occ >= 0.90 && a > 0 && a < bl.adr * 0.95 })
+    if (raise.length > 0) recs.push({
+      severity: 'amber',
+      title: raise.length + ' unit' + (raise.length > 1 ? 's' : '') + ' at 90%+ occupancy priced below building peers',
+      action: 'Money on the table: raise base rates 5-10% and confirm pacing holds.',
+      units: raise.map(chip),
+    })
+    const dropped = units.filter(u => u.prevOcc - u.occ >= 0.15 && u.prevOcc > 0.30)
+    if (dropped.length > 0) recs.push({
+      severity: 'amber',
+      title: dropped.length + ' unit' + (dropped.length > 1 ? 's' : '') + ' dropped 15+ occupancy points vs the prior period',
+      action: 'Before touching price: check each for a fresh bad review, a channel delisting or sync issue, or new calendar blocks.',
+      units: dropped.map(chip),
+    })
+    const parkBld = new Set<string>()
+    for (const u of units) if (u.parking > 0) parkBld.add(u.building)
+    const upsell = units.filter(u => parkBld.has(u.building) && u.parking === 0 && u.nightsSold > 5)
+    if (upsell.length > 0) recs.push({
+      severity: 'info',
+      title: upsell.length + ' unit' + (upsell.length > 1 ? 's' : '') + ' collected $0 parking in buildings where parking sells',
+      action: 'Upsell miss: add parking to the welcome-call script and listing description for these units.',
+      units: upsell.map(chip),
+    })
+    const otb30Pct = active.length > 0 ? n30 / (active.length * 30) : 0
+    if (active.length > 0 && otb30Pct < 0.40) recs.push({
+      severity: 'info',
+      title: 'Portfolio is only ' + Math.round(otb30Pct * 100) + '% booked for the next 30 days',
+      action: 'Broad pacing is soft. Review base rates for near-term dates and open up min-stays to catch short-window demand.',
+      units: [],
+    })
+    const topCh = channels[0]
+    if (topCh && totals.total > 0 && topCh.revenue / totals.total > 0.80) recs.push({
+      severity: 'info',
+      title: topCh.name + ' is ' + Math.round((topCh.revenue / totals.total) * 100) + '% of revenue',
+      action: 'Heavy single-channel dependence. Keep pushing direct: booking-engine links in guidebooks and repeat-guest offers.',
+      units: [],
+    })
+
     return {
       from, to, days, currency,
       activeUnits: active.length, inactiveUnits,
@@ -343,9 +415,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
         d90: active.length ? n90 / (active.length * 90) : 0,
         nights30: n30, nights60: n60, nights90: n90, rev30,
       },
-      channels, buildingAvg, units,
+      channels, buildingAvg, units, recs,
     }
-  }, ['revenue-center-v3'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v4'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 
