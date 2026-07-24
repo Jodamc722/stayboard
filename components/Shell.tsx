@@ -7,7 +7,7 @@ import { featureForPath, featureEnabled } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -139,6 +139,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
           ))}
         </nav>
+        <NotificationsBell />
         <div className="border-t border-line p-3">
           <div className="flex items-center gap-2.5 px-1.5 py-1.5">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
@@ -158,6 +159,46 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-auto">
         <div className="max-w-[1600px] mx-auto p-6 lg:p-8 animate-fade-in">{children}</div>
       </main>
+    </div>
+  )
+}
+
+// SYSTEM-WIDE notifications bell — polls /api/notifications (comments, @mentions, and any
+// feature that calls lib/notify). Lives in the sidebar so it's visible on every page.
+function NotificationsBell() {
+  const [open, setOpen] = useState(false)
+  const [unread, setUnread] = useState(0)
+  const [items, setItems] = useState<any[]>([])
+  const loadN = () => { fetch('/api/notifications', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.ok) { setUnread(j.unread || 0); setItems(Array.isArray(j.notifications) ? j.notifications : []) } }).catch(() => {}) }
+  useEffect(() => { loadN(); const t = setInterval(() => { if (document.visibilityState === 'visible') loadN() }, 60000); return () => clearInterval(t) }, [])
+  const markAll = async () => { try { await fetch('/api/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'readAll' }) }) } catch {} loadN() }
+  const openOne = async (n: any) => { try { await fetch('/api/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'read', ids: [n.id] }) }) } catch {} if (n.link) { window.location.href = n.link } else { loadN() } }
+  const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
+  return (
+    <div className="border-t border-line px-2 py-1.5 relative">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all">
+        <Bell size={16} />
+        Notifications
+        {unread > 0 && <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{unread}</span>}
+      </button>
+      {open && (
+        <div className="absolute bottom-12 left-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-line bg-white shadow-lg z-50">
+          <div className="flex items-center px-3 py-2 border-b border-line sticky top-0 bg-white">
+            <span className="text-sm font-semibold text-ink">Notifications</span>
+            {unread > 0 && <button onClick={markAll} className="ml-auto text-[11px] font-medium text-brand-700 hover:underline">Mark all read</button>}
+          </div>
+          {items.length === 0 && <div className="px-3 py-6 text-sm text-muted text-center">Nothing yet.</div>}
+          <div className="divide-y divide-line">
+            {items.map(n => (
+              <button key={n.id} onClick={() => openOne(n)} className={'w-full text-left px-3 py-2 hover:bg-app/60 ' + (n.read ? 'opacity-60' : '')}>
+                <div className="text-[12px] font-medium text-ink">{n.title}</div>
+                {n.body && <div className="text-[11px] text-muted line-clamp-2">{n.body}</div>}
+                <div className="text-[10px] text-muted mt-0.5">{when(n.created_at)}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
