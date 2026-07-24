@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, retrieveBreezewayTask, updateBreezewayTask, normalizeTaskStatus, breezewayConfigured } from '@/lib/breezeway'
+import { adminPasswordOk } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -120,6 +121,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete') {
+      // Deleting anything requires the embedded admin password — no password, no delete.
+      const gate = await adminPasswordOk(str(b.adminPassword))
+      if (!gate.ok) return NextResponse.json({ ok: false, error: 'Admin password required to delete' + (gate.reason ? ' (' + gate.reason + ')' : '') + '.' }, { status: 403 })
       const { error } = await db.from('glitches').delete().eq('id', id)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true, deleted: true })
