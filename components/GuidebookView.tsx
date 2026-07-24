@@ -3,7 +3,7 @@
 // Editorial-grade rendering. Playfair Display typography, full-bleed cover with
 // gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
-// print-exact A4 output (@page, exact colors, no app chrome).
+// print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
 import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -223,7 +223,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         style={{ aspectRatio: '210/297', background: paper, color: ink, fontFamily: SANS }}>
         {edit && hideKey && (
           <button onClick={() => hidePage(hideKey)} title="Remove this page from the book (restore from the bar above)"
-            className="absolute right-3 top-3 z-10 rounded-lg border border-red-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-red-600 shadow-sm hover:bg-red-50">
+            className="print:hidden absolute right-3 top-3 z-10 rounded-lg border border-red-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-red-600 shadow-sm hover:bg-red-50">
             <X size={10} className="mr-1 inline" />Hide page
           </button>
         )}
@@ -283,12 +283,13 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       <style>{`
         .gb-page { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         @media print {
-          @page { size: A4; margin: 0; }
-          html, body { background: white !important; overflow: visible !important; }
+          @page { size: letter; margin: 0; }
+          html, body { background: white !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; }
           .gb-chrome, .gb-nav { display: none !important; }
-          .gb-pages { position: static !important; display: block !important; overflow: visible !important; height: auto !important; }
+          .gb-pages { position: static !important; display: block !important; overflow: visible !important; height: auto !important; padding: 0 !important; margin: 0 !important; }
           .gb-slide { display: block !important; overflow: visible !important; height: auto !important; }
-          .gb-page { transform: none !important; width: 210mm !important; height: 296.5mm !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-inside: avoid; }
+          .gb-page { transform: none !important; width: 215.9mm !important; height: 279mm !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-inside: avoid; }
+          .gb-page:last-of-type { page-break-after: auto; }
         }
         @media screen and (max-width: 820px) {
           html, body { overflow: hidden !important; height: 100% !important; }
