@@ -288,7 +288,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           .gb-chrome, .gb-nav { display: none !important; }
           .gb-pages { position: static !important; display: block !important; overflow: visible !important; height: auto !important; padding: 0 !important; margin: 0 !important; }
           .gb-slide { display: block !important; overflow: visible !important; height: auto !important; }
-          .gb-page { transform: none !important; width: 215.9mm !important; height: 279mm !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-inside: avoid; }
+          .gb-page { transform: none !important; width: 215.9mm !important; height: 279.4mm !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-inside: avoid; }
           .gb-page:last-of-type { page-break-after: auto; }
         }
         @media screen and (max-width: 820px) {
