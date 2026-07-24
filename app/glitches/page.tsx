@@ -182,49 +182,92 @@ function buildingOf(g: Glitch): string {
   return stripped || head || 'Unknown'
 }
 function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDrill: (u: string) => void }) {
+  // FOCUS FILTERS — narrow every stat to one building and/or one unit, so it's obvious
+  // where to spend improvement effort.
+  const [bFilter, setBFilter] = useState('')
+  const [uFilter, setUFilter] = useState('')
+  const buildingOpts = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const g of all) { const b = buildingOf(g); m[b] = (m[b] || 0) + 1 }
+    return Object.keys(m).map(b => ({ b, n: m[b] })).sort((a, b) => b.n - a.n)
+  }, [all])
+  const unitOpts = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const g of all) { if (bFilter && buildingOf(g) !== bFilter) continue; m[g.unit] = (m[g.unit] || 0) + 1 }
+    return Object.keys(m).map(u => ({ u, n: m[u] })).sort((a, b) => b.n - a.n)
+  }, [all, bFilter])
+  const filtered = useMemo(() => all.filter(g => (!bFilter || buildingOf(g) === bFilter) && (!uFilter || g.unit === uFilter)), [all, bFilter, uFilter])
+  const focused = !!(bFilter || uFilter)
+
   const stats = useMemo(() => {
-    const open = all.filter(g => !g.done)
+    const open = filtered.filter(g => !g.done)
     const now = new Date()
     const monthKey = (iso: string) => iso.slice(0, 7)
     const months: { key: string; label: string; n: number }[] = []
     for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push({ key: d.toISOString().slice(0, 7), label: d.toLocaleDateString('en-US', { month: 'short' }), n: 0 }) }
     const byB: Record<string, { total: number; open: number; recent: number }> = {}
-    const byUnit: Record<string, number> = {}
+    const byUnit: Record<string, { total: number; open: number; recent: number }> = {}
     const themeCount: Record<string, number> = {}
     const cutoff90 = new Date(now.getTime() - 90 * 86400000).toISOString().slice(0, 10)
-    for (const g of all) {
+    for (const g of filtered) {
       const d = g.reportedDate || g.scheduledDate || ''
       const mk = d ? monthKey(d) : ''
       const m = months.find(x => x.key === mk); if (m) m.n++
       const bld = buildingOf(g)
       if (!byB[bld]) byB[bld] = { total: 0, open: 0, recent: 0 }
       byB[bld].total++; if (!g.done) byB[bld].open++; if (d && d >= cutoff90) byB[bld].recent++
-      byUnit[g.unit] = (byUnit[g.unit] || 0) + 1
+      if (!byUnit[g.unit]) byUnit[g.unit] = { total: 0, open: 0, recent: 0 }
+      byUnit[g.unit].total++; if (!g.done) byUnit[g.unit].open++; if (d && d >= cutoff90) byUnit[g.unit].recent++
       let matched = false
       for (const t of THEMES) if (t.re.test(g.issue)) { themeCount[t.key] = (themeCount[t.key] || 0) + 1; matched = true }
       if (!matched) themeCount.other = (themeCount.other || 0) + 1
     }
     const buildings = Object.keys(byB).map(k => ({ b: k, ...byB[k] })).sort((a, b) => b.total - a.total).slice(0, 12)
-    const units = Object.keys(byUnit).map(u => ({ u, n: byUnit[u] })).sort((a, b) => b.n - a.n).slice(0, 10)
+    const unitRows = Object.keys(byUnit).map(k => ({ b: k, ...byUnit[k] })).sort((a, b) => b.total - a.total).slice(0, 15)
+    const units = Object.keys(byUnit).map(u => ({ u, n: byUnit[u].total })).sort((a, b) => b.n - a.n).slice(0, 10)
     const themes = THEMES.map(t => ({ label: t.label, n: themeCount[t.key] || 0 })).concat([{ label: 'Other', n: themeCount.other || 0 }]).filter(x => x.n > 0).sort((a, b) => b.n - a.n)
+    const last90 = filtered.filter(g => { const d = g.reportedDate || g.scheduledDate || ''; return d && d >= cutoff90 }).length
     const maxM = Math.max(1, ...months.map(m => m.n))
     const maxT = Math.max(1, ...themes.map(t => t.n))
-    return { open: open.length, months, maxM, buildings, units, themes, maxT }
-  }, [all])
-  const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
+    return { open: open.length, months, maxM, buildings, unitRows, units, themes, maxT, last90 }
+  }, [filtered])
+
+  const bg: any[] = useMemo(() => {
+    const src = board && Array.isArray(board.glitches) ? board.glitches : []
+    return src.filter((g: any) => (!bFilter || buildingOf({ unit: g.unit || '', building: null } as Glitch) === bFilter) && (!uFilter || g.unit === uFilter))
+  }, [board, bFilter, uFilter])
   const rec = bg.reduce((s, g) => s + (Number(g.recovery_cost) || 0), 0)
   const ref = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
+
   return (
     <div className="space-y-4">
+      {/* FOCUS BAR — building and/or unit */}
+      <div className="rounded-2xl border border-line bg-white p-3 flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold">Focus</span>
+        <select value={bFilter} onChange={e => { setBFilter(e.target.value); setUFilter('') }} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white max-w-[240px]">
+          <option value="">All buildings</option>
+          {buildingOpts.map(x => <option key={x.b} value={x.b}>{x.b} ({x.n})</option>)}
+        </select>
+        <input list="patterns-units" value={uFilter} onChange={e => setUFilter(e.target.value)} placeholder={'Unit\u2026 (' + unitOpts.length + ')'} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-56" />
+        <datalist id="patterns-units">{unitOpts.map(x => <option key={x.u} value={x.u}>{'\u00d7' + x.n}</option>)}</datalist>
+        {focused && <button onClick={() => { setBFilter(''); setUFilter('') }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app">Clear</button>}
+        {focused && (
+          <span className="text-sm text-ink font-medium">
+            {uFilter || bFilter}: <span className="font-bold">{filtered.length}</span> glitches \u00b7 <span className={stats.open > 0 ? 'text-rose-700 font-bold' : 'font-bold'}>{stats.open} open</span> \u00b7 {stats.last90} in last 90d
+          </span>
+        )}
+        {uFilter && <button onClick={() => onDrill(uFilter)} className="text-[12px] font-semibold text-brand-700 hover:underline">Full history \u2192</button>}
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">On record</div><div className="text-2xl font-bold text-ink">{all.length}</div></div>
+        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">{focused ? 'Glitches (focused)' : 'On record'}</div><div className="text-2xl font-bold text-ink">{filtered.length}</div></div>
         <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Still open</div><div className="text-2xl font-bold text-rose-700">{stats.open}</div></div>
         <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Recovery cost (board)</div><div className="text-2xl font-bold text-ink">${Math.round(rec).toLocaleString()}</div></div>
         <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Refunds approved (board)</div><div className="text-2xl font-bold text-ink">${Math.round(ref).toLocaleString()}</div></div>
       </div>
 
       <div className="rounded-2xl border border-line bg-white p-4">
-        <div className="text-sm font-semibold text-ink mb-3">Glitches per month (last 12)</div>
+        <div className="text-sm font-semibold text-ink mb-3">Glitches per month (last 12){focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
         <div className="flex items-end gap-1.5 h-28">
           {stats.months.map(m => (
             <div key={m.key} className="flex-1 flex flex-col items-center gap-1">
@@ -238,7 +281,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
 
       <div className="grid md:grid-cols-2 gap-4">
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="text-sm font-semibold text-ink mb-2">Recurring issue themes</div>
+          <div className="text-sm font-semibold text-ink mb-2">Recurring issue themes{focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
           <div className="space-y-1.5">
             {stats.themes.map(t => (
               <div key={t.label} className="flex items-center gap-2 text-[12px]">
@@ -247,39 +290,41 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
                 <span className="w-8 text-right tabular-nums font-semibold text-ink">{t.n}</span>
               </div>
             ))}
+            {stats.themes.length === 0 && <div className="text-[12px] text-muted">No glitches in this selection.</div>}
           </div>
           <div className="text-[10px] text-muted mt-2">Keyword match on the task issue text; one glitch can hit multiple themes.</div>
         </div>
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="text-sm font-semibold text-ink mb-2">Repeat-offender units</div>
+          <div className="text-sm font-semibold text-ink mb-2">{uFilter ? 'Unit in focus' : 'Repeat-offender units' + (bFilter ? ' \u2014 ' + bFilter : '')}</div>
           <div className="divide-y divide-line">
             {stats.units.map(x => (
-              <button key={x.u} onClick={() => onDrill(x.u)} className="w-full flex items-center gap-2 py-1.5 text-left text-[12px] hover:bg-app/50 rounded px-1">
-                <span className="flex-1 text-ink">{x.u}</span>
-                <span className="tabular-nums font-semibold text-rose-700">×{x.n}</span>
+              <button key={x.u} onClick={() => setUFilter(uFilter === x.u ? '' : x.u)} className={'w-full flex items-center gap-2 py-1.5 text-left text-[12px] rounded px-1 ' + (uFilter === x.u ? 'bg-ink text-white' : 'hover:bg-app/50')}>
+                <span className={'flex-1 ' + (uFilter === x.u ? 'text-white' : 'text-ink')}>{x.u}</span>
+                <span className={'tabular-nums font-semibold ' + (uFilter === x.u ? 'text-white' : 'text-rose-700')}>{'\u00d7'}{x.n}</span>
               </button>
             ))}
           </div>
-          <div className="text-[10px] text-muted mt-2">Click a unit to see its full history.</div>
+          <div className="text-[10px] text-muted mt-2">Click a unit to focus every stat on it; click again to clear.</div>
         </div>
       </div>
 
       <div className="rounded-2xl border border-line bg-white p-4">
-        <div className="text-sm font-semibold text-ink mb-2">By building</div>
+        <div className="text-sm font-semibold text-ink mb-2">{bFilter || uFilter ? 'By unit' + (bFilter ? ' \u2014 ' + bFilter : '') : 'By building'}</div>
         <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 gap-y-1 text-[12px]">
-          <div className="text-[10px] uppercase tracking-wide text-muted">Building</div>
+          <div className="text-[10px] uppercase tracking-wide text-muted">{bFilter || uFilter ? 'Unit' : 'Building'}</div>
           <div className="text-[10px] uppercase tracking-wide text-muted text-right">Total</div>
           <div className="text-[10px] uppercase tracking-wide text-muted text-right">Open</div>
           <div className="text-[10px] uppercase tracking-wide text-muted text-right">Last 90d</div>
-          {stats.buildings.map(b => (
-            <FragmentRow key={b.b} b={b} />
+          {(bFilter || uFilter ? stats.unitRows : stats.buildings).map(b => (
+            <FragmentRow key={b.b} b={b} onPick={() => { if (bFilter || uFilter) setUFilter(uFilter === b.b ? '' : b.b); else { setBFilter(b.b); setUFilter('') } }} />
           ))}
         </div>
+        <div className="text-[10px] text-muted mt-2">{bFilter || uFilter ? 'Click a unit to focus on it.' : 'Click a building to focus every stat on it.'}</div>
       </div>
 
       {bg.length > 0 && (
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="text-sm font-semibold text-ink mb-2">Board categories</div>
+          <div className="text-sm font-semibold text-ink mb-2">Board categories{focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             {Object.entries(bg.reduce((m: Record<string, number>, g: any) => { if (g.category) m[g.category] = (m[g.category] || 0) + 1; return m }, {})).sort((a: any, b: any) => b[1] - a[1]).map(([k, n]: any) => (
               <span key={k} className="px-2 py-1 rounded-full border border-line bg-app text-muted">{k.replace('Maintenance - ', '')} <span className="font-semibold text-ink">{n}</span></span>
@@ -290,10 +335,10 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
     </div>
   )
 }
-function FragmentRow({ b }: { b: { b: string; total: number; open: number; recent: number } }) {
+function FragmentRow({ b, onPick }: { b: { b: string; total: number; open: number; recent: number }; onPick?: () => void }) {
   return (
     <>
-      <div className="text-ink">{b.b}</div>
+      <button onClick={onPick} className="text-left text-ink hover:underline decoration-dotted">{b.b}</button>
       <div className="text-right tabular-nums font-semibold text-ink">{b.total}</div>
       <div className={'text-right tabular-nums font-semibold ' + (b.open > 0 ? 'text-rose-700' : 'text-muted')}>{b.open}</div>
       <div className="text-right tabular-nums text-muted">{b.recent}</div>
