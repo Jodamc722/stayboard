@@ -121,7 +121,7 @@ function expediaCleaningFix(list: { r: RawResv; c: Comp }[]) {
 }
 
 export type UnitRow = {
-  id: string; name: string; building: string; market: string; bedrooms: number | null
+  id: string; name: string; building: string; market: string; owner: string; bedrooms: number | null
   nightsSold: number; occ: number; bookings: number
   grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; total: number
   prevOcc: number; prevTotal: number
@@ -175,6 +175,20 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       .select('id, title, nickname, building, unit, bedrooms, status, address_city')
       .limit(5000)
     const listings = (listingRows || []) as any[]
+
+    // Listing -> owner name, from the synced Guesty owners store (app_settings 'guesty_owners').
+    const ownerOf: Record<string, string> = {}
+    try {
+      const { data: ownRow } = await sb.from('app_settings').select('value').eq('key', 'guesty_owners').limit(1)
+      const j = ownRow && ownRow[0] && ownRow[0].value ? JSON.parse(ownRow[0].value) : null
+      const owners = j && Array.isArray(j.owners) ? j.owners : []
+      for (const o of owners) {
+        const nm = String(o.name || '').trim()
+        for (const lid of (Array.isArray(o.listingIds) ? o.listingIds : [])) {
+          if (nm) ownerOf[String(lid)] = nm
+        }
+      }
+    } catch {}
     const active = listings.filter(l => !DEAD.includes(String(l.status || '').toLowerCase()))
       .filter(l => !/\bfull\b/i.test(String(l.nickname || l.title || '')))
     const inactiveUnits = listings.length - active.length
@@ -259,6 +273,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
         id, name,
         building: rollupBuilding(String(l.building || '').trim()),
         market: marketOf(l.building, l.address_city, name),
+        owner: ownerOf[id] || 'Unassigned',
         bedrooms: l.bedrooms ?? null,
         nightsSold: a.nightsSold,
         occ: days > 0 ? a.nightsSold / days : 0,
@@ -330,7 +345,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       },
       channels, buildingAvg, units,
     }
-  }, ['revenue-center-v2'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v3'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 
