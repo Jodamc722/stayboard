@@ -292,11 +292,19 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
   const [issue, setIssue] = useState((g.overview || '').split('\n')[0].slice(0, 70))
   const [assignee, setAssignee] = useState('')
   const [busy, setBusy] = useState(false)
+  // Breezeway property override — building-level glitches (e.g. "Rustic Exterior") get pushed
+  // to the BUILDING property instead of the guest's unit. Default: the unit.
+  const [prop, setProp] = useState('')
+  const [props, setProps] = useState<{ id: number; name: string }[]>([])
+  useEffect(() => { fetch('/api/glitches/properties', { cache: 'no-store' }).then(r => r.json()).then(j => setProps(Array.isArray(j.properties) ? j.properties : [])).catch(() => {}) }, [])
+  const pickedProp = props.find(x => x.name === prop.trim()) || null
   const doPush = async () => {
     setBusy(true)
     const nm = assignee.trim().replace(/\s*\([^)]*\)\s*$/, '')
     const p = people.find(x => x.name === nm)
-    await act(g.id, { action: 'push', issue: issue.trim(), assigneeIds: p ? [p.id] : [] })
+    const body: Record<string, any> = { action: 'push', issue: issue.trim(), assigneeIds: p ? [p.id] : [] }
+    if (pickedProp) { body.homeId = pickedProp.id; body.homeName = pickedProp.name }
+    await act(g.id, body)
     setBusy(false); onDone()
   }
   return (
@@ -305,7 +313,10 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
       <div className="text-[11px] text-muted">Task: <span className="text-ink">Guest Reported / Glitch - {issue || '…'}</span></div>
       <input value={issue} onChange={e => setIssue(e.target.value)} placeholder="Short issue (e.g. Hot water issue.)" className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
       <input list="glitch-board-ppl" value={assignee} onChange={e => setAssignee(e.target.value)} placeholder="Assignee (optional)…" className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
+      <input list="glitch-board-props" value={prop} onChange={e => setProp(e.target.value)} placeholder={'Property: ' + (g.unit || 'unit') + ' (default) — type to push to a building, e.g. Rustic Exterior'} className={'w-full text-xs border rounded px-2 py-1.5 bg-white ' + (prop && !pickedProp ? 'border-amber-300' : 'border-line')} />
+      {pickedProp && <div className="text-[10px] text-violet-700">Task will file under <span className="font-semibold">{pickedProp.name}</span> instead of the unit.</div>}
       <datalist id="glitch-board-ppl">{people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}</datalist>
+      <datalist id="glitch-board-props">{props.map(x => <option key={x.id} value={x.name} />)}</datalist>
       <button onClick={doPush} disabled={busy || !issue.trim()} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-violet-600 text-white disabled:opacity-40">{busy ? 'Pushing…' : 'Create task'}</button>
     </div>
   )
