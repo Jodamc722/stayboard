@@ -51,12 +51,12 @@ export function BrainChat() {
     <>
       {!open && (
         <button onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 rounded-full bg-brand-600 text-white px-4 py-3 shadow-lg hover:bg-brand-700 transition-colors">
+          className="print:hidden fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 rounded-full bg-brand-600 text-white px-4 py-3 shadow-lg hover:bg-brand-700 transition-colors">
           <Sparkles size={18} /> <span className="font-semibold text-sm">Ask Eve</span>
         </button>
       )}
       {open && (
-        <div className="fixed bottom-5 right-5 z-50 w-[min(92vw,380px)] h-[min(72vh,580px)] flex flex-col rounded-2xl border border-brand-200 bg-white shadow-2xl overflow-hidden">
+        <div className="print:hidden fixed bottom-5 right-5 z-50 w-[min(92vw,380px)] h-[min(72vh,580px)] flex flex-col rounded-2xl border border-brand-200 bg-white shadow-2xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-brand-50">
             <span className="font-semibold text-ink text-sm inline-flex items-center gap-1.5"><Sparkles size={15} className="text-brand-600" /> Eve</span>
             <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
