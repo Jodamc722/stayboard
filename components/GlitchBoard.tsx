@@ -152,6 +152,7 @@ export function GlitchBoard() {
                           </div>
                           {panel === g.id + ':push' && <PushPanel g={g} people={people} onDone={() => { setPanel(''); load() }} act={act} />}
                           {panel === g.id + ':edit' && <EditGlitch g={g} onDone={() => { setPanel(''); load() }} />}
+                          <GlitchComments g={g} />
                         </div>
                       )}
                     </div>
@@ -386,6 +387,64 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
       <div className="flex items-center gap-1.5">
         <button onClick={save} disabled={busy} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
         {err && <span className="text-[10px] text-rose-700">{err}</span>}
+      </div>
+    </div>
+  )
+}
+
+
+// Comments + @tags on a glitch — uses the SYSTEM-WIDE /api/comments (mentions notify via the
+// Shell bell). Tag with the picker or type @name in the text; the glitch creator is notified too.
+function GlitchComments({ g }: { g: Glitch }) {
+  const [items, setItems] = useState<any[]>([])
+  const [team, setTeam] = useState<string[]>([])
+  const [body, setBody] = useState('')
+  const [tags, setTags] = useState<string[]>([])
+  const [tagQ, setTagQ] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    fetch('/api/comments?type=glitch&id=' + g.id, { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (j && j.ok) { setItems(Array.isArray(j.comments) ? j.comments : []); setTeam(Array.isArray(j.team) ? j.team : []); setLoaded(true) }
+    }).catch(() => {})
+  }, [g.id, tick])
+  const post = async () => {
+    if (!body.trim()) return
+    setBusy(true); setErr('')
+    try {
+      const label = (g.unit ? g.unit + ' — ' : '') + ((g.overview || '').split('\n')[0].slice(0, 60) || 'glitch')
+      const r = await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'glitch', id: g.id, body: body.trim(), mentions: tags, label }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Could not post') } else { setBody(''); setTags([]); setTick(t => t + 1) }
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const addTag = (v: string) => { const e2 = v.trim().toLowerCase(); if (e2 && team.indexOf(e2) >= 0 && tags.indexOf(e2) < 0) setTags(prev => prev.concat([e2])); setTagQ('') }
+  const who = (e2: string) => String(e2 || '').split('@')[0]
+  const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
+  return (
+    <div className="mt-2 rounded-lg border border-line bg-app/40 p-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Comments{loaded ? ' (' + items.length + ')' : ''}</div>
+      <div className="space-y-1 max-h-44 overflow-y-auto">
+        {items.map(cm => (
+          <div key={cm.id} className="bg-white border border-line rounded-md px-2 py-1.5">
+            <div className="text-[10px] text-muted"><span className="font-semibold text-ink">{who(cm.author_email)}</span> · {when(cm.created_at)}{(cm.mentions || []).length > 0 && <span> · tagged {(cm.mentions || []).map(who).join(', ')}</span>}</div>
+            <div className="text-[12px] text-ink whitespace-pre-wrap">{cm.body}</div>
+          </div>
+        ))}
+        {loaded && items.length === 0 && <div className="text-[11px] text-muted">No comments yet.</div>}
+      </div>
+      <div className="mt-1.5 space-y-1">
+        <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Add a comment… (@name in the text also tags)" rows={2} className="w-full text-xs border border-line rounded-md px-2 py-1.5 bg-white" />
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <input list={'cmt-team-' + g.id} value={tagQ} onChange={e => { setTagQ(e.target.value); if (team.indexOf(e.target.value.trim().toLowerCase()) >= 0) addTag(e.target.value) }} placeholder="Tag teammate…" className="text-[11px] border border-line rounded-md px-2 py-1 bg-white w-44" />
+          <datalist id={'cmt-team-' + g.id}>{team.map(t => <option key={t} value={t} />)}</datalist>
+          {tags.map(t2 => <span key={t2} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-1">@{who(t2)}<button onClick={() => setTags(prev => prev.filter(x => x !== t2))} className="hover:text-rose-600">{'\u00d7'}</button></span>)}
+          <button onClick={post} disabled={busy || !body.trim()} className="ml-auto text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Posting…' : 'Comment'}</button>
+        </div>
+        {err && <div className="text-[11px] text-rose-700">{err}</div>}
       </div>
     </div>
   )
