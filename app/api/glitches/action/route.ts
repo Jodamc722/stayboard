@@ -80,14 +80,22 @@ export async function POST(req: NextRequest) {
         '',
         str(g.overview),
       ].filter(x => x !== '')
-      const payload: Record<string, any> = { name: title, type_department: deptFor(category), type_priority: 'urgent', scheduled_date: ymd(new Date()), description: lines.join('\n') }
+      // Instantiate the built Breezeway "Guest Reported / Glitch -" TEMPLATE (id 356707, discovered
+      // from task 159116755) so pushed tasks carry the template's checklist/settings.
+      const GLITCH_TEMPLATE_ID = 356707
+      const payload: Record<string, any> = { template_id: GLITCH_TEMPLATE_ID, name: title, type_department: deptFor(category), type_priority: 'urgent', scheduled_date: ymd(new Date()), description: lines.join('\n') }
       if (g.listing_id) {
         const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', String(g.listing_id)).limit(1)
         const homeId = Number(((props || [])[0] || {}).home_id)
         if (Number.isFinite(homeId)) payload.home_id = homeId
         else payload.reference_property_id = String(g.listing_id)
       }
-      const r = await createBreezewayTask(payload)
+      let r = await createBreezewayTask(payload)
+      if (!r.ok) {
+        // some API versions reject template_id on create — retry without it rather than failing
+        delete payload.template_id
+        r = await createBreezewayTask(payload)
+      }
       if (!r.ok || !r.data?.id) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
       const taskId = String(r.data.id)
       // optional assignee picked at push time
