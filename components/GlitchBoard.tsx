@@ -13,7 +13,7 @@ type Glitch = {
   channel: string | null; check_in: string | null; check_out: string | null
   reservation_total: number | null; incident_date: string | null; overview: string | null
   recovery_cost: number | null; refund_approved: number | null; reported_by: string | null; guest_email: string | null
-  breezeway_task_id: string | null; photos: string[] | null; task_status: string | null
+  breezeway_task_id: string | null; photos: string[] | null; task_status: string | null; task_report_url?: string | null
   reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
   created_at: string
 }
@@ -146,9 +146,9 @@ export function GlitchBoard() {
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {!g.breezeway_task_id && <button onClick={() => setPanel(panel === g.id + ':push' ? '' : g.id + ':push')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100">Push to Breezeway</button>}
                             <button onClick={() => setPanel(panel === g.id + ':edit' ? '' : g.id + ':edit')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Edit</button>
-                            {g.breezeway_task_id && <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-brand-600 hover:underline">Task {g.breezeway_task_id}</a>}
+                            {g.breezeway_task_id && <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-brand-600 hover:underline" title="Open the ADMIN task in Breezeway — edit, assign, modify, check">Admin task</a>}{g.task_report_url && <a href={g.task_report_url} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" title="View the field report (read-only)">Report</a>}
                             {g.breezeway_task_id && <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Check status</button>}
-                            <button onClick={() => act(g.id, { action: 'delete' }, 'Delete this glitch record? (The Breezeway task, if any, stays.)')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-muted hover:text-rose-700 hover:border-rose-300">Delete</button>
+                            <button onClick={() => { const adminPassword = window.prompt('Admin password required to delete this glitch record (the Breezeway task, if any, stays):'); if (!adminPassword) return; act(g.id, { action: 'delete', adminPassword }) }} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-muted hover:text-rose-700 hover:border-rose-300">Delete</button>
                           </div>
                           {panel === g.id + ':push' && <PushPanel g={g} people={people} onDone={() => { setPanel(''); load() }} act={act} />}
                           {panel === g.id + ':edit' && <EditGlitch g={g} onDone={() => { setPanel(''); load() }} />}
