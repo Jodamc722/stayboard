@@ -184,8 +184,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
   const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const validDate = (s: string | undefined) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null)
   const to = validDate(searchParams?.to) || todayStr
-  const def30 = addDays(to, -29)
-  let from = validDate(searchParams?.from) || def30
+  // Default view = MONTH TO DATE (first of the current month through today).
+  const defFrom = to.slice(0, 8) + '01'
+  let from = validDate(searchParams?.from) || defFrom
   if (from > to) from = to
   const toExcl = addDays(to, 1)
   const days = daysBetween(from, to) + 1
