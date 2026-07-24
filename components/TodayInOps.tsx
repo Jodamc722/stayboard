@@ -160,9 +160,11 @@ export function TodayInOps() {
     } catch (e: any) { setErr(String(e?.message || e)) }
   }
   const delTask = async (t: Task) => {
-    if (!window.confirm('Delete \u201c' + t.name + '\u201d on ' + t.unit + ' from Breezeway?')) return
+    // NOTHING deletes without the embedded admin password (set in Users & access).
+    const adminPassword = window.prompt('Admin password required to delete \u201c' + t.name + '\u201d on ' + t.unit + ':')
+    if (!adminPassword) return
     try {
-      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, action: 'delete' }) })
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, action: 'delete', adminPassword }) })
       const j = await r.json(); if (!r.ok || !j.ok) { setErr(j.error || 'Could not delete'); return }
       load()
     } catch (e: any) { setErr(String(e?.message || e)) }
@@ -644,7 +646,8 @@ function ActiveGlitches({ market }: { market: string }) {
               {stage[g.id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200 shrink-0">{stage[g.id]}</span>}
               <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + (g.running ? 'bg-sky-50 text-sky-700 border-sky-200' : (g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>{g.running ? 'In progress' : 'Open' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '')}</span>
               <span className={'text-xs shrink-0 ' + (g.unassigned ? 'font-medium text-rose-700' : 'text-muted')}>{g.unassigned ? 'Unassigned' : (g.assignees || []).join(', ')}</span>
-              <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
+              <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0" title="Open the admin task in Breezeway — edit, assign, check">admin</a>
+              {g.reportUrl && <a href={g.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0" title="View the field report">report</a>}
             </div>
           ))}
         </div>
