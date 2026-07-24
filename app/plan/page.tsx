@@ -1,17 +1,13 @@
 'use client'
-// Ops Plan — the daily operations board. Shows TODAY / TOMORROW / next day by checkout
-// (turnover), with internal operational-improvement tasks generated per unit from guest
-// feedback, recurring issues, a turnover audit, and a preventative-maintenance check.
-// Units are ranked LUX FIRST, then weakest health. Field tasks can be pushed to Breezeway
-// (assign + track) right from the row; desk tasks stay internal.
-import { useState, useEffect } from 'react'
+// Today in Ops — ONE page, no tabs. The live field board (with active guest glitches on it)
+// is the page; the 3-day improvement plan folds away underneath for when it's needed.
+import { useState } from 'react'
 import Link from 'next/link'
 import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
 import { TodayInOps } from '@/components/TodayInOps'
-import { GlitchesBoard } from '@/components/GlitchesBoard'
-import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Star, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
+import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
 type Evidence = { quote: string; channel: string; date: string; stars: number | null }
@@ -29,33 +25,39 @@ const CAT: Record<string, string> = {
 const catC = (c: string) => CAT[c] || 'bg-app text-muted'
 
 export default function OpsPlanPage() {
-  const { data, loading, error, refresh } = useCachedFetch<Data>('/api/ops-plan/daily')
-  const [tab, setTab] = useState<'today' | 'glitches' | 'plan'>('today')
-  const [glitchCount, setGlitchCount] = useState(0)
-  useEffect(() => { fetch('/api/ops-today/glitches', { cache: 'no-store' }).then(r => r.json()).then(j => setGlitchCount(j && j.count ? j.count : 0)).catch(() => {}) }, [])
-  const [open, setOpen] = useState<string | null>(null)
-  const [market, setMarket] = useState<'all' | 'Miami' | 'Broward' | 'North'>('all')
-  const [ccs, setCcs] = useState(false)  // include CCS (desk) work?
-
+  const [showPlan, setShowPlan] = useState(false)
   return (
     <Shell>
       <header className="mb-5">
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Today in Ops</h1>
-        <p className="text-sm text-muted mt-1">Live field board &mdash; cleans, maintenance, inspections and guest glitches by market. Assign, reschedule, and see what needs attention.</p>
+        <p className="text-sm text-muted mt-1">Live field board &mdash; cleans, maintenance, inspections and active guest glitches by market. Assign, reschedule, and see what needs attention.</p>
       </header>
 
-      <div className="flex gap-1 mb-5 bg-app rounded-xl p-1 max-w-md">
-        {([['today', 'Today'], ['glitches', 'Glitches'], ['plan', '3-day plan']] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setTab(k)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition inline-flex items-center justify-center gap-1.5 ' + (tab === k ? 'bg-white shadow-soft text-ink' : 'text-muted hover:text-ink')}>{lbl}{k === 'glitches' && glitchCount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{glitchCount}</span>}</button>
-        ))}
-      </div>
+      <TodayInOps />
 
-      {tab === 'today' && <TodayInOps glitchCount={glitchCount} onShowGlitches={() => setTab('glitches')} />}
+      {/* 3-DAY IMPROVEMENT PLAN — folded away; loads only when opened */}
+      <section className="mt-8">
+        <button onClick={() => setShowPlan(!showPlan)} className="w-full rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-2 text-left hover:bg-app/50">
+          <Calendar size={15} className="text-muted" />
+          <span className="font-semibold text-ink text-sm">3-day improvement plan</span>
+          <span className="text-xs text-muted">per-unit prep from guest feedback, audits and PM &mdash; by checkout day</span>
+          <ChevronDown size={16} className={'ml-auto text-muted transition-transform ' + (showPlan ? 'rotate-180' : '')} />
+        </button>
+        {showPlan && <div className="mt-4"><ThreeDayPlan /></div>}
+      </section>
+    </Shell>
+  )
+}
 
-      {tab === 'glitches' && <GlitchesBoard />}
+function ThreeDayPlan() {
+  const { data, loading, error, refresh } = useCachedFetch<Data>('/api/ops-plan/daily')
+  const [open, setOpen] = useState<string | null>(null)
+  const [market, setMarket] = useState<'all' | 'Miami' | 'Broward' | 'North'>('all')
+  const [ccs, setCcs] = useState(false)  // include CCS (desk) work?
+  return (
+    <>
 
-      {tab === 'plan' && (<>
 
       {data?.days && (
         <div className="flex items-center gap-2 flex-wrap mb-4">
@@ -158,7 +160,6 @@ export default function OpsPlanPage() {
           })}
         </div>
       )}
-      </>)}
-    </Shell>
+    </>
   )
 }
