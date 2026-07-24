@@ -49,6 +49,18 @@ export async function GET(req: NextRequest) {
 
     const { data: rows, error } = await db.from('glitches').select('*').order('created_at', { ascending: false }).limit(500)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    // live Breezeway status per pushed glitch, from the task mirror (webhooks keep it fresh) —
+    // so the team sees Completed / In progress at a glance and can manage guest expectations.
+    const taskIds = ((rows || []) as any[]).map(g => str(g.breezeway_task_id)).filter(Boolean)
+    const tmap: Record<string, string> = {}
+    if (taskIds.length) {
+      const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status,finished_at').in('id', taskIds)
+      for (const t of (ts || []) as any[]) {
+        const st = str(t.status)
+        tmap[String(t.id)] = (/complete|finish|close|approv/i.test(st) || t.finished_at) ? 'completed' : /progress|started/i.test(st) ? 'in_progress' : 'created'
+      }
+    }
+    for (const g of (rows || []) as any[]) (g as any).task_status = g.breezeway_task_id ? (tmap[str(g.breezeway_task_id)] || null) : null
     const counts: Record<string, number> = {}
     for (const s of STATUSES) counts[s] = 0
     for (const g of (rows || []) as any[]) counts[str(g.status)] = (counts[str(g.status)] || 0) + 1
@@ -66,6 +78,8 @@ export async function POST(req: NextRequest) {
     const b = await req.json().catch(() => ({} as any))
     const overview = str(b.overview).trim()
     if (!overview) return NextResponse.json({ ok: false, error: 'Describe the glitch (overview).' }, { status: 400 })
+    if (!str(b.category).trim()) return NextResponse.json({ ok: false, error: 'Category is required.' }, { status: 400 })
+    if (!str(b.incidentDate).trim()) return NextResponse.json({ ok: false, error: 'Incident date is required.' }, { status: 400 })
     const row: Record<string, any> = {
       status: 'pool',
       glitch_type: str(b.glitchType) || 'Glitch (Quality Issue)',
@@ -83,6 +97,9 @@ export async function POST(req: NextRequest) {
       incident_date: str(b.incidentDate) || null,
       overview,
       recovery_cost: num(b.recoveryCost) || 0,
+      refund_approved: num(b.refundApproved) || 0,
+      reported_by: str(b.reportedBy) || null,
+      guest_email: str(b.guestEmail) || null,
       photos: Array.isArray(b.photos) ? b.photos.filter((x: any) => typeof x === 'string').slice(0, 20) : [],
       created_by: user.email || 'team',
       history: [{ at: new Date().toISOString(), by: user.email || 'team', action: 'created' }],
