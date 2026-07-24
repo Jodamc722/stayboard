@@ -42,7 +42,7 @@ function addDays(iso: string, d: number): string {
 
 type RawResv = {
   listing_id: string; check_in: string; check_out: string; nights: number
-  source: string; money_total: number; fare: number; grossFare: number; cleaningFee: number; items: any[]
+  source: string; money_total: number; fare: number; grossFare: number; cleaningFee: number; hostFee: number; commission: number; items: any[]
 }
 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
@@ -59,7 +59,7 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
     for (let attempt = 0; attempt < 3; attempt++) {
       const res = await sb
         .from('guesty_reservations')
-        .select('listing_id, check_in, check_out, nights, status, source, money_total, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted, cleaningFee:raw->money->>fareCleaning, items:raw->money->invoiceItems')
+        .select('listing_id, check_in, check_out, nights, status, source, money_total, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted, cleaningFee:raw->money->>fareCleaning, hostFee:raw->money->>hostServiceFeeIncTax, commission:raw->money->>commission, items:raw->money->invoiceItems')
         .in('status', CONFIRMED)
         .gt('check_out', from)
         .lt('check_in', toExcl)
@@ -83,16 +83,22 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
       source: String(r.source || 'other'),
       money_total: num(r.money_total),
       fare: num(r.fare), grossFare: num(r.grossFare), cleaningFee: num(r.cleaningFee),
+      hostFee: num(r.hostFee), commission: num(r.commission),
       items: Array.isArray(r.items) ? r.items : [],
     }))
 }
 
-// Per-reservation revenue components. netAccom = fareAccommodation (after channel/OTA host fee),
-// grossAccom = fareAccommodationAdjusted (before the fee - matches PriceLabs / guest-paid room rate).
-type Comp = { grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number }
+// Per-reservation revenue components. grossAccom = fareAccommodationAdjusted (guest-paid room
+// rate, before OTA fees - matches PriceLabs). netAccom = grossAccom - hostServiceFeeIncTax: the
+// OWNER-STATEMENT "Rental Income" basis, validated to the penny against Guesty owner statements
+// (Jun 2026: Vrbo 770.23-45.53=724.70, Airbnb 221.15-54.34=166.81, direct 170-0=170). Do NOT use
+// raw netIncome/ownerRevenue - they double-count the Airbnb fee and carry stale formula snapshots.
+// commission = Guesty's per-reservation PMC commission (the owner's actual business-model %).
+type Comp = { grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number }
 function componentsOf(r: RawResv): Comp {
-  const netAccom = r.fare
-  const grossAccom = r.grossFare || netAccom
+  const grossAccom = r.grossFare || r.fare
+  const netAccom = grossAccom - r.hostFee
+  const commission = r.commission
   const cleaning = r.cleaningFee
   let parking = 0, other = 0
   for (const it of r.items) {
@@ -103,7 +109,7 @@ function componentsOf(r: RawResv): Comp {
     if (/park/i.test(t)) parking += amt
     else other += amt
   }
-  return { grossAccom, netAccom, cleaning, parking, other }
+  return { grossAccom, netAccom, cleaning, parking, other, commission }
 }
 
 // Expedia-family channels bundle cleaning into accommodation (arrives cleaning=0). Rebuild each
@@ -138,7 +144,7 @@ function expediaCleaningFix(list: { r: RawResv; c: Comp }[]) {
 export type UnitRow = {
   id: string; name: string; building: string; market: string; owner: string; bedrooms: number | null
   nightsSold: number; occ: number; bookings: number
-  grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; total: number
+  grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; total: number
   prevOcc: number; prevTotal: number
   otb30: number // forward on-the-books occupancy next 30 days (0..1)
   flags: string[] // struggling reasons
@@ -233,8 +239,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const currency = 'USD'
 
     // ---- per-listing accumulation (prorated per night into the range) ----
-    type Acc = { nightsSold: number; bookings: number; grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; moneyTotal: number }
-    const blank = (): Acc => ({ nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, moneyTotal: 0 })
+    type Acc = { nightsSold: number; bookings: number; grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; moneyTotal: number }
+    const blank = (): Acc => ({ nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, moneyTotal: 0 })
     const per: Record<string, Acc> = {}
     const byChannel: Record<string, { count: number; revenue: number }> = {}
     for (const x of curX) {
@@ -250,6 +256,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       a.cleaning += x.c.cleaning * share
       a.parking += x.c.parking * share
       a.other += x.c.other * share
+      a.commission += x.c.commission * share
       a.moneyTotal += x.r.money_total * share
       const ch = prettyChannel(x.r.source)
       if (!byChannel[ch]) byChannel[ch] = { count: 0, revenue: 0 }
@@ -303,7 +310,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
         nightsSold: a.nightsSold,
         occ: days > 0 ? a.nightsSold / days : 0,
         bookings: a.bookings,
-        grossAccom: a.grossAccom, netAccom: a.netAccom, cleaning: a.cleaning, parking: a.parking, other: a.other,
+        grossAccom: a.grossAccom, netAccom: a.netAccom, cleaning: a.cleaning, parking: a.parking, other: a.other, commission: a.commission,
         total: a.grossAccom + a.cleaning + a.parking + a.other,
         prevOcc: days > 0 ? p.nights / days : 0,
         prevTotal: p.total,
@@ -342,12 +349,12 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     }
 
     // ---- portfolio totals ----
-    const totals = { grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, total: 0, moneyTotal: 0 }
+    const totals = { grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, total: 0, moneyTotal: 0 }
     let nightsSold = 0, bookings = 0
     for (const id of Object.keys(per)) {
       const a = per[id]
       totals.grossAccom += a.grossAccom; totals.netAccom += a.netAccom; totals.cleaning += a.cleaning
-      totals.parking += a.parking; totals.other += a.other; totals.moneyTotal += a.moneyTotal
+      totals.parking += a.parking; totals.other += a.other; totals.commission += a.commission; totals.moneyTotal += a.moneyTotal
       nightsSold += a.nightsSold; bookings += a.bookings
     }
     totals.total = totals.grossAccom + totals.cleaning + totals.parking + totals.other
@@ -433,7 +440,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       },
       channels, buildingAvg, units, recs,
     }
-  }, ['revenue-center-v5'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v6'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 
