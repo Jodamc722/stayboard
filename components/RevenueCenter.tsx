@@ -4,7 +4,7 @@
 // that scopes the KPI strip AND the table -> Daily checks for the rev team (server-built recs,
 // unit chips click-to-filter) -> portfolio cards (mix / pacing / channels) -> performance table
 // with Units / Buildings / Owners views and a compact-by-default fee-breakdown toggle.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { RangeFilter } from '@/components/RangeFilter'
 import type { RevenueData, UnitRow, Rec } from '@/app/revenue/page'
 import {
@@ -69,6 +69,11 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
   const [own, setOwn] = useState('all')
   const [onlyFlagged, setOnlyFlagged] = useState(false)
   const [showFees, setShowFees] = useState(false)
+  // Daily checks panel collapses; last choice sticks per browser. Starts collapsed - the
+  // header chips still show the red/amber counts so nothing urgent hides.
+  const [checksOpen, setChecksOpen] = useState(false)
+  useEffect(() => { try { if (window.localStorage.getItem('revChecksOpen') === '1') setChecksOpen(true) } catch {} }, [])
+  function toggleChecks() { setChecksOpen(v => { try { window.localStorage.setItem('revChecksOpen', v ? '0' : '1') } catch {}; return !v }) }
   const [sortKey, setSortKey] = useState('rev')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -266,7 +271,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
         <Kpi label="Occupancy" value={pct(k.occ)} Icon={Percent} sub={`${k.nights.toLocaleString()} / ${k.avail.toLocaleString()} nights`} extra={<Delta cur={k.occ} prev={k.prevOcc} />} />
         <Kpi label="RevPAR" value={fmtMoney(k.revpar)} Icon={BedDouble} sub="rev / available night" extra={<Delta cur={k.revparT} prev={k.prevRevparT} money />} />
       </div>
-      <div className="grid grid-cols-3 md:grid-cols-7 gap-3 mb-5">
+      <div className="grid grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-5">
         <Kpi small label="Gross accom" value={fmtMoney(k.gross)} Icon={DollarSign} />
         <Kpi small label="Net accom" value={fmtMoney(k.net)} Icon={Wallet} sub={`${fmtMoney(k.gross - k.net)} channel fees`} />
         <Kpi small label="Cleaning" value={fmtMoney(k.cleaning)} Icon={Sparkles} />
@@ -278,15 +283,15 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
 
       {/* Daily checks for the rev team */}
       <section className="rounded-2xl border border-line bg-white mb-5">
-        <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-3 flex-wrap border-b border-line">
-          <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><ClipboardCheck size={15} className="text-brand-600" /> Daily checks — rev team</h2>
+        <div onClick={toggleChecks} className={`px-5 pt-4 pb-3 flex items-center justify-between gap-3 flex-wrap cursor-pointer select-none hover:bg-app/40 rounded-t-2xl ${checksOpen ? 'border-b border-line' : 'pb-4'}`}>
+          <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><ClipboardCheck size={15} className="text-brand-600" /> Daily checks — rev team {checksOpen ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}</h2>
           <div className="flex items-center gap-1.5 text-[11px] font-semibold">
             {redCount > 0 && <span className="rounded-full bg-red-50 border border-red-200 text-red-700 px-2.5 py-0.5">{redCount} act today</span>}
             {amberCount > 0 && <span className="rounded-full bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-0.5">{amberCount} this week</span>}
             <span className="rounded-full bg-app border border-line text-muted px-2.5 py-0.5">{d.recs.length} checks</span>
           </div>
         </div>
-        {d.recs.length === 0 ? (
+        {checksOpen && (d.recs.length === 0 ? (
           <div className="px-5 py-6 text-sm text-muted italic text-center">Nothing to flag — pacing, pricing and forward calendar all look healthy.</div>
         ) : (
           <ol className="divide-y divide-line/70">
@@ -316,8 +321,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
               </li>
             ))}
           </ol>
-        )}
-        <div className="px-5 py-2 border-t border-line text-[11px] text-muted">Rebuilt from live data on every load · click a unit to focus the whole page on it · severity: red = act today, amber = this week, blue = watch.</div>
+        ))}
+        {checksOpen && <div className="px-5 py-2 border-t border-line text-[11px] text-muted">Rebuilt from live data on every load · click a unit to focus the whole page on it · severity: red = act today, amber = this week, blue = watch.</div>}
       </section>
 
       {/* Portfolio cards */}
@@ -433,7 +438,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                 const dRev = u.prevTotal > 0 ? (u.total - u.prevTotal) / u.prevTotal : null
                 const struggling = view === 'units' && u.flags.length >= 2
                 return (
-                  <tr key={u.id} className={`border-t border-line/70 hover:bg-app/40 ${struggling ? 'bg-amber-50/40' : ''}`}>
+                  <tr key={u.id} className={`border-t border-line/70 odd:bg-app/20 hover:bg-app/40 ${struggling ? 'bg-amber-50/40' : ''}`}>
                     <td className="px-2.5 py-2 font-medium text-ink whitespace-nowrap max-w-[220px] truncate">{u.name}{view !== 'units' && <span className="text-muted font-normal"> · {(u as any).unitCount} units</span>}</td>
                     {view === 'units' && <td className="px-2.5 py-2 text-muted whitespace-nowrap">{u.building}</td>}
                     {view === 'units' && <td className="px-2.5 py-2 text-muted whitespace-nowrap max-w-[160px] truncate">{u.owner}</td>}
