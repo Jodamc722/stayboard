@@ -14,9 +14,10 @@ type Glitch = {
   reservation_total: number | null; incident_date: string | null; overview: string | null
   recovery_cost: number | null; refund_approved: number | null; reported_by: string | null; guest_email: string | null
   breezeway_task_id: string | null; photos: string[] | null; task_status: string | null
+  reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
   created_at: string
 }
-type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null }
+type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
 
 const COLS: { key: string; label: string }[] = [
   { key: 'pool', label: 'Glitch pool' },
@@ -35,6 +36,12 @@ const CATS = [
 ]
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso || ''; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 function money(n: number | null) { return n == null ? null : '$' + Math.round(n).toLocaleString() }
+function SentimentChip({ s }: { s: { band?: string; dissatisfied?: boolean; topIssue?: string | null } | null }) {
+  if (!s || !s.band) return null
+  const bad = s.dissatisfied || /neg|bad|angry|upset/i.test(String(s.band))
+  const mid = /mix|neutral|warn/i.test(String(s.band))
+  return <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (bad ? 'bg-rose-100 text-rose-800 border-rose-300' : mid ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200')}>Sentiment: {s.band}{s.topIssue ? ' · ' + s.topIssue : ''}</span>
+}
 
 export function GlitchBoard() {
   const [glitches, setGlitches] = useState<Glitch[]>([])
@@ -122,7 +129,13 @@ export function GlitchBoard() {
                       </button>
                       {isOpen && (
                         <div className="px-3 pb-2.5 border-t border-line pt-2 space-y-1.5">
-                          {g.check_in && <div className="text-[11px] text-muted">Stay {fmtShort(g.check_in)} &rarr; {fmtShort(g.check_out)}{g.reservation_total ? ' · ' + money(g.reservation_total) : ''}{g.guest_phone ? ' · ' + g.guest_phone : ''}</div>}
+                          {g.check_in && <div className="text-[11px] text-muted">Stay {fmtShort(g.check_in)} &rarr; {fmtShort(g.check_out)}{g.reservation_total ? ' · ' + money(g.reservation_total) : ''}{g.guest_phone ? ' · ' + g.guest_phone : ''}{g.guest_email ? ' · ' + g.guest_email : ''}</div>}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {g.reservation_id && <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-brand-600 hover:underline">Open reservation in Guesty ↗</a>}
+                            <SentimentChip s={g.sentiment} />
+                          </div>
+                          {g.reservation_notes && <div className="text-[11px] text-muted">Reservation notes: {g.reservation_notes.slice(0, 200)}</div>}
+                          {g.sentiment && g.sentiment.excerpt && <div className="text-[11px] text-muted">Guest said: &ldquo;{String(g.sentiment.excerpt).slice(0, 180)}&rdquo;</div>}
                           {(g.photos || []).length > 0 && (
                             <div className="flex gap-1 flex-wrap">{(g.photos || []).map((u, i) => <a key={i} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" className="w-12 h-12 object-cover rounded border border-line" /></a>)}</div>
                           )}
@@ -202,7 +215,7 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
       const body: Record<string, any> = {
         glitchType, category, incidentDate, overview, recoveryCost: recovery, photos, reportedBy, guestEmail,
       }
-      if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total })
+      if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total, reservationNotes: res.notes, sentiment: res.sentiment })
       const r = await fetch('/api/glitches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Could not create'); setBusy(false); return }
@@ -229,9 +242,10 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
           {matches.length > 0 && (
             <div className="mt-2 space-y-1 max-w-xl">
               {matches.map(m => (
-                <button key={m.reservationId} onClick={() => setRes(m)} className="w-full text-left text-sm border border-line rounded-lg px-3 py-2 bg-white hover:bg-app flex items-center gap-2 flex-wrap">
+                <button key={m.reservationId} onClick={() => { setRes(m); if (m.guestEmail) setGuestEmail(m.guestEmail) }} className="w-full text-left text-sm border border-line rounded-lg px-3 py-2 bg-white hover:bg-app flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-ink">{m.guestName}</span>
                   <span className="text-xs text-muted">{m.unit} · {fmtShort(m.checkIn)} &rarr; {fmtShort(m.checkOut)}{m.channel ? ' · ' + m.channel : ''}{m.total ? ' · ' + money(m.total) : ''}</span>
+                  <SentimentChip s={m.sentiment} />
                 </button>
               ))}
             </div>
@@ -242,7 +256,11 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
       {res && (
         <div className="mb-3 text-sm bg-app border border-line rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
           <span className="font-medium text-ink">{res.guestName}</span>
-          <span className="text-xs text-muted">{res.unit} · {res.market} · {fmtShort(res.checkIn)} &rarr; {fmtShort(res.checkOut)}{res.channel ? ' · ' + res.channel : ''}{res.total ? ' · ' + money(res.total) : ''}{res.guestPhone ? ' · ' + res.guestPhone : ''}</span>
+          <span className="text-xs text-muted">{res.unit} · {res.market} · {fmtShort(res.checkIn)} &rarr; {fmtShort(res.checkOut)}{res.channel ? ' · ' + res.channel : ''}{res.total ? ' · ' + money(res.total) : ''}{res.guestPhone ? ' · ' + res.guestPhone : ''}{res.guestEmail ? ' · ' + res.guestEmail : ''}</span>
+          <a href={res.guestyUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline">Open in Guesty ↗</a>
+          <SentimentChip s={res.sentiment} />
+          {res.notes && <span className="text-[11px] text-muted w-full">Reservation notes: {res.notes.slice(0, 200)}</span>}
+          {res.sentiment && res.sentiment.excerpt && <span className="text-[11px] text-muted w-full">Guest said: &ldquo;{String(res.sentiment.excerpt).slice(0, 180)}&rdquo;</span>}
           <button onClick={() => setRes(null)} className="ml-auto text-xs text-muted hover:text-ink">change</button>
         </div>
       )}
