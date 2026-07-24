@@ -49,7 +49,7 @@ export default function LaborPage() {
   return (
     <Shell>
       <header className="mb-5">
-        <div className="text-[11px] font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5"><Timer size={12} /> Performance</div>
+        <div className="text-[11px] font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5"><Timer size={12} /> Team</div>
         <h1 className="text-3xl font-bold text-ink mt-1">Labor</h1>
         <p className="text-sm text-muted mt-1">Upload the Homebase timesheet export, and this joins hours + wages against completed Breezeway cleans: hours per clean and cost per clean, per person.</p>
       </header>
