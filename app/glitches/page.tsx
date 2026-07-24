@@ -147,7 +147,8 @@ export default function GlitchesPage() {
                 </div>
                 {!g.done && <input list="glitch-page-ppl" defaultValue="" placeholder={g.assignees.length ? g.assignees.join(', ') : 'assign…'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(g.id, p.id) } }} className={'text-xs rounded border px-2 py-1.5 bg-white w-[150px] shrink-0 ' + (g.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-rose-300 text-rose-800 placeholder:text-rose-800 font-medium')} />}
                 {g.done && g.assignees.length > 0 && <span className="text-xs text-muted shrink-0">{g.assignees.join(', ')}</span>}
-                <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">open</a>
+                <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0" title="Open the admin task in Breezeway — edit, assign, check">admin</a>
+                {g.reportUrl && <a href={g.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0" title="View the field report">report</a>}
               </div>
             ))}
           </div>
