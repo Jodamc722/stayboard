@@ -3,6 +3,7 @@
 // on it today (strip, departure clean, inspection, maintenance) so a coordinator manages the
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck } from 'lucide-react'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
@@ -82,7 +83,7 @@ function sortByArea(list: Unit[]): Unit[] {
   return out
 }
 
-export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: number; onShowGlitches?: () => void } = {}) {
+export function TodayInOps() {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -223,17 +224,21 @@ export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: numb
         {(d.untracked || 0) > 0 && <div className="mt-1 text-xs text-muted">Excludes {d.untracked} vendor-cleaned unit{(d.untracked || 0) > 1 ? 's' : ''} (Botanica) — the vendor doesn&rsquo;t close tasks in Breezeway, so they can&rsquo;t be tracked against 4pm.</div>}
       </div>
 
-      {/* stat cards double as filters — click Maintenance to see only maintenance, etc. */}
-      <div className="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-9 gap-2 mb-5">
-        <Stat label="All work" value={srcUnits.length + ''} sub={(totals.tasks || 0) + ' tasks'} active={tf === 'all'} onClick={() => setTf('all')} />
-        <Stat label="Departure cleans" value={d.cleans + ''} sub={d.done + ' done · ' + (totals.strips || 0) + ' strips'} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
-        <Stat label="Maintenance" value={(totals.maintenance || 0) + ''} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
-        <Stat label="Inspections" value={(totals.inspection || 0) + ''} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
-        <Stat label="Other" value={srcUnits.reduce((a, u) => a + u.tasks.filter(t => t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip').length, 0) + ''} active={tf === 'other'} onClick={() => setTf('other')} />
-        <Stat label="In progress" value={(totals.running || 0) + ''} active={tf === 'running'} onClick={() => setTf('running')} />
-        <Stat label="Not started" value={(totals.notStarted || 0) + ''} sub={(totals.done || 0) + ' done'} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
-        <Stat label="Unassigned" value={(totals.unassigned || 0) + ''} warn={(totals.unassigned || 0) > 0} active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
-        <Stat label="Glitches" value={(glitchCount || 0) + ''} sub="guest-reported" warn={(glitchCount || 0) > 0} onClick={onShowGlitches} />
+      {/* ACTIVE GLITCHES — guest-reported problems, on the main page where they belong */}
+      <ActiveGlitches market={market} />
+
+      {/* filters — one slim row instead of a wall of cards */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-4">
+        <Chip label="All work" n={totals.tasks || 0} active={tf === 'all'} onClick={() => setTf('all')} />
+        <Chip label="Cleans" n={d.cleans} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
+        <Chip label="Maintenance" n={totals.maintenance || 0} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
+        <Chip label="Inspections" n={totals.inspection || 0} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
+        <Chip label="Other" n={srcUnits.reduce((a, u) => a + u.tasks.filter(t => t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip').length, 0)} active={tf === 'other'} onClick={() => setTf('other')} />
+        <span className="h-5 w-px bg-line mx-1" />
+        <Chip label="In progress" n={totals.running || 0} active={tf === 'running'} onClick={() => setTf('running')} />
+        <Chip label="Not started" n={totals.notStarted || 0} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
+        <Chip label="Unassigned" n={totals.unassigned || 0} warn active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
+        <span className="text-[11px] text-muted ml-1">{(totals.done || 0) + ' done'}</span>
       </div>
 
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
@@ -290,12 +295,12 @@ export function TodayInOps({ glitchCount, onShowGlitches }: { glitchCount?: numb
             </div>
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className={'flex items-center gap-3 px-4 py-3 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
+                <div key={t.id} className={'flex items-center gap-3 px-4 py-2.5 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
                   <div className="flex flex-col shrink-0 -my-1 text-muted">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
                     <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
                   </div>
-                  <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-28 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
+                  <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-ink truncate">{t.name}</div>
                     <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
@@ -592,13 +597,59 @@ function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone
   )
 }
 
-function Stat({ label, value, sub, warn, active, onClick }: { label: string; value: string; sub?: string; warn?: boolean; active?: boolean; onClick?: () => void }) {
+function Chip({ label, n, warn, active, onClick }: { label: string; n: number; warn?: boolean; active?: boolean; onClick?: () => void }) {
+  const hot = warn && n > 0 && !active
   return (
-    <button onClick={onClick} title="Click to filter the board" className={'text-left w-full rounded-2xl border p-3 transition cursor-pointer hover:shadow-soft hover:-translate-y-px ' + (active ? 'border-ink ring-1 ring-ink/20 bg-white' : warn ? 'border-amber-200 bg-amber-50 hover:border-amber-300' : 'border-line bg-white hover:border-ink/30')}>
-      <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
-      <div className={'text-2xl font-bold ' + (warn ? 'text-amber-800' : 'text-ink')}>{value}</div>
-      {sub && <div className="text-[11px] text-muted">{sub}</div>}
+    <button onClick={onClick} title="Filter the board" className={'inline-flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1.5 rounded-full border transition ' + (active ? 'bg-ink text-white border-ink' : hot ? 'bg-amber-50 text-amber-800 border-amber-300 hover:border-amber-400' : 'bg-white text-muted border-line hover:text-ink hover:bg-app')}>
+      {label}
+      <span className={'tabular-nums font-semibold ' + (active ? 'text-white' : hot ? 'text-amber-800' : 'text-ink')}>{n}</span>
     </button>
+  )
+}
+
+// ACTIVE GLITCHES — current guest-reported Breezeway tasks, plus where each one sits on the
+// glitch board (managed fully on /glitches). On the main page so nobody misses a hurting guest.
+const STAGE_LABEL: Record<string, string> = { pool: 'New', ops: 'With ops', guest_followup: 'Guest follow-up', refund: 'Refund request', manager_review: 'Manager review', incident: 'Incident report', closed: 'Closed' }
+function ActiveGlitches({ market }: { market: string }) {
+  const [data, setData] = useState<any>(null)
+  const [stage, setStage] = useState<Record<string, string>>({})
+  const [open, setOpen] = useState(true)
+  useEffect(() => {
+    fetch('/api/ops-today/glitches', { cache: 'no-store' }).then(r => r.json()).then(setData).catch(() => {})
+    fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      const m: Record<string, string> = {}
+      for (const g of (j && Array.isArray(j.glitches) ? j.glitches : [])) if (g.breezeway_task_id) m[String(g.breezeway_task_id)] = STAGE_LABEL[g.status] || ''
+      setStage(m)
+    }).catch(() => {})
+  }, [])
+  const rows = ((data && data.glitches) || []).filter((g: any) => market === 'all' || g.market === market)
+  if (!data || rows.length === 0) return null
+  const unassigned = rows.filter((g: any) => g.unassigned).length
+  return (
+    <div className="rounded-2xl border border-rose-200 bg-white mb-4 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left bg-rose-50/60">
+        <AlertTriangle size={15} className="text-rose-700" />
+        <span className="font-semibold text-ink text-sm">Active glitches</span>
+        <span className="text-xs font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{rows.length}</span>
+        {unassigned > 0 && <span className="text-xs font-medium text-rose-700">{unassigned} unassigned</span>}
+        <Link href="/glitches" onClick={e => e.stopPropagation()} className="ml-auto text-xs font-semibold text-brand-700 hover:underline shrink-0">Manage board &rarr;</Link>
+        <span className="text-muted text-xs">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="divide-y divide-line border-t border-line">
+          {rows.map((g: any) => (
+            <div key={g.id} className="flex items-center gap-2.5 px-4 py-2.5 text-sm flex-wrap">
+              <span className="font-medium text-ink shrink-0">{g.unit}</span>
+              <span className="text-[13px] text-ink/80 flex-1 min-w-[160px] truncate">{g.issue}</span>
+              {stage[g.id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200 shrink-0">{stage[g.id]}</span>}
+              <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + (g.running ? 'bg-sky-50 text-sky-700 border-sky-200' : (g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>{g.running ? 'In progress' : 'Open' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '')}</span>
+              <span className={'text-xs shrink-0 ' + (g.unassigned ? 'font-medium text-rose-700' : 'text-muted')}>{g.unassigned ? 'Unassigned' : (g.assignees || []).join(', ')}</span>
+              <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
