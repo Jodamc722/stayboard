@@ -282,7 +282,7 @@ export function TodayInOps() {
         {units.map(u => (
           <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line bg-app/60 flex-wrap">
-              <span className="font-semibold text-ink">{u.unit}</span>
+              <span className="font-bold text-[15px] text-ink">{u.unit}</span>
               <span className="text-xs text-muted">{u.market}</span>
               {u.city && <span className="text-xs text-muted">&middot; {u.city}</span>}
               {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
@@ -295,10 +295,11 @@ export function TodayInOps() {
               <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
               <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
             </div>
+            <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: (u.tasks.length ? Math.round((u.tasks.filter(t => t.done).length / u.tasks.length) * 100) : 0) + '%' }} /></div>
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className={'flex items-center gap-3 px-4 py-2.5 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
-                  <div className="flex flex-col shrink-0 -my-1 text-muted">
+                <div key={t.id} className={'group flex items-center gap-3 px-4 py-2.5 text-sm ' + (t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
+                  <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
                     <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
                   </div>
@@ -310,11 +311,11 @@ export function TodayInOps() {
                       <span>{t.finishedAt ? '· done ' + hhmm(t.finishedAt) : t.startedAt ? '· started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
                     </div>
                   </div>
-                  <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
-                  <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0">admin</a>
-                  {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0">report</a>}
-                  {!t.done && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50')}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
-                  {!t.done && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1">✕</button>}
+                  <span className={'text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
+                  <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" title="Open the ADMIN task in Breezeway \u2014 edit, assign, modify, check" className="text-xs font-medium text-brand-600 hover:underline shrink-0 opacity-70 group-hover:opacity-100">admin</a>
+                  {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" title="View the field report" className="text-xs text-muted hover:underline shrink-0 opacity-70 group-hover:opacity-100">report</a>}
+                  {!t.done && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50') + ' opacity-70 group-hover:opacity-100'}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
+                  {!t.done && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1 opacity-60 group-hover:opacity-100">✕</button>}
                 </div>
               ))}
             </div>
