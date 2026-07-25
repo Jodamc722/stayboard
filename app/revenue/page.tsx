@@ -155,7 +155,9 @@ export type Rec = {
   severity: 'red' | 'amber' | 'info'
   title: string
   action: string
-  units: { id: string; name: string }[]
+  // Estimated $/month left on the table (0 for informational checks). Ranked desc in the UI.
+  impact: number
+  units: { id: string; name: string; impact: number }[]
 }
 
 export type RevenueData = {
@@ -169,6 +171,10 @@ export type RevenueData = {
   buildingAvg: Record<string, { occ: number; adr: number }>
   units: UnitRow[]
   recs: Rec[]
+  // Portfolio trend series: total collected revenue + nights sold per day in the range.
+  daily: { d: string; rev: number; nights: number }[]
+  // Forward on-the-books nights per day for the next 90 days (portfolio).
+  fwdDaily: { d: string; nights: number }[]
 }
 
 function prettyChannel(s: string): string {
@@ -243,11 +249,22 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const blank = (): Acc => ({ nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, moneyTotal: 0 })
     const per: Record<string, Acc> = {}
     const byChannel: Record<string, { count: number; revenue: number }> = {}
+    const dayRev: Record<string, number> = {}
+    const dayNights: Record<string, number> = {}
     for (const x of curX) {
       if (!activeIds.has(x.r.listing_id)) continue
       const n = overlapNights(x.r.check_in, x.r.check_out, from, toExcl)
       if (n <= 0) continue
       const share = n / x.r.nights
+      // Per-day trend: spread the reservation's total evenly across its in-range nights.
+      const nightly = (x.c.grossAccom + x.c.cleaning + x.c.parking + x.c.other) / x.r.nights
+      let nd = x.r.check_in > from ? x.r.check_in : from
+      const nEnd = x.r.check_out < toExcl ? x.r.check_out : toExcl
+      while (nd < nEnd) {
+        dayRev[nd] = (dayRev[nd] || 0) + nightly
+        dayNights[nd] = (dayNights[nd] || 0) + 1
+        nd = addDays(nd, 1)
+      }
       const a = per[x.r.listing_id] = per[x.r.listing_id] || blank()
       a.nightsSold += n
       a.bookings += 1
@@ -278,8 +295,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       prevTotalAll += tot; prevNights += n; prevGross += x.c.grossAccom * share
     }
 
-    // Forward on-the-books nights per listing (30/60/90)
+    // Forward on-the-books nights per listing (30/60/90) + per-day booked curve
     const fwd30: Record<string, number> = {}
+    const fwdDayN: Record<string, number> = {}
     let n30 = 0, n60 = 0, n90 = 0, rev30 = 0
     const t30 = addDays(todayStr, 30), t60 = addDays(todayStr, 60), t90 = addDays(todayStr, 90)
     for (const r of fwd) {
@@ -288,6 +306,11 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       const b = overlapNights(r.check_in, r.check_out, todayStr, t60)
       const c = overlapNights(r.check_in, r.check_out, todayStr, t90)
       n30 += a; n60 += b; n90 += c
+      if (c > 0) {
+        let fd = r.check_in > todayStr ? r.check_in : todayStr
+        const fEnd = r.check_out < t90 ? r.check_out : t90
+        while (fd < fEnd) { fwdDayN[fd] = (fwdDayN[fd] || 0) + 1; fd = addDays(fd, 1) }
+      }
       if (a > 0) {
         fwd30[r.listing_id] = (fwd30[r.listing_id] || 0) + a
         const comp = componentsOf(r)
@@ -364,68 +387,89 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       .map(k => ({ name: k, revenue: byChannel[k].revenue, count: byChannel[k].count }))
       .sort((a, b) => b.revenue - a.revenue)
 
-    // ---- daily checks / recommendations for the rev team ----
+    // ---- daily checks / recommendations, each with an estimated $/month impact ----
+    // Impact estimates are deliberately simple and conservative: peer-pace gaps priced at the
+    // building's ADR, normalized to a 30-day month. They rank the work; they are not forecasts.
     const recs: Rec[] = []
-    const chip = (u: UnitRow) => ({ id: u.id, name: u.name })
     const adrOf = (u: UnitRow) => (u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0)
+    const monthize = (v: number) => (days > 0 ? (v * 30) / days : 0)
+    const rnd = (v: number) => Math.round(v)
+    const chips = (list: { u: UnitRow; imp: number }[]) =>
+      list.sort((a, b) => b.imp - a.imp).map(x => ({ id: x.u.id, name: x.u.name, impact: rnd(x.imp) }))
+    const sum = (list: { imp: number }[]) => rnd(list.reduce((s, x) => s + x.imp, 0))
+
     const dead = units.filter(u => u.nightsSold === 0 && u.otb30 === 0)
+      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: bl && bl.occ > 0 ? bl.occ * 30 * bl.adr : 0 } })
     if (dead.length > 0) recs.push({
       severity: 'red',
       title: dead.length + ' unit' + (dead.length > 1 ? 's' : '') + ' earned $0 in this range and have nothing on the books',
-      action: 'Confirm each is live and bookable (calendar blocks, listing status, min-stay). If deliberately offline, ignore. Otherwise restart momentum: intro rate about -15% and a relaxed min-stay for the next 14 days.',
-      units: dead.map(chip),
+      action: 'Confirm each is live and bookable (calendar blocks, listing status, min-stay). If deliberately offline, ignore. Otherwise restart momentum: intro rate about -15% and a relaxed min-stay for the next 14 days. Impact = a month at the building’s pace.',
+      impact: sum(dead), units: chips(dead),
     })
     const noOtb = units.filter(u => u.nightsSold > 0 && u.otb30 === 0)
+      .map(u => { const bl = buildingAvg[u.building]; const base = bl && bl.occ > 0 ? bl.occ * 30 * bl.adr : monthize(u.total); return { u, imp: base } })
     if (noOtb.length > 0) recs.push({
       severity: 'red',
       title: noOtb.length + ' selling unit' + (noOtb.length > 1 ? 's have' : ' has') + ' ZERO nights booked for the next 30 days',
-      action: 'These sold recently but the forward calendar is empty. Check for new blocks and stale pricing; refresh near-term rates today before they go dark.',
-      units: noOtb.map(chip),
+      action: 'These sold recently but the forward calendar is empty. Check for new blocks and stale pricing; refresh near-term rates today before they go dark. Impact = next month’s revenue at peer pace, all at risk.',
+      impact: sum(noOtb), units: chips(noOtb),
     })
     const tooHigh = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && bl.occ > 0.05 && u.occ < bl.occ - 0.10 && a > bl.adr * 1.05 })
+      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: (bl.occ - u.occ) * 30 * bl.adr } })
     if (tooHigh.length > 0) recs.push({
       severity: 'amber',
       title: tooHigh.length + ' unit' + (tooHigh.length > 1 ? 's are' : ' is') + ' priced above building peers but filling less',
-      action: 'Same building is outselling them at lower rates. Trim about 10% or add value (parking credit, flexible check-in) and re-check next week.',
-      units: tooHigh.map(chip),
+      action: 'Same building is outselling them at lower rates. Trim about 10% or add value (parking credit, flexible check-in) and re-check next week. Impact = closing the occupancy gap at the building’s ADR.',
+      impact: sum(tooHigh), units: chips(tooHigh),
     })
     const raise = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && u.occ >= 0.90 && a > 0 && a < bl.adr * 0.95 })
+      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: (bl.adr - adrOf(u)) * u.occ * 30 } })
     if (raise.length > 0) recs.push({
       severity: 'amber',
       title: raise.length + ' unit' + (raise.length > 1 ? 's' : '') + ' at 90%+ occupancy priced below building peers',
-      action: 'Money on the table: raise base rates 5-10% and confirm pacing holds.',
-      units: raise.map(chip),
+      action: 'Money on the table: raise base rates 5-10% and confirm pacing holds. Impact = closing the ADR gap at current occupancy.',
+      impact: sum(raise), units: chips(raise),
     })
     const dropped = units.filter(u => u.prevOcc - u.occ >= 0.15 && u.prevOcc > 0.30)
+      .map(u => ({ u, imp: (u.prevOcc - u.occ) * 30 * (adrOf(u) || (buildingAvg[u.building]?.adr || 0)) }))
     if (dropped.length > 0) recs.push({
       severity: 'amber',
       title: dropped.length + ' unit' + (dropped.length > 1 ? 's' : '') + ' dropped 15+ occupancy points vs the prior period',
-      action: 'Before touching price: check each for a fresh bad review, a channel delisting or sync issue, or new calendar blocks.',
-      units: dropped.map(chip),
+      action: 'Before touching price: check each for a fresh bad review, a channel delisting or sync issue, or new calendar blocks. Impact = the lost occupancy priced at the unit’s ADR.',
+      impact: sum(dropped), units: chips(dropped),
     })
-    const parkBld = new Set<string>()
-    for (const u of units) if (u.parking > 0) parkBld.add(u.building)
-    const upsell = units.filter(u => parkBld.has(u.building) && u.parking === 0 && u.nightsSold > 5)
+    // Parking upsell: value the gap at the building's average parking take per selling unit.
+    const parkAgg: Record<string, { rev: number; sellers: number }> = {}
+    for (const u of units) if (u.parking > 0) { const p = parkAgg[u.building] = parkAgg[u.building] || { rev: 0, sellers: 0 }; p.rev += u.parking; p.sellers += 1 }
+    const upsell = units.filter(u => parkAgg[u.building] && u.parking === 0 && u.nightsSold > 5)
+      .map(u => { const p = parkAgg[u.building]; return { u, imp: monthize(p.rev / p.sellers) } })
     if (upsell.length > 0) recs.push({
       severity: 'info',
       title: upsell.length + ' unit' + (upsell.length > 1 ? 's' : '') + ' collected $0 parking in buildings where parking sells',
-      action: 'Upsell miss: add parking to the welcome-call script and listing description for these units.',
-      units: upsell.map(chip),
+      action: 'Upsell miss: add parking to the welcome-call script and listing description for these units. Impact = the building’s average parking take per selling unit.',
+      impact: sum(upsell), units: chips(upsell),
     })
     const otb30Pct = active.length > 0 ? n30 / (active.length * 30) : 0
     if (active.length > 0 && otb30Pct < 0.40) recs.push({
       severity: 'info',
       title: 'Portfolio is only ' + Math.round(otb30Pct * 100) + '% booked for the next 30 days',
       action: 'Broad pacing is soft. Review base rates for near-term dates and open up min-stays to catch short-window demand.',
-      units: [],
+      impact: 0, units: [],
     })
     const topCh = channels[0]
     if (topCh && totals.total > 0 && topCh.revenue / totals.total > 0.80) recs.push({
       severity: 'info',
       title: topCh.name + ' is ' + Math.round((topCh.revenue / totals.total) * 100) + '% of revenue',
       action: 'Heavy single-channel dependence. Keep pushing direct: booking-engine links in guidebooks and repeat-guest offers.',
-      units: [],
+      impact: 0, units: [],
     })
+    recs.sort((a, b) => b.impact - a.impact)
+
+    // ---- trend series ----
+    const daily: { d: string; rev: number; nights: number }[] = []
+    for (let dd = from; dd <= to; dd = addDays(dd, 1)) daily.push({ d: dd, rev: Math.round(dayRev[dd] || 0), nights: dayNights[dd] || 0 })
+    const fwdDaily: { d: string; nights: number }[] = []
+    for (let dd = todayStr; dd < t90; dd = addDays(dd, 1)) fwdDaily.push({ d: dd, nights: fwdDayN[dd] || 0 })
 
     return {
       from, to, days, currency,
@@ -438,9 +482,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
         d90: active.length ? n90 / (active.length * 90) : 0,
         nights30: n30, nights60: n60, nights90: n90, rev30,
       },
-      channels, buildingAvg, units, recs,
+      channels, buildingAvg, units, recs, daily, fwdDaily,
     }
-  }, ['revenue-center-v6'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v7'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 
