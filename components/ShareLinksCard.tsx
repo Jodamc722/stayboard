@@ -14,6 +14,8 @@ export function ShareLinksCard() {
   const [origin, setOrigin] = useState('')
   const [copied, setCopied] = useState('')
   const [adminSet, setAdminSet] = useState(false)
+  const [adminCurrent, setAdminCurrent] = useState('')  // only ever sent to the Super Admin
+  const [showAdminPw, setShowAdminPw] = useState(false)
   const [adminDraft, setAdminDraft] = useState('')
   const [adminMsg, setAdminMsg] = useState('')
   const [adminErr, setAdminErr] = useState('')
@@ -23,7 +25,7 @@ export function ShareLinksCard() {
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet) } })
+      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || '') } })
       .catch(() => {})
   }, [])
 
@@ -76,7 +78,15 @@ export function ShareLinksCard() {
       </div>
       <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>
-        <p className="text-xs text-muted mt-0.5 mb-1">Required to delete a clean from Breezeway on the scheduler. {adminSet ? 'Currently SET.' : 'Not set yet \u2014 Delete is locked until you set one.'}</p>
+        <p className="text-xs text-muted mt-0.5 mb-1">Required to delete ANY task or record, anywhere in the app. {adminSet ? 'Currently SET.' : 'Not set yet \u2014 Delete is locked until you set one.'}</p>
+        {adminCurrent && (
+          <div className="flex items-center gap-2 mb-2 text-sm">
+            <span className="text-muted">Current password:</span>
+            <code className="px-2 py-1 rounded-md bg-app border border-line font-mono text-ink">{showAdminPw ? adminCurrent : '\u2022'.repeat(Math.min(adminCurrent.length, 12))}</code>
+            <button onClick={() => setShowAdminPw(!showAdminPw)} className="text-xs font-medium text-brand-700 hover:underline">{showAdminPw ? 'Hide' : 'Show'}</button>
+            <span className="text-[11px] text-muted">Visible only to the Super Admin account.</span>
+          </div>
+        )}
         <div className="flex gap-2 mt-1 max-w-md">
           <input type="password" value={adminDraft} onChange={e => setAdminDraft(e.target.value)} placeholder={adminSet ? 'New admin password' : 'Create admin password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
           <button onClick={saveAdmin} disabled={adminBusy || adminDraft.trim().length < 4} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{adminBusy ? 'Saving\u2026' : adminSet ? 'Change' : 'Set'}</button>
