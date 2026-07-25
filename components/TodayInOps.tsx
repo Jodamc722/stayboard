@@ -93,7 +93,10 @@ export function TodayInOps() {
   const [itemsFor, setItemsFor] = useState('')
   const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
   const [people, setPeople] = useState<Person[]>([])
-  const [showVacant, setShowVacant] = useState(false)
+  const [panel, setPanel] = useState<'' | 'glitches' | 'vacant'>('')
+  // active glitches live in the status strip — fetched here so the count shows without opening
+  const [gl, setGl] = useState<any>(null)
+  const [glStage, setGlStage] = useState<Record<string, string>>({})
   const [groupBy, setGroupBy] = useState<'urgency' | 'area'>('urgency')
   const [taskOrder, setTaskOrder] = useState<Record<string, string[]>>({})
   const [addVacant, setAddVacant] = useState('')
@@ -112,6 +115,14 @@ export function TodayInOps() {
   useEffect(() => { load() }, [load])
   // roster for assigning — fetched once, filtered per task department
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  useEffect(() => {
+    fetch('/api/ops-today/glitches', { cache: 'no-store' }).then(r => r.json()).then(setGl).catch(() => {})
+    fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      const m: Record<string, string> = {}
+      for (const g of (j && Array.isArray(j.glitches) ? j.glitches : [])) if (g.breezeway_task_id) m[String(g.breezeway_task_id)] = STAGE_LABEL[g.status] || ''
+      setGlStage(m)
+    }).catch(() => {})
+  }, [])
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 5 * 60 * 1000); return () => clearInterval(t) }, [load])
   // manual task order (up/down arrows), persisted per day in the browser
   useEffect(() => { try { const raw = localStorage.getItem('ops_taskorder_' + (data && data.today ? data.today : '')); if (raw) setTaskOrder(JSON.parse(raw)) } catch {} }, [data && data.today])
@@ -132,6 +143,7 @@ export function TodayInOps() {
     || (tf === 'running' && t.running && !t.done)
     || (tf === 'notstarted' && !t.done && !t.running)
     || (tf === 'other' && t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip')
+  const glRows = ((gl && gl.glitches) || []).filter((g: any) => market === 'all' || g.market === market)
   const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
   const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
@@ -186,78 +198,77 @@ export function TodayInOps() {
       <datalist id="ppl-all">
         {people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}
       </datalist>
-      <div className="flex items-center gap-2 flex-wrap mb-4">
-        {markets.map(m => (
-          <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
-        ))}
+      {/* CONTROL BAR — everything you SET, one tidy line */}
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shadow-soft">
+          {markets.map(m => (
+            <button key={m} onClick={() => setMarket(m)} className={'text-[13px] font-medium px-3 py-1.5 transition ' + (market === m ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
+          ))}
+        </span>
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
-          <button onClick={() => setShowDone(!showDone)} className="text-sm font-medium px-3 py-1.5 bg-white text-muted hover:bg-app">{showDone ? 'Hide finished' : 'Finished (' + doneCount + ')'}</button>
-          <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-sm font-medium px-3 py-1.5 ' + (groupBy === 'area' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{groupBy === 'area' ? 'By area \u2713' : 'By area'}</button>
+          <button onClick={() => setShowDone(!showDone)} className={'text-[13px] font-medium px-3 py-1.5 ' + (showDone ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Show or hide units where everything is already done">Finished {doneCount}</button>
+          <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-[13px] font-medium px-3 py-1.5 ' + (groupBy === 'area' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Group units by neighbourhood so runners drive less">By area</button>
         </span>
         <span className="ml-auto inline-flex items-center rounded-lg border border-line overflow-hidden divide-x divide-line">
-          <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-sm font-medium px-2.5 py-1.5 bg-white hover:bg-app">&lsaquo;</button>
-          <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-sm px-2 py-1.5 bg-white border-0 focus:outline-none" />
-          <button onClick={() => { setDateSel(shiftDay(data.today, 1)); setLoading(true) }} title="Next day" className="text-sm font-medium px-2.5 py-1.5 bg-white hover:bg-app">&rsaquo;</button>
-          {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-sm font-medium px-2.5 py-1.5 bg-ink text-white">Today</button>}
+          <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-[13px] font-medium px-2.5 py-1.5 bg-white hover:bg-app">&lsaquo;</button>
+          <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-[13px] px-2 py-1.5 bg-white border-0 focus:outline-none" />
+          <button onClick={() => { setDateSel(shiftDay(data.today, 1)); setLoading(true) }} title="Next day" className="text-[13px] font-medium px-2.5 py-1.5 bg-white hover:bg-app">&rsaquo;</button>
+          {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-[13px] font-medium px-2.5 py-1.5 bg-ink text-white">Today</button>}
+          <button onClick={() => { setLoading(true); load() }} title="Refresh" className="px-2.5 py-1.5 bg-white text-muted hover:bg-app hover:text-ink"><RefreshCw size={13} /></button>
         </span>
-        <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
       </div>
 
-      {/* THE CLOCK: departure cleans must be finished by 4pm (next check-in) */}
-      <div className={'rounded-2xl border p-4 mb-4 ' + (d.late > 0 ? 'border-rose-300 bg-rose-50' : d.atRisk > 0 ? 'border-amber-300 bg-amber-50' : 'border-line bg-white')}>
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Clock size={16} className={d.late > 0 ? 'text-rose-700' : d.atRisk > 0 ? 'text-amber-700' : 'text-muted'} />
-            <span className="font-semibold text-ink">Departure cleans &middot; due by {d.dueBy}</span>
-            <span className="text-sm text-muted">{data.isToday === false ? 'planning ' + fmtDay(data.today) : d.passed ? fmtLeft(d.minsLeft) + ' past deadline' : fmtLeft(d.minsLeft) + ' left'}</span>
+      {/* STATUS STRIP — everything you READ, one card: cleans progress | glitches | vacant */}
+      <div className={'rounded-2xl border mb-3 overflow-hidden bg-white ' + (d.late > 0 ? 'border-rose-300' : d.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
+        <div className="grid md:grid-cols-[1fr_auto_auto] divide-y md:divide-y-0 md:divide-x divide-line">
+          <div className="px-4 py-3 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Clock size={14} className={d.late > 0 ? 'text-rose-700' : d.atRisk > 0 ? 'text-amber-700' : 'text-muted'} />
+              <span className="font-semibold text-ink text-sm">Departure cleans</span>
+              <span className="text-sm font-bold text-ink tabular-nums">{d.done}/{d.cleans}</span>
+              <span className="text-[12px] text-muted">due {d.dueBy}{data.isToday === false ? ' \u00b7 planning ' + fmtDay(data.today) : d.passed ? ' \u00b7 ' + fmtLeft(d.minsLeft) + ' past' : ' \u00b7 ' + fmtLeft(d.minsLeft) + ' left'}</span>
+              {behind && <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded ' + (d.late > 0 ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}>{d.late > 0 ? d.late + ' LATE' : d.atRisk + ' at risk'}</span>}
+              {(d.missed > 0 || (d.untracked || 0) > 0) && <span className="ml-auto text-[11px] text-muted" title={(d.missed > 0 ? d.missed + ' finished after 4pm today. ' : '') + ((d.untracked || 0) > 0 ? 'Excludes ' + d.untracked + ' vendor-cleaned units (Botanica) \u2014 the vendor does not close tasks in Breezeway, so they cannot be tracked against 4pm.' : '')}>{d.missed > 0 ? d.missed + ' after 4pm' : ''}{(d.untracked || 0) > 0 ? (d.missed > 0 ? ' \u00b7 ' : '') + d.untracked + ' vendor-cleaned' : ''}</span>}
+            </div>
+            <div className="mt-2 h-1.5 rounded-full bg-app overflow-hidden">
+              <div className={'h-full ' + (d.late > 0 ? 'bg-rose-500' : 'bg-emerald-500')} style={{ width: (d.cleans ? Math.round((d.done / d.cleans) * 100) : 0) + '%' }} />
+            </div>
           </div>
-          <div className="text-sm font-medium text-ink">{d.done} of {d.cleans} done{d.running ? ' · ' + d.running + ' in progress' : ''}{d.remaining ? ' · ' + d.remaining + ' to go' : ''}</div>
+          <button onClick={() => setPanel(panel === 'glitches' ? '' : 'glitches')} className={'px-5 py-3 text-left flex items-center gap-2 transition ' + (panel === 'glitches' ? 'bg-rose-50/70' : 'hover:bg-app/50')} title="Guest-reported problems happening right now \u2014 click to see them">
+            <AlertTriangle size={14} className={glRows.length > 0 ? 'text-rose-700' : 'text-muted'} />
+            <span className="text-sm font-semibold text-ink">Glitches</span>
+            {glRows.length > 0 ? <span className="text-xs font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{glRows.length}</span> : <span className="text-xs text-muted">0</span>}
+            <span className="text-muted text-[10px]">{panel === 'glitches' ? '\u25b2' : '\u25bc'}</span>
+          </button>
+          <button onClick={() => setPanel(panel === 'vacant' ? '' : 'vacant')} className={'px-5 py-3 text-left flex items-center gap-2 transition ' + (panel === 'vacant' ? 'bg-app/70' : 'hover:bg-app/50')} title={'Units empty today, safe to work in' + (data.lastSync ? ' \u00b7 reservations synced ' + hhmm(data.lastSync) : '')}>
+            <DoorOpen size={14} className="text-muted" />
+            <span className="text-sm font-semibold text-ink">Vacant</span>
+            <span className="text-xs font-bold text-ink tabular-nums">{vacants.length}</span>
+            <span className="text-muted text-[10px]">{panel === 'vacant' ? '\u25b2' : '\u25bc'}</span>
+          </button>
         </div>
-        <div className="mt-2 h-2 rounded-full bg-app overflow-hidden">
-          <div className={'h-full ' + (d.late > 0 ? 'bg-rose-500' : 'bg-emerald-500')} style={{ width: (d.cleans ? Math.round((d.done / d.cleans) * 100) : 0) + '%' }} />
-        </div>
-        {behind && (
-          <div className={'mt-3 text-sm font-semibold inline-flex items-center gap-1.5 ' + (d.late > 0 ? 'text-rose-800' : 'text-amber-800')}>
-            <AlertTriangle size={14} />
-            {d.late > 0 ? 'RUNNING BEHIND — ' + d.late + ' clean' + (d.late > 1 ? 's' : '') + ' past the 4pm deadline' : d.atRisk + ' clean' + (d.atRisk > 1 ? 's' : '') + ' at risk of missing 4pm'}
+        {panel === 'glitches' && (
+          <div className="border-t border-line">
+            {glRows.length === 0 && <div className="px-4 py-4 text-sm text-muted">No active glitches{market === 'all' ? '' : ' in ' + market} right now.</div>}
+            <div className="divide-y divide-line">
+              {glRows.map((g: any) => (
+                <div key={g.id} className="flex items-center gap-2.5 px-4 py-2.5 text-sm flex-wrap">
+                  <span className="font-medium text-ink shrink-0">{g.unit}</span>
+                  <span className="text-[13px] text-ink/80 flex-1 min-w-[160px] truncate">{g.issue}</span>
+                  {glStage[g.id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200 shrink-0">{glStage[g.id]}</span>}
+                  <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + (g.running ? 'bg-sky-50 text-sky-700 border-sky-200' : (g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>{g.running ? 'In progress' : 'Open' + (g.ageDays ? ' \u00b7 ' + g.ageDays + 'd' : '')}</span>
+                  <span className={'text-xs shrink-0 ' + (g.unassigned ? 'font-medium text-rose-700' : 'text-muted')}>{g.unassigned ? 'Unassigned' : (g.assignees || []).join(', ')}</span>
+                  <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0" title="Open the admin task in Breezeway \u2014 edit, assign, check">admin</a>
+                  {g.reportUrl && <a href={g.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0" title="View the field report">report</a>}
+                </div>
+              ))}
+            </div>
+            <div className="px-4 py-2 border-t border-line bg-app/40"><Link href="/glitches" className="text-xs font-semibold text-brand-700 hover:underline">Manage the full glitch board &rarr;</Link></div>
           </div>
         )}
-        {d.missed > 0 && <div className="mt-1 text-xs text-muted">{d.missed} finished after 4pm today</div>}
-        {(d.untracked || 0) > 0 && <div className="mt-1 text-xs text-muted">Excludes {d.untracked} vendor-cleaned unit{(d.untracked || 0) > 1 ? 's' : ''} (Botanica) — the vendor doesn&rsquo;t close tasks in Breezeway, so they can&rsquo;t be tracked against 4pm.</div>}
-      </div>
-
-      {/* ACTIVE GLITCHES — guest-reported problems, on the main page where they belong */}
-      <ActiveGlitches market={market} />
-
-      {/* filters — one slim row instead of a wall of cards */}
-      <div className="flex items-center gap-1.5 flex-wrap mb-4">
-        <Chip label="All work" n={totals.tasks || 0} active={tf === 'all'} onClick={() => setTf('all')} />
-        <Chip label="Cleans" n={d.cleans} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
-        <Chip label="Maintenance" n={totals.maintenance || 0} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
-        <Chip label="Inspections" n={totals.inspection || 0} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
-        <Chip label="Other" n={srcUnits.reduce((a, u) => a + u.tasks.filter(t => t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip').length, 0)} active={tf === 'other'} onClick={() => setTf('other')} />
-        <span className="h-5 w-px bg-line mx-1" />
-        <Chip label="In progress" n={totals.running || 0} active={tf === 'running'} onClick={() => setTf('running')} />
-        <Chip label="Not started" n={totals.notStarted || 0} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
-        <Chip label="Unassigned" n={totals.unassigned || 0} warn active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
-        <span className="text-[11px] text-muted ml-1">{(totals.done || 0) + ' done'}</span>
-      </div>
-
-      {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
-
-      {/* VACANT UNITS — safe to work in. Conservative by design: anything with a live reservation
-          spanning today (including arrivals today) is treated as occupied and never listed here. */}
-      <div className="rounded-2xl border border-line bg-white mb-3 overflow-hidden">
-        <button onClick={() => setShowVacant(!showVacant)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left">
-          <DoorOpen size={15} className="text-muted" />
-          <span className="font-semibold text-ink text-sm">Vacant units</span>
-          <span className="text-xs text-muted">{vacants.length} empty{market === 'all' ? '' : ' in ' + market} &middot; free to work in</span>
-          <span className="ml-auto text-xs text-muted">{data.lastSync ? 'reservations synced ' + hhmm(data.lastSync) : 'sync time unknown'}</span>
-          <span className="text-muted text-xs">{showVacant ? '\u25b2' : '\u25bc'}</span>
-        </button>
-        {showVacant && (
+        {panel === 'vacant' && (
           <div className="border-t border-line">
-            <div className="px-4 py-2 text-[11px] text-muted bg-app">Empty per Guesty as of the sync above. A unit is only listed when no live reservation covers today &mdash; guests arriving today are treated as occupied.</div>
+            <div className="px-4 py-2 text-[11px] text-muted bg-app">Empty per Guesty{data.lastSync ? ' (synced ' + hhmm(data.lastSync) + ')' : ''}. A unit only shows when no live reservation covers today &mdash; guests arriving today count as occupied.</div>
             {vacants.length === 0 && <div className="px-4 py-4 text-sm text-muted">No vacant units{market === 'all' ? '' : ' in ' + market} today.</div>}
             <div className="divide-y divide-line">
               {vacants.map(vu => (
@@ -265,7 +276,7 @@ export function TodayInOps() {
                   <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-ink truncate">{vu.unit}</div>
-                      <div className="text-xs text-muted">{vu.market}{vu.leftToday ? ' · checked out today' : ''}{vu.openTasks ? ' · ' + vu.openTasks + ' task' + (vu.openTasks > 1 ? 's' : '') + ' today' : ''}</div>
+                      <div className="text-xs text-muted">{vu.market}{vu.leftToday ? ' \u00b7 checked out today' : ''}{vu.openTasks ? ' \u00b7 ' + vu.openTasks + ' task' + (vu.openTasks > 1 ? 's' : '') + ' today' : ''}</div>
                     </div>
                     <div className="text-xs text-muted shrink-0">{vu.nextArrival ? 'next in ' + fmtDay(vu.nextArrival) : 'no upcoming booking'}</div>
                     <button onClick={() => setAddVacant(addVacant === vu.listingId ? '' : vu.listingId)} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1 shrink-0"><Plus size={12} /> Add task</button>
@@ -277,6 +288,22 @@ export function TodayInOps() {
           </div>
         )}
       </div>
+
+      {/* WORK FILTERS — click to narrow the board */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-4">
+        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Show</span>
+        <Chip label="All work" n={totals.tasks || 0} active={tf === 'all'} onClick={() => setTf('all')} />
+        <Chip label="Cleans" n={d.cleans} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
+        <Chip label="Maintenance" n={totals.maintenance || 0} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
+        <Chip label="Inspections" n={totals.inspection || 0} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
+        <Chip label="Other" n={srcUnits.reduce((a, u) => a + u.tasks.filter(t => t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip').length, 0)} active={tf === 'other'} onClick={() => setTf('other')} />
+        <span className="h-5 w-px bg-line mx-1" />
+        <Chip label="In progress" n={totals.running || 0} active={tf === 'running'} onClick={() => setTf('running')} />
+        <Chip label="Not started" n={totals.notStarted || 0} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
+        <Chip label="Unassigned" n={totals.unassigned || 0} warn active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
+      </div>
+
+      {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
 
       <div className="space-y-3">
         {units.map(u => (
@@ -610,51 +637,7 @@ function Chip({ label, n, warn, active, onClick }: { label: string; n: number; w
   )
 }
 
-// ACTIVE GLITCHES — current guest-reported Breezeway tasks, plus where each one sits on the
-// glitch board (managed fully on /glitches). On the main page so nobody misses a hurting guest.
+// Board-stage labels for glitches shown in the status strip.
 const STAGE_LABEL: Record<string, string> = { pool: 'New', ops: 'With ops', guest_followup: 'Guest follow-up', refund: 'Refund request', manager_review: 'Manager review', incident: 'Incident report', closed: 'Closed' }
-function ActiveGlitches({ market }: { market: string }) {
-  const [data, setData] = useState<any>(null)
-  const [stage, setStage] = useState<Record<string, string>>({})
-  const [open, setOpen] = useState(true)
-  useEffect(() => {
-    fetch('/api/ops-today/glitches', { cache: 'no-store' }).then(r => r.json()).then(setData).catch(() => {})
-    fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(j => {
-      const m: Record<string, string> = {}
-      for (const g of (j && Array.isArray(j.glitches) ? j.glitches : [])) if (g.breezeway_task_id) m[String(g.breezeway_task_id)] = STAGE_LABEL[g.status] || ''
-      setStage(m)
-    }).catch(() => {})
-  }, [])
-  const rows = ((data && data.glitches) || []).filter((g: any) => market === 'all' || g.market === market)
-  if (!data || rows.length === 0) return null
-  const unassigned = rows.filter((g: any) => g.unassigned).length
-  return (
-    <div className="rounded-2xl border border-rose-200 bg-white mb-4 overflow-hidden">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left bg-rose-50/60">
-        <AlertTriangle size={15} className="text-rose-700" />
-        <span className="font-semibold text-ink text-sm">Active glitches</span>
-        <span className="text-xs font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{rows.length}</span>
-        {unassigned > 0 && <span className="text-xs font-medium text-rose-700">{unassigned} unassigned</span>}
-        <Link href="/glitches" onClick={e => e.stopPropagation()} className="ml-auto text-xs font-semibold text-brand-700 hover:underline shrink-0">Manage board &rarr;</Link>
-        <span className="text-muted text-xs">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="divide-y divide-line border-t border-line">
-          {rows.map((g: any) => (
-            <div key={g.id} className="flex items-center gap-2.5 px-4 py-2.5 text-sm flex-wrap">
-              <span className="font-medium text-ink shrink-0">{g.unit}</span>
-              <span className="text-[13px] text-ink/80 flex-1 min-w-[160px] truncate">{g.issue}</span>
-              {stage[g.id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200 shrink-0">{stage[g.id]}</span>}
-              <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + (g.running ? 'bg-sky-50 text-sky-700 border-sky-200' : (g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>{g.running ? 'In progress' : 'Open' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '')}</span>
-              <span className={'text-xs shrink-0 ' + (g.unassigned ? 'font-medium text-rose-700' : 'text-muted')}>{g.unassigned ? 'Unassigned' : (g.assignees || []).join(', ')}</span>
-              <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0" title="Open the admin task in Breezeway — edit, assign, check">admin</a>
-              {g.reportUrl && <a href={g.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0" title="View the field report">report</a>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 // redeploy-nudge 2026-07-23
