@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { currentSharePassword, currentAdminPassword } from '@/lib/shareAuth'
+import { isSuperadmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,8 +21,12 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const password = await currentSharePassword()
-  const adminSet = !!(await currentAdminPassword())
-  return NextResponse.json({ ok: true, password, adminSet, links: LINKS })
+  const adminCur = await currentAdminPassword()
+  const adminSet = !!adminCur
+  // The admin password itself is visible ONLY to the Super Admin account (Jon).
+  const payload: Record<string, any> = { ok: true, password, adminSet, links: LINKS }
+  if (isSuperadmin(user.email)) payload.adminPassword = adminCur
+  return NextResponse.json(payload)
 }
 
 export async function POST(req: NextRequest) {
