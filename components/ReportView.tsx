@@ -1193,13 +1193,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <input type="date" value={pdTo} onChange={e => setPdTo(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
                 <button
                   onClick={applyPeriod}
-                  disabled={pdBusy || !pdFrom || !pdTo || (pdFrom === (meta.periodStart || '') && pdTo === (meta.periodEnd || ''))}
+                  disabled={pdBusy || !pdFrom || !pdTo}
                   className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-semibold disabled:opacity-50"
                   style={{ background: t.ink, color: t.bg }}
                 >
-                  {pdBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Update dates
+                  {pdBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  {pdFrom === (meta.periodStart || '') && pdTo === (meta.periodEnd || '') ? 'Resync numbers' : 'Update dates'}
                 </button>
-                <span className="text-[11px]" style={{ color: t.muted }}>Recomputes this report — same link, no new report.</span>
+                <span className="text-[11px]" style={{ color: t.muted }}>Recomputes this report — same link, no new report. Run it on the same dates to pull every figure, card and headline back into agreement.</span>
               </div>
             )}
             {edit && hasBasisRaw(snap.metrics) && (
