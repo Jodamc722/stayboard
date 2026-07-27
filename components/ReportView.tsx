@@ -24,12 +24,14 @@ function cardGross(card: Any): string {
   return m ? m[1].trim() : ''
 }
 // Does an object carry the raw numbers needed to compute any basis?
+// feeNum is required too: without it Net can't deduct the channel fee, so a section
+// missing it gets refetched on the next edit-mode open rather than shown as-is.
 function hasBasisRaw(o: Any): boolean {
-  return o && o.accomNum != null && o.accomGrossNum != null && o.cleaningNum != null
+  return o && o.accomNum != null && o.accomGrossNum != null && o.cleaningNum != null && o.feeNum != null
 }
 // Formatted Revenue / ADR / RevPAR strings for a basis, from a raw-carrying object (snap / listing / metrics).
 function basisStrings(o: Any, b: Basis): { rev: string; adr: string; revpar: string } {
-  const t = basisTriple({ accomNum: o.accomNum || 0, accomGrossNum: o.accomGrossNum || 0, cleaningNum: o.cleaningNum || 0, occNights: o.occNights || 0, availNights: o.availNights || 0 }, b)
+  const t = basisTriple({ accomNum: o.accomNum || 0, accomGrossNum: o.accomGrossNum || 0, cleaningNum: o.cleaningNum || 0, feeNum: o.feeNum == null ? undefined : (o.feeNum || 0), occNights: o.occNights || 0, availNights: o.availNights || 0 }, b)
   return { rev: fmtMoney(t.revenue), adr: '$' + t.adr, revpar: '$' + t.revpar }
 }
 // Edit-mode segmented control for choosing a section's revenue basis.
@@ -452,6 +454,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [rvFrom, setRvFrom] = useState('')
   const [rvTo, setRvTo] = useState('')
   const [rvBusy, setRvBusy] = useState(false)
+  // ---- report period, editable in place (no new report, same /r/<code> link) ----
+  const [pdFrom, setPdFrom] = useState(String((initial.content as Any)?.meta?.periodStart || initial.period_start || ''))
+  const [pdTo, setPdTo] = useState(String((initial.content as Any)?.meta?.periodEnd || initial.period_end || ''))
+  const [pdBusy, setPdBusy] = useState(false)
 
   // ---------- present mode (full-screen slideshow) ----------
   const [present, setPresent] = useState(false)
@@ -554,11 +560,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           const d = await r.json()
           if (!cancelled && d?.ok && d?.snap) {
             const s = d.snap
-            mutate((dr: Any) => { dr.snapshot = dr.snapshot || {}; dr.snapshot.metrics = { accomNum: s.accomNum, accomGrossNum: s.accomGrossNum, cleaningNum: s.cleaningNum, occNights: s.occNights, availNights: s.availNights, reservations: s.reservations, units: s.units, occPct: s.occPct } })
+            mutate((dr: Any) => { dr.snapshot = dr.snapshot || {}; dr.snapshot.metrics = { accomNum: s.accomNum, accomGrossNum: s.accomGrossNum, cleaningNum: s.cleaningNum, feeNum: s.feeNum, occNights: s.occNights, availNights: s.availNights, reservations: s.reservations, units: s.units, occPct: s.occPct } })
           }
         } catch (_e) { /* keep the stored (single-basis) values */ }
       }
-      if (Array.isArray(c.byListing) && c.byListing.length > 0 && c.byListing.some((l: Any) => l.accomGrossNum == null)) {
+      if (Array.isArray(c.byListing) && c.byListing.length > 0 && c.byListing.some((l: Any) => l.accomGrossNum == null || l.feeNum == null)) {
         try {
           const r = await fetch('/api/reports/listing-breakdown?id=' + encodeURIComponent(initial.id))
           const d = await r.json()
@@ -870,6 +876,29 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     } catch (_e) { setAttachMsg('Could not pull reviews.') }
     setRvBusy(false)
   }
+  // Change the report's own reporting period in place. The server recomputes the snapshot,
+  // month-by-month and per-listing rows and writes them back to THIS report — no new report row,
+  // so the /r/<code> link already sent to an owner keeps working and just shows the new window.
+  async function applyPeriod() {
+    if (!pdFrom || !pdTo || pdBusy) return
+    if (pdFrom > pdTo) { setAttachMsg('Report start date must be on or before the end date.'); return }
+    setPdBusy(true); setAttachMsg('')
+    try {
+      const r = await fetch('/api/reports/reperiod', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: initial.id, from: pdFrom, to: pdTo }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.content) {
+        setC(d.content) // already persisted server-side; no Save needed for the numbers
+        setAttachMsg('Report period updated to ' + pdFrom + ' → ' + pdTo + '. The headline and written sections were left as-is — edit them if they mention dates.')
+      } else {
+        setAttachMsg((d && d.error) || 'Could not update the report period.')
+      }
+    } catch (_e) { setAttachMsg('Could not update the report period.') }
+    setPdBusy(false)
+  }
   // Add an extra snapshot for a custom date range — same metrics engine as the main report.
   async function addSnapshotRange() {
     if (!snFrom || !snTo || snBusy) return
@@ -1156,8 +1185,25 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
               <Ed v={snap.subtitle || ''} set={v => patch('snapshot.subtitle', v)} edit={edit} />
             </p>
+            {edit && (
+              <div className="mt-4 flex items-center gap-2 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+                <span className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Report period</span>
+                <input type="date" value={pdFrom} onChange={e => setPdFrom(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <span style={{ color: t.muted }}>&rarr;</span>
+                <input type="date" value={pdTo} onChange={e => setPdTo(e.target.value)} className="rounded-md px-2 py-1 text-[12px]" style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+                <button
+                  onClick={applyPeriod}
+                  disabled={pdBusy || !pdFrom || !pdTo || (pdFrom === (meta.periodStart || '') && pdTo === (meta.periodEnd || ''))}
+                  className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-semibold disabled:opacity-50"
+                  style={{ background: t.ink, color: t.bg }}
+                >
+                  {pdBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Update dates
+                </button>
+                <span className="text-[11px]" style={{ color: t.muted }}>Recomputes this report — same link, no new report.</span>
+              </div>
+            )}
             {edit && hasBasisRaw(snap.metrics) && (
-              <div className="mt-4 flex items-center gap-3 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+              <div className="mt-3 flex items-center gap-3 flex-wrap rounded-xl p-3" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
                 <BasisPicker label="Big number" value={snapPrimary} onPick={(v: string) => setBasis('snapshotPrimary', v)} t={t} />
                 <BasisPicker label="Below it" value={snapSecondary} withNone onPick={(v: string) => setBasis('snapshotSecondary', v)} t={t} />
               </div>
