@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
-import { featureForPath, featureEnabled } from '@/lib/features'
+import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
@@ -82,11 +82,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
   const [features, setFeatures] = useState<Record<string, boolean> | null>(null)
+  const [workspace, setWorkspace] = useState<string | null>(null)
+  const [displayName, setDisplayName] = useState<string | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || null))
-    fetch('/api/access/me').then(r => r.json()).then(j => { setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner); setFeatures(j?.features && typeof j.features === 'object' ? j.features : {}) }).catch(() => {})
+    fetch('/api/access/me').then(r => r.json()).then(j => {
+      setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner)
+      setFeatures(j?.features && typeof j.features === 'object' ? j.features : {})
+      setWorkspace(typeof j?.workspace === 'string' ? j.workspace : null)
+      if (j?.profile?.name) setDisplayName(String(j.profile.name))
+    }).catch(() => {})
   }, [])
 
   async function signOut() {
@@ -99,18 +106,22 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const isActive = (to: string) => path === to || (to !== '/' && path?.startsWith(to))
 
-  // Hide pages a user doesn't have access to (owner always sees all). Then add the admin-only Users link.
+  // Hide pages outside the user's workspace bundle or toggled off for them (owner always sees all).
+  // While /api/access/me is still loading (workspace === null) show everything — no nav flicker,
+  // and the middleware is the real gate anyway.
   const canSee = (to: string) => {
-    if (isOwner) return true
+    if (isOwner || workspace === null) return true
     const feat = featureForPath(to)
-    return !feat || featureEnabled(features, feat.key)
+    return !feat || pageAllowed(workspace, features, feat.key)
   }
   const sections = SECTIONS
     .map(sec => sec.title === 'Settings' && isAdmin
-      ? { ...sec, items: [...sec.items, { to: '/users', label: 'Users & access', Icon: UserCog }] }
+      ? { ...sec, items: [...sec.items, { to: '/users', label: 'Users & admin', Icon: UserCog }] }
       : sec)
     .map(sec => ({ ...sec, items: sec.items.filter(it => it.to === '/users' || canSee(it.to)) }))
     .filter(sec => sec.items.length > 0)
+
+  const wsLabel = workspace ? workspaceDef(workspace).label : null
 
   return (
     <div className="min-h-screen flex bg-app">
@@ -146,10 +157,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
               {initials}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-ink truncate font-medium">{email?.split('@')[0]}</div>
-              <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 mt-0.5">
-                <LogOut size={10} /> Sign out
-              </button>
+              <div className="text-xs text-ink truncate font-medium">{displayName || email?.split('@')[0]}</div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {wsLabel && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-brand-50 text-brand-700">{wsLabel}</span>}
+                <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1">
+                  <LogOut size={10} /> Sign out
+                </button>
+              </div>
             </div>
           </div>
         </div>
