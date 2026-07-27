@@ -258,34 +258,74 @@ export async function GET(req: NextRequest) {
     m.net = money(m.net - x.amount)
   }
 
-  // 5b. Forensic on the nightly-income lines for one month (?af=YYYY-MM). Eight units times the
-  // nights in a month caps the honest row count at ~248. The Jan-Jun pull returns 1999 AF lines
-  // against a 1448-night ceiling, so Guesty is emitting more than one line per unit-night. This
-  // reports which dimension it repeats on — same unit+night twice, one line per rate component,
-  // or recognized-and-unrecognized copies of the same transaction — because none of the totals
-  // above can be shown to an owner until that is settled.
+  // 5b. Forensic on one month's owner ledger (?af=YYYY-MM), reported in DOLLARS rather than row
+  // counts. Row counts led me astray once already: 302 AF lines against a 248 unit-night ceiling
+  // looked impossible until the duplicates turned out to be sub-cent rounding adjustments. What
+  // actually has to be settled is which SUBSET of the owner ledger equals the statement's
+  // dueToOwner — January's ledger earns 18,371.18 while the statement pays 15,293.76 — so every
+  // split below is a candidate partition of that difference: recognised vs not, positive vs
+  // reversal, one-row-per-unit-night vs all rows, and a day-by-day run in case the statement
+  // simply cuts off before month end.
   const afMonth = qs.get('af') || ''
   let afDebug: any = undefined
   if (afMonth) {
-    const af = ownerLines.filter(x => x.month === afMonth && x.chargeCode === 'AF')
+    const mo = ownerLines.filter(x => x.month === afMonth)
+    const af = mo.filter(x => x.chargeCode === 'AF')
+    // Owner-ledger amounts are signed from the PM's side; flip so credits to the owner read positive.
+    const sum = (xs: any[]) => money(-xs.reduce((a, x) => a + x.amount, 0))
+    const split = (xs: any[], fn: (x: any) => string) => {
+      const m: Record<string, { count: number; total: number }> = {}
+      for (const x of xs) {
+        const k = fn(x)
+        m[k] = m[k] || { count: 0, total: 0 }
+        m[k].count++
+        m[k].total = money(m[k].total - x.amount)
+      }
+      return m
+    }
     const byPair: Record<string, any[]> = {}
     for (const x of af) {
       const k = x.listingId + '|' + x.date
       ;(byPair[k] = byPair[k] || []).push(x)
     }
-    const tally = (fn: (x: any) => string) =>
-      af.reduce((m: Record<string, number>, x) => { const k = fn(x); m[k] = (m[k] || 0) + 1; return m }, {})
     const dupPairs = Object.entries(byPair).filter(([, v]) => v.length > 1)
+    // Keep the single largest row per unit-night. If Guesty re-recognises a night after a
+    // reservation edit without reversing the old line, this is what the night is really worth.
+    const oncePerNight = money(-Object.values(byPair)
+      .map(v => v.slice().sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))[0].amount)
+      .reduce((a, v) => a + v, 0))
+    const byDay: Record<string, number> = {}
+    for (const x of mo) byDay[x.date] = money((byDay[x.date] || 0) - x.amount)
+    let run = 0
+    const cumulative: Record<string, number> = {}
+    for (const d of Object.keys(byDay).sort()) { run = money(run + byDay[d]); cumulative[d] = run }
     afDebug = {
       month: afMonth,
-      afRows: af.length,
-      distinctUnitNights: Object.keys(byPair).length,
-      duplicatedUnitNights: dupPairs.length,
-      distinctTxnIds: new Set(af.map(x => x.txn)).size,
-      distinctReservations: new Set(af.map(x => x.conf)).size,
-      byName: tally(x => x.name || '(none)'),
-      byRecognized: tally(x => String(x.recognized)),
-      byTrigger: tally(x => x.trigger || '(none)'),
+      ownerLedgerRows: mo.length,
+      ownerLedgerTotal: sum(mo),
+      // The statement is a cash-settlement document; PO lines are the payout, not earnings.
+      ownerLedgerExcludingPayouts: sum(mo.filter(x => x.chargeCode !== 'PO')),
+      recognizedSplit: split(mo, x => String(x.recognized)),
+      recognizedByCode: split(mo, x => String(x.recognized) + ' | ' + (x.chargeCode || '-')),
+      af: {
+        rows: af.length,
+        total: sum(af),
+        distinctUnitNights: Object.keys(byPair).length,
+        duplicatedUnitNights: dupPairs.length,
+        oncePerNightTotal: oncePerNight,
+        duplicateExcess: money(sum(af) - oncePerNight),
+        positiveTotal: sum(af.filter(x => x.amount < 0)),
+        reversalTotal: sum(af.filter(x => x.amount > 0)),
+        distinctTxnIds: new Set(af.map(x => x.txn)).size,
+        distinctReservations: new Set(af.map(x => x.conf)).size,
+        byName: split(af, x => x.name || '(none)'),
+        byRecognized: split(af, x => String(x.recognized)),
+        byTrigger: split(af, x => x.trigger || '(none)'),
+      },
+      byDay,
+      // Where does the running total cross the statement's dueToOwner? If the statement is a
+      // simple cut-off, this lands exactly on one date.
+      cumulative,
       worstUnitNights: dupPairs.sort((a, b) => b[1].length - a[1].length).slice(0, 5)
         .map(([k, v]) => ({ key: k, n: v.length,
           rows: v.slice(0, 8).map(x => ({ amt: x.amount, conf: x.conf, txn: x.txn, rec: x.recognized, trig: x.trigger, name: x.name })) })),
