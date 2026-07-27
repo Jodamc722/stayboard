@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
   const rows: any[] = []
   let truncated = false
   let total: number | null = null
-  for (let skip = 0; skip < 20000; skip += 100) {
+  for (let skip = 0; skip < 40000; skip += 100) {
     const page = await get(token, '/accounting-api/journal-entries/all?limit=100&sortByDate=ASC&skip=' + skip
       + '&' + dateFilter + encodeListings(style, listingIds))
     if (!page.ok) {
@@ -133,12 +133,19 @@ export async function GET(req: NextRequest) {
     if (typeof page.json?.total === 'number') total = page.json.total
     rows.push(...batch)
     if (batch.length < 100) break
-    if (rows.length >= 6000) { truncated = true; break }
+    if (rows.length >= 30000) { truncated = true; break }
   }
 
   // 5. Group. Journal amounts are signed: revenue positive, deductions negative.
+  // Guesty returns listing as a UI link object — { href: '/properties/<id>', title: '906/9 - Studio' }
+  // — not a bare id, so pull the id out of the href and fall back to the title for labelling.
   const norm = (r: any) => {
-    const listingId = String(typeof r.listing === 'string' ? r.listing : (r.listing?._id || r.listing?.id || ''))
+    const L = r.listing
+    const href = typeof L === 'object' && L ? String(L.href || '') : ''
+    const listingId = typeof L === 'string' ? L
+      : String(L?._id || L?.id || (href.split('/').filter(Boolean).pop() || ''))
+    const title = typeof L === 'object' && L ? String(L.title || '') : ''
+    const conf = r.reservationConfirmationCode
     return {
       date: String(r.date || '').slice(0, 10),
       month: String(r.date || '').slice(0, 7),
@@ -149,8 +156,8 @@ export async function GET(req: NextRequest) {
       trigger: r.trigger || '',
       amount: Number(r.amount?.value ?? r.amount ?? 0) || 0,
       listingId,
-      unit: nameOf[listingId] || listingId || '(none)',
-      conf: r.reservationConfirmationCode || '',
+      unit: nameOf[listingId] || title || listingId || '(none)',
+      conf: typeof conf === 'string' ? conf : String(conf?.title || ''),
     }
   }
   const n = rows.map(norm)
@@ -168,6 +175,32 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
   }
 
+  // The owner's economics live entirely in the "Owners" ledger. Guesty signs it from the
+  // property manager's side, so a credit to the owner is negative — flip it to read as revenue.
+  const ownerLines = n.filter(x => x.ledger === 'Owners')
+  const sumOwner = (pred: (x: any) => boolean) => money(-ownerLines.filter(pred).reduce((a, x) => a + x.amount, 0))
+  const ownerByCode: Record<string, { count: number; total: number }> = {}
+  for (const x of ownerLines) {
+    const k = (x.chargeCode || '-') + ' | ' + (x.name || '-')
+    ownerByCode[k] = ownerByCode[k] || { count: 0, total: 0 }
+    ownerByCode[k].count++
+    ownerByCode[k].total = money(ownerByCode[k].total - x.amount)
+  }
+  const ownerByMonth: Record<string, { rental: number; commission: number; other: number; net: number }> = {}
+  for (const x of ownerLines) {
+    const m = ownerByMonth[x.month] || (ownerByMonth[x.month] = { rental: 0, commission: 0, other: 0, net: 0 })
+    if (x.chargeCode === 'AF') m.rental = money(m.rental - x.amount)
+    else if (x.chargeCode === 'CMS') m.commission = money(m.commission + x.amount)
+    else m.other = money(m.other - x.amount)
+    m.net = money(m.net - x.amount)
+  }
+
+  // Which listings did the filter actually return? If anything outside this building shows up,
+  // the listings[] filter silently did nothing and every total below is account-wide.
+  const seen: Record<string, number> = {}
+  for (const x of n) seen[x.listingId || '(none)'] = (seen[x.listingId || '(none)'] || 0) + 1
+  const outsideBuilding = Object.keys(seen).filter(id => id !== '(none)' && !listingIds.includes(id))
+
   const byMonthLedger: Record<string, Record<string, number>> = {}
   for (const x of n) {
     byMonthLedger[x.month] = byMonthLedger[x.month] || {}
@@ -182,6 +215,23 @@ export async function GET(req: NextRequest) {
     owners: matched,
     statements,
     statementsTotalDueToOwner: money(statements.reduce((a, s) => a + (Number(s.dueToOwner) || 0), 0)),
+    // The headline answer: revenue credited to the owner before any deduction, the PM
+    // commission taken off it, and what the statement therefore owes.
+    ownerSummary: {
+      rentalIncome: sumOwner(x => x.chargeCode === 'AF'),
+      pmCommission: money(ownerLines.filter(x => x.chargeCode === 'CMS').reduce((a, x) => a + x.amount, 0)),
+      otherAdjustments: sumOwner(x => x.chargeCode !== 'AF' && x.chargeCode !== 'CMS'),
+      netAfterCommission: sumOwner(() => true),
+      byChargeCode: Object.entries(ownerByCode).map(([k, v]) => ({ key: k, count: v.count, total: v.total }))
+        .sort((a, b) => Math.abs(b.total) - Math.abs(a.total)),
+      byMonth: ownerByMonth,
+    },
+    filterCheck: {
+      buildingListings: listingIds.length,
+      distinctListingsSeen: Object.keys(seen).length,
+      outsideBuilding: outsideBuilding.slice(0, 20),
+      unattributedRows: seen['(none)'] || 0,
+    },
     journal: {
       listingFilterStyle: style,
       rows: rows.length,
