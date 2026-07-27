@@ -15,6 +15,7 @@ import {
   pullBudgets, pullReviews, pullTasks, weekBuckets, makeCode, etToday,
 } from '@/lib/owner-report'
 import type { ReportContent, ReportListing } from '@/lib/owner-report'
+import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -159,6 +160,20 @@ export async function POST(req: NextRequest) {
   const period = metricsFor(resv, units, periodStart, toExcl)
   const daysRemaining = asOf >= periodStart && asOf <= periodEnd ? Math.max(0, Math.round((Date.parse(periodEnd + 'T00:00:00Z') - Date.parse(asOf + 'T00:00:00Z')) / 86_400_000)) : 0
 
+  // ---- ONE source of truth for the four headline numbers ----
+  // ReportView renders the snapshot cards live from `snapshot.metrics` via basisTriple(), so the
+  // strings we persist here — and the numbers we hand the copywriter — must come from the SAME
+  // function on the SAME basis. Writing them from period.accomRevenue/adr/revpar (the legacy
+  // after-channel-fee figures) is what put a $238 ADR in the hero sentence over a $280 card.
+  const SNAP_PRIMARY: Basis = 'netota'
+  const snapRaw = {
+    accomNum: period.accomRevenue, accomGrossNum: period.accomGrossRevenue,
+    cleaningNum: period.cleaningRevenue, feeNum: period.channelFees,
+    occNights: period.occupiedNights, availNights: period.availableNights,
+  }
+  const shown = basisTriple(snapRaw, SNAP_PRIMARY)
+  const shownGross = basisTriple(snapRaw, 'gross')
+
   // ---- YTD + months ahead ----
   const ytd = await ytdStats(ids, asOf, units)
   const mAhead = await monthsAhead(ids, asOf, units, 6) // [prev, current, +1..+5]
@@ -243,8 +258,11 @@ export async function POST(req: NextRequest) {
     'Property: ' + scopeLabel,
     'Period: ' + prettyDate(periodStart) + ' to ' + prettyDate(periodEnd) + ', as of ' + prettyDate(asOf) + (daysRemaining ? ' (' + daysRemaining + ' days remaining)' : ''),
     'Active listings: ' + units,
-    'Accommodation revenue: ' + fmtK(period.accomRevenue) + ' | Gross (incl cleaning + channel fees): ' + fmtK(period.grossRevenue),
-    'Occupancy: ' + period.occupancyPct + '% | ADR: $' + period.adr + ' (gross $' + period.grossAdr + ') | RevPAR: $' + period.revpar,
+    'Accommodation revenue (' + BASIS_LABEL[SNAP_PRIMARY] + '): ' + fmtK(shown.revenue)
+      + ' | Gross (incl cleaning + channel fees): ' + fmtK(shownGross.revenue),
+    'Occupancy: ' + period.occupancyPct + '% | ADR: $' + shown.adr + ' (gross $' + shownGross.adr + ')'
+      + ' | RevPAR: $' + shown.revpar + ' (gross $' + shownGross.revpar + ')',
+    'USE ONLY THESE FIGURES. Any dollar or percent you write must match one of them exactly.',
     'Months ahead (OTB occupancy): ' + mAhead.map(m => m.short + ' ' + m.m.occupancyPct + '%').join(', '),
   ].join('\n')
 
@@ -383,7 +401,7 @@ export async function POST(req: NextRequest) {
     hero: {
       eyebrow: prettyDate(asOf).toUpperCase(),
       title: scopeLabel,
-      headline: str(ai.heroHeadline) || (period.occupancyPct + '% on the books with ' + fmtK(period.accomRevenue) + ' in accommodation revenue.'),
+      headline: str(ai.heroHeadline) || (period.occupancyPct + '% on the books with ' + fmtK(shown.revenue) + ' in accommodation revenue.'),
       preparedFor: 'Prepared for the owners of ' + scopeLabel,
       dateLabel: 'OWNER REVIEW',
       heroImage: heroImageUrl || null,
@@ -392,10 +410,10 @@ export async function POST(req: NextRequest) {
       headline: str(ai.snapshotHeadline) || 'Where the period stands today.',
       subtitle: 'On-the-books as of ' + prettyDate(asOf) + '  ·  ' + units + ' active listings' + (daysRemaining ? '  ·  ' + daysRemaining + ' days remaining' : ''),
       cards: [
-        { key: 'revenue', label: 'REVENUE', value: fmtK(period.accomRevenue), sub: 'Net accommodation payout · Gross (incl. cleaning + channel fees): ' + fmtK(period.grossRevenue), gross: fmtK(period.grossRevenue) },
+        { key: 'revenue', label: 'REVENUE', value: fmtK(shown.revenue), sub: BASIS_NOTE[SNAP_PRIMARY] + ' · Gross (incl. cleaning + channel fees): ' + fmtK(shownGross.revenue), gross: fmtK(shownGross.revenue) },
         { key: 'occupancy', label: 'OCCUPANCY', value: period.occupancyPct + '%', sub: 'Occupied ÷ available nights' },
-        { key: 'adr', label: 'ADR', value: '$' + period.adr, sub: 'Accommodation ÷ occupied nights · Gross ADR: $' + period.grossAdr, gross: '$' + period.grossAdr },
-        { key: 'revpar', label: 'REVPAR', value: '$' + period.revpar, sub: 'Accommodation ÷ available nights · Gross RevPAR: $' + period.grossRevpar, gross: '$' + period.grossRevpar },
+        { key: 'adr', label: 'ADR', value: '$' + shown.adr, sub: 'Accommodation ÷ occupied nights · Gross ADR: $' + shownGross.adr, gross: '$' + shownGross.adr },
+        { key: 'revpar', label: 'REVPAR', value: '$' + shown.revpar, sub: 'Accommodation ÷ available nights · Gross RevPAR: $' + shownGross.revpar, gross: '$' + shownGross.revpar },
       ],
       ytd: ytd.reservations > 0 ? {
         text: ytd.reservations + ' reservations booked YTD with an average stay of ' + ytd.avgStay + ' nights and a ' + ytd.avgWindow + '-day booking window.',
