@@ -44,6 +44,19 @@ function redact(v: any, depth = 0): any {
   return v
 }
 
+// Like redact() but keeps whole arrays, for ?full=1 when we actually need the numbers
+// rather than the shape. Still strips anything matching SECRET.
+function redactAll(v: any, depth = 0): any {
+  if (v == null || depth > 6) return v
+  if (Array.isArray(v)) return v.slice(0, 500).map(x => redactAll(x, depth + 1))
+  if (typeof v === 'object') {
+    const out: Record<string, any> = {}
+    for (const k of Object.keys(v)) out[k] = SECRET.test(k) ? '<redacted>' : redactAll(v[k], depth + 1)
+    return out
+  }
+  return v
+}
+
 async function probe(token: string, path: string): Promise<any> {
   const started = Date.now()
   try {
@@ -80,6 +93,7 @@ export async function GET(req: NextRequest) {
 
   const qs = new URL(req.url).searchParams
   const withSample = qs.get('sample') === '1'
+  const withFull = qs.get('full') === '1'
   // ?path=/owners/statements%3FownerId%3D... — probe one or more explicit paths instead of the
   // default set. Read-only: this only ever issues GETs against the Guesty base URL. Newline- or
   // comma-separated for several at once. {owner} and {listing} expand to the ids resolved below.
@@ -112,6 +126,7 @@ export async function GET(req: NextRequest) {
       listingProbed: listingId || null,
       results: out.map(r => {
         const { _raw, ...rest } = r
+        if (withFull && _raw) return { ...rest, data: redactAll(_raw) }
         return withSample && _raw ? { ...rest, sample: redact(_raw) } : rest
       }),
     })
@@ -154,6 +169,7 @@ export async function GET(req: NextRequest) {
     blocked: results.filter(r => !r.ok).map(r => ({ path: r.path, status: r.status, error: r.error })),
     results: results.map(r => {
       const { _raw, ...rest } = r
+      if (withFull && _raw) return { ...rest, data: redactAll(_raw) }
       return withSample && _raw ? { ...rest, sample: redact(_raw) } : rest
     }),
   })
