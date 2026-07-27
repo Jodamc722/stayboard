@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createBreezewayTask } from '@/lib/breezeway'
+import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -34,7 +34,14 @@ export async function POST(req: NextRequest) {
     else payload.reference_property_id = listingId
     const r = await createBreezewayTask(payload)
     if (!r.ok || !r.data || !r.data.id) return NextResponse.json({ ok: false, error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
-    return NextResponse.json({ ok: true, taskId: String(r.data.id), reportUrl: r.data.report_url || null, department, priority, date })
+    // Optional: assign it in the same click (the board sends the person picked in the panel).
+    let assigned: boolean | undefined = undefined
+    const ids = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
+    if (ids.length) {
+      assigned = false
+      try { const a = await updateBreezewayTask(String(r.data.id), { assignments: ids }); assigned = !!a.ok } catch { assigned = false }
+    }
+    return NextResponse.json({ ok: true, taskId: String(r.data.id), reportUrl: r.data.report_url || null, department, priority, date, assigned })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
