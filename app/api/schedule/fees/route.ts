@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -8,7 +10,6 @@ export const maxDuration = 60
 // Cleaning-fee revenue per day per market for a week. Isolated on purpose — if this fails,
 // the scheduler just shows no fee, and nothing else breaks. Fee = raw.money.fareCleaning (guest-charged).
 const LIVE = /confirm|checked/i
-const VENDOR = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
 const MARKETS = ['Miami', 'Broward', 'North']
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -19,6 +20,7 @@ function sunOf(s: string) { return addDays(s, -dow(s)) }
 
 export async function GET(req: NextRequest) {
   try {
+    const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
     const { searchParams } = new URL(req.url)
     const db = supabaseAdmin()
     const today = ymd(new Date())
