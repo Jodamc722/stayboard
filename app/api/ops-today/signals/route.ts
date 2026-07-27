@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     const calTo = addDays(today, 14)
     const db = supabaseAdmin()
 
-    const [tasksR, revR, resR] = await Promise.all([
+    const [tasksR, revR, resR, audR] = await Promise.all([
       db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department,report_url')
         .in('reference_property_id', ids).gte('scheduled_date', historyFrom).limit(8000),
@@ -58,10 +58,18 @@ export async function GET(req: NextRequest) {
         .select('listing_id,check_in,check_out,status,guest_name')
         .in('listing_id', ids).in('status', ['confirmed', 'closed'])
         .lt('check_in', calTo).gte('check_out', today).limit(3000),
+      db.from('property_audits').select('listing_id,status,created_at').in('listing_id', ids).limit(3000),
     ])
     const tasks = (tasksR.data || []) as any[]
     const reviews = (revR.data || []) as any[]
     const res = (resR.data || []) as any[]
+    // Real audit records beat task-name guessing for the audit cadence.
+    const auditLast: Record<string, string> = {}
+    for (const a of ((audR.data || []) as any[])) {
+      if (!/complete/i.test(str(a.status))) continue
+      const k = str(a.listing_id), when = str(a.created_at).slice(0, 10)
+      if (k && when && (!auditLast[k] || when > auditLast[k])) auditLast[k] = when
+    }
 
     // group by listing
     const byListing: Record<string, any[]> = {}
@@ -103,7 +111,8 @@ export async function GET(req: NextRequest) {
 
       // 3. UPKEEP — when was each recurring job last COMPLETED, and is it overdue
       const doneTasks = mine.filter(t => t.finished_at || isDone(str(t.status).toLowerCase()))
-      const upkeep: any[] = []
+      const upkeep: any[] = []     // OVERDUE with evidence -> earns a chip on the unit header
+      const unknown: any[] = []     // no record at all -> shown inside the panel, never as a chip
       for (const rule of UPKEEP) {
         let last: string | null = null
         for (const t of doneTasks) {
@@ -111,11 +120,13 @@ export async function GET(req: NextRequest) {
           const when = str(t.finished_at || t.scheduled_date).slice(0, 10)
           if (when && (!last || when > last)) last = when
         }
+        if (rule.key === 'audit' && auditLast[id] && (!last || auditLast[id] > last)) last = auditLast[id]
         const months = last ? monthsBetween(last, today) : null
-        // Never done in the window we can see = treat as due, but say so honestly.
-        if (months === null || months >= rule.every) {
-          upkeep.push({ key: rule.key, label: rule.label, short: rule.short, template: rule.template, lastAt: last, monthsAgo: months === null ? null : Math.round(months * 10) / 10, every: rule.every, neverSeen: months === null })
-        }
+        const row = { key: rule.key, label: rule.label, short: rule.short, template: rule.template, lastAt: last, monthsAgo: months === null ? null : Math.round(months * 10) / 10, every: rule.every, neverSeen: months === null }
+        // "No record" is not evidence of neglect - it usually means the job was never logged in
+        // Breezeway. Those go in the panel so a GM can still act, but they do NOT shout on the board.
+        if (months === null) unknown.push(row)
+        else if (months >= rule.every) upkeep.push(row)
       }
 
       // 14-DAY OCCUPANCY — which days the unit is empty, and where the checkouts land
@@ -135,7 +146,7 @@ export async function GET(req: NextRequest) {
       const nextFree = (days.filter(d => d.free)[0] || {}).date || null
       const nextCheckout = (days.filter(d => d.checkout)[0] || {}).date || null
 
-      signals[id] = { pending, review, upkeep, days, nextFree, nextCheckout }
+      signals[id] = { pending, review, upkeep, unknown, days, nextFree, nextCheckout }
 
       // discovery: what other recurring work exists that we are NOT tracking yet
       for (const t of doneTasks) {
