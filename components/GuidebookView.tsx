@@ -173,27 +173,35 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
   // Clickable contact details for the digital/shared view: phones dial, addresses open Maps,
   // email opens mail. Inert while editing; prints as plain text.
-  const Tel = ({ v, children }: { v?: string; children: any }) => {
+  // NOTE (v3.11): every component below is frozen with useMemo([]) and reads live state through
+  // _live.current. A component *value* recreated on each render is a NEW type to React, which
+  // unmounts and rebuilds the whole subtree on every keystroke — that collapsed the document
+  // height and bounced the editor back to the top of the book. Never inline a component here.
+  const Tel = useMemo(() => function Tel({ v, children }: { v?: string; children: any }) {
+    const { edit } = _live.current
     const num = String(v || '').replace(/[^\d+]/g, '')
     return !edit && num.length >= 7 ? <a href={'tel:' + num} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
-  }
-  const MapLink = ({ v, children }: { v?: string; children: any }) => {
+  }, [])
+  const MapLink = useMemo(() => function MapLink({ v, children }: { v?: string; children: any }) {
+    const { edit } = _live.current
     const q = String(v || '').trim()
     return !edit && q ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(q)} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
-  }
-  const Mail = ({ v, children }: { v?: string; children: any }) => {
+  }, [])
+  const Mail = useMemo(() => function Mail({ v, children }: { v?: string; children: any }) {
+    const { edit } = _live.current
     const m = String(v || '').trim()
     return !edit && m.includes('@') ? <a href={'mailto:' + m} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
-  }
+  }, [])
   // Local places & restaurants click through to Google Maps (venue + city) on the digital view.
   const placeCity = String(s.guidelines?.address || '').split(',')[1]?.trim() || ''
-  const PlaceLink = ({ name, addr, children }: { name?: string; addr?: string; children: any }) => {
+  const PlaceLink = useMemo(() => function PlaceLink({ name, addr, children }: { name?: string; addr?: string; children: any }) {
+    const { edit, placeCity } = _live.current
     const nm = String(name || '').trim()
     const mq = String(addr || '').trim() ? nm + ', ' + String(addr || '').trim() : nm + (placeCity ? ', ' + placeCity : '')
     return !edit && nm
       ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(mq)} target="_blank" rel="noreferrer" className="block transition-opacity hover:opacity-85" style={{ color: 'inherit' }}>{children}</a>
       : <>{children}</>
-  }
+  }, [])
 
   // Pages the operator can remove from the book (Edit mode → "Hide page"; restore from the bar).
   const PAGE_LABELS: Record<string, string> = { special: 'What makes it special', houseGuide: 'How-to guide', addons: 'Add-ons', localPlaces: 'Local places', restaurants: 'Where to eat', gettingThere: 'Finding the residence', gettingAround: 'Getting around', retreat: 'Retreat lines', host: 'Meet your host' }
@@ -214,12 +222,18 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
     })
   }
 
+  // Page numbers are handed down as a prop (num={++pageNo}) rather than counted inside Page, so
+  // Page can stay a frozen component type. The counter is evaluated at each call site during this
+  // render pass, in source order, so conditional/omitted pages still number correctly.
   let pageNo = 0
-  const Page = ({ children, bleed, id, ghost, hideKey }: { children: any; bleed?: string | null; id?: string; ghost?: string; hideKey?: string }) => {
-    pageNo += 1
-    const n = pageNo
+  // noFooter: for a page that paints its own full-bleed footer over this one (the wi-fi spread).
+  // Without it both footers exist in the DOM — invisible in print, but the book reports one more
+  // page number than it has pages, which breaks anything counting them.
+  const Page = useMemo(() => function Page({ children, bleed, id, ghost, hideKey, num, noFooter }: { children: any; bleed?: string | null; id?: string; ghost?: string; hideKey?: string; num?: number; noFooter?: boolean }) {
+    const { paper, ink, edit, accentColor, s, hidePage, lbl } = _live.current
+    const n = num || 1
     return (
-      <div key={id || n} className="gb-page relative mx-auto mb-8 w-full max-w-[760px] overflow-hidden shadow-[0_2px_24px_rgba(0,0,0,0.10)] print:mb-0 print:shadow-none"
+      <div className="gb-page relative mx-auto mb-8 w-full max-w-[760px] overflow-hidden shadow-[0_2px_24px_rgba(0,0,0,0.10)] print:mb-0 print:shadow-none"
         style={{ aspectRatio: '210/297', background: paper, color: ink, fontFamily: SANS }}>
         {edit && hideKey && (
           <button onClick={() => hidePage(hideKey)} title="Remove this page from the book (restore from the bar above)"
@@ -239,18 +253,20 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         )}
         <div className={'relative flex h-full flex-col ' + (bleed ? 'text-white' : '')} style={{ padding: '52px 58px 40px' }}>
           {children}
-          <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
+          {!noFooter && <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
             <span><Tel v={s.contact?.customerService || '954-526-8998'}>{s.contact?.customerService || '954-526-8998'}</Tel></span>
             <span className="tabular-nums">{String(n).padStart(2, '0')}</span>
             <span>{edit ? <L k="footer.site" def="STAY-HOSPITALITY.COM" /> : <a href={'https://' + lbl('footer.site', 'STAY-HOSPITALITY.COM').toLowerCase().replace(/[^a-z0-9.-]/g, '')} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>{lbl('footer.site', 'STAY-HOSPITALITY.COM')}</a>}</span>
-          </div>
+          </div>}
         </div>
       </div>
     )
-  }
+  }, [])
 
   // Half-photo header with scrim — text below is always on paper, label over photo is scrimmed white.
-  const PhotoBand = ({ src, label, k, p }: { src: string | null; label?: string; k?: string; p?: string[] }) => src ? (
+  const PhotoBand = useMemo(() => function PhotoBand({ src, label, k, p }: { src: string | null; label?: string; k?: string; p?: string[] }) {
+    const { showTags, edit, accentColor, pickBtn, openPick } = _live.current
+    return src ? (
     <div className="relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 88%, 0 100%)' }}>
       <img loading="lazy" decoding="async" src={src} alt="" className="h-full w-full object-cover" />
       <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.45), rgba(10,10,12,0.05) 55%)' }} />
@@ -264,13 +280,19 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       <button onClick={() => openPick(p)} className="rounded bg-neutral-100 px-3 py-1.5 text-[11px] font-bold text-neutral-700 ring-1 ring-neutral-300">📷 Add a photo</button>
     </div>
   ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{k ? <L k={k} def={label} /> : label}</p> : null))
+  }, [])
 
-  const H = ({ children, size = 'text-[40px]' }: { children: any; size?: string }) => (
-    <h2 className={size + ' lowercase leading-[1.05] font-medium'} style={{ fontFamily: SERIF }}>{children}</h2>
-  )
-  const Kicker = ({ children }: { children: any }) => (
-    <p className="mb-2 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{children}</p>
-  )
+  const H = useMemo(() => function H({ children, size = 'text-[40px]' }: { children: any; size?: string }) {
+    return <h2 className={size + ' lowercase leading-[1.05] font-medium'} style={{ fontFamily: SERIF }}>{children}</h2>
+  }, [])
+  const Kicker = useMemo(() => function Kicker({ children }: { children: any }) {
+    const { accentColor } = _live.current
+    return <p className="mb-2 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{children}</p>
+  }, [])
+
+  // One place where every value the frozen components read is refreshed. Must run before the JSX
+  // below is returned (children render after the parent body finishes, so this is always current).
+  Object.assign(_live.current, { edit, set, lbl, paper, ink, accentColor, s, showTags, pickBtn, openPick, hidePage, placeCity })
 
   const localSecs = [
     has('localPlaces', (s.localPlaces?.items || []).length > 0) && { title: 'local places', tag: 'TO VISIT', key: 'localPlaces' },
@@ -282,6 +304,16 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" />
       <style>{`
         .gb-page { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        /* Vertical fill. A page is a fixed Letter box, so every body block has leftover space, and
+           the question is only where that leftover goes. It used to be decided per page by
+           hard-coded item-count thresholds, which produced two opposite failure modes: content-evenly
+           / justify-evenly drifted rows hundreds of px apart on sparse pages, and centring floats
+           the body away from the heading that introduces it. One rule instead: content starts under
+           its heading and the leftover collects at the foot of the page, where it reads as margin.
+           'safe' is load-bearing: it falls back to start when content is taller than the box, so a
+           full page can never overflow upward and get clipped by .gb-page's overflow-hidden. */
+        .gb-vfill { align-content: safe start; }
+        .gb-vfill-col { justify-content: safe start; }
         @media print {
           @page { size: letter; margin: 0; }
           html, body { background: white !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; }
@@ -416,22 +448,27 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
       <div className="px-4 py-10 gb-pages">
         {/* COVER — full-bleed, scrimmed, white type */}
-        <Page bleed={pa.cover || photos[0] || null} id="cover">
+        {/* COVER type is opacity-tinted rather than white-tinted: Page already sets text-white when a
+            cover photo exists, so inheriting currentColor keeps the kicker/rule/subtitle readable on
+            cream paper too. Hard-coded white here made a photoless cover invisible. */}
+        {(() => { const coverBleed = pa.cover || photos[0] || null; return (
+        <Page num={++pageNo} bleed={coverBleed} id="cover">
           {pickBtn(['_photoAssign', 'cover'])}
           <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <p className="text-[9px] tracking-[0.55em] text-white/80"><L k="cover.kicker" def="WELCOME" /></p>
-            <div className="mt-5 text-[54px] leading-[1.08] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 24px rgba(0,0,0,0.35)' }}>
+            <p className="text-[9px] tracking-[0.55em] opacity-80"><L k="cover.kicker" def="WELCOME" /></p>
+            <div className="mt-5 text-[54px] leading-[1.08] font-medium" style={{ fontFamily: SERIF, textShadow: coverBleed ? '0 1px 24px rgba(0,0,0,0.35)' : 'none' }}>
               <T path={['cover', 'line1']} value={s.cover?.line1} /><br />
               <T path={['cover', 'line2']} value={s.cover?.line2} />
             </div>
-            <div className="mx-auto mt-7 h-px w-14 bg-white/60" />
-            <p className="mt-5 text-[10px] tracking-[0.4em] text-white/85"><T path={['cover', 'subtitle']} value={s.cover?.subtitle} /></p>
+            <div className="mx-auto mt-7 h-px w-14 opacity-60" style={{ background: 'currentColor' }} />
+            <p className="mt-5 text-[10px] tracking-[0.4em] opacity-85"><T path={['cover', 'subtitle']} value={s.cover?.subtitle} /></p>
           </div>
-          <div className="pb-2"><StayLogo light /></div>
+          <div className="pb-2"><StayLogo light={!!coverBleed} /></div>
         </Page>
+        ) })()}
 
         {/* ABOUT — adaptive: short copy becomes a centered manifesto page; long copy reads editorial-left */}
-        <Page id="about">
+        <Page num={++pageNo} id="about">
           <PhotoBand src={pa.about || null} p={['_photoAssign', 'about']} />
           {(s.about?.body || '').length < 240 ? (
             <div className="flex flex-1 flex-col items-center justify-center pb-10 text-center">
@@ -472,10 +509,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* SPECIAL + QR */}
         {has('special', (s.special?.groups || []).length > 0) && (
-          <Page id="special" hideKey="special">
+          <Page num={++pageNo} id="special" hideKey="special">
             <PhotoBand src={pa.special || null} label="THE EXPERIENCE" k="band.special" p={['_photoAssign', 'special']} />
             <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
-            <div className={'mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7 ' + ((s.special.groups || []).length <= 2 ? 'content-center' : 'content-start')}>
+            <div className="gb-vfill mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7">
               {(s.special.groups).map((g: any, i: number) => (
                 <div key={i}>
                   <p className="text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><T path={['special', 'groups', String(i), 'title'] as any} value={g.title} /></p>
@@ -496,7 +533,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* ARRIVAL — adaptive: sparse copy + photo becomes a full-height split page */}
         {((s.arrival?.entry || '').length + (s.arrival?.parking || '').length) < 340 && !has('gettingAround', !!str2(s.gettingAround?.body)) && false ? (
-          <Page id="arrival">
+          <Page num={++pageNo} id="arrival">
             <div className="absolute inset-y-0 left-0 w-[42%] overflow-hidden">
               <img loading="lazy" decoding="async" src={pa.arrival} alt="" className="h-full w-full object-cover" />
               <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.5), rgba(10,10,12,0.06) 50%)' }} />
@@ -522,7 +559,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             </div>
           </Page>
         ) : (
-        <Page id="arrival">
+        <Page num={++pageNo} id="arrival">
           <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" k="band.arrival" p={['_photoAssign', 'arrival']} />
           <H><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
           <div className="mt-6 flex gap-14">
@@ -530,7 +567,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <div className="w-px" style={{ background: accentColor + '44' }} />
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.outLabel" def="CHECK-OUT" /></p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
           </div>
-          <div className="mt-8 grid flex-1 grid-cols-2 content-center gap-x-12 gap-y-8 text-[12.5px] font-light leading-[1.85]">
+          <div className="gb-vfill mt-8 grid flex-1 grid-cols-2 gap-x-12 gap-y-8 text-[12.5px] font-light leading-[1.85]">
             <div>
               <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.entryLabel" def="Entry" /></p>
               <p className="max-w-[58ch]"><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p>
@@ -556,13 +593,15 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         )}
 
         {/* WI-FI — dark spread with a half-page photo and useful connection notes */}
-        <Page id="wifi">
+        {(() => {
+          const n = ++pageNo
+          const used = new Set(Object.values(pa).filter(Boolean))
+          const scene = (s._photoMeta || []).find((x: any) => ['living', 'bedroom', 'view', 'beach', 'pool', 'kitchen', 'dining', 'exterior', 'amenity'].includes(x.category) && !x.hasText && !used.has(x.url))
+          const wifiPhoto = pa.wifi || scene?.url || pa.about || null
+          return (
+        <Page num={n} id="wifi" noFooter>
           <div className="absolute inset-0" style={{ background: '#131210' }} />
-          {(() => {
-            const used = new Set(Object.values(pa).filter(Boolean))
-            const scene = (s._photoMeta || []).find((x: any) => ['living', 'bedroom', 'view', 'beach', 'pool', 'kitchen', 'dining', 'exterior', 'amenity'].includes(x.category) && !x.hasText && !used.has(x.url))
-            const wifiPhoto = pa.wifi || scene?.url || pa.about || null
-            return wifiPhoto ? (
+          {wifiPhoto ? (
               <div className="absolute inset-x-0 top-0 h-[46%] overflow-hidden">
                 <img loading="lazy" decoding="async" src={wifiPhoto} alt="" className="h-full w-full object-cover" />
                 <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(19,18,16,0.10), rgba(19,18,16,0.45) 65%, #131210 100%)' }} />
@@ -572,35 +611,44 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <div className="absolute inset-x-0 top-0 flex h-[46%] items-center justify-center print:hidden">
                 <button onClick={() => openPick(['_photoAssign', 'wifi'])} className="rounded bg-white/10 px-3 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/30">📷 Add a photo</button>
               </div>
-            ) : null)
-          })()}
+            ) : null)}
           <div className="relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
-            <div className="h-[38%] shrink-0" />
-            <div>
+            {/* The spacer only exists to clear the photo. Without one it was pure black void that
+                pushed the headline a third of the way down an otherwise empty page. */}
+            {wifiPhoto ? <div className="h-[38%] shrink-0" /> : null}
+            <div className={wifiPhoto ? '' : 'mt-6'}>
               <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// '}<L k="wifi.kicker" def="CONNECTED" /></p>
-              <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF, textShadow: '0 1px 18px rgba(0,0,0,0.5)' }}><L k="wifi.heading" def="wi-fi & the essentials" /></h2>
+              <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF, textShadow: wifiPhoto ? '0 1px 18px rgba(0,0,0,0.5)' : 'none' }}><L k="wifi.heading" def="wi-fi & the essentials" /></h2>
             </div>
             <div className="mt-7 grid grid-cols-2 gap-8 border-y py-6" style={{ borderColor: '#c9a96a44' }}>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}><L k="wifi.netLabel" def="NETWORK" /></p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}><L k="wifi.passLabel" def="PASSWORD" /></p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
             </div>
-            <div className="mt-7 grid flex-1 content-evenly grid-cols-2 gap-x-8 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75">
+            <div className="gb-vfill mt-7 grid flex-1 grid-cols-2 gap-x-8 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75">
               <div><L k="wifi.note1" def="The password is case-sensitive — enter it exactly as printed. Once a device connects, it will remember the network for the rest of your stay." rows={4} /></div>
               <div>{(() => { const d = 'Trouble connecting? Our team is one call away, day or night — ' + (s.contact?.customerService || '954-526-8998') + '. And if you sign into personal accounts on any TV, remember to log out before checkout.'; return edit ? <L k="wifi.note2" def={d} rows={4} /> : withTel(lbl('wifi.note2', d)) })()}</div>
             </div>
+            {/* This dark footer paints over Page's own, so it has to carry the page number
+                itself — otherwise wi-fi is the one page in the book that prints without one. */}
             <div className="mt-auto flex items-end justify-between pt-5 text-[8.5px] tracking-[0.28em] text-[#efeae2]/50">
-              <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span><span><Mail v={s.contact?.email}><T path={['contact', 'email']} value={s.contact?.email} rows={1} /></Mail></span>
+              <span><Tel v={s.contact?.customerService}>{s.contact?.customerService}</Tel></span>
+              <span className="tabular-nums">{String(n).padStart(2, '0')}</span>
+              <span><Mail v={s.contact?.email}><T path={['contact', 'email']} value={s.contact?.email} rows={1} /></Mail></span>
             </div>
           </div>
         </Page>
+        ) })()}
 
         {/* HOW-TO GUIDE — one item per appliance/system, read from uploads + notes */}
         {has('houseGuide', (s.houseGuide?.items || []).length > 0) && (
-          <Page id="howto" ghost="how" hideKey="houseGuide">
+          <Page num={++pageNo} id="howto" ghost="how" hideKey="houseGuide">
             <Kicker><L k="houseGuide.kicker" def="HOUSE GUIDE" /></Kicker>
             <H><L k="houseGuide.heading" def="how-to guide" /></H>
             <div className="mt-3 max-w-[56ch] text-[11px] font-light leading-[1.55] opacity-80"><L k="houseGuide.intro" def="Everything here is a feature — a minute of reading makes the whole stay effortless." rows={2} /></div>
-            <div className={'mt-4 flex-1 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-2' : 'columns-1')}>
+            {/* CSS columns can't be align-content'd, so the leftover space is absorbed with auto
+                margins instead — same optical centring, and auto margins collapse to 0 when the
+                content is taller than the box, so a full page still can't overflow. */}
+            <div className={'mb-auto mt-6 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-2' : 'columns-1')}>
               {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
                 <div key={i} className="flex gap-3 border-b pb-3 mb-3 break-inside-avoid" style={{ borderColor: accentColor + '22' }}>
                   <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
@@ -622,11 +670,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         )}
 
         {/* GUIDELINES + CONTACT — combined, lean */}
-        <Page id="guidelines" ghost="notes">
+        <Page num={++pageNo} id="guidelines" ghost="notes">
           <Kicker><L k="guidelines.kicker" def="HOUSE NOTES" /></Kicker>
           <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
           <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
-          <div className={'mt-7 flex-1 flex flex-col ' + ((s.guidelines?.items || []).length <= 3 ? 'justify-center gap-6' : 'justify-evenly gap-4')}>
+          <div className="gb-vfill-col mt-7 flex flex-1 flex-col gap-5">
             {(s.guidelines?.items || []).slice(0, 5).map((it: any, i: number) => (
               <div key={i} className="flex gap-4 border-b pb-3.5" style={{ borderColor: accentColor + '22' }}>
                 <p className="w-44 shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
@@ -647,11 +695,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           const anyPhoto = items.some((p: any) => p.photo)
           const few = items.length <= 3
           return (
-            <Page key={sec.key} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
+            <Page key={sec.key} num={++pageNo} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
               <Kicker><L k={sec.key + '.tag'} def={sec.tag} /></Kicker>
               <H><L k={sec.key + '.heading'} def={sec.title} /></H>
               {anyPhoto ? (
-                <div className={'mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1 content-center' : 'grid-cols-2 content-start')}>
+                <div className={'gb-vfill mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1' : 'grid-cols-2')}>
                   {items.map((p: any, i: number) => (
                     <div key={i} className={!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : ''}>
                       <PlaceLink name={p.name} addr={p.address}>
@@ -676,7 +724,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                   ))}
                 </div>
               ) : (
-                <div className="mt-9 grid flex-1 grid-cols-2 content-start gap-x-10 gap-y-7">
+                <div className="gb-vfill mt-9 grid flex-1 grid-cols-2 gap-x-10 gap-y-7">
                   {items.map((p: any, i: number) => (
                     <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
                       {pickBtn([sec.key, 'items', String(i), 'photo'], false)}
@@ -698,11 +746,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
 
         {/* ADD-ONS (only if provided) */}
         {has('addons', (s.addons?.items || []).length > 0) && (
-          <Page id="addons" ghost="more" hideKey="addons">
+          <Page num={++pageNo} id="addons" ghost="more" hideKey="addons">
             <Kicker><L k="addons.kicker" def="AT YOUR SERVICE" /></Kicker>
             <H><L k="addons.heading" def="exclusive add-ons" /></H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
-            <div className={'mt-8 grid flex-1 content-evenly ' + ((s.addons.items || []).length <= 4 ? 'grid-cols-1 gap-y-6' : 'grid-cols-2 gap-x-10 gap-y-5')}>
+            <div className={'gb-vfill mt-8 grid flex-1 ' + ((s.addons.items || []).length <= 4 ? 'grid-cols-1 gap-y-6' : 'grid-cols-2 gap-x-10 gap-y-5')}>
               {(s.addons.items).slice(0, 10).map((p: any, i: number) => (
                 <div key={i} className="flex items-baseline gap-5 border-b pb-4" style={{ borderColor: accentColor + '22' }}>
                   <span className={((s.addons.items || []).length <= 4 ? 'text-[24px]' : 'text-[13px]') + ' leading-none opacity-30'} style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
@@ -714,8 +762,10 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         )}
 
         {/* CLOSING — checklist + starred review ask + thank you, on paper for readability */}
-        <Page id="closing" ghost="bye">
-          <PhotoBand src={pa.closing || null} label="UNTIL NEXT TIME" k="band.closing" p={['_photoAssign', 'closing']} />
+        <Page num={++pageNo} id="closing" ghost="bye">
+          {/* No label here: PhotoBand's read-mode fallback renders the label as a bare kicker,
+              which stacked a second '// UNTIL NEXT TIME' directly above this page's own kicker. */}
+          <PhotoBand src={pa.closing || null} p={['_photoAssign', 'closing']} />
           <div className="grid flex-1 grid-cols-[1fr_1px_1.1fr] gap-x-8">
             <div>
               <p className="text-[9px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="closing.beforeLabel" def="BEFORE YOU GO" /></p>
@@ -739,7 +789,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <div className="mt-4"><StayLogo small /></div>
           </div>
         </Page>
-        <Page id="booknext" ghost="stay">
+        <Page num={++pageNo} id="booknext" ghost="stay">
           <div className="flex flex-1 flex-col items-center justify-center text-center">
             <p className="text-[10px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="booknext.kicker" def="COME BACK SOON" /></p>
             <h2 className="mt-4 text-[40px] lowercase font-medium leading-[1.05]" style={{ fontFamily: SERIF }}><L k="booknext.heading" def="book your next stay" /></h2>
