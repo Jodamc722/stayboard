@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -10,7 +12,6 @@ export const maxDuration = 60
 // A clean = a confirmed/checked Guesty checkout, deduped per unit/day (same rule as /api/schedule).
 // Botanica is vendor-cleaned (hotel staff) - tracked separately, not counted in OUR needs. ET dates.
 const LIVE = /confirm|checked/i
-const VENDOR = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
 const MARKETS = ['Miami', 'Broward', 'North']
 const DAYLABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const HIST = 60
   const today = ymd(new Date())
   const histStart = addDays(today, -HIST)
