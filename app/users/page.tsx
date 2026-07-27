@@ -5,6 +5,7 @@ import { Shell } from '@/components/Shell'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { ReviewVoiceAdmin } from '@/components/ReviewVoiceAdmin'
+import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
 import { ShareLinksCard } from '@/components/ShareLinksCard'
 import { ShieldAlert } from 'lucide-react'
 import { redirect } from 'next/navigation'
@@ -27,6 +28,7 @@ export default async function UsersPage() {
       ) : (
         <div className="space-y-5">
           <UsersAdmin myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
+          <OpsPresetsAdmin isOwner={isSuperadmin(access.email)} />
           <ReviewVoiceAdmin />
           <ShareLinksCard />
         </div>
