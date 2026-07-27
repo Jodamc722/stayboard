@@ -1,11 +1,17 @@
-// User management API. Admin-only. GET lists app_users; POST invites (password-set email via Supabase
-// Admin API) + upserts the allowlist row; PATCH changes role or active/disabled status. All writes use
-// the service-role client; the CALLER's admin role is verified via getAccess() on every request.
+// User management API. Admin-only. GET lists app_users (+ last sign-in from Supabase auth);
+// POST invites (password-set email via Supabase Admin API) + upserts the allowlist row;
+// PATCH changes role, active/disabled status, workspace (owner-only), profile, prefs or password.
+// All writes use the service-role client; the CALLER's admin role is verified via getAccess() on
+// every request. Columns added by migration 013 (workspace/profile/prefs/last_seen_at) are handled
+// tolerantly so the page still works before the migration runs.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
+import { normWorkspace } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
+
+const OWNER = 'jon@stay-hospitality.com'
 
 function clean(v: any): string { return String(v ?? '').trim().toLowerCase() }
 
@@ -34,14 +40,22 @@ export async function GET() {
   const { error } = await requireAdmin()
   if (error) return error
   const sb = supabaseAdmin()
-  let { data, error: e } = await sb.from('app_users').select('email, role, status, features, invited_by, created_at, last_invited_at').order('created_at', { ascending: true })
-  if (e) {
-    // The features column may not exist yet (pre-migration 005) — fall back so the page still loads.
-    const fb = await sb.from('app_users').select('email, role, status, invited_by, created_at, last_invited_at').order('created_at', { ascending: true })
-    data = fb.data as any; e = fb.error
-  }
+  // select('*') so optional columns (workspace/profile/prefs/last_seen_at, migration 013) come
+  // through when present and are simply absent otherwise.
+  const { data, error: e } = await sb.from('app_users').select('*').order('created_at', { ascending: true })
   if (e) return NextResponse.json({ error: `Could not load users: ${e.message}. Has the app_users table been created?` }, { status: 500 })
-  return NextResponse.json({ users: data || [] })
+  // Merge last sign-in from Supabase auth (best-effort; small team so one page is plenty).
+  const lastSignIn: Record<string, string> = {}
+  try {
+    for (let page = 1; page <= 5; page++) {
+      const { data: au, error: aErr } = await (sb as any).auth.admin.listUsers({ page, perPage: 1000 })
+      if (aErr || !au?.users?.length) break
+      for (const u of au.users) if (u?.email && u?.last_sign_in_at) lastSignIn[clean(u.email)] = u.last_sign_in_at
+      if (au.users.length < 1000) break
+    }
+  } catch { /* ignore */ }
+  const users = (data || []).map((u: any) => ({ ...u, last_sign_in_at: lastSignIn[clean(u.email)] || null }))
+  return NextResponse.json({ users })
 }
 
 export async function POST(req: NextRequest) {
@@ -56,9 +70,15 @@ export async function POST(req: NextRequest) {
 
   const sb = supabaseAdmin()
   // Upsert the allowlist row first so access is granted even if the email can't be delivered.
-  const { error: upErr } = await sb.from('app_users').upsert({
-    email, role, status: 'active', invited_by: access.email, last_invited_at: new Date().toISOString(),
-  }, { onConflict: 'email' })
+  const row: any = { email, role, status: 'active', invited_by: access.email, last_invited_at: new Date().toISOString() }
+  if (typeof body?.workspace === 'string' && body.workspace) row.workspace = normWorkspace(body.workspace)
+  let { error: upErr } = await sb.from('app_users').upsert(row, { onConflict: 'email' })
+  if (upErr && row.workspace && /workspace/i.test(upErr.message || '')) {
+    // Pre-migration-013 fallback: retry without the workspace column.
+    delete row.workspace
+    const retry = await sb.from('app_users').upsert(row, { onConflict: 'email' })
+    upErr = retry.error
+  }
   if (upErr) return NextResponse.json({ error: `Could not save user: ${upErr.message}` }, { status: 500 })
 
   // If an admin supplied a password, create (or update) the auth account directly with it - no email
@@ -101,13 +121,22 @@ export async function PATCH(req: NextRequest) {
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
   const password = typeof body?.password === 'string' ? body.password : ''
   if (password && password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
+  const isOwnerCall = clean(access.email) === OWNER
   const patch: any = {}
   if (body?.role === 'admin' || body?.role === 'member') patch.role = body.role
   if (body?.status === 'active' || body?.status === 'disabled') patch.status = body.status
+  // Page access (workspace + per-page overrides) is owner-only; the owner's own access is immutable.
   if (body?.features && typeof body.features === 'object' && !Array.isArray(body.features)) {
-    if (clean(access.email) !== 'jon@stay-hospitality.com') return NextResponse.json({ error: 'Only the owner can change page access.' }, { status: 403 })
-    if (email !== 'jon@stay-hospitality.com') patch.features = body.features  // owner always keeps all pages
+    if (!isOwnerCall) return NextResponse.json({ error: 'Only the owner can change page access.' }, { status: 403 })
+    if (email !== OWNER) patch.features = body.features  // owner always keeps all pages
   }
+  if (typeof body?.workspace === 'string' && body.workspace) {
+    if (!isOwnerCall) return NextResponse.json({ error: 'Only the owner can change workspaces.' }, { status: 403 })
+    if (email !== OWNER) patch.workspace = normWorkspace(body.workspace)
+  }
+  // Profile details + notification preferences: any admin can edit.
+  if (body?.profile && typeof body.profile === 'object' && !Array.isArray(body.profile)) patch.profile = body.profile
+  if (body?.prefs && typeof body.prefs === 'object' && !Array.isArray(body.prefs)) patch.prefs = body.prefs
   if (Object.keys(patch).length === 0 && !password) return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 })
   // Guard: never let an admin lock themselves out of admin or disable themselves.
   if (email === access.email && (patch.role === 'member' || patch.status === 'disabled')) {
@@ -116,7 +145,10 @@ export async function PATCH(req: NextRequest) {
   const sb = supabaseAdmin()
   if (Object.keys(patch).length) {
     const { error: e } = await sb.from('app_users').update(patch).eq('email', email)
-    if (e) return NextResponse.json({ error: e.message }, { status: 500 })
+    if (e) {
+      const missing = /column .*(workspace|profile|prefs)/i.test(e.message || '')
+      return NextResponse.json({ error: missing ? 'This needs the workspaces migration — run supabase/migrations/013_user_workspaces.sql in Supabase, then try again.' : e.message }, { status: 500 })
+    }
   }
   // Optional password reset for the existing account.
   let passwordSet: boolean | undefined
@@ -139,7 +171,7 @@ export async function DELETE(req: NextRequest) {
   const email = clean(body?.email)
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
   if (email === access.email) return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 })
-  if (email === 'jon@stay-hospitality.com') return NextResponse.json({ error: 'The owner account cannot be deleted.' }, { status: 400 })
+  if (email === OWNER) return NextResponse.json({ error: 'The owner account cannot be deleted.' }, { status: 400 })
   const sb = supabaseAdmin()
   const { error: dErr } = await sb.from('app_users').delete().eq('email', email)
   if (dErr) return NextResponse.json({ error: dErr.message }, { status: 500 })
