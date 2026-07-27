@@ -40,8 +40,11 @@ async function getVoice(): Promise<Voice> {
   if (_voiceCache && Date.now() - _voiceCache.at < 60_000) return _voiceCache.val
   let val: Voice = null
   try {
+    // app_settings.value is TEXT — stored as a JSON string by the admin console.
     const { data } = await supabaseAdmin().from('app_settings').select('value').eq('key', 'review_voice').maybeSingle()
-    if (data?.value && typeof data.value === 'object') val = data.value as Voice
+    const v: any = data?.value
+    if (v && typeof v === 'object') val = v as Voice
+    else if (typeof v === 'string' && v) { try { const j = JSON.parse(v); if (j && typeof j === 'object') val = j as Voice } catch { /* not json */ } }
   } catch { /* fail-open */ }
   _voiceCache = { at: Date.now(), val }
   return val
