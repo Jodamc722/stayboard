@@ -8,6 +8,8 @@ import { unstable_cache, revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorNameOf } from '@/lib/ops-presets'
 import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
@@ -20,8 +22,8 @@ const CLEANING_TIME_FIELD = '69977f98e346440013af2462'
 const DEAD = /cancel|declin|inquir|expire|denied/i
 const LIVE = /confirm|checked/i // ONLY confirmed/checked stays make cleans. NOT inquiry/reserved (holds) and NOT 'closed' (Guesty closed = released/replaced - verified with the Cindy/Rustic-18 phantom)
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
-const VENDOR_RE = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i // vendor-cleaned buildings (hotel/vendor staff, not our team) - mirrors forecast API + ForecastBoard
-const VENDOR_OF = (s: string) => { if (!VENDOR_RE.test(s)) return null; if (/botanica/i.test(s)) return 'Botanica'; if (/park\s*towers?|\bpt\b/i.test(s)) return 'Park Towers'; if (/amrit/i.test(s)) return 'Amrit'; if (/capri/i.test(s)) return 'Capri'; return 'Lucerne' }
+// Vendor-cleaned buildings (hotel/vendor staff, not our team) now come from ops presets
+// (/users -> Ops presets), so a building can be brought in house without a code change.
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 const DAYLABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -46,6 +48,12 @@ const supabase = createClient()
 const { data: { user } } = await supabase.auth.getUser()
 if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
+const presets = await getOpsPresets()
+const VENDOR_OF = (s: string) => vendorNameOf(presets.vendorBuildings, s)
+// The computed schedule is cached for a day, so the vendor config has to be part of the cache key —
+// otherwise bringing a building in house wouldn't show up here until the cache expired.
+const vendorKey = JSON.stringify(presets.vendorBuildings)
+
 const sp = new URL(req.url).searchParams
 const view = sp.get('view') === 'week' ? 'week' : 'day'
 const today = ymd(new Date())
@@ -53,7 +61,7 @@ const anchor = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('date') || '') ? sp.get('date')
 const start = anchor // week = rolling next-7-days from the anchor (today on load)
 const end = view === 'day' ? anchor : addDays(start, 6)
 
-const compute = unstable_cache(async (view: string, start: string, end: string, today: string) => {
+const compute = unstable_cache(async (view: string, start: string, end: string, today: string, _vendorKey: string) => {
 const db = supabaseAdmin()
 const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
 db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).limit(4000),
@@ -422,7 +430,7 @@ syncedAt: new Date().toISOString(),
 }
 }, ['schedule-v2'], { tags: ['schedule'], revalidate: 86400 })
 
-const payload = await compute(view, start, end, today)
+const payload = await compute(view, start, end, today, vendorKey)
 // LIVE staged-assignment overlay (uncached): server-saved cleaner picks survive refresh/tab-switch
   try {
     const sdb = supabaseAdmin()
