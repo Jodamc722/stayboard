@@ -1,7 +1,9 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, UploadCloud, Sparkles, RefreshCw } from 'lucide-react'
 import ListingOpsPanel from './ListingOpsPanel'
+import { useOpsPresets } from '@/lib/useOpsPresets'
+import { vendorRegex, DEFAULT_ROSTER, DEFAULT_PRESETS } from '@/lib/ops-presets'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[]; avgByMarketDow?: Record<string, number[]>; vendorAvgByMarketDow?: Record<string, number[]> }
@@ -9,17 +11,8 @@ type Unit = { unit: string; movedTo?: string | null; movedFrom?: string | null; 
 type HK = { id: string; name: string }
 type Pending = { listingId: string; date: string; id: string; name: string }
 
-const DEFAULT_RATE: Record<string, number> = { Miami: 5, Broward: 4, North: 4 }
 const MARKETS = ['Miami', 'Broward', 'North']
-// Default cleaner roster per market (from ops' weekly sheet). Generate seeds these.
-const BROWARD_TEAM = ['Roberto', 'Guillermo', 'Maribel', 'Vilma', 'Miriam', 'Kenia', 'Paola', 'Yessica', 'Maryurie', 'Eber', 'Leydi']
-const MIAMI_TEAM = ['Roberto', 'Yoslenis', 'Ernesto', 'George', 'Maraly', 'Abel', 'Elyani', 'Monica', 'Yaribel', 'Alejandro', 'Dayrene', 'Michael', 'Shaany', 'Helem', 'Yunisleydis', 'Yaneisis', 'Mileydis', 'Fernanda']
-const DEFAULT_TEAM: Record<string, string[]> = { Miami: MIAMI_TEAM, Broward: BROWARD_TEAM, North: [] }
-// Non-cleaners (supervisor/ops) — on the roster but NOT counted toward cleaners needed.
-const NON_CLEANERS: Record<string, string> = { Guillermo: 'supervisor', Roberto: 'ops', Yoslenis: 'supervisor', George: 'handyman', Ernesto: 'handyman' }
 const STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
-// Vendor-cleaned buildings (hotel/vendor staff) — not our cleaners. Mirrors the forecast API.
-const VENDOR = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 function shortName(n: string) {
@@ -51,13 +44,18 @@ function money(n: number) {
 }
 
 export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
+  // Roster, staffing ratio and the vendor-cleaning rule are operator-editable (/users -> Ops presets).
+  const presets = useOpsPresets()
+  const DEFAULT_TEAM = presets.roster.teams
+  const NON_CLEANERS = presets.roster.nonCleaners
+  const VENDOR = useMemo(() => vendorRegex(presets.vendorBuildings), [presets])
   const [data, setData] = useState<FC | null>(null)
   const [err, setErr] = useState('')
   const [weekStart, setWeekStart] = useState('')
   const [market, setMarket] = useState('Miami')
   const [view, setView] = useState<'day' | 'week'>(mode === 'weekly' ? 'week' : 'day')
-  const [rate, setRate] = useState<Record<string, number>>({ ...DEFAULT_RATE })
-  const [growth, setGrowth] = useState(10)
+  const [rate, setRate] = useState<Record<string, number>>({ ...DEFAULT_ROSTER.rate })
+  const [growth, setGrowth] = useState(DEFAULT_ROSTER.growth)
   const [locked, setLocked] = useState(false)
   const [hk, setHk] = useState<string[]>([])
   const [hkPeople, setHkPeople] = useState<HK[]>([])
@@ -78,6 +76,15 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
   const [lastSync, setLastSync] = useState<number | null>(null)
   const dirty = useRef(false)
   const loadKey = useRef('')
+  // Apply the saved staffing ratio / growth buffer once the presets arrive, without stomping a
+  // change the coordinator has already made on screen.
+  const presetsApplied = useRef(false)
+  useEffect(() => {
+    if (presetsApplied.current || presets === DEFAULT_PRESETS) return
+    presetsApplied.current = true
+    setRate(r => ({ ...r, ...presets.roster.rate }))
+    setGrowth(presets.roster.growth)
+  }, [presets])
 
   useEffect(() => {
     const url = '/api/schedule/forecast' + (weekStart ? '?weekStart=' + weekStart : '')

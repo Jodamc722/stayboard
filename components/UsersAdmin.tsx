@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react'
 import {
   UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2,
-  KeyRound, ChevronDown, ChevronRight, LayoutGrid, BellOff, Bell, IdCard, Clock
+  KeyRound, ChevronDown, ChevronRight, LayoutGrid, BellOff, Bell, IdCard, Clock, SlidersHorizontal
 } from 'lucide-react'
 import { FEATURES, WORKSPACES, workspaceDef, workspaceAllows, normWorkspace, type Workspace } from '@/lib/features'
 
@@ -198,10 +198,17 @@ function UserRow({ u, me, isOwner, expanded, onToggle, onPatch, onResetPw, onDel
             <div className="text-[11px] text-muted mt-0.5 inline-flex items-center gap-1">
               <Clock size={10} /> Last sign-in {ago(u.last_sign_in_at)}{u.last_seen_at ? ` · active ${ago(u.last_seen_at)}` : ''}
               {u.profile?.title ? ` · ${u.profile.title}` : ''}
+              {!isOwnerRow && u.role !== 'admin' ? ` · ${activeCount}/${bundlePages.length} pages` : ''}
             </div>
           </div>
         </button>
         <div className="flex items-center gap-2">
+          {/* The profile / workspace / page-access panels live behind this button. It is the primary
+              action on the row, so it reads as a real button rather than a bare chevron. */}
+          <button onClick={onToggle}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-semibold transition-colors ${expanded ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-brand-300 text-brand-700 hover:bg-brand-50'}`}>
+            <SlidersHorizontal size={13} /> {expanded ? 'Close' : 'Edit access'}
+          </button>
           <select value={u.role} disabled={me || isOwnerRow} onChange={e => onPatch(u.email, { role: e.target.value })}
             className="text-[12px] rounded-lg border border-line bg-app px-2 py-1 disabled:opacity-50">
             <option value="member">Member</option>
