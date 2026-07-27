@@ -405,7 +405,7 @@ export async function POST(req: NextRequest) {
           { value: ytd.avgWindow + ' d', label: 'BOOK WINDOW' },
         ],
       } : null,
-      metrics: { accomNum: period.accomRevenue, accomGrossNum: period.accomGrossRevenue, cleaningNum: period.cleaningRevenue, occNights: period.occupiedNights, availNights: period.availableNights, reservations: period.reservations, units, occPct: period.occupancyPct },
+      metrics: { accomNum: period.accomRevenue, accomGrossNum: period.accomGrossRevenue, cleaningNum: period.cleaningRevenue, feeNum: period.channelFees, occNights: period.occupiedNights, availNights: period.availableNights, reservations: period.reservations, units, occPct: period.occupancyPct },
     },
     pacing: pacingSection,
     plan,
