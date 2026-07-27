@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
     accomNum: m.accomRevenue,
     accomGrossNum: m.accomGrossRevenue,
     cleaningNum: m.cleaningRevenue,
+    feeNum: m.channelFees,
     occNights: m.occupiedNights,
     availNights: m.availableNights,
   }
