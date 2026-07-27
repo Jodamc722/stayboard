@@ -18,13 +18,20 @@ async function requireAdmin() {
   return { error: null, access }
 }
 
+// app_settings.value is TEXT (shared with banner_overrides / guesty_owners) — JSON-stringify in, parse out.
+function parseValue(v: any): any {
+  if (v && typeof v === 'object') return v
+  if (typeof v === 'string' && v) { try { const j = JSON.parse(v); if (j && typeof j === 'object') return j } catch { /* not json */ } }
+  return null
+}
+
 export async function GET() {
   const { error } = await requireAdmin()
   if (error) return error
   try {
     const { data, error: e } = await supabaseAdmin().from('app_settings').select('value, updated_by, updated_at').eq('key', KEY).maybeSingle()
     if (e) return NextResponse.json({ voice: null, note: MISSING_TABLE })
-    return NextResponse.json({ voice: data?.value || null, updated_by: data?.updated_by || null, updated_at: data?.updated_at || null })
+    return NextResponse.json({ voice: parseValue(data?.value), updated_by: data?.updated_by || null, updated_at: data?.updated_at || null })
   } catch { return NextResponse.json({ voice: null, note: MISSING_TABLE }) }
 }
 
@@ -40,7 +47,7 @@ export async function PUT(req: NextRequest) {
     .slice(0, 12)
   const value = { guidelines, examples }
   const { error: e } = await supabaseAdmin().from('app_settings').upsert(
-    { key: KEY, value, updated_by: access.email, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    { key: KEY, value: JSON.stringify(value), updated_by: access.email, updated_at: new Date().toISOString() }, { onConflict: 'key' })
   if (e) return NextResponse.json({ error: /app_settings/i.test(e.message || '') || /relation/i.test(e.message || '') ? MISSING_TABLE : e.message }, { status: 500 })
   return NextResponse.json({ ok: true, voice: value })
 }
