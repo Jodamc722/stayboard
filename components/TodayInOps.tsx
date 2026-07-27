@@ -553,10 +553,13 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
         </div>
       )}
 
-      <div className="flex gap-1.5 flex-wrap mb-2">
+      <div className="flex gap-1.5 flex-wrap mb-2 items-center">
         {(s.upkeep || []).map((x: any) => (
-          <span key={x.key} className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-line text-muted">{x.short}: <span className="text-ink font-medium">{x.neverSeen ? 'no record' : x.lastAt + ' (' + x.monthsAgo + 'mo)'}</span></span>
+          <span key={x.key} className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-line text-muted">{x.short}: <span className="text-ink font-medium">{x.lastAt + ' (' + x.monthsAgo + 'mo)'}</span></span>
         ))}
+        {(s.unknown || []).length > 0 && (
+          <span className="text-[11px] text-muted">Never logged in Breezeway: {(s.unknown || []).map((x: any) => x.short).join(', ')}</span>
+        )}
       </div>
 
       <div className="rounded-lg border border-line bg-white p-2">
