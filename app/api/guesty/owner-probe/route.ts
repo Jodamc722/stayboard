@@ -78,7 +78,12 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-  const withSample = new URL(req.url).searchParams.get('sample') === '1'
+  const qs = new URL(req.url).searchParams
+  const withSample = qs.get('sample') === '1'
+  // ?path=/owners/statements%3FownerId%3D... — probe one or more explicit paths instead of the
+  // default set. Read-only: this only ever issues GETs against the Guesty base URL. Newline- or
+  // comma-separated for several at once. {owner} and {listing} expand to the ids resolved below.
+  const custom = (qs.get('path') || '').split(/[\n,]/).map(s => s.trim()).filter(Boolean)
 
   let token = ''
   try { token = await getToken() }
@@ -89,6 +94,28 @@ export async function GET(req: NextRequest) {
   const { data: ls } = await db.from('guesty_listings')
     .select('id, building, unit').ilike('building', '%906%').limit(1)
   const listingId = ls && ls[0] ? String((ls[0] as any).id) : ''
+
+  if (custom.length) {
+    // Resolve a real owner id first so {owner} placeholders work.
+    const ow = await probe(token, '/owners?limit=5')
+    const owList = ow?._raw?.results || ow?._raw?.data || ow?._raw
+    const oid = Array.isArray(owList) && owList[0] ? String(owList[0]._id || owList[0].id || '') : ''
+    const out: any[] = []
+    for (const raw of custom) {
+      const p = raw.split('{owner}').join(oid).split('{listing}').join(listingId)
+      out.push(await probe(token, p.startsWith('/') ? p : '/' + p))
+    }
+    return NextResponse.json({
+      ok: true,
+      base: BASE,
+      ownerProbed: oid || null,
+      listingProbed: listingId || null,
+      results: out.map(r => {
+        const { _raw, ...rest } = r
+        return withSample && _raw ? { ...rest, sample: redact(_raw) } : rest
+      }),
+    })
+  }
 
   const paths = [
     '/owners?limit=5',
