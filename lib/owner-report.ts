@@ -51,10 +51,11 @@ export type MetricSet = {
   occupancyPct: number; adr: number; grossAdr: number; revpar: number; grossRevpar: number
   reservations: number
   // Raw components for the 3-basis model (see lib/basis.ts):
-  // accomRevenue    = accommodation after channel fees (net)
-  // accomGrossRevenue = accommodation before channel fees (netota)
-  // cleaningRevenue = prorated cleaning; gross = accomGrossRevenue + cleaningRevenue
-  accomGrossRevenue: number; cleaningRevenue: number
+  // accomRevenue      = base accommodation fare (Guesty fareAccommodation, before adjustments)
+  // accomGrossRevenue = accommodation the guest paid, before channel fees (netota)
+  // channelFees       = channel/OTA host fee (Guesty hostServiceFee); net = accomGross - channelFees
+  // cleaningRevenue   = prorated cleaning; gross = accomGrossRevenue + cleaningRevenue
+  accomGrossRevenue: number; cleaningRevenue: number; channelFees: number
 }
 export type ReportListing = { id: string; name: string; unit: string; bedrooms: number | null; building: string }
 
@@ -69,7 +70,7 @@ export type ReportContent = {
     cards: { key: string; label: string; value: string; sub: string; gross?: string }[]
     ytd: { text: string; stats: { value: string; label: string }[] } | null
     // Raw period metrics so the snapshot can render Revenue/ADR/RevPAR in any basis (see lib/basis.ts).
-    metrics?: { accomNum: number; accomGrossNum: number; cleaningNum: number; occNights: number; availNights: number; reservations: number; units: number; occPct: number }
+    metrics?: { accomNum: number; accomGrossNum: number; cleaningNum: number; feeNum?: number; occNights: number; availNights: number; reservations: number; units: number; occPct: number }
   }
   pacing: { headline: string; subtitle: string; rows: { metric: string; ours: string; comps: string; delta: string }[] } | null
   plan: {
@@ -94,8 +95,8 @@ export type ReportContent = {
   }
   // Per-calendar-month breakdown for the "view by month" toggle; only set when the period spans 2+ months.
   byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
-  snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number; accomNum?: number; accomGrossNum?: number; cleaningNum?: number; occNights?: number; availNights?: number }[]
-  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; building?: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number; accomNum?: number; grossNum?: number; accomGrossNum?: number; cleaningNum?: number; occNights?: number; availNights?: number }[]
+  snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number; accomNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number; occNights?: number; availNights?: number }[]
+  byListing?: { id: string; name: string; unit: string; bedrooms: number | null; building?: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number; accomNum?: number; grossNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number; occNights?: number; availNights?: number }[]
   // Per-section revenue basis (see lib/basis.ts). default flows to every section unless overridden.
   // Snapshot cards show a big primary number with a secondary number beneath ('none' hides it).
   basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis }
@@ -135,10 +136,14 @@ export async function resolveScope(listingIds: string[], buildings: string[]): P
 }
 
 // ---------- reservations pull + metrics ----------
-// fare = fareAccommodation (room revenue NET of the OTA/channel host fee — what we're paid on the room).
-// grossFare = fareAccommodationAdjusted (room revenue the guest paid, GROSS of the OTA host fee).
-// The gap between them is the OTA host fee; Gross adds it back so the top line matches PriceLabs.
-type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; grossFare: number; cleaning: number; source: string; created_at: string | null }
+// fare = fareAccommodation (the BASE accommodation fare, before booking alterations/adjustments).
+// grossFare = fareAccommodationAdjusted (accommodation the guest actually paid, after alterations).
+//   Verified against Guesty data: the gap between these two is the price ADJUSTMENT, not the OTA
+//   fee — it runs in both directions and is non-zero on channels with hostServiceFee = 0.
+// fee = hostServiceFee (the channel's host-side commission). Net = grossFare - fee.
+//   Do NOT use Guesty's own `netIncome` field: on Airbnb rows it subtracts hostServiceFee twice
+//   (netIncome = fareAccommodationAdjusted - 2 x hostServiceFee), which understates owner net.
+type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; grossFare: number; fee: number; cleaning: number; source: string; created_at: string | null }
 // Expedia-family channels bundle the cleaning fee into accommodation, so ~1/3 arrive with cleaning=0.
 const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
 
@@ -148,7 +153,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
   for (let i = 0; i < 20; i++) {
     const { data } = await db
       .from('guesty_reservations')
-      .select('listing_id, check_in, check_out, nights, status, source, created_at, cleaning:raw->money->>fareCleaning, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted')
+      .select('listing_id, check_in, check_out, nights, status, source, created_at, cleaning:raw->money->>fareCleaning, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted, fee:raw->money->>hostServiceFee')
       .in('status', CONFIRMED)
       .in('listing_id', listingIds)
       .gt('check_out', from)
@@ -164,7 +169,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
       listing_id: String(r.listing_id || ''),
       check_in: String(r.check_in), check_out: String(r.check_out),
       nights: Math.max(1, num(r.nights) || daysBetween(String(r.check_in), String(r.check_out))),
-      fare: num(r.fare), grossFare: num(r.grossFare), cleaning: num(r.cleaning),
+      fare: num(r.fare), grossFare: num(r.grossFare), fee: Math.max(0, num(r.fee)), cleaning: num(r.cleaning),
       source: String(r.source || '').toLowerCase(),
       created_at: r.created_at ? String(r.created_at).slice(0, 10) : null,
     }))
@@ -201,7 +206,7 @@ export async function pullReservations(listingIds: string[], from: string, toExc
 // so month boundaries and partial ranges attribute revenue correctly. Cleaning fees are
 // whole-stay and attributed when the CHECKOUT falls inside the window.
 export function metricsFor(resv: Resv[], units: number, from: string, toExcl: string): MetricSet {
-  let accom = 0, grossAccom = 0, cleaning = 0, occNights = 0, resCount = 0
+  let accom = 0, grossAccom = 0, cleaning = 0, fees = 0, occNights = 0, resCount = 0
   for (const r of resv) {
     const on = overlapNights(r.check_in, r.check_out, from, toExcl)
     if (on <= 0) continue
@@ -212,6 +217,7 @@ export function metricsFor(resv: Resv[], units: number, from: string, toExcl: st
     // net fare and the adjusted (gross) fare so Gross is always ≥ Net even on channels that pass the
     // OTA fee to the guest (VRBO/direct), where the "adjusted" value can dip below the net fare.
     grossAccom += (Math.max(r.fare, r.grossFare) / r.nights) * on
+    fees += (r.fee / r.nights) * on // channel host fee, prorated the same way as the fare it came off
     cleaning += (r.cleaning / r.nights) * on // prorate cleaning by night-fraction (matches 17W methodology)
   }
   const days = daysBetween(from, toExcl)
@@ -220,6 +226,7 @@ export function metricsFor(resv: Resv[], units: number, from: string, toExcl: st
   return {
     accomRevenue: Math.round(accom), grossRevenue: Math.round(gross),
     accomGrossRevenue: Math.round(grossAccom), cleaningRevenue: Math.round(cleaning),
+    channelFees: Math.round(fees),
     occupiedNights: occNights, availableNights: avail,
     occupancyPct: avail > 0 ? Math.round((occNights / avail) * 100) : 0,
     adr: occNights > 0 ? Math.round(accom / occNights) : 0,
