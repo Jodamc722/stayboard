@@ -37,7 +37,9 @@ function monthLabel(iso: string): string {
 }
 
 // Swap stale figures inside narrative copy. Only exact old-card-value tokens are replaced, and
-// only when they stand alone — the guards stop "$186" from matching inside "$1,865" or "$186K".
+// only when they stand alone: "$186" must not match inside "$1,865", "$186.50" or "$186K", but it
+// MUST still match in "RevPAR at $186." — a sentence-ending period is the common case, so the
+// trailing guard rejects a following digit or magnitude suffix, not punctuation on its own.
 function escRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 function resync(text: string, swaps: Array<[string, string]>): string {
   let out = str(text)
@@ -45,7 +47,8 @@ function resync(text: string, swaps: Array<[string, string]>): string {
   // Longest token first, so "$208K" is consumed before a bare "$208" could bite into it.
   for (const [from, to] of swaps.slice().sort((a, b) => b[0].length - a[0].length)) {
     if (!from || from === to) continue
-    out = out.replace(new RegExp('(?<![\\w.,$])' + escRe(from) + '(?![\\w.,%])', 'g'), to)
+    // String.replace treats "$&" / "$'" in a replacement as patterns — pass a function instead.
+    out = out.replace(new RegExp('(?<![\\w.,$])' + escRe(from) + '(?![\\dKkMm%]|[.,]\\d)', 'g'), () => to)
   }
   return out
 }
