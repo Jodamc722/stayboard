@@ -1,10 +1,11 @@
 // SYSTEM-WIDE comments with @mentions -> in-app notifications. A comment attaches to any
-// entity via (type, id); glitches are the first consumer. Mentioned teammates (picked in the
+// entity via (type, id): glitches, Breezeway tasks (type 'task'), anything else later. Mentioned teammates (picked in the
 // UI or typed as @name in the text) get a notification; on glitches the creator does too.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
+import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -56,8 +57,16 @@ export async function POST(req: NextRequest) {
   // notifications: mentioned teammates always; on glitches the creator hears about every comment
   const actorName = me.split('@')[0]
   const label = str(b.label) || type
-  const link = type === 'glitch' ? '/glitches' : str(b.link) || null
+  const link = type === 'glitch' ? '/glitches' : (str(b.link) || (type === 'task' ? '/plan' : null))
   if (mentions.length) await notify(mentions, { kind: 'mention', title: actorName + ' tagged you: ' + label, body, link: link || undefined, actor: me })
+  // THREAD FOLLOWERS: anyone who already commented here hears about the reply, so a comment
+  // left on a task comes back as a notification without re-opening the board.
+  try {
+    const { data: prior } = await db.from('app_comments').select('author_email').eq('entity_type', type).eq('entity_id', id).limit(200)
+    const followers = Array.from(new Set(((prior || []) as any[]).map(r => str(r.author_email).toLowerCase())))
+      .filter(e => e && e !== me && !mentions.includes(e) && team.includes(e))
+    if (followers.length) await notify(followers, { kind: 'comment', title: actorName + ' replied: ' + label, body, link: link || undefined, actor: me })
+  } catch { /* best effort */ }
   if (type === 'glitch') {
     try {
       const { data: g } = await db.from('glitches').select('created_by').eq('id', id).maybeSingle()
@@ -67,5 +76,23 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* best effort */ }
   }
-  return NextResponse.json({ ok: true, comment: row, notified: mentions })
+  // Optional: mirror the comment onto the BREEZEWAY task so the field crew sees it in their app.
+  // Best effort - never fails the comment itself.
+  let breezeway: boolean | undefined = undefined
+  const bzTaskId = str(b.taskId)
+  if (b.toBreezeway === true && bzTaskId && breezewayConfigured()) {
+    breezeway = false
+    try {
+      const cur = await retrieveBreezewayTask(bzTaskId)
+      const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
+      if (t) {
+        const stamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date())
+        const existing = str(t.description)
+        const description = ('NOTE (' + actorName + ', ' + stamp + '): ' + body + (existing ? '\n' + existing : '')).slice(0, 4000)
+        const r = await updateBreezewayTask(bzTaskId, { name: str(t.name) || 'Task', description })
+        breezeway = !!r.ok
+      }
+    } catch { breezeway = false }
+  }
+  return NextResponse.json({ ok: true, comment: row, notified: mentions, breezeway })
 }
