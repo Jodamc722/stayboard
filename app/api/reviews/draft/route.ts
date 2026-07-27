@@ -1,8 +1,11 @@
 // AI draft of a guest-review reply. DEFAULT is no-fault / no-concede, but the host's own
 // instruction is authoritative (e.g. "let them know we resolved it") and the host's current
 // draft is refined, never discarded. Calls the Anthropic API. Logged-in users only.
+// The saved VOICE PROFILE (admin console → Review reply AI: house guidelines + approved example
+// replies, app_settings key 'review_voice') is appended to the system prompt on every draft.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -29,6 +32,37 @@ OUTPUT
 End with this signature on the same or a new line: — Stay Hospitality
 Output ONLY the final reply text, ready to post. No preamble, no quotes around it.`
 
+// Saved voice profile -> extra system-prompt section. FAIL-OPEN: any error just drafts without it.
+// Small in-memory cache so we don't hit the DB on every keystroke of "Rewrite".
+type Voice = { guidelines?: string; examples?: { review?: string; reply?: string }[] } | null
+let _voiceCache: { at: number; val: Voice } | null = null
+async function getVoice(): Promise<Voice> {
+  if (_voiceCache && Date.now() - _voiceCache.at < 60_000) return _voiceCache.val
+  let val: Voice = null
+  try {
+    const { data } = await supabaseAdmin().from('app_settings').select('value').eq('key', 'review_voice').maybeSingle()
+    if (data?.value && typeof data.value === 'object') val = data.value as Voice
+  } catch { /* fail-open */ }
+  _voiceCache = { at: Date.now(), val }
+  return val
+}
+function voiceSection(v: Voice): string {
+  if (!v) return ''
+  const g = String(v.guidelines || '').trim()
+  const ex = (Array.isArray(v.examples) ? v.examples : []).filter(e => String(e?.reply || '').trim()).slice(0, 12)
+  if (!g && !ex.length) return ''
+  let s = '\n\nHOUSE VOICE (set by the Stay Hospitality admin — follow it within the hard limits above)'
+  if (g) s += `\n${g.slice(0, 6000)}`
+  if (ex.length) {
+    s += '\n\nAPPROVED EXAMPLE REPLIES (match this tone and style):'
+    ex.forEach((e, i) => {
+      const rv = String(e.review || '').trim()
+      s += `\n\nExample ${i + 1}:` + (rv ? `\nGuest review: """${rv.slice(0, 1000)}"""` : '') + `\nReply: """${String(e.reply || '').trim().slice(0, 1200)}"""`
+    })
+  }
+  return s
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -37,9 +71,14 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured — add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
 
-  const { content, rating, guest, channel, instruction, currentDraft } = await req.json().catch(() => ({} as any))
+  const { content, rating, guest, channel, instruction, currentDraft, voicePreview } = await req.json().catch(() => ({} as any))
   const draft = typeof currentDraft === 'string' ? currentDraft.trim() : ''
   const instr = typeof instruction === 'string' ? instruction.trim() : ''
+
+  // voicePreview: the admin voice-training playground sends its UNSAVED editor state so admins can
+  // test guideline changes before saving. Everyone else gets the saved profile.
+  const voice = (voicePreview && typeof voicePreview === 'object') ? voicePreview : await getVoice()
+  const system = SYSTEM + voiceSection(voice)
 
   const userMsg =
     `Channel: ${channel || 'unknown'}\n` +
@@ -54,7 +93,7 @@ export async function POST(req: NextRequest) {
     const reqBody = JSON.stringify({
       model: 'claude-opus-4-8',
       max_tokens: 500,
-      system: SYSTEM,
+      system,
       messages: [{ role: 'user', content: userMsg }],
     })
     // Anthropic 429 (rate limit) and 529 (overloaded) are transient - retry with backoff
