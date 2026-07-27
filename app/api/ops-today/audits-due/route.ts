@@ -5,11 +5,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const DUE_DAYS = 365
+// Audit cadence is operator-editable (/users -> Ops presets).
 const DONE = /complete|finish|close|approv/i
 const GONE = /delete|cancel/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
+    const DUE_DAYS = (await getOpsPresets()).timing.auditDueDays
     const db = supabaseAdmin()
     const today = ymd(new Date())
     const [lRes, aRes] = await Promise.all([
