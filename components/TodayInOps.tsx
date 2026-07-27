@@ -103,6 +103,10 @@ export function TodayInOps() {
   // so the team can talk about a task in the app and get the replies as notifications.
   const [cmtFor, setCmtFor] = useState('')
   const [cmtCounts, setCmtCounts] = useState<Record<string, number>>({})
+  // Proactive unit signals: overdue Breezeway work, bad recent review, upkeep that has aged out.
+  const [sig, setSig] = useState<Record<string, any>>({})
+  const [actFor, setActFor] = useState('')      // listingId whose action panel is open
+  const [actSeed, setActSeed] = useState<any>(null) // {template,title,reason} preloaded from a chip
   const [taskOrder, setTaskOrder] = useState<Record<string, string[]>>({})
   const [addVacant, setAddVacant] = useState('')
   const [dateSel, setDateSel] = useState('')  // '' = today
@@ -144,6 +148,17 @@ export function TodayInOps() {
       .then(r => r.json()).then(j => { if (alive && j && j.ok) setCmtCounts(j.counts || {}) }).catch(() => {})
     return () => { alive = false }
   }, [taskIdKey])
+
+  // Signals ride on the same unit list; one call per board refresh, capped server-side.
+  const listingKey = (data && Array.isArray((data as any).units) ? (data as any).units : []).map((u: any) => String(u.listingId)).join(',')
+  useEffect(() => {
+    const ids = Array.from(new Set(listingKey.split(',').filter(Boolean))).slice(0, 150)
+    if (!ids.length) { setSig({}); return }
+    let alive = true
+    fetch('/api/ops-today/signals?ids=' + encodeURIComponent(ids.join(',')), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { if (alive && j && j.ok) setSig(j.signals || {}) }).catch(() => {})
+    return () => { alive = false }
+  }, [listingKey])
 
   if (loading && !data) return <div className="text-sm text-muted py-10 text-center">Loading today&rsquo;s operations&hellip;</div>
   if (err) return <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>
@@ -336,6 +351,7 @@ export function TodayInOps() {
               {u.qc.map((q, i) => (
                 <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
               ))}
+              <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
               <span className={'ml-auto text-xs font-medium ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length + ' done'}</span>
               <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
               <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
@@ -368,6 +384,7 @@ export function TodayInOps() {
                 </div>
               ))}
             </div>
+            {actFor === u.listingId && <SignalPanel s={sig[u.listingId]} seed={actSeed} listingId={u.listingId} unit={u.unit} today={data.today} people={people} onClose={() => setActFor('')} onDone={() => { setActFor(''); load() }} />}
             {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} date={data.today} onDone={() => { setAddFor(''); load() }} />}
             {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} onClose={() => setItemsFor('')} />}
           </div>
@@ -445,7 +462,127 @@ const TEMPLATES: { key: string; label: string; department: string; priority: str
   { key: 'batteries', label: 'Lock batteries', department: 'maintenance', priority: 'normal', title: 'Replace lock batteries', base: 'Annual lock battery replacement. Replace batteries in every door lock, re-test the lock and codes afterwards, and log the date.' },
   { key: 'acfilter', label: 'A/C filter', department: 'maintenance', priority: 'normal', title: 'Change A/C filter', base: 'Change the central A/C filter. Note the filter size used and log the date.' },
   { key: 'pm', label: 'PM check', department: 'maintenance', priority: 'normal', title: 'Preventative Maintenance Task', base: 'Preventative maintenance pass: A/C, plumbing under sinks, water heater, smoke / CO detectors, light bulbs, door hardware.' },
+  { key: 'deepclean', label: 'Deep clean', department: 'housekeeping', priority: 'normal', title: 'Deep Clean', base: 'Deep clean (beyond the turnover standard): inside appliances, behind and under furniture, grout and caulk, vents, baseboards, windows and tracks, upholstery and mattress protectors.' },
 ]
+
+// A signal is something the board noticed on its own. Each one is a CHIP on the unit header that
+// opens the action panel pre-loaded with the right task - see it, decide, schedule it, move on.
+function SignalChips({ s, onAct }: { s: any; onAct: (seed: any) => void }) {
+  if (!s) return null
+  const pending = (s.pending || []).length
+  const rev = s.review
+  const up = s.upkeep || []
+  return (
+    <>
+      {pending > 0 && (
+        <button onClick={() => onAct({ key: 'pending' })} title={'Open Breezeway work on this unit from the last 60 days that was never finished - oldest is ' + ((s.pending[0] || {}).daysOld || 0) + ' days old'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100">{pending} pending task{pending === 1 ? '' : 's'}</button>
+      )}
+      {rev && (
+        <button onClick={() => onAct({ key: 'review', template: 'feedback', title: 'Guest-feedback inspection', reason: rev.rating + '\u2605 review ' + (rev.at || '') + (rev.excerpt ? ' \u2014 \u201c' + String(rev.excerpt).slice(0, 120) + '\u201d' : '') })} title={'Recent review ' + rev.rating + '\u2605' + (rev.at ? ' on ' + rev.at : '') + ' - inspect before the next guest'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 hover:bg-rose-100">Review inspection {'\u00b7'} {rev.rating}{'\u2605'}</button>
+      )}
+      {up.map((x: any) => (
+        <button key={x.key} onClick={() => onAct({ key: x.key, template: x.template, title: x.label, reason: x.neverSeen ? 'No record of this being done in the last 2 years' : 'Last done ' + x.lastAt + ' (' + x.monthsAgo + ' months ago, due every ' + x.every + ')' })} title={x.neverSeen ? 'No completed ' + x.short + ' task found in the last 2 years' : 'Last ' + x.short + ': ' + x.lastAt + ' - ' + x.monthsAgo + ' months ago, cadence is every ' + x.every + ' months'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200">{x.short}{x.neverSeen ? ' \u00b7 never' : ' \u00b7 ' + Math.round(x.monthsAgo) + 'mo'}</button>
+      ))}
+    </>
+  )
+}
+
+// The decide-and-schedule panel: what the board found, the open work behind it, and a 14-day
+// strip showing which days the unit is EMPTY so the task lands on a day someone can actually work.
+function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone }: { s: any; seed: any; listingId: string; unit: string; today: string; people: Person[]; onClose: () => void; onDone: () => void }) {
+  const [date, setDate] = useState(today)
+  const [who, setWho] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const tpl = TEMPLATES.filter(t => t.key === (seed && seed.template))[0] || null
+  const [title, setTitle] = useState(tpl ? tpl.title : '')
+  const [desc, setDesc] = useState(tpl ? tpl.base + (seed && seed.reason ? '\n\nWhy: ' + seed.reason : '') : '')
+  useEffect(() => {
+    const t2 = TEMPLATES.filter(t => t.key === (seed && seed.template))[0] || null
+    setTitle(t2 ? t2.title : ''); setDesc(t2 ? t2.base + (seed && seed.reason ? '\n\nWhy: ' + seed.reason : '') : ''); setMsg(''); setErr('')
+  }, [seed])
+  if (!s) return null
+  const days = s.days || []
+  const dow = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })
+  const dnum = (d: string) => new Date(d + 'T12:00:00').getDate()
+  const create = async () => {
+    if (!title.trim()) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const person = people.filter(p => p.name === who)[0]
+      const r = await fetch('/api/ops-today/add-task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, title: title.trim(), department: tpl ? tpl.department : 'maintenance', priority: tpl ? tpl.priority : 'normal', description: desc, date, assigneeIds: person ? [person.id] : [] })
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Could not create the task'); setBusy(false); return }
+      setMsg('Created in Breezeway for ' + date + (person ? ' \u00b7 assigned to ' + person.name : '') + (j.assigned === false ? ' (assign failed, do it in Breezeway)' : ''))
+      setTimeout(onDone, 1200)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="px-4 py-3 bg-app border-t border-line">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="text-xs uppercase tracking-wide text-muted">What the board found on {unit}</div>
+        <button onClick={onClose} className="ml-auto text-xs text-muted hover:text-ink">Close</button>
+      </div>
+
+      {(s.pending || []).length > 0 && (
+        <div className="mb-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 mb-1">Still open from the last 60 days</div>
+          <div className="space-y-1">
+            {(s.pending || []).slice(0, 6).map((t: any) => (
+              <div key={t.id} className="flex items-center gap-2 bg-white border border-amber-200 rounded-md px-2 py-1 text-[12px]">
+                <span className="text-ink truncate">{t.name}</span>
+                <span className="text-muted whitespace-nowrap">{t.date} {'\u00b7'} {t.daysOld}d old</span>
+                <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" className="ml-auto text-brand-600 hover:underline whitespace-nowrap">admin</a>
+                {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-muted hover:underline whitespace-nowrap">report</a>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {s.review && (
+        <div className="mb-2 text-[12px] bg-white border border-rose-200 rounded-md px-2 py-1.5">
+          <span className="font-semibold text-rose-700">{s.review.rating}{'\u2605'}</span>
+          <span className="text-muted"> {'\u00b7'} {s.review.at}{s.review.guest ? ' \u00b7 ' + s.review.guest : ''}{s.review.channel ? ' \u00b7 ' + s.review.channel : ''}</span>
+          {s.review.excerpt && <div className="text-ink mt-0.5">{'\u201c'}{s.review.excerpt}{'\u201d'}</div>}
+        </div>
+      )}
+
+      <div className="flex gap-1.5 flex-wrap mb-2">
+        {(s.upkeep || []).map((x: any) => (
+          <span key={x.key} className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-line text-muted">{x.short}: <span className="text-ink font-medium">{x.neverSeen ? 'no record' : x.lastAt + ' (' + x.monthsAgo + 'mo)'}</span></span>
+        ))}
+      </div>
+
+      <div className="rounded-lg border border-line bg-white p-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Pick a day {'\u00b7'} green = unit empty, amber = guest in-house{s.nextCheckout ? ', next checkout ' + s.nextCheckout : ''}</div>
+        <div className="flex gap-1 overflow-x-auto pb-1">
+          {days.map((d: any) => (
+            <button key={d.date} onClick={() => setDate(d.date)} title={d.date + (d.occupied ? ' \u2014 guest in-house' : ' \u2014 unit empty') + (d.checkout ? ' \u00b7 checkout' : '') + (d.checkin ? ' \u00b7 check-in' : '')}
+              className={'shrink-0 w-12 rounded-md border px-1 py-1 text-center ' + (date === d.date ? 'bg-ink text-white border-ink' : d.occupied ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:border-emerald-400')}>
+              <div className="text-[9px] uppercase leading-none">{dow(d.date)}</div>
+              <div className="text-[13px] font-bold leading-tight">{dnum(d.date)}</div>
+              <div className="text-[8px] leading-none">{d.checkout ? 'out' : d.checkin ? 'in' : d.occupied ? '\u00b7' : 'free'}</div>
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 flex-wrap items-center mt-2">
+          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs doing?" className="flex-1 min-w-[200px] text-sm border border-line rounded-lg px-3 py-2 bg-white" />
+          <input list="ppl-all" value={who} onChange={e => setWho(e.target.value.trim().replace(/\s*\([^)]*\)\s*$/, ''))} placeholder="Assign to\u2026" className="text-sm border border-line rounded-lg px-3 py-2 bg-white w-[170px]" />
+          <button onClick={create} disabled={busy || !title.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating\u2026' : 'Create for ' + date.slice(5)}</button>
+        </div>
+        {desc && <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={4} className="w-full mt-2 text-xs border border-line rounded-lg px-3 py-2 bg-white font-mono text-muted" />}
+        {msg && <div className="text-xs text-emerald-700 mt-2">{msg}</div>}
+        {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
+      </div>
+    </div>
+  )
+}
 
 function fmtShort(iso: string | null) { if (!iso) return '\u2014'; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 function UnitItems({ listingId, unit, people, onDone, onClose }: { listingId: string; unit: string; people: Person[]; onDone: () => void; onClose: () => void }) {
