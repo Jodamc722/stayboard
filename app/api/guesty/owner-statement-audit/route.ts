@@ -46,11 +46,11 @@ const money = (n: number) => Math.round(n * 100) / 100
 
 // Guesty's array filters are not documented consistently across services, so try the
 // encodings in order and keep the first one the gateway accepts.
-function encodeListings(style: string, ids: string[]): string {
+function encodeIds(style: string, key: string, ids: string[]): string {
   if (!ids.length) return ''
-  if (style === 'bracket') return ids.map(id => '&listings[]=' + encodeURIComponent(id)).join('')
-  if (style === 'repeat') return ids.map(id => '&listings=' + encodeURIComponent(id)).join('')
-  return '&listings=' + encodeURIComponent(JSON.stringify(ids))
+  if (style === 'bracket') return ids.map(id => '&' + key + '[]=' + encodeURIComponent(id)).join('')
+  if (style === 'repeat') return ids.map(id => '&' + key + '=' + encodeURIComponent(id)).join('')
+  return '&' + key + '=' + encodeURIComponent(JSON.stringify(ids))
 }
 
 export async function GET(req: NextRequest) {
@@ -63,6 +63,12 @@ export async function GET(req: NextRequest) {
   const from = qs.get('from') || '2026-01-01'
   const to = qs.get('to') || '2026-06-30'
   const withSample = qs.get('sample') === '1'
+  // Filter the journal by listing (default) or by owner. They are NOT equivalent: an owner
+  // charge that is not tied to a specific unit — a building-wide bill, a manual owner debit —
+  // carries no listing, so listings[] silently drops it. January's owner ledger came to
+  // 18,626.18 against a statement of 15,293.76, and rows with no listing are the first place
+  // that 3,332.42 gap can be hiding. ?by=owner is how we look.
+  const by = qs.get('by') === 'owner' ? 'owner' : 'listing'
 
   let token = ''
   try { token = await getToken() }
@@ -116,10 +122,15 @@ export async function GET(req: NextRequest) {
   const filterFor = (a: string, b: string) =>
     'transactionDate=' + encodeURIComponent(JSON.stringify({ operator: '@between', value: [a, b] }))
   const dateFilter = filterFor(from, to)
+  const fKey = by === 'owner' ? 'owners' : 'listings'
+  const fIds = by === 'owner' ? matched.map(m => String(m.ownerId)) : listingIds
+  if (!fIds.length) {
+    return NextResponse.json({ error: 'no ' + fKey + ' resolved for building ' + building }, { status: 404 })
+  }
   let style = ''
   let styleErr: any = null
   for (const s of ['bracket', 'repeat', 'json']) {
-    const probe = await get(token, '/accounting-api/journal-entries/all?limit=1&' + dateFilter + encodeListings(s, listingIds.slice(0, 1)))
+    const probe = await get(token, '/accounting-api/journal-entries/all?limit=1&' + dateFilter + encodeIds(s, fKey, fIds.slice(0, 1)))
     if (probe.ok) { style = s; break }
     styleErr = { style: s, status: probe.status, error: probe.error }
   }
@@ -159,7 +170,7 @@ export async function GET(req: NextRequest) {
     for (const dir of ['ASC', 'DESC']) {
       for (let skip = 0; skip < 20000; skip += 100) {
         const page = await get(token, '/accounting-api/journal-entries/all?limit=100&sortByDate=' + dir
-          + '&skip=' + skip + '&' + cf + encodeListings(style, listingIds))
+          + '&skip=' + skip + '&' + cf + encodeIds(style, fKey, fIds))
         if (!page.ok) {
           return NextResponse.json({ ok: false, stage: 'journal-entries page', month: a, dir, skip,
             status: page.status, error: page.error, building, owners: matched, statements, rowsSoFar: rows.length })
@@ -213,9 +224,10 @@ export async function GET(req: NextRequest) {
   }
   const n = rows.map(norm)
 
-  const bucket = (keyFn: (x: any) => string) => {
+  const bucket = (keyFn: (x: any) => string, pred?: (x: any) => boolean) => {
     const m: Record<string, { count: number; total: number }> = {}
     for (const x of n) {
+      if (pred && !pred(x)) continue
       const k = keyFn(x)
       m[k] = m[k] || { count: 0, total: 0 }
       m[k].count++
@@ -313,13 +325,19 @@ export async function GET(req: NextRequest) {
       afDebug,
     },
     filterCheck: {
+      filteredBy: fKey,
       buildingListings: listingIds.length,
       distinctListingsSeen: Object.keys(seen).length,
       outsideBuilding: outsideBuilding.slice(0, 20),
       unattributedRows: seen['(none)'] || 0,
+      // In owner mode the rows carrying no listing are the whole point of the query, so break
+      // them out rather than reporting a bare count.
+      unattributedByCode: bucket(x => (x.ledger || '-') + ' | ' + (x.chargeCode || '-') + ' | ' + (x.name || '-'),
+        x => !x.listingId).slice(0, 25),
     },
     journal: {
-      listingFilterStyle: style,
+      filteredBy: fKey,
+      filterStyle: style,
       rows: rows.length,
       reportedTotal: total,
       coverage,
