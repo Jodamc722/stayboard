@@ -207,6 +207,8 @@ export async function GET(req: NextRequest) {
       listingId,
       unit: nameOf[listingId] || title || listingId || '(none)',
       conf: typeof conf === 'string' ? conf : String(conf?.title || ''),
+      recognized: r.recognized === undefined ? null : !!r.recognized,
+      txn: String(r.transactionId || ''),
     }
   }
   const n = rows.map(norm)
@@ -244,6 +246,40 @@ export async function GET(req: NextRequest) {
     m.net = money(m.net - x.amount)
   }
 
+  // 5b. Forensic on the nightly-income lines for one month (?af=YYYY-MM). Eight units times the
+  // nights in a month caps the honest row count at ~248. The Jan-Jun pull returns 1999 AF lines
+  // against a 1448-night ceiling, so Guesty is emitting more than one line per unit-night. This
+  // reports which dimension it repeats on — same unit+night twice, one line per rate component,
+  // or recognized-and-unrecognized copies of the same transaction — because none of the totals
+  // above can be shown to an owner until that is settled.
+  const afMonth = qs.get('af') || ''
+  let afDebug: any = undefined
+  if (afMonth) {
+    const af = ownerLines.filter(x => x.month === afMonth && x.chargeCode === 'AF')
+    const byPair: Record<string, any[]> = {}
+    for (const x of af) {
+      const k = x.listingId + '|' + x.date
+      ;(byPair[k] = byPair[k] || []).push(x)
+    }
+    const tally = (fn: (x: any) => string) =>
+      af.reduce((m: Record<string, number>, x) => { const k = fn(x); m[k] = (m[k] || 0) + 1; return m }, {})
+    const dupPairs = Object.entries(byPair).filter(([, v]) => v.length > 1)
+    afDebug = {
+      month: afMonth,
+      afRows: af.length,
+      distinctUnitNights: Object.keys(byPair).length,
+      duplicatedUnitNights: dupPairs.length,
+      distinctTxnIds: new Set(af.map(x => x.txn)).size,
+      distinctReservations: new Set(af.map(x => x.conf)).size,
+      byName: tally(x => x.name || '(none)'),
+      byRecognized: tally(x => String(x.recognized)),
+      byTrigger: tally(x => x.trigger || '(none)'),
+      worstUnitNights: dupPairs.sort((a, b) => b[1].length - a[1].length).slice(0, 5)
+        .map(([k, v]) => ({ key: k, n: v.length,
+          rows: v.slice(0, 8).map(x => ({ amt: x.amount, conf: x.conf, txn: x.txn, rec: x.recognized, trig: x.trigger, name: x.name })) })),
+    }
+  }
+
   // Which listings did the filter actually return? If anything outside this building shows up,
   // the listings[] filter silently did nothing and every total below is account-wide.
   const seen: Record<string, number> = {}
@@ -274,6 +310,7 @@ export async function GET(req: NextRequest) {
       byChargeCode: Object.entries(ownerByCode).map(([k, v]) => ({ key: k, count: v.count, total: v.total }))
         .sort((a, b) => Math.abs(b.total) - Math.abs(a.total)),
       byMonth: ownerByMonth,
+      afDebug,
     },
     filterCheck: {
       buildingListings: listingIds.length,
