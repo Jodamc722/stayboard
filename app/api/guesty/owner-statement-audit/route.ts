@@ -106,7 +106,16 @@ export async function GET(req: NextRequest) {
   statements.sort((a, b) => a.periodStart.localeCompare(b.periodStart))
 
   // 4. Journal entries for those listings over the window. This is the line-item source.
-  const dateFilter = 'transactionDate=' + encodeURIComponent(JSON.stringify({ operator: '@between', value: [from, to] }))
+  //
+  // Guesty's skip-based pagination is NOT stable: rows sharing a transaction date get
+  // reshuffled between requests, so deep pages re-serve rows that earlier pages already
+  // returned. Paging straight through inflated 906's March total by 2.4x. Two defences:
+  // walk the window one month at a time so each paginated set stays small, and dedupe on
+  // the journal-entry id so a repeat can never be counted twice. Per-month expected-vs-unique
+  // counts come back in the response so completeness is checkable, not assumed.
+  const filterFor = (a: string, b: string) =>
+    'transactionDate=' + encodeURIComponent(JSON.stringify({ operator: '@between', value: [a, b] }))
+  const dateFilter = filterFor(from, to)
   let style = ''
   let styleErr: any = null
   for (const s of ['bracket', 'repeat', 'json']) {
@@ -119,21 +128,61 @@ export async function GET(req: NextRequest) {
       owners: matched, statements, listingFilterError: styleErr })
   }
 
+  // Inclusive list of [monthStart, monthEnd] chunks covering the window.
+  const chunks: Array<[string, string]> = []
+  {
+    const [fy, fm] = from.split('-').map(Number)
+    const cur = new Date(Date.UTC(fy, fm - 1, 1))
+    const end = new Date(to + 'T00:00:00Z')
+    while (cur <= end) {
+      const y = cur.getUTCFullYear()
+      const m = cur.getUTCMonth()
+      const first = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10)
+      const last = new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10)
+      chunks.push([first < from ? from : first, last > to ? to : last])
+      cur.setUTCMonth(m + 1)
+    }
+  }
+
+  const seenIds = new Set<string>()
   const rows: any[] = []
   let truncated = false
-  let total: number | null = null
-  for (let skip = 0; skip < 40000; skip += 100) {
-    const page = await get(token, '/accounting-api/journal-entries/all?limit=100&sortByDate=ASC&skip=' + skip
-      + '&' + dateFilter + encodeListings(style, listingIds))
-    if (!page.ok) {
-      return NextResponse.json({ ok: false, stage: 'journal-entries page', skip, status: page.status,
-        error: page.error, building, owners: matched, statements, rowsSoFar: rows.length })
+  let total = 0
+  const coverage: Array<{ month: string; expected: number | null; unique: number; complete: boolean }> = []
+
+  for (const [a, b] of chunks) {
+    const cf = filterFor(a, b)
+    let expected: number | null = null
+    const before = seenIds.size
+    // Sweep ascending, then descending. Because the shuffle is on ties only, a second pass
+    // from the other end picks up rows the first pass skipped over.
+    for (const dir of ['ASC', 'DESC']) {
+      for (let skip = 0; skip < 20000; skip += 100) {
+        const page = await get(token, '/accounting-api/journal-entries/all?limit=100&sortByDate=' + dir
+          + '&skip=' + skip + '&' + cf + encodeListings(style, listingIds))
+        if (!page.ok) {
+          return NextResponse.json({ ok: false, stage: 'journal-entries page', month: a, dir, skip,
+            status: page.status, error: page.error, building, owners: matched, statements, rowsSoFar: rows.length })
+        }
+        const batch = page.json?.results || page.json?.data || []
+        if (typeof page.json?.total === 'number') expected = page.json.total
+        for (const r of batch) {
+          const id = String(r.id ?? r._id ?? '')
+          if (!id || seenIds.has(id)) continue
+          seenIds.add(id)
+          rows.push(r)
+        }
+        if (batch.length < 100) break
+        if (rows.length >= 30000) { truncated = true; break }
+      }
+      // A complete ascending sweep makes the descending one unnecessary.
+      if (expected != null && seenIds.size - before >= expected) break
+      if (truncated) break
     }
-    const batch = page.json?.results || page.json?.data || []
-    if (typeof page.json?.total === 'number') total = page.json.total
-    rows.push(...batch)
-    if (batch.length < 100) break
-    if (rows.length >= 30000) { truncated = true; break }
+    const unique = seenIds.size - before
+    total += expected ?? unique
+    coverage.push({ month: a.slice(0, 7), expected, unique, complete: expected == null || unique >= expected })
+    if (truncated) break
   }
 
   // 5. Group. Journal amounts are signed: revenue positive, deductions negative.
@@ -236,6 +285,8 @@ export async function GET(req: NextRequest) {
       listingFilterStyle: style,
       rows: rows.length,
       reportedTotal: total,
+      coverage,
+      incompleteMonths: coverage.filter(c => !c.complete).map(c => c.month),
       truncated,
       grandTotal: money(n.reduce((a, x) => a + x.amount, 0)),
       byLedger: bucket(x => x.ledger || '(none)'),
