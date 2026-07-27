@@ -3,6 +3,7 @@
 // market (Miami / Broward / North). Adds per clean: hub/building, bedrooms, check-in/out times,
 // nights, same-day-turn, current DOOR CODE, and cleaning time. Read-only; assignment via /api/schedule/assign.
 import { NextRequest, NextResponse } from 'next/server'
+import { getListingCalendar } from '@/lib/guesty'
 import { unstable_cache, revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -101,7 +102,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -143,7 +144,7 @@ assignedNames: [],
 // with zero live API calls; the live API is only consulted for day-view rows the mirror misses.
 let mirror: any[] = []
 try {
-const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -3)).lte('scheduled_date', addDays(end, 3)).limit(3000)
+const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -14)).lte('scheduled_date', addDays(end, 3)).limit(3000)
 mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
 } catch (e) { console.error('schedule: mirror pull failed', e) }
 
@@ -263,9 +264,21 @@ const extendedTaskIds = new Set<string>()
       const movedIns: Clean[] = []
 for (const c of cleans) {
 if (c.syncStatus !== 'guesty-only') continue
-const _cands = mirror.filter((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date && !t.finished_at)
-const _byRes = c.reservationId ? _cands.find((t: any) => String(t.linked_reservation_id || '') === String(c.reservationId)) : null; const mv = _byRes || (_cands.length ? _cands.reduce((a: any, b: any) => Math.abs(+new Date(String(b.scheduled_date).slice(0, 10)) - +new Date(c.date)) < Math.abs(+new Date(String(a.scheduled_date).slice(0, 10)) - +new Date(c.date)) ? b : a) : null)
-if (!mv) continue
+const _all = mirror.filter((t: any) => String(t.reference_property_id) === c.listingId && String(t.scheduled_date).slice(0, 10) !== c.date)
+const _cands = _all.filter((t: any) => !t.finished_at)
+// Reservation link is TRUTH: prefer the task tied to THIS reservation; then unlinked tasks; a task
+// linked to a DIFFERENT reservation is someone else's clean and must never be borrowed.
+const _rid = c.reservationId ? String(c.reservationId) : ''
+const _pick = (list: any[]) => list.length ? list.reduce((a: any, b: any) => Math.abs(+new Date(String(b.scheduled_date).slice(0, 10)) - +new Date(c.date)) < Math.abs(+new Date(String(a.scheduled_date).slice(0, 10)) - +new Date(c.date)) ? b : a) : null
+const _byRes = _rid ? _cands.find((t: any) => String(t.linked_reservation_id || '') === _rid) : null
+const mv = _byRes || _pick(_cands.filter((t: any) => !t.linked_reservation_id)) || (_rid ? null : _pick(_cands))
+if (!mv) {
+          // EXTENSION even when the old clean was already COMPLETED (mid-stay clean or closed by
+          // mistake): the reservation extended past a finished task -> tag it, keep Push available.
+          const doneRes = _rid ? _all.find((t: any) => t.finished_at && String(t.linked_reservation_id || '') === _rid && String(t.scheduled_date).slice(0, 10) < c.date) : null
+          if (doneRes) { c.extended = true; c.extendedFrom = String(doneRes.scheduled_date).slice(0, 10) }
+          continue
+        }
 const mvDate = String(mv.scheduled_date).slice(0, 10)
 const ppl = Array.isArray(mv.assignees) ? mv.assignees : []
 const mvIds = ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n))
@@ -319,6 +332,37 @@ const _extTo = (_co && _co > d) ? _co : null // guest's CURRENT checkout is AFTE
 cleans.push({ listingId: id, unit: m2.name, market: m2.market, hub: m2.hub, date: d, guestOut: _lr ? _lr.guest : null, movedFrom: (_co && _co < d) ? _co : null, extended: !!_extTo, extendedFrom: _extTo, nights: null, bedrooms: m2.bedrooms ?? null, checkInTime: m2.checkIn || null, checkOutTime: m2.checkOut || null, sameDayTurn: false, nextArrival: null, doorCode: m2.doorCode || null, cleaningTime: m2.cleaningTime || null, vendor: m2.vendor || null, assignedIds: ppl.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)), assignedNames: ppl.map((p: any) => String(p.name || '')).filter(Boolean), syncStatus: 'synced', breezewayTaskId: String(t.id), breezewayReportUrl: t.report_url ? String(t.report_url) : null, taskStatus: t.finished_at ? 'completed' : t.started_at ? 'in_progress' : 'created', cleanMinutes: (t.total_minutes != null && Number(t.total_minutes) > 0) ? Number(t.total_minutes) : null, bzOnly: !_lr })
 }
 } catch (e) { console.error('schedule: moved-reconcile failed', e) }
+
+// CALENDAR TRUTH (day view): when a clean was MOVED or tagged EXTENDED, ask the Guesty calendar
+// what actually covers the gap \u2014 a reservation (guest still in-house / extended) or a BLOCK
+// (owner hold / maintenance). Distinguishes "guest extended" from "unit blocked" at a glance.
+if (view === 'day') {
+  try {
+    const wants = cleans.filter(c => (c.movedTo || c.extended) && c.listingId).slice(0, 8)
+    const byListing = Array.from(new Set(wants.map(c => c.listingId)))
+    const calCache: Record<string, any[]> = {}
+    await Promise.allSettled(byListing.map(async id => {
+      const lo = addDays(start, -14), hi = addDays(end, 3)
+      try { calCache[id] = await getListingCalendar(id, lo, hi) } catch { calCache[id] = [] }
+    }))
+    for (const c of wants) {
+      const days = calCache[c.listingId] || []
+      if (!days.length) continue
+      const from = c.movedTo ? c.date : (c.extendedFrom && c.extendedFrom < c.date ? c.extendedFrom : c.date)
+      const to = c.movedTo ? c.movedTo : c.date
+      if (!(from < to)) continue
+      let blocked = 0, booked = 0
+      for (const dY of days) {
+        const dd = String((dY as any).date || '').slice(0, 10)
+        if (!dd || dd < from || dd >= to) continue
+        const bl = (dY as any).blocks || {}
+        if (bl.r || /booked|reserved/i.test(String((dY as any).status || ''))) booked++
+        else if (bl.m || bl.o || bl.b || bl.bd || /unavailable|blocked/i.test(String((dY as any).status || ''))) blocked++
+      }
+      ;(c as any).calNote = blocked > 0 && booked === 0 ? 'blocked' : booked > 0 ? 'booked' : 'open'
+    }
+  } catch (e) { console.error('schedule: calendar-truth failed', e) }
+}
 
 // MANUAL CLEANS: tasks added from the board (create-clean logs them). Breezeway is a co-source
 // of truth, so board-added tasks show on the calendar even without a Guesty checkout.
