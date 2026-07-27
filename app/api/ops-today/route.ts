@@ -6,19 +6,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, MARKETS } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorRegex, untrackedRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const DEADLINE_MIN = 16 * 60      // 4:00pm ET — next guest can check in
-const AT_RISK_MIN = 2 * 60        // flag when under 2h left and not started
 // Botanica is cleaned by a vendor who does NOT close the task in Breezeway, so its cleans sit at
 // 'not started' forever. Tracking them against 4pm produced 11 false 'at risk' alerts out of 17.
 // They still show on the board, but they carry no deadline and no status alarm.
-const UNTRACKED_RE = /botanica/i
 // Vendor-managed buildings are grouped under 'Vendor', NOT their geographic market — Botanica is
 // cleaned by a vendor, so it must not sit inside Broward's numbers (same rule as the scheduler).
-const VENDOR_RE = /botanica|park\s*towers?|\bpt\b|amrit|capri|lucerne/i
 const VENDOR_MARKET = 'Vendor'
 
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -58,6 +56,12 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const db = supabaseAdmin()
+    // Vendor buildings + the 4pm deadline are operator-editable (/users -> Ops presets).
+    const presets = await getOpsPresets()
+    const VENDOR_RE = vendorRegex(presets.vendorBuildings)
+    const UNTRACKED_RE = untrackedRegex(presets.vendorBuildings)
+    const DEADLINE_MIN = presets.timing.deadlineMin
+    const AT_RISK_MIN = presets.timing.atRiskMin
     const now = new Date()
     // Optional ?date=YYYY-MM-DD lets the coordinator plan ahead; defaults to today (ET).
     const qd = String(req.nextUrl.searchParams.get('date') || '')
