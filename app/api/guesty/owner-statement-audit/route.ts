@@ -249,14 +249,52 @@ export async function GET(req: NextRequest) {
     ownerByCode[k].count++
     ownerByCode[k].total = money(ownerByCode[k].total - x.amount)
   }
-  const ownerByMonth: Record<string, { rental: number; commission: number; other: number; net: number }> = {}
-  for (const x of ownerLines) {
-    const m = ownerByMonth[x.month] || (ownerByMonth[x.month] = { rental: 0, commission: 0, other: 0, net: 0 })
+  // RECOGNISED IS THE WHOLE BALL GAME. January's owner ledger earns 18,371.18 but the statement
+  // pays 15,293.76, and the split is exact: the 580 recognised rows net to 0.00 once the payout
+  // line is included — recognised earnings 15,293.76 less the 15,293.76 paid on Jan 31 — while
+  // the 86 unrecognised rows carry 3,077.42 forward into February. So a Guesty owner statement
+  // is the RECOGNISED slice of the journal and nothing else. Every figure below is reported both
+  // ways: `recognised` is what ties to the statement PDF, `all` is what the ledger currently
+  // holds including revenue Guesty has not yet recognised.
+  //
+  // PO (payout) lines are settlement, not earnings, so they are excluded from rental/commission/
+  // other and tracked separately as `paid`.
+  type MonthAgg = { rental: number; commission: number; other: number; net: number; paid: number; rows: number }
+  const blank = (): MonthAgg => ({ rental: 0, commission: 0, other: 0, net: 0, paid: 0, rows: 0 })
+  const addTo = (m: MonthAgg, x: any) => {
+    m.rows++
+    if (x.chargeCode === 'PO') { m.paid = money(m.paid + x.amount); return }
     if (x.chargeCode === 'AF') m.rental = money(m.rental - x.amount)
     else if (x.chargeCode === 'CMS') m.commission = money(m.commission + x.amount)
     else m.other = money(m.other - x.amount)
     m.net = money(m.net - x.amount)
   }
+  const ownerByMonth: Record<string, MonthAgg> = {}
+  const ownerByMonthRecognized: Record<string, MonthAgg> = {}
+  const ownerByMonthUnrecognized: Record<string, MonthAgg> = {}
+  for (const x of ownerLines) {
+    addTo(ownerByMonth[x.month] || (ownerByMonth[x.month] = blank()), x)
+    const t = x.recognized === false ? ownerByMonthUnrecognized : ownerByMonthRecognized
+    addTo(t[x.month] || (t[x.month] = blank()), x)
+  }
+  // Statement-grade monthly figures: recognised only, payouts excluded. `net` here should equal
+  // the statement's dueToOwner for that month.
+  const stmtCheck = statements.map((s: any) => {
+    const mo = String(s.periodStart || '').slice(0, 7)
+    const rec = ownerByMonthRecognized[mo]
+    const due = Number(s.dueToOwner ?? s.endingBalance ?? 0) || 0
+    return {
+      month: mo,
+      statementDueToOwner: due,
+      recognizedNet: rec ? rec.net : null,
+      variance: rec ? money(rec.net - due) : null,
+      ties: rec ? Math.abs(rec.net - due) < 0.02 : false,
+      recognizedRental: rec ? rec.rental : null,
+      recognizedCommission: rec ? rec.commission : null,
+      commissionRate: rec && rec.rental ? Math.round((rec.commission / rec.rental) * 10000) / 100 : null,
+      unrecognizedCarry: ownerByMonthUnrecognized[mo] ? ownerByMonthUnrecognized[mo].net : 0,
+    }
+  })
 
   // 5b. Forensic on one month's owner ledger (?af=YYYY-MM), reported in DOLLARS rather than row
   // counts. Row counts led me astray once already: 302 AF lines against a 248 unit-night ceiling
@@ -355,6 +393,28 @@ export async function GET(req: NextRequest) {
     // The headline answer: revenue credited to the owner before any deduction, the PM
     // commission taken off it, and what the statement therefore owes.
     ownerSummary: {
+      // Statement-grade: recognised rows only, payouts excluded. These are the numbers that tie
+      // to the owner statement PDFs and the only ones safe to show an owner.
+      recognized: {
+        rentalIncome: sumOwner(x => x.chargeCode === 'AF' && x.recognized !== false),
+        pmCommission: money(ownerLines.filter(x => x.chargeCode === 'CMS' && x.recognized !== false)
+          .reduce((a, x) => a + x.amount, 0)),
+        otherAdjustments: sumOwner(x => x.recognized !== false
+          && x.chargeCode !== 'AF' && x.chargeCode !== 'CMS' && x.chargeCode !== 'PO'),
+        netAfterCommission: sumOwner(x => x.recognized !== false && x.chargeCode !== 'PO'),
+        paidOut: money(ownerLines.filter(x => x.chargeCode === 'PO' && x.recognized !== false)
+          .reduce((a, x) => a + x.amount, 0)),
+        byMonth: ownerByMonthRecognized,
+      },
+      // Revenue Guesty has posted but not yet recognised. It carries into a later statement.
+      unrecognized: {
+        rentalIncome: sumOwner(x => x.chargeCode === 'AF' && x.recognized === false),
+        netAfterCommission: sumOwner(x => x.recognized === false && x.chargeCode !== 'PO'),
+        byMonth: ownerByMonthUnrecognized,
+      },
+      // Does each month's recognised net equal that month's statement? This is the audit.
+      stmtCheck,
+      statementsTied: stmtCheck.every(c => c.ties),
       rentalIncome: sumOwner(x => x.chargeCode === 'AF'),
       pmCommission: money(ownerLines.filter(x => x.chargeCode === 'CMS').reduce((a, x) => a + x.amount, 0)),
       otherAdjustments: sumOwner(x => x.chargeCode !== 'AF' && x.chargeCode !== 'CMS'),
