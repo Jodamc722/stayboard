@@ -132,6 +132,19 @@ export function TodayInOps() {
   // manual task order (up/down arrows), persisted per day in the browser
   useEffect(() => { try { const raw = localStorage.getItem('ops_taskorder_' + (data && data.today ? data.today : '')); if (raw) setTaskOrder(JSON.parse(raw)) } catch {} }, [data && data.today])
 
+  // Comment counts for the badge on each task row. MUST live above the early returns below:
+  // a hook after a conditional return changes the hook count between renders (React #310).
+  const taskIdKey = (data && Array.isArray((data as any).units) ? (data as any).units : [])
+    .flatMap((u: any) => (Array.isArray(u && u.tasks) ? u.tasks : []).map((t: any) => String(t.id))).join(',')
+  useEffect(() => {
+    const ids = Array.from(new Set(taskIdKey.split(',').filter(Boolean))).slice(0, 300)
+    if (!ids.length) { setCmtCounts({}); return }
+    let alive = true
+    fetch('/api/comments/counts?type=task&ids=' + encodeURIComponent(ids.join(',')), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { if (alive && j && j.ok) setCmtCounts(j.counts || {}) }).catch(() => {})
+    return () => { alive = false }
+  }, [taskIdKey])
+
   if (loading && !data) return <div className="text-sm text-muted py-10 text-center">Loading today&rsquo;s operations&hellip;</div>
   if (err) return <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>
   if (!data) return null
@@ -155,16 +168,6 @@ export function TodayInOps() {
   const all = tf === 'all' ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
   const baseUnits = showDone ? all : all.filter(u => !u.allDone)
   const units = groupBy === 'area' ? sortByArea(baseUnits) : baseUnits
-  const taskIdKey = units.map(u => u.tasks.map(t => t.id).join(',')).join('|')
-  useEffect(() => {
-    const ids = Array.from(new Set(units.flatMap(u => u.tasks.map(t => String(t.id))))).slice(0, 300)
-    if (!ids.length) { setCmtCounts({}); return }
-    let alive = true
-    fetch('/api/comments/counts?type=task&ids=' + encodeURIComponent(ids.join(',')), { cache: 'no-store' })
-      .then(r => r.json()).then(j => { if (alive && j && j.ok) setCmtCounts(j.counts || {}) }).catch(() => {})
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskIdKey])
   const doneCount = all.filter(u => u.allDone).length
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
   const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
