@@ -78,6 +78,21 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   const pa: any = {}
   for (const _k of Object.keys(_paRaw)) pa[_k] = purl(_paRaw[_k])
   const photos: string[] = (Array.isArray(s._photos) ? s._photos : []).map(purl).filter(Boolean) as string[]
+  // The guidelines page carries a fill photo (see .gb-fillslot) because its length depends on how
+  // many rules a building has. Default it to a listing photo no other slot is already using —
+  // photos[0] counts as used when there is no explicit cover, since the cover falls back to it —
+  // so a short book never prints the same picture twice. Swappable in Edit like every other photo.
+  const usedPhotos: string[] = (['cover', 'about', 'special', 'arrival', 'wifi', 'closing']
+    .map(k => pa[k]).filter(Boolean) as string[]).concat(pa.cover ? [] : photos.slice(0, 1))
+  const guidelinesPhoto: string | null = pa.guidelines || photos.filter(u => usedPhotos.indexOf(u) < 0)[0] || null
+
+  // Photos that failed to load. Place imagery is auto-sourced from third-party URLs, so any one of
+  // them can go away without warning; when that happened the card kept its frame and printed the
+  // browser's broken-image icon inside it. Recording the failure lets the card fall back to the
+  // text-only treatment we already ship, so a dead URL degrades quietly instead of looking broken.
+  const [badPhotos, setBadPhotos] = useState<string[]>([])
+  const photoOk = (u?: string | null): boolean => !!u && badPhotos.indexOf(u) < 0
+  const photoFailed = (u?: string | null) => { if (u) setBadPhotos(b => b.indexOf(u) < 0 ? b.concat(u) : b) }
   const dark = gb.theme === 'dark'
   const showTags = s._showTags !== false
 
@@ -314,6 +329,18 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
            full page can never overflow upward and get clipped by .gb-page's overflow-hidden. */
         .gb-vfill { align-content: safe start; }
         .gb-vfill-col { justify-content: safe start; }
+        /* Fill photo. The guidelines page is the one page whose length is set entirely by how many
+           house rules a building has, so it can end anywhere from a full sheet to half of one, and
+           on a short list the empty tail reads as an unfinished page rather than as margin. The
+           slot sits high on the page, under the intro, and takes exactly the space the rules leave
+           over — flex: 1 1 0 with min-height: 0, so it collapses to nothing on a full page and can
+           never push content off the sheet — while a container query hides the photo unless that
+           space is worth filling. Below ~170px an image reads as a stray band instead of a design
+           element. Browsers with no container-query support simply never show it, which is exactly
+           what shipped before. */
+        .gb-fillslot { flex: 1 1 0%; min-height: 0; container-type: size; }
+        .gb-fillslot > .gb-fillphoto { display: none; height: 100%; padding-top: 26px; flex-direction: column; }
+        @container (min-height: 170px) { .gb-fillslot > .gb-fillphoto { display: flex; } }
         @media print {
           @page { size: letter; margin: 0; }
           html, body { background: white !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; }
@@ -674,7 +701,33 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <Kicker><L k="guidelines.kicker" def="HOUSE NOTES" /></Kicker>
           <H><T path={['guidelines', 'heading']} value={s.guidelines?.heading} /></H>
           <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['guidelines', 'intro']} value={s.guidelines?.intro} rows={2} /></p>
-          <div className="gb-vfill-col mt-7 flex flex-1 flex-col gap-5">
+          {/* Fill photo. Sits directly under the intro, above the rules, and bleeds to the sheet
+              edges so it reads as a deliberate band rather than an inset picture dropped in to plug
+              a hole. Takes only the space the rules leave over, and hides itself on a long list.
+              The slot is only emitted when there is actually something to put in it — an empty slot
+              at the top of the page would push the rules down and turn the leftover into a gap
+              instead of the foot margin it is when the slot is absent. */}
+          {photoOk(guidelinesPhoto) ? (
+            <div className="gb-fillslot">
+              <div className="gb-fillphoto">
+                <div className="relative -mx-[58px] min-h-0 flex-1 overflow-hidden">
+                  <img loading="lazy" decoding="async" src={guidelinesPhoto as string} alt="" onError={() => photoFailed(guidelinesPhoto)} className="h-full w-full object-cover" />
+                  {pickBtn(['_photoAssign', 'guidelines'])}
+                </div>
+              </div>
+            </div>
+          ) : edit ? (
+            <div className="gb-fillslot print:hidden">
+              <div className="gb-fillphoto">
+                <div className="flex min-h-0 flex-1 items-center justify-center border border-dashed" style={{ borderColor: accentColor + '55' }}>
+                  <button onClick={() => openPick(['_photoAssign', 'guidelines'])} className="rounded bg-neutral-100 px-3 py-1.5 text-[11px] font-bold text-neutral-700 ring-1 ring-neutral-300">📷 Add a photo</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {/* No flex-1 here any more: the leftover space belongs to the fill photo above, which
+              only claims it when there is enough of it to be worth showing. */}
+          <div className="mt-7 flex flex-col gap-5">
             {(s.guidelines?.items || []).slice(0, 5).map((it: any, i: number) => (
               <div key={i} className="flex gap-4 border-b pb-3.5" style={{ borderColor: accentColor + '22' }}>
                 <p className="w-44 shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
@@ -692,7 +745,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {/* LOCAL — places / eats. Photo cards when imagery exists; big editorial cards when few items. */}
         {localSecs.map((sec: any) => {
           const items = (s[sec.key].items || []).slice(0, 6)
-          const anyPhoto = items.some((p: any) => p.photo)
+          // A photo that failed to load does not count, so a section whose imagery is all dead
+          // falls back to the editorial layout rather than printing a page of empty frames.
+          const anyPhoto = items.some((p: any) => photoOk(p.photo))
           const few = items.length <= 3
           return (
             <Page key={sec.key} num={++pageNo} id={sec.key} ghost={sec.key === 'restaurants' ? 'eat' : 'go'} hideKey={sec.key}>
@@ -703,17 +758,19 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                   {items.map((p: any, i: number) => (
                     <div key={i} className={!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : ''}>
                       <PlaceLink name={p.name} addr={p.address}>
-                      {p.photo ? (
+                      {/* When a card has no usable photo but its neighbours do, it stays compact
+                          instead of reserving photo height, which used to leave a tall empty box. */}
+                      {photoOk(p.photo) ? (
                         <div className={'relative overflow-hidden ' + (few ? 'h-[190px]' : 'h-[145px]')}>
-                          <img loading="lazy" decoding="async" src={p.photo} alt="" className="h-full w-full object-cover" />
+                          <img loading="lazy" decoding="async" src={p.photo} alt="" onError={() => photoFailed(p.photo)} className="h-full w-full object-cover" />
                           <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.62), rgba(10,10,12,0.02) 55%)' }} />
                           <span className="absolute right-3 top-3 h-px w-10 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />
                           <p className="absolute bottom-3 left-4 text-[15px] font-medium tracking-wide text-white" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                           {pickBtn([sec.key, 'items', String(i), 'photo'])}
                         </div>
                       ) : (
-                        <div className={'relative flex items-end border-l-2 pl-4 ' + (few ? 'h-[190px]' : 'h-[145px]')} style={{ borderColor: accentColor + '66' }}>
-                          <p className="pb-3 text-[15px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
+                        <div className="relative flex items-end border-l-2 py-1.5 pl-4" style={{ borderColor: accentColor + '66' }}>
+                          <p className="text-[15px] font-medium tracking-wide" style={{ fontFamily: SERIF }}><T path={[sec.key, 'items', String(i), 'name'] as any} value={p.name} rows={1} /></p>
                           {pickBtn([sec.key, 'items', String(i), 'photo'])}
                         </div>
                       )}
