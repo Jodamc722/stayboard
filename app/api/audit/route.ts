@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { routeFor } from '@/lib/approval'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -348,7 +349,7 @@ export async function POST(req: NextRequest) {
   if (action === 'updateItem' || action === 'deleteItem') {
     const itemId = String(body.itemId || '')
     if (!itemId) return NextResponse.json({ error: 'itemId required' }, { status: 400 })
-    const { data: rows } = await db.from('audit_items').select('id,audit_id,status,details').eq('id', itemId).limit(1)
+    const { data: rows } = await db.from('audit_items').select('id,audit_id,status,details,kind,qty,listing_id').eq('id', itemId).limit(1)
     const item = rows && rows[0]
     if (!item) return NextResponse.json({ error: 'item not found' }, { status: 404 })
     if (audit && String(item.audit_id) !== String(audit.id)) return NextResponse.json({ error: 'wrong audit' }, { status: 403 })
@@ -372,6 +373,26 @@ export async function POST(req: NextRequest) {
     if (typeof f.room === 'string' && f.room) upd.room = f.room.slice(0, 80)
     if (['low', 'medium', 'high'].includes(String(f.severity))) upd.severity = String(f.severity)
     if (!audit && ['open', 'approved', 'ordered', 'arriving', 'done', 'dismissed'].includes(String(f.status))) upd.status = String(f.status)
+    // AUTO-ROUTE ON PRICE: the moment a desk user puts a price on an order line, the approval
+    // ladder decides itself - at or under that owner's GM pre-auth limit it is GM-approved and
+    // goes straight to Ready to buy; over it, it is routed to the owner. Only ever fills an EMPTY
+    // decision, so any human approve/decline stands. Best-effort: a settings blip must not fail
+    // the save the user actually asked for.
+    if (!audit && f.est !== undefined && f.approval === undefined && ['replace', 'add'].includes(String(item.kind))) {
+      try {
+        const d: any = (upd.details && typeof upd.details === 'object') ? upd.details : ((item.details && typeof item.details === 'object') ? { ...item.details } : {})
+        const est = Number(d.est)
+        if (!d.approval && Number.isFinite(est) && est > 0) {
+          const qty = Math.max(1, Number(upd.qty !== undefined ? upd.qty : item.qty) || 1)
+          const dec = await routeFor(String(item.listing_id || ''), est * qty)
+          d.approval = dec.approval
+          d.approvedBy = 'auto (limit $' + dec.limit + ')'
+          d.autoLimit = dec.limit
+          d.autoAt = new Date().toISOString()
+          upd.details = d
+        }
+      } catch { /* pricing still saves; the line just stays unrouted for the bulk pass */ }
+    }
     const r = await db.from('audit_items').update(upd).eq('id', itemId).select('*').limit(1)
     if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
     return NextResponse.json({ ok: true, item: r.data && r.data[0] })
