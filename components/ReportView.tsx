@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
+import { paceTier, paceStatus, PACE_TONE, PACE_BENCHMARK, PACE_EXCEPTIONAL } from '@/lib/pacing'
 
 type Any = any
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
@@ -75,6 +76,35 @@ const THEMES: Record<string, Any> = {
     trackBg: '#15181d', footA: '#6e6a61', footB: '#4f4b43', barA: '#4a5160', barB: '#C9A227',
     edBg: 'rgba(255,255,255,0.08)', edBorder: '#C9A227',
   },
+}
+
+// ---------- on-the-books pacing chips (P14) ----------
+// Jon's benchmark: >20% on the books going into a month is great, ~60%+ is exceptional.
+// Tier and tone are derived from occPct at render time rather than read from the stored
+// status string, so reports generated before this existed pick up the new labels too.
+function hexA(hex: string, a: number): string {
+  const h = String(hex || '').replace('#', '')
+  if (h.length !== 6) return hex
+  const n = parseInt(h, 16)
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'
+}
+
+/** Chip label + colours for an `ahead` month. The in-progress month is never tiered. */
+function paceChip(t: Any, occPct: unknown, inMonth: boolean): { label: string; style: Any } {
+  const tone = inMonth ? 'hot' : PACE_TONE[paceTier(occPct)]
+  const label = paceStatus(occPct, inMonth)
+  if (tone === 'hi') return { label, style: { background: hexA(t.good, 0.15), color: t.good } }
+  if (tone === 'hot') return { label, style: { background: t.statusHotBg, color: t.statusHotInk } }
+  return { label, style: { background: t.statusColdBg, color: t.statusColdInk } }
+}
+
+/** Bar colour for the months-ahead strip: muted below benchmark, accent at it, green past it. */
+function paceBar(t: Any, occPct: unknown, isCurrent: boolean): string {
+  if (isCurrent) return t.barB
+  const n = Number(occPct) || 0
+  if (n >= PACE_EXCEPTIONAL) return t.good
+  if (n >= PACE_BENCHMARK) return t.barB
+  return t.barA
 }
 
 // ---------- PPTX export (P5): built in the browser from the content JSON + active theme ----------
@@ -1564,14 +1594,19 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <Ed v={ahead.subtitle || ''} set={v => patch('ahead.subtitle', v)} edit={edit} />
             </p>
             <div className={'mt-6 grid gap-4 ' + (((ahead.months || []).length >= 3) ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
-              {(ahead.months || []).map((m: Any, i: number) => (
+              {(ahead.months || []).map((m: Any, i: number) => {
+                // The first card is the month already underway (its stored status says so);
+                // everything after it is a future month the 20% benchmark applies to.
+                const inMonth = i === 0 && String(m.status || '').toUpperCase() === 'IN MONTH'
+                const chip = paceChip(t, m.occPct, inMonth)
+                return (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
                     <button onClick={() => mutate(d => d.ahead.months.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                   )}
                   <div className="flex items-center gap-2.5">
                     <span className="text-sm font-black tracking-[0.14em]"><Ed v={m.label || ''} set={v => patch('ahead.months.' + i + '.label', v)} edit={edit} /></span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ background: t.statusHotBg, color: t.statusHotInk }}>{m.status}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={chip.style}>{chip.label}</span>
                   </div>
                   <p className="mt-3 text-4xl font-black tabular-nums">
                     {edit ? <Ed v={String(m.occPct ?? 0)} set={v => patch('ahead.months.' + i + '.occPct', Number(v) || 0)} edit /> : (m.occPct ?? 0)}%
@@ -1586,18 +1621,30 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </p>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
             {Array.isArray(ahead.strip) && ahead.strip.length > 0 && (
               <div className="mt-6 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-4" style={{ color: t.muted }}>MONTHS AHEAD  ·  OCCUPANCY %</p>
-                <div className="flex items-end gap-3 h-36">
+                <div className="flex items-baseline justify-between mb-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>MONTHS AHEAD  ·  OCCUPANCY %</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{PACE_BENCHMARK}% BENCHMARK</p>
+                </div>
+                {/* Bar band is a fixed 144px so the dashed benchmark line at bottom:20% lands
+                    on the same scale the bars are drawn against. Labels sit below the band. */}
+                <div className="relative" style={{ height: 144 }}>
+                  <div className="absolute left-0 right-0 pointer-events-none" style={{ bottom: PACE_BENCHMARK + '%', borderTop: '1px dashed ' + t.downGray, opacity: 0.85 }} />
+                  <div className="flex items-end gap-3 h-full">
+                    {ahead.strip.map((s: Any, i: number) => (
+                      <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                        <span className="text-[12px] font-black tabular-nums mb-1">{s.occPct}%</span>
+                        <div className="w-full rounded-t-md" style={{ height: Math.max(4, (Number(s.occPct) || 0)) + '%', background: paceBar(t, s.occPct, i === 1), opacity: i === 0 ? 0.35 : 1 }} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-3 mt-1.5">
                   {ahead.strip.map((s: Any, i: number) => (
-                    <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
-                      <span className="text-[12px] font-black tabular-nums mb-1">{s.occPct}%</span>
-                      <div className="w-full rounded-t-md" style={{ height: Math.max(4, (Number(s.occPct) || 0)) + '%', background: i === 1 ? t.barB : t.barA, opacity: i === 0 ? 0.35 : 1 }} />
-                      <span className="text-[11px] font-semibold mt-1.5" style={{ color: t.sub }}>{s.month}</span>
-                    </div>
+                    <span key={i} className="flex-1 text-center text-[11px] font-semibold" style={{ color: t.sub }}>{s.month}</span>
                   ))}
                 </div>
               </div>
