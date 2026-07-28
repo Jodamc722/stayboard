@@ -7,6 +7,7 @@ import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
 import { TodayInOps } from '@/components/TodayInOps'
+import { AuditFollowUps } from '@/components/AuditFollowUps'
 import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
 
 type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
@@ -35,6 +36,9 @@ export default function OpsPlanPage() {
       </header>
 
       <TodayInOps />
+
+      {/* CLEANLINESS FROM AUDITS — renders nothing when there is none outstanding */}
+      <AuditFollowUps />
 
       {/* 3-DAY IMPROVEMENT PLAN — folded away; loads only when opened */}
       <section className="mt-8">
