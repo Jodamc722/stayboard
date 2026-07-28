@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
-import { vendorNameOf } from '@/lib/ops-presets'
+import { vendorNameOf, noBreezewayRegex } from '@/lib/ops-presets'
 import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
@@ -50,6 +50,9 @@ if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
 const presets = await getOpsPresets()
 const VENDOR_OF = (s: string) => vendorNameOf(presets.vendorBuildings, s)
+// Buildings that are not in Breezeway AT ALL (Botanica): their cleans live only in Guesty, so the
+// board must not chase them for a missing Breezeway task or offer to create one.
+const NOBZ_RE = noBreezewayRegex(presets.vendorBuildings)
 // The computed schedule is cached for a day, so the vendor config has to be part of the cache key —
 // otherwise bringing a building in house wouldn't show up here until the cache expired.
 const vendorKey = JSON.stringify(presets.vendorBuildings)
@@ -75,7 +78,7 @@ db.from('guesty_listings').select('id,nickname,title,building,address_city,statu
 // (rows would render with hub 'Other', no bedrooms/door codes - worse than an error).
 if (!listings || !listings.length) throw new Error('Listing data unavailable - hit Sync to retry.')
 
-type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null; city: string | null; lat: number | null; lng: number | null }
+type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null; guestyOnly: boolean; city: string | null; lat: number | null; lng: number | null }
 const meta: Record<string, Meta> = {}
 const units: { id: string; name: string }[] = []
 for (const l of (listings || [])) {
@@ -94,6 +97,7 @@ checkIn: raw?.defaultCheckInTime || null,
 checkOut: raw?.defaultCheckOutTime || null,
 is17: IS_17WEST(building) || IS_17WEST(name),
 vendor: VENDOR_OF(building) || VENDOR_OF(name),
+guestyOnly: NOBZ_RE.test(building) || NOBZ_RE.test(name),
 city: (l as any).address_city || null,
 lat: Number.isFinite(Number((l as any).lat)) ? Number((l as any).lat) : null,
 lng: Number.isFinite(Number((l as any).lng)) ? Number((l as any).lng) : null,
@@ -110,7 +114,7 @@ if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; guestyOnly?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -143,6 +147,7 @@ nextArrival,
 doorCode: m?.doorCode || null,
 cleaningTime: m?.cleaningTime || null,
 vendor: m?.vendor || null,
+guestyOnly: !!m?.guestyOnly,
 assignedIds: [],
 assignedNames: [],
 })
@@ -174,7 +179,7 @@ enrichedOk++
 }
 // DAY view: live-API lookup ONLY for cleans the mirror didn't cover (usually a handful, not all 30+).
 if (view === 'day' && breezewayConfigured() && cleans.length) {
-const pending = cleans.filter(c => c.syncStatus === undefined && c.date === anchor)
+const pending = cleans.filter(c => c.syncStatus === undefined && c.date === anchor && !c.guestyOnly)
 const CONC = 8
 for (let i = 0; i < pending.length; i += CONC) {
 await Promise.all(pending.slice(i, i + CONC).map(async c => {
