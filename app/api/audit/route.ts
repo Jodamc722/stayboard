@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.get('orders')) {
     // Property-wide order sheet: every Replace/Add need across all audits, with lifecycle status.
     const [oi, ol] = await Promise.all([
-      db.from('audit_items').select('id,audit_id,listing_id,room,kind,title,qty,note,photo_url,status,details,created_at').in('kind', ['replace', 'add']).neq('status', 'dismissed').order('created_at', { ascending: false }).limit(2000),
+      db.from('audit_items').select('id,audit_id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).neq('status', 'dismissed').order('created_at', { ascending: false }).limit(2000),
       db.from('guesty_listings').select('id,nickname,title,building').limit(2000),
     ])
     const lm: Record<string, any> = {}
