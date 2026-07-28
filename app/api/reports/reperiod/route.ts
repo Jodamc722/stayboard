@@ -159,6 +159,10 @@ export async function POST(req: NextRequest) {
       label: monthLabel(mIso), monthIso: mIso,
       revenue: fmtK(mm.accomRevenue), grossRevenue: fmtK(mm.grossRevenue),
       occPct: mm.occupancyPct, adr: '$' + mm.adr, grossAdr: '$' + mm.grossAdr, revpar: '$' + mm.revpar,
+      // Same raw components the generator writes, so re-periodising a report does not quietly
+      // strip them and send the monthly cards back to being frozen on legacy Net.
+      accomNum: mm.accomRevenue, accomGrossNum: mm.accomGrossRevenue, cleaningNum: mm.cleaningRevenue,
+      feeNum: mm.channelFees, occNights: mm.occupiedNights, availNights: mm.availableNights,
     })
     mIso = mNext
   }
