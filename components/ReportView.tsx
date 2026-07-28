@@ -131,6 +131,14 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
   } catch { return null }
 }
 
+// Statement figures arrive as exact dollars from the recognised owner ledger. Round for
+// display only — a negative reads as "−$1,234", never as "$-1,234".
+function usdP(n: Any): string {
+  const v = Number(n)
+  if (!isFinite(v)) return '$0'
+  return (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US')
+}
+
 function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   const pptx = new P()
   pptx.layout = 'LAYOUT_WIDE'
@@ -231,17 +239,54 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     }
   }
 
-  // owner statement
-  if (c.statement && (c.statement.items || []).length) {
+  // owner statement — KPI band + month table off the recognised ledger. Legacy reports that
+  // still carry the old parsed-PDF `items` fall back to the card layout they were built for.
+  const stKpis = (c.statement && Array.isArray(c.statement.kpis)) ? c.statement.kpis : []
+  const stItems = (c.statement && Array.isArray(c.statement.items)) ? c.statement.items : []
+  if (c.statement && (stKpis.length || stItems.length)) {
     const s = pptx.addSlide()
-    head(s, 'OWNER STATEMENT', c.statement.headline || 'Owner statement summary.')
-    const items = (c.statement.items || []).slice(0, 4)
-    const n = Math.max(1, items.length), igap = 0.22, ih = (CBOT - CT - (n - 1) * igap) / n
-    for (let i = 0; i < items.length; i++) {
-      const y = CT + i * (ih + igap)
-      s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: ih, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
-      s.addText(String(items[i].title || ''), { x: 0.95, y: y + 0.16, w: 11.4, h: 0.3, fontSize: 13, bold: true, color: INK })
-      s.addText(String(items[i].summary || '').slice(0, 320), { x: 0.95, y: y + 0.54, w: 11.4, h: ih - 0.68, fontSize: 11, color: BODY, valign: 'top' })
+    head(s, 'OWNER STATEMENT', c.statement.headline || 'Owner statement summary.', c.statement.subtitle || '')
+    if (stKpis.length) {
+      const ks = stKpis.slice(0, 4)
+      const kn = Math.max(1, ks.length), kgap = 0.25, kw = (12.13 - (kn - 1) * kgap) / kn
+      for (let i = 0; i < ks.length; i++) {
+        const x = 0.6 + i * (kw + kgap)
+        s.addShape('roundRect', { x, y: CT, w: kw, h: 1.5, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+        s.addText(String(ks[i].label || '').toUpperCase(), { x: x + 0.22, y: CT + 0.16, w: kw - 0.44, h: 0.24, fontSize: 8.5, bold: true, color: MUT, charSpacing: 1 })
+        s.addText(String(ks[i].value || ''), { x: x + 0.22, y: CT + 0.44, w: kw - 0.44, h: 0.52, fontSize: 22, bold: true, color: INK })
+        s.addText(String(ks[i].sub || ''), { x: x + 0.22, y: CT + 1.0, w: kw - 0.44, h: 0.3, fontSize: 9.5, color: SUB })
+      }
+      const ms = (Array.isArray(c.statement.months) ? c.statement.months : []).slice(0, 8)
+      if (ms.length) {
+        const tTop = CT + 1.85
+        const cols = ['MONTH', 'RENTAL', 'COMMISSION', 'NET TO OWNER', 'PAID OUT']
+        const cw = [3.0, 2.3, 2.3, 2.3, 2.23]
+        let cx = 0.6
+        for (let i = 0; i < cols.length; i++) {
+          s.addText(cols[i], { x: cx + 0.1, y: tTop, w: cw[i] - 0.2, h: 0.26, fontSize: 8.5, bold: true, color: MUT, charSpacing: 1, align: i ? 'right' : 'left' })
+          cx += cw[i]
+        }
+        for (let r = 0; r < ms.length; r++) {
+          const y = tTop + 0.34 + r * 0.34
+          const m = ms[r]
+          const cells = [String(m.label || m.month || ''), usdP(m.rental), usdP(m.commission), usdP(m.net), usdP(m.paid)]
+          let x2 = 0.6
+          for (let i = 0; i < cells.length; i++) {
+            s.addText(cells[i], { x: x2 + 0.1, y, w: cw[i] - 0.2, h: 0.3, fontSize: 10.5, bold: i === 3, color: i === 3 ? INK : BODY, align: i ? 'right' : 'left' })
+            x2 += cw[i]
+          }
+        }
+      }
+      if (c.statement.note) s.addText(String(c.statement.note).slice(0, 240), { x: 0.6, y: CBOT - 0.4, w: 12.13, h: 0.36, fontSize: 9, color: SUB })
+    } else {
+      const items = stItems.slice(0, 4)
+      const n = Math.max(1, items.length), igap = 0.22, ih = (CBOT - CT - (n - 1) * igap) / n
+      for (let i = 0; i < items.length; i++) {
+        const y = CT + i * (ih + igap)
+        s.addShape('roundRect', { x: 0.6, y, w: 12.13, h: ih, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
+        s.addText(String(items[i].title || ''), { x: 0.95, y: y + 0.16, w: 11.4, h: 0.3, fontSize: 13, bold: true, color: INK })
+        s.addText(String(items[i].summary || '').slice(0, 320), { x: 0.95, y: y + 0.54, w: 11.4, h: ih - 0.68, fontSize: 11, color: BODY, valign: 'top' })
+      }
     }
   }
 
@@ -474,7 +519,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [pwMsg, setPwMsg] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
   const pacingRef = useRef<HTMLInputElement>(null)
-  const stmtRef = useRef<HTMLInputElement>(null)
   const heroRef = useRef<HTMLInputElement>(null)
   const aiFileRef = useRef<HTMLInputElement>(null)
   const [aiKey, setAiKey] = useState<string | null>(null)
@@ -776,21 +820,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     }
     setBusy(''); e.target.value = ''
   }
-  async function onStatementsPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files ? Array.from(e.target.files).slice(0, 4) : []
-    if (!files.length) return
-    setAttachMsg(''); setBusy('statements')
-    const urls: string[] = []
-    for (const f of files) {
-      const url = await uploadOne(f)
-      if (url) urls.push(url)
-    }
-    if (urls.length) {
-      const section = await parseAttach({ kind: 'statements', urls })
-      if (section) patch('statement', section)
-    }
-    setBusy(''); e.target.value = ''
-  }
+  // Statement PDFs are no longer uploaded or AI-parsed. The Owner Statement section is built
+  // in the generator from statements picked out of the Guesty owner-ledger mirror, so there is
+  // nothing to attach here.
   async function onHeroPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files && e.target.files[0]
     if (!f) return
@@ -974,7 +1006,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const presentCount = (['hero', 'snapshot',
     (c.pacing ? 'pacing' : null),
     (plan ? 'plan' : null),
-    ((c.statement && Array.isArray(c.statement.items) && c.statement.items.length) ? 'statement' : null),
+    ((c.statement && ((Array.isArray(c.statement.kpis) && c.statement.kpis.length) || (Array.isArray(c.statement.items) && c.statement.items.length))) ? 'statement' : null),
     'ahead', 'voices', 'projects'] as (string | null)[])
     .filter(k => !!k && (k === 'hero' || !isHidden(k as string))).length + customSecs.length
 
@@ -995,13 +1027,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           {edit && (
             <>
               <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
-              <input ref={stmtRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onStatementsPick} />
               <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
               <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
                 {busy === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Pacing PDF
-              </button>
-              <button onClick={() => stmtRef.current && stmtRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-                {busy === 'statements' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Statements
               </button>
               <button onClick={openPicker} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={picker ? { background: t.ink, color: t.bg } : { background: t.card, border: '1px solid ' + t.toolbarBorder }}>
                 {busy === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
@@ -1568,17 +1596,139 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           <SectionShell id="statement" title="Statement" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')} onAi={() => openAi('statement')}>
             <div className="pt-12">
               <Eyebrow>OWNER STATEMENT</Eyebrow>
-              <div className="mt-4 space-y-3">
-                {(c.statement.items || []).map((it: Any, i: number) => (
-                  <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                    {edit && (
-                      <button onClick={() => mutate(d => d.statement.items.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
-                    )}
-                    <p className="text-sm font-bold"><Ed v={it.title || ''} set={v => patch('statement.items.' + i + '.title', v)} edit={edit} /></p>
-                    <p className="text-[13px] mt-1" style={{ color: t.body }}><Ed v={it.summary || ''} set={v => patch('statement.items.' + i + '.summary', v)} edit={edit} multiline /></p>
+              <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
+                <Ed v={c.statement.headline || ''} set={v => patch('statement.headline', v)} edit={edit} multiline />
+              </h2>
+              {(c.statement.subtitle || edit) && (
+                <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+                  <Ed v={c.statement.subtitle || ''} set={v => patch('statement.subtitle', v)} edit={edit} placeholder="Subtitle…" />
+                </p>
+              )}
+              {(c.statement.note || edit) && (
+                <p className="mt-1 text-[12px] italic" style={{ color: t.muted }}>
+                  <Ed v={c.statement.note || ''} set={v => patch('statement.note', v)} edit={edit} multiline placeholder="Methodology note…" />
+                </p>
+              )}
+
+              {/* KPI band — the four figures an owner actually asks about. */}
+              {Array.isArray(c.statement.kpis) && c.statement.kpis.length > 0 && (
+                <div className={'mt-6 grid gap-4 ' + (c.statement.kpis.length >= 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-2')}>
+                  {c.statement.kpis.map((k: Any, i: number) => (
+                    <div key={i} className="rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>{k.label}</p>
+                      <p className="mt-2 text-3xl font-black tabular-nums" style={{ color: t.ink }}>
+                        <Ed v={k.value || ''} set={v => patch('statement.kpis.' + i + '.value', v)} edit={edit} />
+                      </p>
+                      <p className="mt-1 text-[12px] font-semibold" style={{ color: t.sub }}>{k.sub}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Earned vs paid, month by month. Bars share one scale so the two series are
+                  directly comparable; the gap between them is settlement timing. */}
+              {Array.isArray(c.statement.months) && c.statement.months.length > 0 && (() => {
+                const ms: Any[] = c.statement.months
+                const peak = Math.max(1, ...ms.map((m: Any) => Math.max(Number(m.net) || 0, Number(m.paid) || 0)))
+                const pct = (v: Any) => Math.max(1.5, ((Number(v) || 0) / peak) * 100)
+                return (
+                  <div className="mt-6 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                    <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>NET TO OWNER  ·  PAID OUT</p>
+                      <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.12em]" style={{ color: t.muted }}>
+                        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: t.barA }} />Net earned</span>
+                        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: t.accent }} />Paid out</span>
+                      </div>
+                    </div>
+                    <div className="flex items-end gap-3" style={{ height: 150 }}>
+                      {ms.map((m: Any, i: number) => (
+                        <div key={i} className="flex-1 flex items-end justify-center gap-1 h-full">
+                          <div className="w-1/2 rounded-t-md" style={{ height: pct(m.net) + '%', background: t.barA }} title={'Net ' + usdP(m.net)} />
+                          <div className="w-1/2 rounded-t-md" style={{ height: pct(m.paid) + '%', background: hexA(t.accent, 0.85) }} title={'Paid ' + usdP(m.paid)} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-3 mt-1.5">
+                      {ms.map((m: Any, i: number) => (
+                        <span key={i} className="flex-1 text-center text-[11px] font-semibold" style={{ color: t.sub }}>
+                          {String(m.label || m.month || '').split(' ')[0].slice(0, 3)}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="mt-5 overflow-x-auto">
+                      <table className="w-full text-[12.5px]">
+                        <thead>
+                          <tr style={{ color: t.muted }}>
+                            <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Month</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Rental</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Commission</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Net to owner</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Paid out</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ms.map((m: Any, i: number) => (
+                            <tr key={i} style={{ borderTop: '1px solid ' + t.rule }}>
+                              <td className="py-1.5 font-semibold" style={{ color: t.ink }}>{m.label || m.month}</td>
+                              <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(m.rental)}</td>
+                              <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(m.commission)}</td>
+                              <td className="py-1.5 text-right tabular-nums font-black" style={{ color: t.ink }}>{usdP(m.net)}</td>
+                              <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(m.paid)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                ))}
-              </div>
+                )
+              })()}
+
+              {/* Owner-level split, only worth showing when the scope covers more than one. */}
+              {Array.isArray(c.statement.owners) && c.statement.owners.length > 1 && (
+                <div className="mt-4 rounded-2xl p-5 shadow-sm border overflow-x-auto" style={{ background: t.card, borderColor: t.cardBorder }}>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-3" style={{ color: t.muted }}>BY OWNER</p>
+                  <table className="w-full text-[12.5px]">
+                    <thead>
+                      <tr style={{ color: t.muted }}>
+                        <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Owner</th>
+                        <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Months</th>
+                        <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Rental</th>
+                        <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Commission</th>
+                        <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Net</th>
+                        <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Paid</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {c.statement.owners.map((o: Any, i: number) => (
+                        <tr key={i} style={{ borderTop: '1px solid ' + t.rule }}>
+                          <td className="py-1.5 font-semibold" style={{ color: t.ink }}>{o.ownerName}</td>
+                          <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{o.months}</td>
+                          <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(o.rental)}</td>
+                          <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(o.commission)}</td>
+                          <td className="py-1.5 text-right tabular-nums font-black" style={{ color: t.ink }}>{usdP(o.net)}</td>
+                          <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(o.paid)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Legacy: reports generated from uploaded PDFs before the mirror existed. */}
+              {!(Array.isArray(c.statement.kpis) && c.statement.kpis.length) && (
+                <div className="mt-4 space-y-3">
+                  {(c.statement.items || []).map((it: Any, i: number) => (
+                    <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                      {edit && (
+                        <button onClick={() => mutate(d => d.statement.items.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                      )}
+                      <p className="text-sm font-bold"><Ed v={it.title || ''} set={v => patch('statement.items.' + i + '.title', v)} edit={edit} /></p>
+                      <p className="text-[13px] mt-1" style={{ color: t.body }}><Ed v={it.summary || ''} set={v => patch('statement.items.' + i + '.summary', v)} edit={edit} multiline /></p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </SectionShell>
         )}
