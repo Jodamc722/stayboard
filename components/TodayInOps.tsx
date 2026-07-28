@@ -9,11 +9,11 @@ import CommentThread from '@/components/CommentThread'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; lat?: number | null; lng?: number | null }
+type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null; arrivingGuest?: string | null; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; lat?: number | null; lng?: number | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
-type Data = { ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
+type Data = { longStayNights?: number; ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
 
 const TYPE_LABEL: Record<string, string> = {
   departure_clean: 'Departure clean', strip: 'Strip', deep_clean: 'Deep clean', inspection: 'Inspection',
@@ -346,6 +346,21 @@ export function TodayInOps() {
               <span className="text-xs text-muted">{u.market}</span>
               {u.city && <span className="text-xs text-muted">&middot; {u.city}</span>}
               {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
+              {(() => {
+                // How long the guest who just left had been in. Long stays clean slower.
+                const LS = data.longStayNights || 10
+                const n = Number(u.nights)
+                if (!Number.isFinite(n) || n <= 0) return null
+                const long = n >= LS
+                return <span title={long ? n + '-night stay just ended — LONG STAY, expect a heavier clean (laundry, kitchen, fridge, bins). Give the cleaner more time.' : n + '-night stay'} className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ' + (long ? 'bg-amber-500 text-white border-amber-500' : 'bg-app text-muted border-line')}>{n} nt{long ? ' · long stay' : ''}</span>
+              })()}
+              {(() => {
+                // A long booking checking in today: the unit has to be properly ready.
+                const LS = data.longStayNights || 10
+                const n = Number(u.arrivingNights)
+                if (!Number.isFinite(n) || n < LS) return null
+                return <span title={'Arriving today: ' + n + '-night booking' + (u.arrivingGuest ? ' (' + u.arrivingGuest + ')' : '') + ' — big stay. Check the unit is fully ready: supplies stocked, everything working, no open issues.'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-violet-600 text-white border border-violet-600">{n}-nt arrival · check ready</span>
+              })()}
               {u.untracked && <span title="Vendor-cleaned. The vendor doesn't close tasks in Breezeway, so status here isn't reliable and these aren't tracked against 4pm." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line">Vendor clean</span>}
               {u.guestOut && <span className="text-xs text-muted">out: {u.guestOut}</span>}
               {u.qc.map((q, i) => (

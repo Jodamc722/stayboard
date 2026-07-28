@@ -292,6 +292,11 @@ function TimingSection({ p, edit, isOwner }: { p: OpsPresets; edit: (fn: (d: Ops
           {num(t.auditDueDays, n => edit(d => { d.timing.auditDueDays = n }), 1, 3650, 'w-20')}
           <span className="text-muted">days — drives the &quot;audits due&quot; list</span>
         </label>
+        <label className="flex items-center gap-2 text-[12px] text-ink flex-wrap mt-2">
+          <span className="font-semibold w-40">Long stay is</span>
+          {num(t.longStayNights, n => edit(d => { d.timing.longStayNights = n }), 2, 365, 'w-20')}
+          <span className="text-muted">nights or more — flags the departure clean (more mess) and the arrival (bigger booking, make sure it is ready)</span>
+        </label>
       </div>
 
       <button disabled={!isOwner} onClick={() => edit(d => { d.timing = JSON.parse(JSON.stringify(DEFAULT_PRESETS.timing)) })}
