@@ -16,7 +16,7 @@ import {
   resolveScope, pullReservations, metricsFor, fmtK, ytdStats, monthsAhead,
   pullBudgets, pullReviews, pullTasks, weekBuckets, makeCode, etToday,
 } from '@/lib/owner-report'
-import type { ReportContent, ReportListing } from '@/lib/owner-report'
+import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL } from '@/lib/owner-statements'
@@ -438,7 +438,12 @@ export async function POST(req: NextRequest) {
 
   // Month-by-month breakdown (powers the "view by month" toggle). Reuses the period reservations; each
   // calendar month in the period gets its own metrics. Only surfaced when the period spans 2+ months.
-  const byMonth: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[] = []
+  const byMonth: {
+    label: string; monthIso: string; revenue: string; grossRevenue: string
+    occPct: number; adr: string; grossAdr: string; revpar: string
+    accomNum: number; accomGrossNum: number; cleaningNum: number; feeNum: number
+    occNights: number; availNights: number
+  }[] = []
   {
     const nextMonthIso = (iso: string) => { const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)); return (m >= 12 ? (y + 1) + '-01' : y + '-' + String(m + 1).padStart(2, '0')) + '-01' }
     let mIso = periodStart.slice(0, 7) + '-01'
@@ -449,10 +454,25 @@ export async function POST(req: NextRequest) {
       const mToExcl = mNext > toExcl ? toExcl : mNext
       const mm = metricsFor(resv, units, mFrom, mToExcl)
       const label = new Date(mIso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).toUpperCase()
-      byMonth.push({ label, monthIso: mIso, revenue: fmtK(mm.accomRevenue), grossRevenue: fmtK(mm.grossRevenue), occPct: mm.occupancyPct, adr: '$' + mm.adr, grossAdr: '$' + mm.grossAdr, revpar: '$' + mm.revpar })
+      byMonth.push({
+        label, monthIso: mIso,
+        revenue: fmtK(mm.accomRevenue), grossRevenue: fmtK(mm.grossRevenue),
+        occPct: mm.occupancyPct, adr: '$' + mm.adr, grossAdr: '$' + mm.grossAdr, revpar: '$' + mm.revpar,
+        // Raw components so the monthly cards render in the selected basis rather than staying
+        // frozen to legacy Net while the snapshot above shows Net + channel fees.
+        accomNum: mm.accomRevenue, accomGrossNum: mm.accomGrossRevenue, cleaningNum: mm.cleaningRevenue,
+        feeNum: mm.channelFees, occNights: mm.occupiedNights, availNights: mm.availableNights,
+      })
       mIso = mNext
     }
   }
+
+  // Raw basis components for an on-the-books month, so the MONTHS AHEAD cards follow the
+  // basis picker instead of always reporting legacy Net.
+  const aheadRaw = (m: MetricSet) => ({
+    accomNum: m.accomRevenue, accomGrossNum: m.accomGrossRevenue, cleaningNum: m.cleaningRevenue,
+    feeNum: m.channelFees, occNights: m.occupiedNights, availNights: m.availableNights,
+  })
 
   const content: ReportContent = {
     meta: {
@@ -493,9 +513,9 @@ export async function POST(req: NextRequest) {
       headline: str(ai.aheadHeadline) || 'On-the-books by stay month.',
       subtitle: 'On-the-books occupancy by stay month, as of ' + prettyDate(asOf),
       months: [
-        cur ? { label: cur.label.toUpperCase(), status: paceStatus(cur.m.occupancyPct, true), occPct: cur.m.occupancyPct, adr: '$' + cur.m.adr, revpar: '$' + cur.m.revpar, note: str(ai.aheadNotes?.current).slice(0, 260) } : null,
-        nxt ? { label: nxt.label.toUpperCase(), status: paceStatus(nxt.m.occupancyPct, false), occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260) } : null,
-        nxt2 ? { label: nxt2.label.toUpperCase(), status: paceStatus(nxt2.m.occupancyPct, false), occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260) } : null,
+        cur ? { label: cur.label.toUpperCase(), status: paceStatus(cur.m.occupancyPct, true), occPct: cur.m.occupancyPct, adr: '$' + cur.m.adr, revpar: '$' + cur.m.revpar, note: str(ai.aheadNotes?.current).slice(0, 260), ...aheadRaw(cur.m) } : null,
+        nxt ? { label: nxt.label.toUpperCase(), status: paceStatus(nxt.m.occupancyPct, false), occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260), ...aheadRaw(nxt.m) } : null,
+        nxt2 ? { label: nxt2.label.toUpperCase(), status: paceStatus(nxt2.m.occupancyPct, false), occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260), ...aheadRaw(nxt2.m) } : null,
       ].filter(Boolean) as any,
       strip: mAhead.map(m => ({ month: m.short, occPct: m.m.occupancyPct })),
     },
@@ -512,7 +532,7 @@ export async function POST(req: NextRequest) {
     byMonth: byMonth.length >= 2 ? byMonth : undefined,
     // Default revenue basis: big number = accommodation before channel fees (matches PriceLabs),
     // with Gross written beneath on the snapshot. Editable per section in the report UI.
-    basis: { default: 'netota', snapshotPrimary: 'netota', snapshotSecondary: 'gross', snaps: 'netota', byListing: 'netota' },
+    basis: { default: 'netota', snapshotPrimary: 'netota', snapshotSecondary: 'gross', snaps: 'netota', byListing: 'netota', byMonth: 'netota', ahead: 'netota' },
     omit: [],
   }
 
