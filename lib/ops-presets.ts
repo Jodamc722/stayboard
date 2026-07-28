@@ -100,6 +100,8 @@ export type Timing = {
   deadlineMin: number        // minutes past ET midnight the unit must be clean by (960 = 4:00pm)
   atRiskMin: number          // flag a not-started clean when fewer than this many minutes remain
   auditDueDays: number       // how often every unit gets audited
+  longStayNights: number     // a stay at or over this many nights is a LONG STAY: more mess on the
+                             // way out, and a bigger booking to have ready on the way in
   cleanMinutes: { studio: number; two: number; threePlus: number; unknown: number }  // benchmark per clean
 }
 
@@ -107,6 +109,7 @@ export const DEFAULT_TIMING: Timing = {
   deadlineMin: 16 * 60,
   atRiskMin: 2 * 60,
   auditDueDays: 365,
+  longStayNights: 10,
   cleanMinutes: { studio: 90, two: 120, threePlus: 180, unknown: 120 },
 }
 
@@ -202,6 +205,7 @@ export function mergePresets(stored: any): OpsPresets {
       deadlineMin: num(t.deadlineMin, DEFAULT_TIMING.deadlineMin),
       atRiskMin: num(t.atRiskMin, DEFAULT_TIMING.atRiskMin),
       auditDueDays: num(t.auditDueDays, DEFAULT_TIMING.auditDueDays),
+      longStayNights: num(t.longStayNights, DEFAULT_TIMING.longStayNights),
       cleanMinutes: {
         studio: num(cm.studio, DEFAULT_TIMING.cleanMinutes.studio),
         two: num(cm.two, DEFAULT_TIMING.cleanMinutes.two),
