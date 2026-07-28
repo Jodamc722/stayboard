@@ -163,6 +163,17 @@ const obj = (v: any, fb: any) => (v && typeof v === 'object' && !Array.isArray(v
  * Merge a stored (possibly partial, possibly junk) settings blob over the defaults.
  * Anything missing or the wrong shape falls back to today's hardcoded behaviour.
  */
+// Settings saved BEFORE a flag existed in code must not silently lose it: unknown/undefined flags
+// fall back to the code default for that building id. Explicit false always wins.
+const DEFAULT_VENDOR_BY_ID: Record<string, VendorBuilding> = {}
+for (const d of DEFAULT_VENDOR_BUILDINGS) DEFAULT_VENDOR_BY_ID[d.id] = d
+function flag(v: any, key: 'untracked' | 'noBreezeway'): boolean {
+  if (v && v[key] === true) return true
+  if (v && v[key] === false) return false
+  const d = DEFAULT_VENDOR_BY_ID[String(v && v.id)]
+  return !!(d && d[key])
+}
+
 export function mergePresets(stored: any): OpsPresets {
   const s = obj(stored, {})
   const r = obj(s.roster, {})
@@ -178,7 +189,8 @@ export function mergePresets(stored: any): OpsPresets {
         terms: arr(v.terms, []).map((x: any) => String(x)).filter(Boolean),
         wordTerms: arr(v.wordTerms, []).map((x: any) => String(x)).filter(Boolean),
         enabled: v.enabled !== false,
-        untracked: v.untracked === true,
+        untracked: flag(v, 'untracked'),
+        noBreezeway: flag(v, 'noBreezeway'),
       })),
     roster: {
       teams: obj(r.teams, DEFAULT_ROSTER.teams),
