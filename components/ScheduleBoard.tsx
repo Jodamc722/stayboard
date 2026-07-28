@@ -104,9 +104,11 @@ export function ScheduleBoard() {
   const teamDirty = useRef<Record<string, boolean>>({})
   const [moreOpen, setMoreOpen] = useState(false)
   // ---- One-pager: forecast strip + weekly roster for the board's week ----
+  // Keyed by the WEEK, not the day: stepping Mon -> Tue used to refetch the forecast and all three
+  // market rosters again (7 roster calls per page load). Same week = same data, so it stays put.
+  const weekKey = useMemo(() => sunOf(date && date.length >= 10 ? date.slice(0, 10) : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())), [date])
   useEffect(() => {
-    const d = date && date.length >= 10 ? date.slice(0, 10) : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-    const ws = sunOf(d)
+    const ws = weekKey
     let dead = false
     fetch('/api/schedule/forecast?weekStart=' + ws).then(r => r.json()).then(j => { if (!dead && j && j.ok) setFc(j) }).catch(() => {})
     ;(async () => {
@@ -122,7 +124,7 @@ export function ScheduleBoard() {
       if (!dead) { teamDirty.current = {}; setTeamDocs(next) }
     })()
     return () => { dead = true }
-  }, [date])
+  }, [weekKey])
 
   const workingSet = useMemo(() => {
     const set = new Set<string>()
@@ -206,7 +208,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       const r = await fetch(`/api/schedule?${qs.toString()}`)
       const raw = await r.text(); let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || 'Could not load the schedule.')
-      setData(j); setDate(d || j.weekStart)
+      setData(j); setDate(prev => (d || j.weekStart) === prev ? prev : (d || j.weekStart))
       // Keep row selections across day nav (they're keyed by listingId__date so only matching rows light up); overrides/cleared re-derive from the server staged overlay.
       setOverrides({}); setCleared({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
