@@ -154,7 +154,20 @@ export function ReportsDesk() {
         if (cancelled) return
         const list: StatementPick[] = Array.isArray(d?.statements) ? d.statements : []
         setStmtList(list)
-        setStmtPicked(idsForMode(stmtModeRef.current, list, periodStart.slice(0, 7), periodEnd.slice(0, 7)))
+        const from = periodStart.slice(0, 7)
+        const to = periodEnd.slice(0, 7)
+        let mode = stmtModeRef.current
+        let ids = idsForMode(mode, list, from, to)
+        // The period defaults to the month we are IN, and a statement for the current month
+        // does not exist yet — so "in this period" would open on an empty selection and look
+        // broken. Drop to the most recent statement instead, and say so by moving the mode.
+        if (!ids.length && mode === 'period' && list.some(s => s.net != null)) {
+          mode = 'one'
+          ids = idsForMode(mode, list, from, to)
+          stmtModeRef.current = mode
+          setStmtMode(mode)
+        }
+        setStmtPicked(ids)
       })
       .catch(() => { if (!cancelled) { setStmtList([]); setStmtPicked([]) } })
       .then(() => { if (!cancelled) setStmtLoading(false) })
