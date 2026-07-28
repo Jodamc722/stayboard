@@ -546,7 +546,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // ---- revenue basis (see lib/basis.ts): per-section, falling back to the report default ----
   const bcfg: Any = c.basis || {}
   const bDefault: Basis = bcfg.default || 'netota'
-  const bSection = (k: 'snaps' | 'byListing'): Basis => (bcfg[k] || bDefault)
+  const bSection = (k: 'snaps' | 'byListing' | 'byMonth' | 'ahead'): Basis => (bcfg[k] || bDefault)
   const snapPrimary: Basis = bcfg.snapshotPrimary || bDefault
   const snapSecondary: Basis | 'none' = (bcfg.snapshotSecondary === undefined ? 'gross' : bcfg.snapshotSecondary)
   const setBasis = (field: string, val: string) => mutate((d: Any) => { d.basis = { ...(d.basis || {}), [field]: val } })
@@ -1323,25 +1323,47 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           <div className="pt-10">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Eyebrow>MONTH BY MONTH</Eyebrow>
-              <button onClick={() => setShowMonths(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: showMonths ? t.accent : t.chip, border: '1px solid ' + (showMonths ? t.accent : t.cardBorder), color: showMonths ? t.card : t.ink }}>
-                {showMonths ? 'Hide monthly view' : 'View by month'}
-              </button>
+              <span className="inline-flex items-center gap-3 flex-wrap">
+                {edit && showMonths && (
+                  <BasisPicker label="Basis" value={bSection('byMonth')} onPick={(v: string) => setBasis('byMonth', v)} t={t} />
+                )}
+                <button onClick={() => setShowMonths(v => !v)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: showMonths ? t.accent : t.chip, border: '1px solid ' + (showMonths ? t.accent : t.cardBorder), color: showMonths ? t.card : t.ink }}>
+                  {showMonths ? 'Hide monthly view' : 'View by month'}
+                </button>
+              </span>
             </div>
-            {showMonths && (
-              <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {c.byMonth.map((m: Any, i: number) => (
-                  <div key={i} className="rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                    <p className="text-sm font-black tracking-[0.14em]" style={{ color: t.accent }}>{m.label}</p>
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.revenue}</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Occupancy</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.occPct}%</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.adr}</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.revpar}</p></div>
+            {showMonths && (() => {
+              // These cards used to print the stored legacy-Net strings whatever basis was
+              // selected, so they disagreed with the snapshot above them. Reports generated
+              // before the raw components existed have no basis numbers to work from — those
+              // keep showing their stored strings rather than a silently wrong figure.
+              const mb = bSection('byMonth')
+              return (
+              <>
+                <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {c.byMonth.map((m: Any, i: number) => {
+                    const mv = hasBasisRaw(m) ? basisStrings(m, mb) : { rev: m.revenue, adr: m.adr, revpar: m.revpar }
+                    return (
+                    <div key={i} className="rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                      <p className="text-sm font-black tracking-[0.14em]" style={{ color: t.accent }}>{m.label}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Revenue</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{mv.rev}</p></div>
+                        <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Occupancy</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{m.occPct}%</p></div>
+                        <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>ADR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{mv.adr}</p></div>
+                        <div><p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>RevPAR</p><p className="text-xl font-black tabular-nums" style={{ color: t.ink }}>{mv.revpar}</p></div>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                    )
+                  })}
+                </div>
+                <p className="mt-3 text-[11px]" style={{ color: t.muted }}>
+                  {c.byMonth.some((m: Any) => hasBasisRaw(m))
+                    ? BASIS_LABEL[mb]
+                    : 'Generated before per-basis monthly figures — regenerate to switch basis here.'}
+                </p>
+              </>
+              )
+            })()}
           </div>
         )}
 
@@ -1745,7 +1767,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {/* ---------- LOOKING AHEAD ---------- */}
         <SectionShell id="ahead" title="Looking Ahead" hidden={isHidden('ahead')} edit={edit} onToggle={() => toggleSection('ahead')} onAi={() => openAi('ahead')}>
           <div className="pt-12">
-            <Eyebrow>LOOKING AHEAD</Eyebrow>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <Eyebrow>LOOKING AHEAD</Eyebrow>
+              {edit && (ahead.months || []).some((m: Any) => hasBasisRaw(m)) && (
+                <BasisPicker label="Basis" value={bSection('ahead')} onPick={(v: string) => setBasis('ahead', v)} t={t} />
+              )}
+            </div>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
               <Ed v={ahead.headline || ''} set={v => patch('ahead.headline', v)} edit={edit} multiline />
             </h2>
@@ -1758,6 +1785,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 // everything after it is a future month the 20% benchmark applies to.
                 const inMonth = i === 0 && String(m.status || '').toUpperCase() === 'IN MONTH'
                 const chip = paceChip(t, m.occPct, inMonth)
+                // These cards used to print their stored legacy-Net strings whatever basis was
+                // selected, so they disagreed with the snapshot above. Reports generated before
+                // the raw components existed have nothing to re-derive from — those keep their
+                // stored, hand-editable strings rather than a silently wrong figure.
+                const aRaw = hasBasisRaw(m)
+                const av = aRaw ? basisStrings(m, bSection('ahead')) : null
                 return (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
@@ -1772,7 +1805,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <span className="text-sm font-semibold ml-2" style={{ color: t.muted }}>on the books</span>
                   </p>
                   <p className="mt-1.5 text-[13px] font-semibold" style={{ color: t.body }}>
-                    ADR <Ed v={m.adr || ''} set={v => patch('ahead.months.' + i + '.adr', v)} edit={edit} />   ·   RevPAR <Ed v={m.revpar || ''} set={v => patch('ahead.months.' + i + '.revpar', v)} edit={edit} />
+                    {av
+                      ? <>ADR <span className="tabular-nums">{av.adr}</span>   ·   RevPAR <span className="tabular-nums">{av.revpar}</span></>
+                      : <>ADR <Ed v={m.adr || ''} set={v => patch('ahead.months.' + i + '.adr', v)} edit={edit} />   ·   RevPAR <Ed v={m.revpar || ''} set={v => patch('ahead.months.' + i + '.revpar', v)} edit={edit} /></>}
                   </p>
                   {(m.note || edit) && (
                     <p className="mt-3 text-[13px]" style={{ color: t.sub }}>
@@ -1782,6 +1817,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
               )})}
             </div>
+            {(ahead.months || []).some((m: Any) => hasBasisRaw(m)) && (
+              <p className="mt-3 text-[11px]" style={{ color: t.muted }}>ADR / RevPAR on the books &middot; {BASIS_LABEL[bSection('ahead')]}</p>
+            )}
             {Array.isArray(ahead.strip) && ahead.strip.length > 0 && (
               <div className="mt-6 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                 <div className="flex items-baseline justify-between mb-4">
