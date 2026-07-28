@@ -130,12 +130,18 @@ function CleaningSection({ p, edit, isOwner }: { p: OpsPresets; edit: (fn: (d: O
                   onChange={e => { const c = e.target.checked; edit(d => { d.vendorBuildings[i].untracked = c }) }} />
                 Doesn&apos;t close Breezeway tasks
               </label>
+              <label className={`inline-flex items-center gap-1.5 text-[11px] ${v.enabled ? 'text-muted' : 'text-muted/40'}`} title="The building is not in Breezeway at all. Its checkouts are read straight from Guesty and the boards offer no Breezeway actions on them.">
+                <input type="checkbox" checked={!!v.noBreezeway} disabled={!isOwner || !v.enabled}
+                  onChange={e => { const c2 = e.target.checked; edit(d => { d.vendorBuildings[i].noBreezeway = c2 }) }} />
+                Not in Breezeway at all
+              </label>
               <button disabled={!isOwner} onClick={() => edit(d => { d.vendorBuildings.splice(i, 1) })}
                 className="ml-auto text-rose-500 hover:text-rose-700 disabled:opacity-30" title="Remove"><Trash2 size={14} /></button>
             </div>
             <div className="mt-1.5 text-[11px] text-muted">
               Matches units containing: <code className="text-[10px]">{[...(v.terms || []), ...(v.wordTerms || []).map(w => `${w} (whole word)`)].join(', ') || '—'}</code>
               {v.untracked && v.enabled ? ' · no 4pm deadline or at-risk alarm' : ''}
+              {v.noBreezeway && v.enabled ? ' · Guesty-only: checkouts come from Guesty, no Breezeway task' : ''}
             </div>
           </div>
         ))}
