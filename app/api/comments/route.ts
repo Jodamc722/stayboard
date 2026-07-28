@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
-import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment } from '@/lib/breezeway'
+import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment, matchBreezewayPerson } from '@/lib/breezeway'
 import { getToken } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
@@ -152,10 +152,23 @@ export async function POST(req: NextRequest) {
     try {
       // A real Breezeway COMMENT is what the crew sees and can reply to. Only if that endpoint
       // fails do we fall back to stamping the description (the old behaviour).
-      const cr = await createBreezewayComment(bzTaskId, actorName + ': ' + body)
+      // Who is this comment FROM in Breezeway? The user's saved profile name, else their email
+      // prefix, else the pinned fallback person in app_settings ('breezeway_comment_person_id').
+      let personId: number | null = null
+      try {
+        const { data: me2 } = await db.from('app_users').select('profile').eq('email', me).maybeSingle()
+        const prof: any = (me2 && (me2 as any).profile) || {}
+        personId = await matchBreezewayPerson(str(prof.name) || str(prof.full_name) || me)
+        if (!personId) {
+          const { data: st } = await db.from('app_settings').select('value').eq('key', 'breezeway_comment_person_id').maybeSingle()
+          const pinned = Number(str(st && (st as any).value).replace(/"/g, ''))
+          if (Number.isFinite(pinned) && pinned > 0) personId = pinned
+        }
+      } catch { /* fall through - the description note still carries the message */ }
+      const cr = await createBreezewayComment(bzTaskId, actorName + ': ' + body, personId)
       // Breezeway has answered 200 with an empty body before while silently not creating the
       // comment, so success means "it is actually in the thread now", not "the call returned 200".
-      bzDebug = { status: cr.status, text: str(cr.text).slice(0, 200) }
+      bzDebug = { status: cr.status, personId, text: str(cr.text).slice(0, 200) }
       if (cr.ok) {
         try {
           const back = await listBreezewayComments(bzTaskId)
