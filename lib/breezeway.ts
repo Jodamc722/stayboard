@@ -151,6 +151,33 @@ export async function completeBreezewayTask(taskId: string | number): Promise<{ 
 // Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway requires
 // a property scope, so the schedule resolves cleans per-property on demand to find the auto-created
 // departure clean for a unit + checkout date (to assign a cleaner + write notes/door code).
+// TASK COMMENTS — Breezeway's own comment thread on a task (GET/POST /task/{id}/comments).
+// This is what the field crew reads and replies to in their app, so app comments post here
+// (not into the description) and their replies come back to us.
+// Mentions arrive encoded as {{personId,Person Name}} - strip to a readable @Name.
+export function cleanBreezewayComment(s: any): string {
+  return String(s == null ? '' : s).replace(/\{\{\s*\d+\s*,\s*([^}]+)\}\}/g, (_m, nm) => '@' + String(nm).trim().replace(/\s+/g, ' ')).trim()
+}
+
+export async function listBreezewayComments(taskId: string | number): Promise<{ ok: boolean; comments: { id: string; body: string; at: string }[] }> {
+  const r = await bzApi('/task/' + encodeURIComponent(String(taskId)) + '/comments')
+  if (!r.ok || !Array.isArray(r.data)) return { ok: false, comments: [] }
+  const comments = (r.data as any[]).map(x => ({
+    id: String(x.id ?? ''),
+    body: cleanBreezewayComment(x.comment ?? x.body ?? x.text),
+    at: String(x.created_at ?? x.createdAt ?? ''),
+  })).filter(x => x.body)
+  return { ok: true, comments }
+}
+
+export async function createBreezewayComment(taskId: string | number, body: string): Promise<{ ok: boolean; status: number; text: string }> {
+  const r = await bzApi('/task/' + encodeURIComponent(String(taskId)) + '/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment: String(body).slice(0, 2000) }),
+  })
+  return { ok: r.ok, status: r.status, text: r.text }
+}
+
 export async function listPropertyHousekeeping(refId: string, from: string, to: string) {
   // Prefer Breezeway's own home_id (resolved from our property map) — the reference_property_id
   // filter on their /task endpoint misses some properties (e.g. Oasis) that home_id finds fine.
