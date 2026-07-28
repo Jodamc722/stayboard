@@ -58,6 +58,13 @@ export async function POST(req: NextRequest) {
       if (b.guestPhone !== undefined) patch.guest_phone = str(b.guestPhone) || null
       if (b.channel !== undefined) patch.channel = str(b.channel) || null
       if (Array.isArray(b.photos)) patch.photos = b.photos.filter((x: any) => typeof x === 'string').slice(0, 20)
+      // Ownership + scheduling: who is on it, when it is due, extra detail, and how far along.
+      // dueDate may sit in the FUTURE - a glitch raised for an upcoming stay is planned work.
+      if (b.dueDate !== undefined) patch.due_date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.dueDate)) ? str(b.dueDate) : null
+      if (b.assignee !== undefined) patch.assignee = str(b.assignee) || null
+      if (b.assigneePersonId !== undefined) { const pid = Number(b.assigneePersonId); patch.assignee_person_id = Number.isFinite(pid) && pid > 0 ? pid : null }
+      if (b.details !== undefined) patch.details = str(b.details).slice(0, 4000) || null
+      if (b.progress !== undefined) { const pr = Number(b.progress); patch.progress = (Number.isFinite(pr) && pr >= 0 && pr <= 100) ? Math.round(pr) : null }
       patch.history = stamp('updated')
       patch.updated_at = new Date().toISOString()
       const { error } = await db.from('glitches').update(patch).eq('id', id)
