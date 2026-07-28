@@ -81,7 +81,11 @@ const blank = (ownerId: string, month: string): OwnerMonth => ({
 /** Every owner whose listings intersect the scope. */
 export async function ownersForListings(listingIds: string[]): Promise<Array<{ id: string; name: string; listingIds: string[] }>> {
   const sb = supabaseAdmin()
-  const { data } = await sb.from('guesty_owners').select('id, full_name, listing_ids')
+  const { data, error } = await sb.from('guesty_owners').select('id, full_name, listing_ids')
+  // Never swallow this. A missing table or an RLS block would otherwise read as "this scope has
+  // no owners", which is indistinguishable from a real empty result and would quietly zero a
+  // report that is going in front of an owner.
+  if (error) throw new Error('owners read: ' + error.message)
   const want = new Set(listingIds.map(String))
   return ((data || []) as any[])
     .map(o => ({
@@ -116,7 +120,8 @@ export async function listStatements(listingIds: string[], limit = 60): Promise<
     .in('owner_id', ownerIds)
     .order('period_start', { ascending: false })
     .limit(limit)
-  const { data } = await q
+  const { data, error } = await q
+  if (error) throw new Error('statements read: ' + error.message)
   const stmts = (data || []) as any[]
   if (!stmts.length) return []
 
@@ -272,7 +277,8 @@ export function rollup(rowsIn: OwnerMonth[]): StatementRollup {
 /** True when the mirror has ledger coverage for every month in the range. */
 export async function coverageFor(months: string[]): Promise<{ ready: boolean; missing: string[] }> {
   const sb = supabaseAdmin()
-  const { data } = await sb.from('guesty_ledger_months').select('month, status').in('month', months)
+  const { data, error } = await sb.from('guesty_ledger_months').select('month, status').in('month', months)
+  if (error) throw new Error('ledger months read: ' + error.message)
   const done = new Set(((data || []) as any[]).filter(r => r.status === 'done').map(r => String(r.month)))
   const missing = months.filter(m => !done.has(m))
   return { ready: missing.length === 0, missing }
