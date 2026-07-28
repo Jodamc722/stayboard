@@ -294,6 +294,80 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     }
   }
 
+  // owner statement — unit performance. Its own slide because a per-unit table never fits
+  // under the KPI band, and the portfolio line has to travel with it or the column stops
+  // footing to net.
+  const stUnits: Any[] = (c.statement && Array.isArray(c.statement.units)) ? c.statement.units : []
+  if (stUnits.length) {
+    const real = stUnits.filter((u: Any) => !u.portfolio)
+    const port = stUnits.filter((u: Any) => u.portfolio)
+    const CAPP = 14
+    const sumU = (a: Any[], k: string) => a.reduce((s: number, x: Any) => s + (Number(x[k]) || 0), 0)
+    const tail = real.slice(CAPP)
+    const body: Any[] = [...real.slice(0, CAPP)]
+    if (tail.length) body.push({ name: tail.length + ' other units', rental: sumU(tail, 'rental'), commission: sumU(tail, 'commission'), other: sumU(tail, 'other'), net: sumU(tail, 'net') })
+    body.push(...port)
+    const totU = { rental: sumU(stUnits, 'rental'), commission: sumU(stUnits, 'commission'), other: sumU(stUnits, 'other'), net: sumU(stUnits, 'net') }
+    const su = pptx.addSlide()
+    head(su, 'UNIT PERFORMANCE', real.length + ' unit' + (real.length === 1 ? '' : 's') + ' on the statement.', 'Net per unit after commission and charges · ' + String((c.statement && c.statement.scope) || ''))
+    const ucols = ['UNIT', 'RENTAL', 'COMMISSION', 'CHARGES / CREDITS', 'NET TO OWNER']
+    const ucw = [4.4, 1.95, 1.95, 2.05, 1.78]
+    let ucx = 0.6
+    for (let i = 0; i < ucols.length; i++) {
+      su.addText(ucols[i], { x: ucx + 0.1, y: CT, w: ucw[i] - 0.2, h: 0.26, fontSize: 8.5, bold: true, color: MUT, charSpacing: 1, align: i ? 'right' : 'left' })
+      ucx += ucw[i]
+    }
+    for (let r = 0; r < body.length; r++) {
+      const y = CT + 0.34 + r * 0.30
+      const u = body[r]
+      const neg = (Number(u.net) || 0) < 0
+      const cells = [String(u.name || u.listingId || '').slice(0, 44), usdP(u.rental), usdP(u.commission), usdP(u.other), usdP(u.net)]
+      let x2 = 0.6
+      for (let i = 0; i < cells.length; i++) {
+        su.addText(cells[i], { x: x2 + 0.1, y, w: ucw[i] - 0.2, h: 0.28, fontSize: 10, bold: i === 4, color: i === 4 && neg ? ACC : i === 4 ? INK : BODY, align: i ? 'right' : 'left' })
+        x2 += ucw[i]
+      }
+    }
+    const uy = CT + 0.34 + body.length * 0.30 + 0.06
+    su.addShape('rect', { x: 0.6, y: uy, w: 12.13, h: 0.012, fill: { color: INK }, line: { color: INK } })
+    const tcells = ['TOTAL', usdP(totU.rental), usdP(totU.commission), usdP(totU.other), usdP(totU.net)]
+    let tx = 0.6
+    for (let i = 0; i < tcells.length; i++) {
+      su.addText(tcells[i], { x: tx + 0.1, y: uy + 0.1, w: ucw[i] - 0.2, h: 0.28, fontSize: 10.5, bold: true, color: INK, align: i ? 'right' : 'left' })
+      tx += ucw[i]
+    }
+  }
+
+  // owner statement — fee and expense breakdown, on Guesty's own line names.
+  const stFees: Any[] = (c.statement && Array.isArray(c.statement.fees)) ? c.statement.fees.filter((f: Any) => f.kind !== 'rental') : []
+  if (stFees.length) {
+    const sf = pptx.addSlide()
+    const totF = stFees.reduce((s: number, f: Any) => s + (Number(f.amount) || 0), 0)
+    head(sf, 'FEES, EXPENSES AND CREDITS', usdP(totF) + ' off rental income.', 'Negative is money out; positive is a credit back to the owner')
+    const fbody = stFees.slice(0, 16)
+    const fcols = ['LINE', 'CODE', 'ENTRIES', 'AMOUNT']
+    const fcw = [6.9, 1.6, 1.7, 1.93]
+    let fcx = 0.6
+    for (let i = 0; i < fcols.length; i++) {
+      sf.addText(fcols[i], { x: fcx + 0.1, y: CT, w: fcw[i] - 0.2, h: 0.26, fontSize: 8.5, bold: true, color: MUT, charSpacing: 1, align: i ? 'right' : 'left' })
+      fcx += fcw[i]
+    }
+    for (let r = 0; r < fbody.length; r++) {
+      const y = CT + 0.34 + r * 0.30
+      const f = fbody[r]
+      const amt = Number(f.amount) || 0
+      const cells = [String(f.label || '').slice(0, 60), String(f.code || ''), String(Number(f.rows) || 0), usdP(amt)]
+      let x2 = 0.6
+      for (let i = 0; i < cells.length; i++) {
+        sf.addText(cells[i], { x: x2 + 0.1, y, w: fcw[i] - 0.2, h: 0.28, fontSize: 10, bold: i === 3, color: i === 3 && amt < 0 ? ACC : i === 3 ? INK : BODY, align: i ? 'right' : 'left' })
+        x2 += fcw[i]
+      }
+    }
+    if (stFees.length > fbody.length) {
+      sf.addText(String(stFees.length - fbody.length) + ' smaller lines not shown', { x: 0.7, y: CT + 0.34 + fbody.length * 0.30 + 0.08, w: 6.8, h: 0.28, fontSize: 9, color: MUT })
+    }
+  }
+
   // looking ahead
   const s6 = pptx.addSlide()
   head(s6, 'LOOKING AHEAD', ahead.headline, ahead.subtitle)
@@ -1749,6 +1823,180 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </table>
                 </div>
               )}
+
+              {/* Unit performance, straight off the statement lines. Every ledger row that
+                  carries a listing lands on its unit; the rows that carry none (owner charges,
+                  transfers, adjustments booked at the portfolio) land on one explicit line so
+                  the column foots to net exactly rather than being spread or dropped. */}
+              {Array.isArray(c.statement.units) && c.statement.units.length > 0 && (() => {
+                const all: Any[] = c.statement.units
+                const real = all.filter((u: Any) => !u.portfolio)
+                const port = all.filter((u: Any) => u.portfolio)
+                const CAP = 30
+                // Keep the table readable at portfolio scale without ever losing a dollar: the
+                // tail is folded into one honest aggregate row rather than truncated away.
+                const shown = real.slice(0, CAP)
+                const restArr = real.slice(CAP)
+                const sum = (a: Any[], k: string) => a.reduce((s: number, x: Any) => s + (Number(x[k]) || 0), 0)
+                const rest = restArr.length ? [{
+                  listingId: '__rest__', name: restArr.length + ' other units', rest: true,
+                  rental: sum(restArr, 'rental'), commission: sum(restArr, 'commission'),
+                  other: sum(restArr, 'other'), net: sum(restArr, 'net'), nights: sum(restArr, 'nights'),
+                }] : []
+                const rows: Any[] = [...shown, ...rest, ...port]
+                const peak = Math.max(1, ...rows.map((u: Any) => Math.abs(Number(u.net) || 0)))
+                const tot = {
+                  rental: sum(all, 'rental'), commission: sum(all, 'commission'),
+                  other: sum(all, 'other'), net: sum(all, 'net'), nights: sum(real, 'nights'),
+                }
+                const best = real.length ? real[0] : null
+                const nUnits = real.length
+                return (
+                  <div className="mt-4 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                    <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>UNIT PERFORMANCE</p>
+                      <p className="text-[11px] font-semibold tabular-nums" style={{ color: t.sub }}>
+                        {nUnits} unit{nUnits === 1 ? '' : 's'}
+                        {best ? '  ·  top unit ' + best.name + ' at ' + usdP(best.net) : ''}
+                      </p>
+                    </div>
+                    <p className="text-[11px] italic mb-4" style={{ color: t.muted }}>
+                      Net per unit after commission and charges. Bars are scaled to the largest unit.
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[12.5px]">
+                        <thead>
+                          <tr style={{ color: t.muted }}>
+                            <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Unit</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Lines</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Rental</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Commission</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Charges / credits</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Net to owner</th>
+                            <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2 pl-3" style={{ width: '18%' }}>Share</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((u: Any, i: number) => {
+                            const net = Number(u.net) || 0
+                            const w = Math.max(1.5, (Math.abs(net) / peak) * 100)
+                            const oth = Number(u.other) || 0
+                            return (
+                              <tr key={i} style={{ borderTop: '1px solid ' + t.rule }}>
+                                <td className="py-1.5 pr-3 font-semibold" style={{ color: u.portfolio ? t.sub : t.ink }}>
+                                  {u.name || u.listingId}
+                                </td>
+                                <td className="py-1.5 text-right tabular-nums" style={{ color: t.muted }}>{u.portfolio ? '—' : (Number(u.nights) || 0)}</td>
+                                <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(u.rental)}</td>
+                                <td className="py-1.5 text-right tabular-nums" style={{ color: t.body }}>{usdP(u.commission)}</td>
+                                <td className="py-1.5 text-right tabular-nums" style={{ color: oth < 0 ? t.accent : t.body }}>{usdP(oth)}</td>
+                                <td className="py-1.5 text-right tabular-nums font-black" style={{ color: net < 0 ? t.accent : t.ink }}>{usdP(net)}</td>
+                                <td className="py-1.5 pl-3">
+                                  <span className="inline-flex items-center gap-2 w-full">
+                                    <span className="inline-block h-2 rounded-sm" style={{ width: w + '%', background: net < 0 ? hexA(t.accent, 0.75) : t.barA }} />
+                                    <span className="text-[10.5px] tabular-nums font-semibold" style={{ color: t.muted }}>
+                                      {tot.net ? (Math.round((net / tot.net) * 1000) / 10).toFixed(1) + '%' : '—'}
+                                    </span>
+                                  </span>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                          <tr style={{ borderTop: '2px solid ' + t.ink }}>
+                            <td className="pt-2 font-black uppercase tracking-[0.1em] text-[10.5px]" style={{ color: t.ink }}>Total</td>
+                            <td className="pt-2 text-right tabular-nums font-semibold" style={{ color: t.muted }}>{tot.nights}</td>
+                            <td className="pt-2 text-right tabular-nums font-bold" style={{ color: t.ink }}>{usdP(tot.rental)}</td>
+                            <td className="pt-2 text-right tabular-nums font-bold" style={{ color: t.ink }}>{usdP(tot.commission)}</td>
+                            <td className="pt-2 text-right tabular-nums font-bold" style={{ color: t.ink }}>{usdP(tot.other)}</td>
+                            <td className="pt-2 text-right tabular-nums font-black" style={{ color: t.ink }}>{usdP(tot.net)}</td>
+                            <td />
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Fee and expense breakdown. Grouped on Guesty's own line name rather than the
+                  charge code: a single code mixes real owner charges with channel-fee
+                  reimbursements, which would net to one meaningless number. Rental income is
+                  the top line above, so this table is everything that moves it to net. */}
+              {Array.isArray(c.statement.fees) && c.statement.fees.length > 0 && (() => {
+                const lines: Any[] = c.statement.fees.filter((f: Any) => f.kind !== 'rental')
+                if (!lines.length) return null
+                const peak = Math.max(1, ...lines.map((f: Any) => Math.abs(Number(f.amount) || 0)))
+                const charges = lines.filter((f: Any) => (Number(f.amount) || 0) < 0)
+                const credits = lines.filter((f: Any) => (Number(f.amount) || 0) >= 0)
+                const sumOf = (a: Any[]) => a.reduce((s: number, f: Any) => s + (Number(f.amount) || 0), 0)
+                const totCharge = sumOf(charges), totCredit = sumOf(credits)
+                const rentalTop = Number((c.statement.totals || {}).rental) || 0
+                return (
+                  <div className="mt-4 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>FEES, EXPENSES AND CREDITS</p>
+                    <p className="text-[11px] italic mt-1 mb-4" style={{ color: t.muted }}>
+                      {c.statement.feeLabels === false
+                        ? 'Grouped by charge code. A negative figure is money out; a positive figure is a credit back to the owner.'
+                        : 'Every line as Guesty names it on the statement. A negative figure is money out; a positive figure is a credit back to the owner.'}
+                    </p>
+
+                    {/* Rental → deductions → credits → net, so the arithmetic is visible. */}
+                    <div className="grid gap-0 sm:grid-cols-4 mb-4">
+                      {[
+                        { l: 'Rental income', v: rentalTop, c: t.ink },
+                        { l: 'Charges and commission', v: totCharge, c: t.accent },
+                        { l: 'Credits back', v: totCredit, c: t.ink },
+                        { l: 'Net to owner', v: rentalTop + totCharge + totCredit, c: t.ink },
+                      ].map((k, i) => (
+                        <div key={i} className="py-2 px-3" style={{ borderLeft: i ? '1px solid ' + t.rule : 'none' }}>
+                          <p className="text-[9.5px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{k.l}</p>
+                          <p className="mt-0.5 text-[17px] font-black tabular-nums" style={{ color: k.c }}>{usdP(k.v)}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[12.5px]">
+                        <thead>
+                          <tr style={{ color: t.muted }}>
+                            <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Line</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Code</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Entries</th>
+                            <th className="text-right font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Amount</th>
+                            <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2 pl-3" style={{ width: '26%' }}>Scale</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lines.map((f: Any, i: number) => {
+                            const amt = Number(f.amount) || 0
+                            const w = Math.max(1.5, (Math.abs(amt) / peak) * 100)
+                            return (
+                              <tr key={i} style={{ borderTop: '1px solid ' + t.rule }}>
+                                <td className="py-1.5 pr-3 font-semibold" style={{ color: t.ink }}>{f.label}</td>
+                                <td className="py-1.5 text-right tabular-nums text-[11px]" style={{ color: t.muted }}>{f.code || '—'}</td>
+                                <td className="py-1.5 text-right tabular-nums" style={{ color: t.muted }}>{Number(f.rows) || 0}</td>
+                                <td className="py-1.5 text-right tabular-nums font-bold" style={{ color: amt < 0 ? t.accent : t.ink }}>{usdP(amt)}</td>
+                                <td className="py-1.5 pl-3">
+                                  <span className="inline-block h-2 rounded-sm" style={{ width: w + '%', background: amt < 0 ? hexA(t.accent, 0.75) : t.barA }} />
+                                </td>
+                              </tr>
+                            )
+                          })}
+                          <tr style={{ borderTop: '2px solid ' + t.ink }}>
+                            <td className="pt-2 font-black uppercase tracking-[0.1em] text-[10.5px]" style={{ color: t.ink }}>Total off rental</td>
+                            <td />
+                            <td className="pt-2 text-right tabular-nums font-semibold" style={{ color: t.muted }}>
+                              {lines.reduce((s: number, f: Any) => s + (Number(f.rows) || 0), 0)}
+                            </td>
+                            <td className="pt-2 text-right tabular-nums font-black" style={{ color: t.ink }}>{usdP(totCharge + totCredit)}</td>
+                            <td />
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Legacy: reports generated from uploaded PDFs before the mirror existed. */}
               {!(Array.isArray(c.statement.kpis) && c.statement.kpis.length) && (
