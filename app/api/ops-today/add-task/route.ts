@@ -13,6 +13,37 @@ const DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
 const PRIOS = ['urgent', 'high', 'normal', 'low']
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
 
+// THE ANNUAL AUDIT CARRIES ITS LINK — and only that one.
+//
+// The Annual Quality Audit is the audit that has a form in the web app, so its Breezeway task used
+// to be a paragraph of instructions with nowhere to put the findings: the inspector walked the unit
+// and then went hunting for the audit link. It now gets (or reuses) that unit's open audit and puts
+// the mobile capture link straight in the Breezeway description, so the walk and the logging are
+// one job.
+//
+// Every OTHER kind of inspection — unit checks, guest-feedback inspections, PM passes — is ordinary
+// field work with no audit form behind it, so it must NOT get a link. Attaching one there would
+// open an audit nobody is going to fill in and pollute the audit history the annual cadence is
+// measured against. Hence the narrow match, not a loose /audit/.
+//
+// Reuses the open audit when there is one, so re-filing never orphans work already captured.
+// Best-effort: if this fails the task is still created, just without a link.
+async function auditLinkFor(db: any, listingId: string, origin: string, createdBy: string | null): Promise<string> {
+  if (!listingId || listingId.indexOf(':') >= 0) return ''
+  let audit: any = null
+  const { data: open } = await db.from('property_audits').select('*').eq('listing_id', listingId).eq('status', 'open').limit(1)
+  audit = open && open[0]
+  if (!audit) {
+    const uuid = (globalThis as any).crypto && (globalThis as any).crypto.randomUUID ? (globalThis as any).crypto.randomUUID() : String(Math.random()).slice(2) + String(Math.random()).slice(2)
+    const shareCode = String(uuid).replace(/-/g, '').slice(0, 14)
+    const ins = await db.from('property_audits').insert({ listing_id: listingId, share_code: shareCode, status: 'open', audit_type: 'quality', created_by: createdBy }).select('*').limit(1)
+    if (ins.error) return ''
+    audit = ins.data && ins.data[0]
+  }
+  if (!audit || !audit.share_code) return ''
+  return origin + '/audit/' + audit.share_code
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -25,8 +56,16 @@ export async function POST(req: NextRequest) {
     const department = DEPTS.indexOf(String(body?.department)) >= 0 ? String(body.department) : 'maintenance'
     const priority = PRIOS.indexOf(String(body?.priority)) >= 0 ? String(body.priority) : 'normal'
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.date || '')) ? String(body.date) : todayET()
-    const description = String(body?.description || '').slice(0, 1000) + (user.email ? '\n\nAdded from Today in Ops by ' + user.email : '')
     const db = supabaseAdmin()
+    // ONLY the annual quality audit. Callers can force it with auditLink:true; otherwise the title
+    // has to actually name the annual audit — "Unit Check" and "Guest-feedback inspection" must not
+    // mint an audit link.
+    const wantsLink = body?.auditLink === true || (body?.auditLink !== false && /\bannual\b/i.test(title) && /\baudit\b/i.test(title))
+    let link = ''
+    if (wantsLink) { try { link = await auditLinkFor(db, listingId, req.nextUrl.origin, user.email || null) } catch { link = '' } }
+    const description = String(body?.description || '').slice(0, 1000)
+      + (link ? '\n\nAUDIT LINK (open on your phone): ' + link + '\nLog every finding in that link as you walk — fixes and cleans become team tasks, and anything below par becomes an order automatically. Photograph anything below standard.' : '')
+      + (user.email ? '\n\nAdded from Today in Ops by ' + user.email : '')
     const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
     const homeId = Number(((props || [])[0] || {}).home_id)
     const payload: Record<string, any> = { name: title, type_department: department, type_priority: priority, scheduled_date: date, description }
