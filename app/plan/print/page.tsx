@@ -100,7 +100,7 @@ export default function DaySheetPage() {
                 <tr key={i}>
                   <td><Box label="done" /></td>
                   <td className="ds-unit">{r.unit}{r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY TURN</span>}{r.vendor && <span className="ds-tag">{r.vendor}</span>}</td>
-                  <td>{r.guest}</td>
+                  <td>{r.guest}{r.nights != null ? <span className={'ds-tag ' + (r.nights >= 10 ? 'ds-hot' : '')}>{r.nights} NT{r.nights >= 10 ? ' LONG STAY' : ''}</span> : null}</td>
                   <td>{r.checkOutTime || '11:00 AM'}</td>
                   <td>{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : 'unassigned') + ' · ' + r.clean.status : <span className="ds-warn">no clean on the board</span>}</td>
                   <td>{shortDate(r.nextArrival)}</td>
@@ -124,7 +124,7 @@ export default function DaySheetPage() {
                   <td className="ds-unit">{r.unit}{r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY TURN</span>}{r.ownerFlag && <span className="ds-tag ds-own">OWNER</span>}</td>
                   <td>{r.guest}{r.phone ? <span className="ds-sub"> {r.phone}</span> : null}</td>
                   <td>{r.checkInTime || '4:00 PM'}</td>
-                  <td>{r.nights ?? '—'}</td>
+                  <td>{r.nights ?? '\u2014'}{r.nights != null && r.nights >= 10 ? <span className="ds-tag ds-hot">CHECK READY</span> : null}</td>
                   <td className="ds-sub">{r.source || '—'}</td>
                   <td />
                 </tr>
