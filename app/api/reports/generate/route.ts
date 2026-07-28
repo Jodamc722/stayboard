@@ -16,6 +16,7 @@ import {
 } from '@/lib/owner-report'
 import type { ReportContent, ReportListing } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
+import { paceStatus } from '@/lib/pacing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -432,9 +433,9 @@ export async function POST(req: NextRequest) {
       headline: str(ai.aheadHeadline) || 'On-the-books by stay month.',
       subtitle: 'On-the-books occupancy by stay month, as of ' + prettyDate(asOf),
       months: [
-        cur ? { label: cur.label.toUpperCase(), status: 'IN MONTH', occPct: cur.m.occupancyPct, adr: '$' + cur.m.adr, revpar: '$' + cur.m.revpar, note: str(ai.aheadNotes?.current).slice(0, 260) } : null,
-        nxt ? { label: nxt.label.toUpperCase(), status: 'BUILDING', occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260) } : null,
-        nxt2 ? { label: nxt2.label.toUpperCase(), status: 'BUILDING', occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260) } : null,
+        cur ? { label: cur.label.toUpperCase(), status: paceStatus(cur.m.occupancyPct, true), occPct: cur.m.occupancyPct, adr: '$' + cur.m.adr, revpar: '$' + cur.m.revpar, note: str(ai.aheadNotes?.current).slice(0, 260) } : null,
+        nxt ? { label: nxt.label.toUpperCase(), status: paceStatus(nxt.m.occupancyPct, false), occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260) } : null,
+        nxt2 ? { label: nxt2.label.toUpperCase(), status: paceStatus(nxt2.m.occupancyPct, false), occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260) } : null,
       ].filter(Boolean) as any,
       strip: mAhead.map(m => ({ month: m.short, occPct: m.m.occupancyPct })),
     },
