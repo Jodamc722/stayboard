@@ -20,12 +20,15 @@ export type VendorBuilding = {
   wordTerms?: string[]  // whole-word matches, for short ambiguous codes like "pt"
   enabled: boolean      // true = vendor-cleaned. false = we clean it (in house).
   untracked?: boolean   // vendor does NOT close Breezeway tasks -> no 4pm deadline / no at-risk alarm
+  noBreezeway?: boolean // building is NOT in Breezeway at all -> boards build its day from GUESTY
 }
 
 export const DEFAULT_VENDOR_BUILDINGS: VendorBuilding[] = [
   // Botanica's vendor never closes the Breezeway task, so its cleans sit at 'not started' forever.
   // Tracking them against the 4pm deadline produced 11 false 'at risk' alerts out of 17.
-  { id: 'botanica',    label: 'Botanica',    terms: ['botanica'],            enabled: true, untracked: true },
+  // Botanica was removed from Breezeway entirely (2026-07), so there are no tasks to read: its
+  // checkouts come straight from Guesty and no Breezeway action is offered on them.
+  { id: 'botanica',    label: 'Botanica',    terms: ['botanica'],            enabled: true, untracked: true, noBreezeway: true },
   { id: 'park-towers', label: 'Park Towers', terms: ['park tower'],          wordTerms: ['pt'], enabled: true },
   { id: 'amrit',       label: 'Amrit',       terms: ['amrit'],               enabled: true },
   { id: 'capri',       label: 'Capri',       terms: ['capri'],               enabled: true },
@@ -51,6 +54,12 @@ export function vendorRegex(list: VendorBuilding[]): RegExp {
 /** Regex matching enabled vendor buildings whose vendor doesn't close Breezeway tasks. */
 export function untrackedRegex(list: VendorBuilding[]): RegExp {
   const pats = (list || []).filter(v => v && v.enabled && v.untracked).flatMap(patternsFor)
+  return pats.length ? new RegExp(pats.join('|'), 'i') : /(?!)/
+}
+
+/** Regex matching enabled vendor buildings that do not exist in Breezeway at all (Guesty-only). */
+export function noBreezewayRegex(list: VendorBuilding[]): RegExp {
+  const pats = (list || []).filter(v => v && v.enabled && v.noBreezeway).flatMap(patternsFor)
   return pats.length ? new RegExp(pats.join('|'), 'i') : /(?!)/
 }
 
