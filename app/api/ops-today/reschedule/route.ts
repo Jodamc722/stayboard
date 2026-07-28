@@ -10,11 +10,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { updateBreezewayTask } from '@/lib/breezeway'
+import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const LIVE = /confirm|checked/i
+// Occupancy uses the ONE shared rule - see lib/stay-status.
+const LIVE = { test: (v: string) => isLiveStay(v) }
 const HORIZON = 14
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
