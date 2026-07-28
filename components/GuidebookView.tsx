@@ -4,7 +4,7 @@
 // gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Paperclip, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
@@ -144,6 +144,47 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
     })
   }
 
+  // Every local spot should carry a picture. Their photos are sourced once, when the book is
+  // generated, from free stock APIs that return nothing for plenty of small businesses and hand
+  // back URLs that can disappear months later — so a page built around imagery can end up with
+  // blank cards, and nothing ever tries again. When a card has no usable photo the page asks the
+  // server for one: the same search the generator runs, name and city first, then a scene that
+  // suits the section. The server saves what it finds, so the repair happens once and every
+  // later reader — including the printed PDF, which is server-rendered — sees the picture
+  // without waiting. One request per card per session, and the result goes through `set` so an
+  // operator who is mid-edit keeps it on Save. If the replacement is dead too, `badPhotos` marks
+  // it and the card falls back to the text treatment rather than asking forever.
+  const askedPhoto = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    if (!gb?.id) return
+    const need: Array<{ k: string; i: number }> = []
+    for (const k of ['localPlaces', 'restaurants']) {
+      ;(gb.sections?.[k]?.items || []).slice(0, 6).forEach((p: any, i: number) => {
+        if (photoOk(p?.photo) || !String(p?.name || '').trim()) return
+        if (askedPhoto.current[k + ':' + i]) return
+        askedPhoto.current[k + ':' + i] = true
+        need.push({ k, i })
+      })
+    }
+    if (!need.length) return
+    // One at a time, not twelve at once. A page can need a dozen replacements, and firing them
+    // together makes the free photo API throttle us — which comes back as "no result" and leaves
+    // cards blank for no better reason than our own impatience. Nobody is waiting on this: the
+    // pictures arrive over a few seconds and are saved, so every later reader gets them at once.
+    // The loop is deliberately not cancelled on cleanup: each card is marked asked before the
+    // request goes out, so abandoning the queue mid-way would strand the rest of it for good.
+    ;(async () => {
+      for (const { k, i } of need) {
+        try {
+          const r = await fetch('/api/public/place-photo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, section: k, index: i }) })
+          const d = await r.json()
+          if (d?.photo) set([k, 'items', String(i), 'photo'], d.photo)
+        } catch { /* leave this card on its text fallback and carry on to the next */ }
+      }
+    })()
+    // Re-runs when a photo fails to load, so a card that dies after first paint gets its one ask.
+  }, [gb?.id, badPhotos])
+
   async function save() {
     setBusy(true)
     try {
@@ -209,12 +250,15 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   }, [])
   // Local places & restaurants click through to Google Maps (venue + city) on the digital view.
   const placeCity = String(s.guidelines?.address || '').split(',')[1]?.trim() || ''
-  const PlaceLink = useMemo(() => function PlaceLink({ name, addr, children }: { name?: string; addr?: string; children: any }) {
+  // `cls` lets a caller extend the link box — the place cards pass flex classes so the anchor
+  // participates in the card's column and the photo inside it can stretch. In edit mode there is
+  // no anchor and the children sit directly in the card, which is already that same column.
+  const PlaceLink = useMemo(() => function PlaceLink({ name, addr, cls, children }: { name?: string; addr?: string; cls?: string; children: any }) {
     const { edit, placeCity } = _live.current
     const nm = String(name || '').trim()
     const mq = String(addr || '').trim() ? nm + ', ' + String(addr || '').trim() : nm + (placeCity ? ', ' + placeCity : '')
     return !edit && nm
-      ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(mq)} target="_blank" rel="noreferrer" className="block transition-opacity hover:opacity-85" style={{ color: 'inherit' }}>{children}</a>
+      ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(mq)} target="_blank" rel="noreferrer" className={'block transition-opacity hover:opacity-85 ' + (cls || '')} style={{ color: 'inherit' }}>{children}</a>
       : <>{children}</>
   }, [])
 
@@ -341,6 +385,22 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         .gb-fillslot { flex: 1 1 0%; min-height: 0; container-type: size; }
         .gb-fillslot > .gb-fillphoto { display: none; height: 100%; padding-top: 26px; flex-direction: column; }
         @container (min-height: 170px) { .gb-fillslot > .gb-fillphoto { display: flex; } }
+        /* Local place cards. Six spots on a fixed Letter sheet left a dead band above the footer,
+           because each row took its natural height and the leftover pooled at the foot as margin —
+           correct for a page of prose, wrong for a grid of pictures, where the reader reads the gap
+           as a page that ran out of content. The rows share the sheet instead: the grid claims the
+           body's full height and every row takes an equal fraction of it. Inside a card only the
+           photo flexes; the note and address keep their natural size, so what grows is imagery,
+           never type, and the cards stay aligned across columns. min-height keeps a photo from
+           collapsing to a sliver next to a long note, max-height stops a page holding one or two
+           spots from printing a single enormous picture. Adapts to any count from 1 to 6. */
+        .gb-placegrid { flex: 1 1 0%; min-height: 0; grid-auto-rows: 1fr; align-content: stretch; }
+        .gb-placephoto { flex: 1 1 0%; min-height: 96px; max-height: 420px; }
+        /* Enough room for a two-line note plus the address line, which is what the copy is written
+           to. Reserving it means a spot with a short note does not get a taller photo than its
+           neighbour, so photo edges line up across a row. A longer note simply takes the space it
+           needs — the block grows, it never clips. */
+        .gb-placetext { min-height: 64px; }
         @media print {
           @page { size: letter; margin: 0; }
           html, body { background: white !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; }
@@ -754,14 +814,14 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <Kicker><L k={sec.key + '.tag'} def={sec.tag} /></Kicker>
               <H><L k={sec.key + '.heading'} def={sec.title} /></H>
               {anyPhoto ? (
-                <div className={'gb-vfill mt-8 grid flex-1 gap-6 ' + (few ? 'grid-cols-1' : 'grid-cols-2')}>
+                <div className={'gb-placegrid mt-8 grid gap-6 ' + (few ? 'grid-cols-1' : 'grid-cols-2')}>
                   {items.map((p: any, i: number) => (
-                    <div key={i} className={!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : ''}>
-                      <PlaceLink name={p.name} addr={p.address}>
+                    <div key={i} className={'flex min-h-0 flex-col ' + (!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : '')}>
+                      <PlaceLink name={p.name} addr={p.address} cls="flex min-h-0 flex-1 flex-col">
                       {/* When a card has no usable photo but its neighbours do, it stays compact
                           instead of reserving photo height, which used to leave a tall empty box. */}
                       {photoOk(p.photo) ? (
-                        <div className={'relative overflow-hidden ' + (few ? 'h-[190px]' : 'h-[145px]')}>
+                        <div className="gb-placephoto relative overflow-hidden">
                           <img loading="lazy" decoding="async" src={p.photo} alt="" onError={() => photoFailed(p.photo)} className="h-full w-full object-cover" />
                           <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.62), rgba(10,10,12,0.02) 55%)' }} />
                           <span className="absolute right-3 top-3 h-px w-10 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />
@@ -774,14 +834,23 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                           {pickBtn([sec.key, 'items', String(i), 'photo'])}
                         </div>
                       )}
-                      {p.note ? <p className="mt-2 text-[11px] font-light leading-[1.65] opacity-80"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p> : null}
-                      {(edit || p.address || p.phone) ? <p className="mt-1 text-[10px] font-light tracking-wide opacity-60"><T path={[sec.key, 'items', String(i), 'address'] as any} value={p.address} rows={1} />{p.address && p.phone ? ' · ' : ''}<Tel v={p.phone}><T path={[sec.key, 'items', String(i), 'phone'] as any} value={p.phone} rows={1} /></Tel></p> : null}
+                      {/* The caption block reserves a fixed height (see .gb-placetext) so that a
+                          one-line note and a two-line note leave their photos the same amount of
+                          room. Without it the photos in a row end at different heights and the
+                          grid reads as ragged rather than as a set. */}
+                      <div className="gb-placetext">
+                        {p.note ? <p className="mt-2 text-[11px] font-light leading-[1.65] opacity-80"><T path={[sec.key, 'items', String(i), 'note'] as any} value={p.note} rows={2} /></p> : null}
+                        {(edit || p.address || p.phone) ? <p className="mt-1 text-[10px] font-light tracking-wide opacity-60"><T path={[sec.key, 'items', String(i), 'address'] as any} value={p.address} rows={1} />{p.address && p.phone ? ' · ' : ''}<Tel v={p.phone}><T path={[sec.key, 'items', String(i), 'phone'] as any} value={p.phone} rows={1} /></Tel></p> : null}
+                      </div>
                       </PlaceLink>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="gb-vfill mt-9 grid flex-1 grid-cols-2 gap-x-10 gap-y-7">
+                // Last resort: no imagery anywhere in the section and nothing found to replace it.
+                // The entries still share the whole sheet rather than stacking at the top, so the
+                // page reads as a spaced list and not as one that ran out halfway down.
+                <div className="gb-placegrid mt-9 grid grid-cols-2 gap-x-10 gap-y-7">
                   {items.map((p: any, i: number) => (
                     <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
                       {pickBtn([sec.key, 'items', String(i), 'photo'], false)}
