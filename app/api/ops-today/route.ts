@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
-import { vendorRegex, untrackedRegex } from '@/lib/ops-presets'
+import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -176,6 +176,28 @@ export async function GET(req: NextRequest) {
       }
       unitMap[t.listingId].tasks.push(t)
     }
+    // GUESTY-ONLY BUILDINGS: a vendor building can be gone from Breezeway completely (Botanica).
+    // There is no task to read, but the checkout still has to appear on the board - so the unit
+    // card is built from the Guesty reservation and carries no Breezeway actions.
+    const NOBZ_RE = noBreezewayRegex(presets.vendorBuildings)
+    for (const id of Object.keys(outToday)) {
+      if (unitMap[id]) continue
+      const li = lmap[id]
+      const nm = li ? str(li.name) : ''
+      if (!nm || !NOBZ_RE.test(nm)) continue
+      unitMap[id] = {
+        listingId: id, unit: nm, market: li.market, guestOut: outToday[id] || null,
+        city: li.city || null, lat: li.lat || null, lng: li.lng || null,
+        sameDayTurn: !!(outToday[id] && inToday[id]), qc: qcByListing[id] || [], guestyOnly: true,
+        tasks: [{
+          id: 'guesty:' + id, listingId: id, unit: nm, market: li.market, dept: 'housekeeping',
+          type: 'departure_clean', name: 'Departure clean (vendor)', status: 'vendor', assignees: [],
+          startedAt: null, finishedAt: null, minutes: null, reportUrl: null,
+          done: false, running: false, clocked: false, late: false, atRisk: false, missed: false,
+          untracked: true, guestyOnly: true,
+        }],
+      }
+    }
     const ORDER: Record<string, number> = { departure_clean: 0, strip: 1, deep_clean: 2, inspection: 3, audit: 4, pm: 5, field: 6, pool_pest: 7, maintenance: 8, other: 9 }
     const units = Object.keys(unitMap).map(k => {
       const u = unitMap[k]
@@ -185,6 +207,7 @@ export async function GET(req: NextRequest) {
       u.unassigned = u.tasks.some((t: any) => t.assignees.length === 0 && !t.done)
       u.untracked = u.tasks.some((t: any) => t.untracked)
       u.allDone = u.tasks.every((t: any) => t.done)
+      u.guestyOnly = !!u.guestyOnly || u.tasks.every((t: any) => t.guestyOnly)
       u.openTasks = u.tasks.filter((t: any) => !t.done).length
       return u
     })
