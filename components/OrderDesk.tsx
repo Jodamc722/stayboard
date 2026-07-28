@@ -11,7 +11,7 @@
 // worklist with a proof photo. Data: /api/audit?orders=1 (session-auth).
 import { useEffect, useState } from 'react'
 
-type Row = { id: string; audit_id: string; listing_id: string; room: string; kind: string; title: string | null; qty: number | null; note: string | null; photo_url: string | null; status: string; details: any; created_at: string; unit: string; building: string; breezeway_task_id?: string | null; report_url?: string | null }
+type Row = { id: string; audit_id: string; listing_id: string; room: string; kind: string; title: string | null; qty: number | null; note: string | null; photo_url: string | null; severity?: string | null; status: string; details: any; created_at: string; unit: string; building: string; breezeway_task_id?: string | null; report_url?: string | null }
 
 type Stage = 'blocked' | 'owner' | 'ready' | 'ordered' | 'arriving' | 'received' | 'installed'
 
@@ -216,6 +216,41 @@ export function OrderDesk() {
   }
   const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
+  // WHAT IS ALLOWED TO SHOUT. Everything on this board needs attention by definition, so only two
+  // things get to raise their voice: a guest is being affected right now, and something the field
+  // reported in the last 48h that nobody has looked at yet. Everything else stays quiet.
+  const isUrgent = (it: Row) => String(it.severity || '') === 'high' && stageOf(it) !== 'installed'
+  const isNew = (it: Row) => {
+    const d = (it.details && typeof it.details === 'object') ? it.details : {}
+    if (d.source !== 'field_request') return false
+    const t = Date.parse(String(it.created_at || ''))
+    return Number.isFinite(t) && (Date.now() - t) < 48 * 3600 * 1000
+  }
+  // A recommendation is an ADD that par does not require — a nice-to-have rather than a gap.
+  // Par restocks are requirements, so they are never recommendations.
+  const isRec = (it: Row) => it.kind === 'add' && !(it.details && it.details.restock) && !isUrgent(it)
+  // Urgent first, then unseen field reports, then the biggest money — the order you would work in.
+  const deskSort = (a2: Row, b2: Row) => {
+    const ua = isUrgent(a2) ? 0 : 1, ub = isUrgent(b2) ? 0 : 1
+    if (ua !== ub) return ua - ub
+    const na = isNew(a2) ? 0 : 1, nb = isNew(b2) ? 0 : 1
+    if (na !== nb) return na - nb
+    return lineCost(b2) - lineCost(a2)
+  }
+  const sum = (list: Row[]) => list.reduce((n, it) => n + lineCost(it), 0)
+
+  // Top-of-page rail. These are the five numbers a manager actually opens this page for.
+  let nUrgent = 0, nNew = 0, nMine = 0, mMine = 0, nOwner = 0, mOwner = 0, mReady = 0
+  for (const it of rows) {
+    const st = stageOf(it)
+    if (st === 'installed') continue
+    if (isUrgent(it)) nUrgent++
+    if (isNew(it)) nNew++
+    if (st === 'blocked') { nMine++; mMine += lineCost(it) }
+    if (st === 'owner') { nOwner++; mOwner += lineCost(it) }
+    if (st === 'ready') mReady += lineCost(it)
+  }
+
   // ---- BY UNIT grouping ----
   const byBldg: Record<string, Record<string, Row[]>> = {}
   for (const it of visible) { const b = it.building || 'Other'; if (!byBldg[b]) byBldg[b] = {}; if (!byBldg[b][it.unit]) byBldg[b][it.unit] = []; byBldg[b][it.unit].push(it) }
@@ -369,9 +404,14 @@ export function OrderDesk() {
   const rowCard = (it: Row, showUnit: boolean) => {
     const st = stageOf(it)
     const link = it.details && it.details.link ? String(it.details.link) : ''
-    const dim = st === 'blocked' || st === 'owner'
+    const urgent = isUrgent(it)
+    const fresh = isNew(it)
+    // The stage pill is NOISE when the whole list is already that stage - only show it when this
+    // line differs from the filter you are looking at.
+    const showStage = tf === 'all' || (FILTERS.find(x => x.key === tf) || { stages: [] as Stage[] }).stages.indexOf(st) < 0 || st === 'owner'
+    const dim = (st === 'blocked' || st === 'owner') && !urgent
     return (
-      <div key={it.id} className={'rounded-lg border border-line p-2 ' + (dim ? 'bg-neutral-50/60' : '')}>
+      <div key={it.id} className={'rounded-lg border p-2 ' + (urgent ? 'border-rose-200 border-l-4 border-l-rose-500 bg-rose-50/50' : 'border-line ' + (dim ? 'bg-neutral-50/60' : ''))}>
         <div className="flex flex-wrap items-center gap-2">
           <input type="checkbox" checked={!!sel[it.id]} onChange={e => setSel(s => ({ ...s, [it.id]: e.target.checked }))} className="shrink-0" />
           <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded border ' + (it.kind === 'add' ? 'bg-sky-100 text-sky-800 border-sky-300' : 'bg-rose-100 text-rose-700 border-rose-300')}>{it.kind === 'add' ? 'Add' : 'Replace'}</span>
@@ -380,9 +420,12 @@ export function OrderDesk() {
           {it.details && it.details.source === 'field_request' ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-violet-100 text-violet-800 border-violet-300" title={'Reported from the field' + (it.details.requestedBy ? ' by ' + it.details.requestedBy : '') + (it.details.ref ? ' · ' + it.details.ref : '')}>{it.details.ref || 'Field'}</span> : null}
           {showUnit ? <span className="text-[11px] text-muted">{it.unit}</span> : null}
           {it.room ? <span className="text-[11px] text-muted">{it.room}</span> : null}
-          <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + STAGE_CLS[st]}>{STAGE_LABEL[st]}</span>
-          {estOf(it) ? <span className="text-[11px] text-muted">{money(lineCost(it))}</span> : null}
-          <span className="ml-auto flex items-center gap-1">
+          {urgent ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white">Urgent</span> : null}
+          {fresh ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-600 text-white">New</span> : null}
+          {isRec(it) ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-slate-100 text-slate-600 border-slate-200" title="Nice to have - par does not require it">Recommendation</span> : null}
+          {showStage ? <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + STAGE_CLS[st]}>{STAGE_LABEL[st]}</span> : null}
+          <span className="ml-auto flex items-center gap-2">
+            <span className={'w-[74px] text-right tabular-nums text-[13px] font-semibold ' + (estOf(it) ? 'text-ink' : 'text-muted/50 font-normal')}>{estOf(it) ? money(lineCost(it)) : 'no price'}</span>
             {actionBtn(it)}
             <button onClick={() => setMoreFor(m => m === it.id ? '' : it.id)} className="text-[11px] font-semibold px-1.5 py-1 rounded-lg border border-line text-muted">⋯</button>
           </span>
@@ -417,6 +460,38 @@ export function OrderDesk() {
 
   return (
     <div>
+      {/* SUMMARY RAIL - the five numbers worth opening this page for */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {nUrgent > 0 ? (
+          <button onClick={() => { setTf('all'); setQ('') }} className="text-left rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 min-w-[124px]">
+            <div className="text-[10px] uppercase tracking-wider text-rose-500 font-bold">Urgent</div>
+            <div className="text-xl font-bold text-rose-700 tabular-nums leading-tight">{nUrgent}</div>
+            <div className="text-[11px] text-rose-500">guest affected</div>
+          </button>
+        ) : null}
+        {nNew > 0 ? (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2 min-w-[124px]">
+            <div className="text-[10px] uppercase tracking-wider text-violet-500 font-bold">New</div>
+            <div className="text-xl font-bold text-violet-700 tabular-nums leading-tight">{nNew}</div>
+            <div className="text-[11px] text-violet-500">from the field, 48h</div>
+          </div>
+        ) : null}
+        <div className="rounded-xl border border-line bg-white px-3.5 py-2 min-w-[124px]">
+          <div className="text-[10px] uppercase tracking-wider text-muted font-bold">Awaiting you</div>
+          <div className="text-xl font-bold text-ink tabular-nums leading-tight">{nMine}</div>
+          <div className="text-[11px] text-muted">{money(mMine)}</div>
+        </div>
+        <div className="rounded-xl border border-line bg-white px-3.5 py-2 min-w-[124px]">
+          <div className="text-[10px] uppercase tracking-wider text-muted font-bold">With owner</div>
+          <div className="text-xl font-bold text-ink tabular-nums leading-tight">{nOwner}</div>
+          <div className="text-[11px] text-muted">{money(mOwner)}</div>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 min-w-[124px]" title="Approved and not yet installed">
+          <div className="text-[10px] uppercase tracking-wider text-emerald-600 font-bold">Approved</div>
+          <div className="text-xl font-bold text-emerald-700 tabular-nums leading-tight">{money(mReady)}</div>
+          <div className="text-[11px] text-emerald-600">ready to buy</div>
+        </div>
+      </div>
       {/* status strip */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         {FILTERS.map(f => (
@@ -424,7 +499,7 @@ export function OrderDesk() {
             {f.label}{' · '}{counts[f.key] === undefined ? 0 : counts[f.key]}
           </button>
         ))}
-        <span className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200" title="Estimated cost of all approved, not-yet-installed items">{money(outstanding)} outstanding</span>
+        <span className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-app text-muted border border-line" title="Estimated cost of everything still open on this board">{money(outstanding)} open</span>
       </div>
       {/* controls */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -514,7 +589,7 @@ export function OrderDesk() {
                     {nReady ? <button onClick={() => groupAct(key, 'order')} disabled={bulkBusy} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50">Order {nReady}</button> : null}
                   </span>
                 </div>
-                {open ? <div className="p-2.5 space-y-1.5">{items.slice().sort((a, b) => (a.building || '').localeCompare(b.building || '') || a.unit.localeCompare(b.unit)).map(it => rowCard(it, true))}</div> : null}
+                {open ? <div className="p-2.5 space-y-1.5">{items.slice().sort(deskSort).map(it => rowCard(it, true))}</div> : null}
               </div>
             )
           })}
@@ -529,14 +604,29 @@ export function OrderDesk() {
             let n = 0; for (const u of units) n += byBldg[b][u].length
             return (
               <div key={b} className="rounded-xl border border-line bg-white shadow-soft">
-                <div className="px-4 py-2.5 border-b border-line text-sm font-bold text-ink">{b} <span className="text-muted font-semibold">· {n} item{n === 1 ? '' : 's'}</span></div>
+                <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+                  <span className="text-sm font-bold text-ink">{b}</span>
+                  <span className="text-[12px] text-muted">{units.length} unit{units.length === 1 ? '' : 's'} · {n} line{n === 1 ? '' : 's'}</span>
+                  <span className="ml-auto text-sm font-bold text-ink tabular-nums">{money(sum(units.flatMap(u => byBldg[b][u])))}</span>
+                </div>
                 <div className="divide-y divide-line">
-                  {units.map(u => (
+                  {units.map(u => {
+                    const list = byBldg[b][u].slice().sort(deskSort)
+                    const uUrg = list.filter(isUrgent).length
+                    const uNew = list.filter(isNew).length
+                    return (
                     <div key={u} className="px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">{u}</div>
-                      <div className="space-y-1.5">{byBldg[b][u].map(it => rowCard(it, false))}</div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">{u}</span>
+                        <span className="text-[11px] text-muted">{list.length} line{list.length === 1 ? '' : 's'}</span>
+                        {uUrg ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white">{uUrg} urgent</span> : null}
+                        {uNew ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-600 text-white">{uNew} new</span> : null}
+                        <span className="ml-auto text-[13px] font-bold text-ink tabular-nums">{money(sum(list))}</span>
+                      </div>
+                      <div className="space-y-1.5">{list.map(it => rowCard(it, false))}</div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )
