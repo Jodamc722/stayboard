@@ -3,6 +3,7 @@
 // replace; AI only assists (photo tagging + per-room suggestions). Breezeway tasks are created
 // in the desktop app, never here.
 import { useEffect, useRef, useState } from 'react'
+import { DEFAULT_PAR, parForRoom, parKey, unitShape, type ParTable, type UnitShape } from '@/lib/par-levels'
 
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; details?: any }
 type Listing = { id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null }
@@ -100,6 +101,12 @@ export default function AuditCapture({ code }: { code: string }) {
   const [shotIdx, setShotIdx] = useState(-1)
   const [shotMap, setShotMap] = useState<Record<number, string>>({})
   const [essBusy, setEssBusy] = useState(false)
+  // PAR levels — the required count of each essential for THIS unit. Loaded from the server so
+  // owner overrides apply; falls back to the shipped table if the fetch fails, never blocks the walk.
+  const [parTable, setParTable] = useState<ParTable>(DEFAULT_PAR)
+  const [parShape, setParShape] = useState<UnitShape>({ bedrooms: 1, bathrooms: 1, guests: 2, beds: 1 })
+  const [restockBusy, setRestockBusy] = useState(false)
+  const [restockMsg, setRestockMsg] = useState('')
   const [wkText, setWkText] = useState('')
   const [wkBusy, setWkBusy] = useState(false)
   const [wkItems, setWkItems] = useState<any[]>([])
@@ -125,6 +132,12 @@ export default function AuditCapture({ code }: { code: string }) {
     } catch { setErr('Network error - reload to retry.') }
   }
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    fetch('/api/audit/par?code=' + encodeURIComponent(code))
+      .then(r => r.json())
+      .then(j => { if (j && j.ok) { if (j.table) setParTable(j.table); if (j.shape) setParShape(j.shape) } })
+      .catch(() => { /* shipped defaults stand in */ })
+  }, [code])
 
   const items = data ? data.items : []
   const done = !!(data && data.audit && data.audit.status === 'completed')
@@ -442,17 +455,55 @@ export default function AuditCapture({ code }: { code: string }) {
     try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: it.id, fields: { title: iedT, note: iedN, brand: iedB, size: iedSz } }) }); setIedId(''); await load() } catch { alert('Failed - retry.') }
     setIedBusy(false)
   }
-  function essFor(room: string): string[] {
-  const parts = room.split(' — ')
-  const r = String(parts[parts.length - 1] || room).toLowerCase()
-  if (r.indexOf('kitchen') >= 0) return ['Plates', 'Bowls', 'Glasses', 'Mugs', 'Silverware', 'Cooking utensils', 'Pots + pans', 'Knife set', 'Cutting board', 'Baking sheet', 'Coffee maker', 'Toaster', 'Blender', 'Kettle', 'Can opener', 'Wine opener', 'Trash bin']
-  if (r.indexOf('bath') >= 0) return ['Bath towels', 'Hand towels', 'Bath mat', 'Hair dryer', 'Plunger', 'Trash bin']
-  if (r.indexOf('bedroom') >= 0 || r.indexOf('master') >= 0) return ['Pillows', 'Extra linens', 'Hangers', 'Iron', 'Luggage rack', 'Safe']
-  if (r.indexOf('living') >= 0) return ['Throw blankets', 'Extra pillows', 'Board games']
-  if (r.indexOf('laundry') >= 0 || r.indexOf('hall') >= 0 || r.indexOf('utility') >= 0) return ['Vacuum', 'Broom + dustpan', 'Mop', 'Ironing board', 'First aid kit', 'Fire extinguisher']
-  if (r.indexOf('balcony') >= 0 || r.indexOf('patio') >= 0) return ['Outdoor seating', 'Outdoor table']
-  return []
-}
+  // The essentials for a room now come from the PAR table, so the label list and the required
+  // count can never drift apart. parRows adds what the walker has actually counted.
+  function essFor(room: string): string[] { return parForRoom(room, parShape, parTable).map(x => x.item) }
+  function parRows(room: string): { item: string; par: number; have: number; short: number }[] {
+    return parForRoom(room, parShape, parTable).map(p => {
+      let have = 0
+      for (const it of items) {
+        if (it.kind !== 'inventory' || it.room !== room) continue
+        if (parKey(it.title) !== parKey(p.item)) continue
+        have += Math.max(1, Number(it.qty) || 1)
+      }
+      return { item: p.item, par: p.par, have, short: Math.max(0, p.par - have) }
+    })
+  }
+  function shortAll(): { room: string; item: string; qty: number }[] {
+    const out: { room: string; item: string; qty: number }[] = []
+    for (const r of ordered) for (const p of parRows(r)) if (p.short > 0) out.push({ room: r, item: p.item, qty: p.short })
+    return out
+  }
+  async function decEss(room: string, label: string) {
+    if (essBusy) return
+    const ex = items.find(it => it.room === room && it.kind === 'inventory' && parKey(it.title) === parKey(label))
+    if (!ex) return
+    setEssBusy(true)
+    try {
+      const n = (Number(ex.qty) || 1) - 1
+      if (n >= 1) await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: ex.id, fields: { qty: n } }) })
+      else await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: ex.id }) })
+    } catch {}
+    setEssBusy(false)
+    await load()
+  }
+  // Turn every shortfall on the walk into order lines in one tap. The server re-derives each gap
+  // from its own par table and skips anything already on order, so this is safe to press twice.
+  async function createRestock() {
+    if (restockBusy) return
+    const shortfalls = shortAll()
+    if (!shortfalls.length) { setRestockMsg('Everything is at par.'); return }
+    setRestockBusy(true); setRestockMsg('')
+    try {
+      const r = await fetch('/api/audit/par', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, shortfalls }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) setRestockMsg(j.error || 'Could not create the restock.')
+      else if (!j.created) setRestockMsg(j.note || 'Nothing new to order.')
+      else setRestockMsg('Added ' + j.created + ' restock line' + (j.created > 1 ? 's' : '') + ' (' + j.units + ' units) to the order desk.')
+      await load()
+    } catch { setRestockMsg('Network error - retry.') }
+    setRestockBusy(false)
+  }
 function shotsFor(room: string, tagTitles: string[]): string[] {
   const out: string[] = []
   const has = (re: RegExp) => tagTitles.some(x => re.test(x))
@@ -711,7 +762,9 @@ function quickTags(r: string): string[] {
               <div className="px-3.5 pb-3.5 space-y-2">
                 {!isOnboarding && !done ? (() => {
                   const maint = pmFor(room)
-                  const inv = essFor(room)
+                  // Inventory is no longer a Good/Flag checkpoint — the par panel below counts it
+                  // properly (have vs required) and turns any gap into an order line.
+                  const inv: string[] = []
                   const all = maint.concat(inv)
                   const total = all.length
                   const doneN = all.filter(l => walkOK[wkKey(room, l)] || !!walkItemFor(room, l)).length
@@ -803,16 +856,30 @@ function quickTags(r: string): string[] {
                       </div>
                     )
                   })() : null}
-                  {!done && isOnboarding && essFor(room).length ? (
-                    <div className="mb-1.5 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
-                      <div className="text-[11px] font-semibold text-emerald-800 mb-1">Essentials - tap what the unit has <span className="font-normal text-emerald-500">tap again for +1</span></div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {essFor(room).map((lbl, i) => { const ex = roomItems.find(x => x.kind === 'inventory' && String(x.title || '').toLowerCase() === lbl.toLowerCase()); return (
-                          <button key={i} onClick={() => bumpEss(room, lbl)} disabled={essBusy} className={'text-xs font-semibold px-2 py-1 rounded-md border ' + (ex ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-700 border-emerald-300')}>{ex && (Number(ex.qty) || 1) > 1 ? ex.qty + '× ' : ''}{ex ? '✓ ' : ''}{lbl}</button>
-                        ) })}
+                  {!done && parRows(room).length ? (() => {
+                    const pr = parRows(room)
+                    const shortN = pr.filter(p => p.short > 0).length
+                    return (
+                      <div className="mb-1.5 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="text-[11px] font-semibold text-emerald-800">Inventory vs par</div>
+                          <span className="text-[10px] text-emerald-500">count what is here &middot; par is for {parShape.guests} guests</span>
+                          <div className="flex-1" />
+                          {shortN ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{shortN} short</span> : <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">at par</span>}
+                        </div>
+                        <div className="space-y-1">
+                          {pr.map((p, i) => (
+                            <div key={i} className="flex items-center gap-1.5 rounded-md bg-white border border-emerald-100 px-2 py-1">
+                              <span className={'flex-1 text-[13px] ' + (p.short > 0 ? 'text-amber-800 font-medium' : 'text-neutral-700')}>{p.item}</span>
+                              <span className={'text-[11px] tabular-nums font-semibold ' + (p.short > 0 ? 'text-amber-700' : 'text-emerald-600')}>{p.have} / {p.par}</span>
+                              <button onClick={() => decEss(room, p.item)} disabled={essBusy || p.have === 0} className="w-6 h-6 rounded border border-neutral-200 text-neutral-500 text-sm leading-none disabled:opacity-30">&minus;</button>
+                              <button onClick={() => bumpEss(room, p.item)} disabled={essBusy} className="w-6 h-6 rounded border border-emerald-300 text-emerald-700 font-bold text-sm leading-none disabled:opacity-40">+</button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
+                    )
+                  })() : null}
                   {isOnboarding ? <div className="flex gap-1.5">
                     <button onClick={() => stageCamera(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">{orgBusy && orgRoom === room ? 'Uploading…' : '📷 Take photos'}</button>
                     <button onClick={() => stageGallery(room)} disabled={orgBusy && orgRoom === room} className="flex-1 text-sm font-semibold px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 disabled:opacity-50">🖼 Gallery</button>
@@ -981,6 +1048,19 @@ function quickTags(r: string): string[] {
         <input value={newRoom} onChange={e => setNewRoom(e.target.value)} placeholder="Add a space (room, garage, hallway…)" className="flex-1 text-sm border border-neutral-200 rounded-lg px-2.5 py-2 bg-white" />
         <button onClick={() => { const n = newRoom.trim(); if (n && customRooms.indexOf(n) < 0) { setCustomRooms(c => [...c, n]); setOpenRoom(n) } setNewRoom('') }} className="text-sm font-semibold px-3 rounded-lg border border-neutral-200 bg-white">Add</button>
       </div>
+      {!done ? (() => {
+        const sf = shortAll()
+        const units = sf.reduce((n, x) => n + x.qty, 0)
+        if (!sf.length && !restockMsg) return null
+        return (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="text-[13px] font-bold text-amber-900">{sf.length ? sf.length + ' item' + (sf.length > 1 ? 's' : '') + ' below par · ' + units + ' to order' : 'Restock'}</div>
+            {sf.length ? <div className="mt-1 text-[11px] text-amber-700 leading-snug">{sf.slice(0, 6).map(x => x.qty + '× ' + x.item).join(' · ')}{sf.length > 6 ? ' + ' + (sf.length - 6) + ' more' : ''}</div> : null}
+            {sf.length ? <button onClick={createRestock} disabled={restockBusy} className="mt-2 w-full rounded-lg bg-amber-600 text-white text-[13px] font-bold py-2 disabled:opacity-50">{restockBusy ? 'Adding…' : 'Add restock to the order desk'}</button> : null}
+            {restockMsg ? <div className="mt-1.5 text-[11px] font-medium text-amber-800">{restockMsg}</div> : null}
+          </div>
+        )
+      })() : null}
       {!done && items.length > 0 ? <button onClick={completeAudit} className="w-full mt-4 rounded-xl bg-emerald-600 text-white text-sm font-bold py-3">Complete audit ✓</button> : null}
       <div className="text-center text-[10px] text-neutral-300 mt-6">Stay Hospitality · items sync to the office in real time</div>
     </div>
