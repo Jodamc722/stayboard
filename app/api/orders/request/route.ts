@@ -17,7 +17,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const KINDS = ['replace', 'add', 'maintenance']
+// Order (replace | add) = costs money, lands on the order desk. Fix + clean = team work, no buy.
+const KINDS = ['replace', 'add', 'maintenance', 'clean']
 
 // Find the unit's open audit, or start one. Order lines live on audits, so a field request needs a
 // home; reusing the open audit keeps everything for a unit in one place instead of spawning a new
