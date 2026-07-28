@@ -7,9 +7,9 @@ import Link from 'next/link'
 import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck, MessageSquare } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
 
-type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean }
+type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean ; city?: string | null; lat?: number | null; lng?: number | null }
+type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; lat?: number | null; lng?: number | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
@@ -369,18 +369,19 @@ export function TodayInOps() {
                   <div className="flex-1 min-w-0">
                     <div className="text-ink truncate">{t.name}</div>
                     <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
-                      <Assign task={t} people={people} onDone={load} />
+                      {t.guestyOnly ? <span className="text-[11px] text-muted">Vendor-cleaned {'\u00b7'} no Breezeway task</span> : <Assign task={t} people={people} onDone={load} />}
                       <span>{t.finishedAt ? '· done ' + hhmm(t.finishedAt) : t.startedAt ? '· started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
                     </div>
                   </div>
-                  <span className={'text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ' + statusCls(t)}>{statusText(t)}</span>
-                  <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" title="Open the ADMIN task in Breezeway \u2014 edit, assign, modify, check" className="text-xs font-medium text-brand-600 hover:underline shrink-0 opacity-70 group-hover:opacity-100">admin</a>
-                  {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" title="View the field report" className="text-xs text-muted hover:underline shrink-0 opacity-70 group-hover:opacity-100">report</a>}
-                  {!t.done && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50') + ' opacity-70 group-hover:opacity-100'}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
+                  <span className={'text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ' + statusCls(t)}>{t.guestyOnly ? 'Vendor' : statusText(t)}</span>
+                  {t.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. Nothing to assign or track here." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-300 shrink-0">Guesty only</span>}
+                  {!t.guestyOnly && <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" title="Open the ADMIN task in Breezeway \u2014 edit, assign, modify, check" className="text-xs font-medium text-brand-600 hover:underline shrink-0 opacity-70 group-hover:opacity-100">admin</a>}
+                  {!t.guestyOnly && t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" title="View the field report" className="text-xs text-muted hover:underline shrink-0 opacity-70 group-hover:opacity-100">report</a>}
+                  {!t.done && !t.guestyOnly && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50') + ' opacity-70 group-hover:opacity-100'}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
                   <button onClick={() => setCmtFor(cmtFor === t.id ? '' : t.id)} title="Comment on this task — teammates you tag get a notification, and everyone on the thread hears about replies" className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 inline-flex items-center gap-1 ' + (cmtFor === t.id ? 'bg-ink text-white border-ink' : cmtCounts[t.id] ? 'bg-sky-50 text-sky-700 border-sky-300' : 'bg-white text-muted border-line hover:bg-app opacity-70 group-hover:opacity-100')}><MessageSquare size={11} />{cmtCounts[t.id] ? cmtCounts[t.id] : ''}</button>
-                  {!t.done && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1 opacity-60 group-hover:opacity-100">✕</button>}
+                  {!t.done && !t.guestyOnly && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1 opacity-60 group-hover:opacity-100">✕</button>}
                 </div>
-                {cmtFor === t.id && <div className="px-4 pb-3"><CommentThread type="task" id={String(t.id)} label={u.unit + ' — ' + t.name} link="/plan" taskId={String(t.id)} onCount={n => setCmtCounts(prev => ({ ...prev, [t.id]: n }))} /></div>}
+                {cmtFor === t.id && <div className="px-4 pb-3"><CommentThread type="task" id={String(t.id)} label={u.unit + ' — ' + t.name} link="/plan" taskId={t.guestyOnly ? '' : String(t.id)} onCount={n => setCmtCounts(prev => ({ ...prev, [t.id]: n }))} /></div>}
                 </div>
               ))}
             </div>
