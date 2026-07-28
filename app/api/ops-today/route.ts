@@ -8,6 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
+import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
     const outToday: Record<string, string> = {}
     const inToday: Record<string, boolean> = {}
     for (const r of (rRes.data || []) as any[]) {
-      if (!/confirm|checked/i.test(str(r.status))) continue
+      if (!isLiveStay(r.status)) continue
       const id = String(r.listing_id)
       if (str(r.check_out).slice(0, 10) === today) outToday[id] = r.guest_name || 'Guest'
       if (str(r.check_in).slice(0, 10) === today) inToday[id] = true
@@ -139,12 +140,12 @@ export async function GET(req: NextRequest) {
     ])
     const occupied: Record<string, string> = {}
     for (const r of (occRes.data || []) as any[]) {
-      if (!/confirm|checked/i.test(str(r.status))) continue
+      if (!isLiveStay(r.status)) continue
       occupied[String(r.listing_id)] = r.guest_name || 'Guest'
     }
     const nextIn: Record<string, string> = {}
     for (const r of (nextRes.data || []) as any[]) {
-      if (!/confirm|checked/i.test(str(r.status))) continue
+      if (!isLiveStay(r.status)) continue
       const id = String(r.listing_id)
       if (!nextIn[id]) nextIn[id] = str(r.check_in).slice(0, 10)
     }
