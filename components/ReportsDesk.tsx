@@ -317,7 +317,7 @@ export function ReportsDesk() {
                     ? ' One statement selected: the report gets a single-owner statement section for that month.'
                     : stmtPicked.length > 1
                       ? ' ' + stmtPicked.length + ' statements selected: the report rolls them up by month, with a per-owner breakdown.'
-                      : ' Nothing selected &mdash; the report will be generated without an Owner Statement section.'}
+                      : ' Nothing selected — the report will be generated without an Owner Statement section.'}
                 </p>
               </div>
             )}
