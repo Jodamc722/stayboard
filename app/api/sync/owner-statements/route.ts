@@ -47,13 +47,21 @@ export async function POST(req: NextRequest) {
         sb.from('guesty_owner_ledger').select('id', { count: 'exact', head: true }),
         sb.from('guesty_ledger_months').select('month, status, rows_synced, last_error, completed_at').order('month'),
       ])
+      // A count comes back null on error as well as on an empty table, so report the errors
+      // rather than printing a confident row of zeros for a schema that does not exist yet.
+      const errs = [owners.error, stmts.error, ledger.error, months.error]
+        .map(e => (e ? String(e.message) : ''))
+        .filter(Boolean)
       return NextResponse.json({
-        ok: true,
+        ok: errs.length === 0,
+        migrated: errs.length === 0,
         owners: owners.count ?? 0,
         statements: stmts.count ?? 0,
         ledgerRows: ledger.count ?? 0,
         months: months.data || [],
-      })
+        errors: errs,
+        hint: errs.length ? 'Run supabase/migrations/014_owner_statements.sql, then sync.' : undefined,
+      }, { status: errs.length ? 503 : 200 })
     }
 
     const out: any = { ok: true }
