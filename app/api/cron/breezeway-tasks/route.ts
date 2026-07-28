@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncBreezewayTasks } from '@/lib/breezeway-sync'
+import { syncBreezewayComments } from '@/lib/breezeway-comment-sync'
 import { revalidateTag } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
@@ -19,8 +20,12 @@ async function run(req: NextRequest) {
     }
   }
   const result = await syncBreezewayTasks(250000)
+  // Field replies written inside Breezeway come back into the app threads and notify whoever
+  // is following that task. Best effort - a comment failure must never fail the task mirror.
+  let comments: any = null
+  try { comments = await syncBreezewayComments(120) } catch (e) { comments = { error: String((e as any)?.message || e).slice(0, 120) } }
   try { revalidateTag('schedule') } catch {}
-  return NextResponse.json({ ranAt: new Date().toISOString(), ...result })
+  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments })
 }
 
 export async function GET(req: NextRequest) {
