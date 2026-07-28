@@ -1613,15 +1613,24 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               {/* KPI band — the four figures an owner actually asks about. */}
               {Array.isArray(c.statement.kpis) && c.statement.kpis.length > 0 && (
                 <div className={'mt-6 grid gap-4 ' + (c.statement.kpis.length >= 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-2')}>
-                  {c.statement.kpis.map((k: Any, i: number) => (
+                  {c.statement.kpis.map((k: Any, i: number) => {
+                    // Measured on the live report: the card is 196px wide, so a seven-figure value
+                    // at text-3xl needs 171px of a 154px inner box and spills past the border. A
+                    // label that wraps to two lines ("MANAGEMENT COMMISSION") also pushes its value
+                    // 15px below the other three. Reserve two label lines and step the value size
+                    // down by length so the band stays flush whatever an owner's figures are.
+                    const vlen = String(k.value || '').length
+                    const vpx = vlen >= 12 ? 20 : vlen >= 10 ? 24 : vlen >= 9 ? 27 : 30
+                    return (
                     <div key={i} className="rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>{k.label}</p>
-                      <p className="mt-2 text-3xl font-black tabular-nums" style={{ color: t.ink }}>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] leading-[1.3] min-h-[26px]" style={{ color: t.muted }}>{k.label}</p>
+                      <p className="mt-2 font-black tabular-nums whitespace-nowrap" style={{ color: t.ink, fontSize: vpx, lineHeight: 1.1 }}>
                         <Ed v={k.value || ''} set={v => patch('statement.kpis.' + i + '.value', v)} edit={edit} />
                       </p>
                       <p className="mt-1 text-[12px] font-semibold" style={{ color: t.sub }}>{k.sub}</p>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
 
