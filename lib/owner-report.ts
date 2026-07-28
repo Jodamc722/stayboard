@@ -77,7 +77,22 @@ export type ReportContent = {
     headline: string; subtitle: string
     months: { label: string; status: string; rows: { metric: string; actual: string; budget: string; delta: string; good: boolean }[]; note: string }[]
   } | null
-  statement: { headline: string; items: { title: string; summary: string; url: string | null }[] } | null
+  // Owner statement section, built from the Guesty owner-statement mirror (lib/owner-statements).
+  // Figures are the RECOGNISED Owners-ledger basis: `net` is what the owner earned, `paid` is the
+  // payout that actually moved. `items` is legacy — reports generated from uploaded PDFs before
+  // the mirror existed still carry it, and the renderer falls back to it when there are no kpis.
+  statement: {
+    headline: string; subtitle: string; scope: string; note: string
+    kpis: { label: string; value: string; sub: string }[]
+    months: { month: string; label: string; rental: number; commission: number; other: number; net: number; paid: number }[]
+    owners: { ownerName: string; rental: number; commission: number; net: number; paid: number; months: number }[]
+    totals: {
+      rental: number; commission: number; commissionPct: number; other: number
+      net: number; paid: number; variance: number
+      ownerMonths: number; statements: number; orphans: number; tied: number
+    }
+    items?: { title: string; summary: string; url: string | null }[]
+  } | null
   ahead: {
     headline: string; subtitle: string
     months: { label: string; status: string; occPct: number; adr: string; revpar: string; note: string }[]
