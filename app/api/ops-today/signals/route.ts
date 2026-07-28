@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -56,13 +57,15 @@ export async function GET(req: NextRequest) {
         .in('listing_id', ids).order('created_at', { ascending: false }).limit(3000),
       db.from('guesty_reservations')
         .select('listing_id,check_in,check_out,status,guest_name')
-        .in('listing_id', ids).in('status', ['confirmed', 'closed'])
+        .in('listing_id', ids)
         .lt('check_in', calTo).gte('check_out', today).limit(3000),
       db.from('property_audits').select('listing_id,status,created_at').in('listing_id', ids).limit(3000),
     ])
     const tasks = (tasksR.data || []) as any[]
     const reviews = (revR.data || []) as any[]
-    const res = (resR.data || []) as any[]
+    // Filter live stays in CODE, not in the query: the shared rule is an exclusion, so a status
+    // Guesty adds later still reads as occupied instead of silently freeing the unit.
+    const res = ((resR.data || []) as any[]).filter(r => isLiveStay(r.status))
     // Real audit records beat task-name guessing for the audit cadence.
     const auditLast: Record<string, string> = {}
     for (const a of ((audR.data || []) as any[])) {
