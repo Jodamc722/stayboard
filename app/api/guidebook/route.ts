@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
+import { photoForPlace } from '@/lib/place-photo'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -293,38 +294,16 @@ ${JSON.stringify(fallback)}`
     }
   }
 
-  // LOCAL IMAGERY - every spot gets a photo. Pexels first (if key set), then Openverse
-  // (keyless, commercial-license filter), then a varied section-appropriate stock query.
-  const pex = process.env.PEXELS_API_KEY
-  const GEN: Record<string, string[]> = {
-    restaurants: ['fine dining restaurant interior', 'chef plating gourmet dish', 'al fresco dining table', 'cocktail bar ambiance', 'seafood dinner platter', 'restaurant candlelight table'],
-    localPlaces: ['florida beach palm trees', 'coastal boardwalk sunset', 'marina boats florida', 'tropical ocean pier', 'florida lighthouse coast', 'palm lined street florida'],
-  }
-  async function imageFor(q: string): Promise<string | null> {
-    if (pex) {
-      try {
-        const r = await fetch('https://api.pexels.com/v1/search?query=' + encodeURIComponent(q) + '&per_page=1&orientation=landscape', { headers: { Authorization: pex } })
-        const d: any = await r.json().catch(() => ({}))
-        const src = d?.photos?.[0]?.src?.large
-        if (src) return src
-      } catch { /* fall through */ }
-    }
-    try {
-      const r = await fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&license_type=commercial&per_page=1&mature=false', { headers: { 'User-Agent': 'StayBoardGuidebook/1.0' } })
-      const d: any = await r.json().catch(() => ({}))
-      const res = d?.results?.[0]
-      // Prefer the Openverse-proxied thumbnail (reliably hotlinkable) over origin URLs.
-      const u = res?.thumbnail || res?.url
-      if (u) return u
-    } catch { /* fall through */ }
-    return null
-  }
+  // LOCAL IMAGERY - every spot gets a photo. The search itself lives in lib/place-photo so the
+  // render-time backfill route (app/api/public/place-photo) uses exactly the same sources and
+  // fallbacks: the place by name and city, then the place alone, then a section-appropriate
+  // scene. Each candidate is fetched to confirm it really serves an image before it is saved,
+  // because an unchecked URL becomes a broken-image icon on a guest's page months from now.
   for (const k of ['localPlaces', 'restaurants']) {
     const items = Array.isArray(sections[k]?.items) ? sections[k].items : []
     await Promise.all(items.slice(0, 6).map(async (it: any, i: number) => {
-      const nm = String(it?.name || '').slice(0, 60)
-      if (!nm) return
-      it.photo = (await imageFor(nm + (city ? ' ' + city : ' florida'))) || (await imageFor(GEN[k][i % GEN[k].length])) || undefined
+      if (!String(it?.name || '').trim()) return
+      it.photo = (await photoForPlace({ name: it.name, city, section: k, index: i })) || undefined
     }))
   }
 
