@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
-import { paceTier, paceStatus, PACE_TONE, PACE_BENCHMARK, PACE_EXCEPTIONAL } from '@/lib/pacing'
+import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 
 type Any = any
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
@@ -79,7 +79,10 @@ const THEMES: Record<string, Any> = {
 }
 
 // ---------- on-the-books pacing chips (P14) ----------
-// Jon's benchmark: >20% on the books going into a month is great, ~60%+ is exceptional.
+// Pacing reads against LEAD TIME, not one fixed number: ~30% on the books entering a
+// month is pacing well, and ~20% for a month still 60 days out is as good or better,
+// because more of the booking window is still open. No threshold is ever printed —
+// the tiers only decide a chip's wording and a bar's colour.
 // Tier and tone are derived from occPct at render time rather than read from the stored
 // status string, so reports generated before this existed pick up the new labels too.
 function hexA(hex: string, a: number): string {
@@ -90,20 +93,21 @@ function hexA(hex: string, a: number): string {
 }
 
 /** Chip label + colours for an `ahead` month. The in-progress month is never tiered. */
-function paceChip(t: Any, occPct: unknown, inMonth: boolean): { label: string; style: Any } {
-  const tone = inMonth ? 'hot' : PACE_TONE[paceTier(occPct)]
-  const label = paceStatus(occPct, inMonth)
+function paceChip(t: Any, occPct: unknown, inMonth: boolean, monthsOut = 1): { label: string; style: Any } {
+  const tone = inMonth ? 'hot' : PACE_TONE[paceTier(occPct, monthsOut)]
+  const label = paceStatus(occPct, inMonth, monthsOut)
   if (tone === 'hi') return { label, style: { background: hexA(t.good, 0.15), color: t.good } }
   if (tone === 'hot') return { label, style: { background: t.statusHotBg, color: t.statusHotInk } }
   return { label, style: { background: t.statusColdBg, color: t.statusColdInk } }
 }
 
-/** Bar colour for the months-ahead strip: muted below benchmark, accent at it, green past it. */
-function paceBar(t: Any, occPct: unknown, isCurrent: boolean): string {
+/** Bar colour for the months-ahead strip, scaled to how far out the month sits. */
+function paceBar(t: Any, occPct: unknown, isCurrent: boolean, monthsOut = 1): string {
   if (isCurrent) return t.barB
   const n = Number(occPct) || 0
-  if (n >= PACE_EXCEPTIONAL) return t.good
-  if (n >= PACE_BENCHMARK) return t.barB
+  const th = paceThresholds(monthsOut)
+  if (n >= th.exceptional) return t.good
+  if (n >= th.strong) return t.barB
   return t.barA
 }
 
@@ -1782,9 +1786,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <div className={'mt-6 grid gap-4 ' + (((ahead.months || []).length >= 3) ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
               {(ahead.months || []).map((m: Any, i: number) => {
                 // The first card is the month already underway (its stored status says so);
-                // everything after it is a future month the 20% benchmark applies to.
+                // everything after it is a future month, and how far out it sits decides how
+                // its occupancy reads — index 1 is next month, index 2 is roughly 60 days out.
                 const inMonth = i === 0 && String(m.status || '').toUpperCase() === 'IN MONTH'
-                const chip = paceChip(t, m.occPct, inMonth)
+                const chip = paceChip(t, m.occPct, inMonth, Math.max(1, i))
                 // These cards used to print their stored legacy-Net strings whatever basis was
                 // selected, so they disagreed with the snapshot above. Reports generated before
                 // the raw components existed have nothing to re-derive from — those keep their
@@ -1824,17 +1829,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div className="mt-6 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                 <div className="flex items-baseline justify-between mb-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>MONTHS AHEAD  ·  OCCUPANCY %</p>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{PACE_BENCHMARK}% BENCHMARK</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>ON THE BOOKS</p>
                 </div>
-                {/* Bar band is a fixed 144px so the dashed benchmark line at bottom:20% lands
-                    on the same scale the bars are drawn against. Labels sit below the band. */}
+                {/* Bar band is a fixed 144px so every bar is drawn against the same scale.
+                    No reference line: an owner reads a dashed line as a target we are under,
+                    and how much is on the books depends entirely on how far out the month is. */}
                 <div className="relative" style={{ height: 144 }}>
-                  <div className="absolute left-0 right-0 pointer-events-none" style={{ bottom: PACE_BENCHMARK + '%', borderTop: '1px dashed ' + t.downGray, opacity: 0.85 }} />
                   <div className="flex items-end gap-3 h-full">
                     {ahead.strip.map((s: Any, i: number) => (
                       <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
                         <span className="text-[12px] font-black tabular-nums mb-1">{s.occPct}%</span>
-                        <div className="w-full rounded-t-md" style={{ height: Math.max(4, (Number(s.occPct) || 0)) + '%', background: paceBar(t, s.occPct, i === 1), opacity: i === 0 ? 0.35 : 1 }} />
+                        <div className="w-full rounded-t-md" style={{ height: Math.max(4, (Number(s.occPct) || 0)) + '%', background: paceBar(t, s.occPct, i === 1, Math.max(1, i - 1)), opacity: i === 0 ? 0.35 : 1 }} />
                       </div>
                     ))}
                   </div>
