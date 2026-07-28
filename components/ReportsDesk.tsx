@@ -20,6 +20,36 @@ type ReportRow = {
 // only, never for anything that is sent to the generator.
 const usd0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
+// How the statement picker fills itself in. Jon's ask, verbatim: "I should be able to select
+// one owner statement for review. I should be able to select all of them if I want to."
+//   period — statements whose month sits inside the report window (the old default)
+//   one    — exactly one statement, review-a-single-owner-month
+//   all    — every synced statement in scope, bulk
+// Rows stay clickable in every mode, so hand-picking still works; the counter is always the
+// truth about what will be pulled.
+type StmtMode = 'period' | 'one' | 'all'
+
+const STMT_MODES: Array<{ id: StmtMode; label: string; hint: string }> = [
+  { id: 'one', label: 'One statement', hint: 'Review a single owner statement in detail.' },
+  { id: 'period', label: 'In this period', hint: 'Statements whose month falls inside the report window.' },
+  { id: 'all', label: 'All statements', hint: 'Every synced statement for these owners — the full history.' },
+]
+
+/** Which statement ids a mode selects. Never picks an unsynced month: the generator refuses those. */
+function idsForMode(mode: StmtMode, list: StatementPick[], from: string, to: string): string[] {
+  const synced = list.filter(s => s.net != null)
+  if (mode === 'all') return synced.map(s => s.id)
+  const inWindow = synced.filter(s => s.month >= from && s.month <= to)
+  if (mode === 'one') {
+    // Newest statement inside the window, falling back to the newest synced one overall so
+    // "one statement" never lands on an empty selection.
+    const pool = inWindow.length ? inWindow : synced
+    const best = pool.slice().sort((a, b) => b.month.localeCompare(a.month))[0]
+    return best ? [best.id] : []
+  }
+  return inWindow.map(s => s.id)
+}
+
 function monthDefaults(): { start: string; end: string } {
   const now = new Date()
   const y = now.getFullYear(); const m = now.getMonth()
@@ -47,6 +77,11 @@ export function ReportsDesk() {
   const [stmtList, setStmtList] = useState<StatementPick[]>([])
   const [stmtPicked, setStmtPicked] = useState<string[]>([])
   const [stmtLoading, setStmtLoading] = useState(false)
+  const [stmtMode, setStmtMode] = useState<StmtMode>('period')
+  // The fetch effect must read the CURRENT mode without re-running when the mode changes —
+  // switching between one and all is a pure re-pick over the list already in hand, and
+  // refetching would re-aggregate the whole ledger for nothing.
+  const stmtModeRef = useRef<StmtMode>('period')
   const pacingRef = useRef<HTMLInputElement>(null)
   const heroRef = useRef<HTMLInputElement>(null)
 
@@ -70,8 +105,16 @@ export function ReportsDesk() {
     setUploading('')
     e.target.value = ''
   }
+  // In one-statement mode a row click REPLACES the selection, so the list behaves like radio
+  // buttons and you can never accidentally end up reviewing two owner-months as if they were one.
   function toggleStatement(id: string) {
+    if (stmtMode === 'one') { setStmtPicked([id]); return }
     setStmtPicked(prev => prev.indexOf(id) >= 0 ? prev.filter(x => x !== id) : [...prev, id])
+  }
+  function pickMode(m: StmtMode) {
+    stmtModeRef.current = m
+    setStmtMode(m)
+    setStmtPicked(idsForMode(m, stmtList, periodStart.slice(0, 7), periodEnd.slice(0, 7)))
   }
   async function onHeroPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files && e.target.files[0]
@@ -111,9 +154,7 @@ export function ReportsDesk() {
         if (cancelled) return
         const list: StatementPick[] = Array.isArray(d?.statements) ? d.statements : []
         setStmtList(list)
-        const from = periodStart.slice(0, 7)
-        const to = periodEnd.slice(0, 7)
-        setStmtPicked(list.filter(s => s.net != null && s.month >= from && s.month <= to).map(s => s.id))
+        setStmtPicked(idsForMode(stmtModeRef.current, list, periodStart.slice(0, 7), periodEnd.slice(0, 7)))
       })
       .catch(() => { if (!cancelled) { setStmtList([]); setStmtPicked([]) } })
       .then(() => { if (!cancelled) setStmtLoading(false) })
@@ -210,12 +251,23 @@ export function ReportsDesk() {
                   {stmtList.length > 0 && (
                     <div className="flex items-center gap-3 text-[11.5px]">
                       <span className="text-muted">{stmtPicked.length} of {stmtList.length} selected</span>
-                      <button onClick={() => setStmtPicked(stmtList.filter(s => s.net != null).map(s => s.id))}
-                        className="font-semibold text-brand-700 hover:underline">All</button>
-                      <button onClick={() => setStmtPicked([])} className="font-semibold text-muted hover:underline">None</button>
+                      <button onClick={() => setStmtPicked([])} className="font-semibold text-muted hover:underline">Clear</button>
                     </div>
                   )}
                 </div>
+                {stmtList.length > 0 && (
+                  <div className="mb-2">
+                    <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
+                      {STMT_MODES.map(m => (
+                        <button key={m.id} onClick={() => pickMode(m.id)} title={m.hint}
+                          className={'rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors ' + (stmtMode === m.id ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink')}>
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-muted mt-1.5">{(STMT_MODES.find(m => m.id === stmtMode) || STMT_MODES[0]).hint}</p>
+                  </div>
+                )}
                 {!stmtLoading && !stmtList.length ? (
                   <p className="text-[12px] text-muted italic">No Guesty owner statements found for these properties.</p>
                 ) : (
@@ -226,7 +278,13 @@ export function ReportsDesk() {
                       return (
                         <button key={s.id} onClick={() => synced && toggleStatement(s.id)} disabled={!synced}
                           className={'w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ' + (synced ? 'hover:bg-app/60 ' : 'opacity-55 cursor-not-allowed ') + (on ? 'bg-brand-50' : 'bg-white')}>
-                          <span className={'shrink-0 h-4 w-4 rounded border flex items-center justify-center text-[10px] font-bold ' + (on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-transparent')}>&#10003;</span>
+                          {stmtMode === 'one' ? (
+                            <span className={'shrink-0 h-4 w-4 rounded-full border-2 flex items-center justify-center ' + (on ? 'border-brand-600' : 'border-line')}>
+                              <span className={'h-2 w-2 rounded-full ' + (on ? 'bg-brand-600' : 'bg-transparent')} />
+                            </span>
+                          ) : (
+                            <span className={'shrink-0 h-4 w-4 rounded border flex items-center justify-center text-[10px] font-bold ' + (on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-transparent')}>&#10003;</span>
+                          )}
                           <span className="min-w-0 flex-1">
                             <span className="block text-[13px] font-semibold text-ink truncate">{s.label}</span>
                             <span className="block text-[11px] text-muted">
@@ -240,7 +298,14 @@ export function ReportsDesk() {
                     })}
                   </div>
                 )}
-                <p className="text-[11px] text-muted mt-1.5">Figures come straight from the recognised Guesty owner ledger &mdash; net is what the owner earned, paid is what actually settled.</p>
+                <p className="text-[11px] text-muted mt-1.5">
+                  Figures come straight from the recognised Guesty owner ledger &mdash; net is what the owner earned, paid is what actually settled.
+                  {stmtPicked.length === 1
+                    ? ' One statement selected: the report gets a single-owner statement section for that month.'
+                    : stmtPicked.length > 1
+                      ? ' ' + stmtPicked.length + ' statements selected: the report rolls them up by month, with a per-owner breakdown.'
+                      : ' Nothing selected &mdash; the report will be generated without an Owner Statement section.'}
+                </p>
               </div>
             )}
             <div>
