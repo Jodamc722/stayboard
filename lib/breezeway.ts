@@ -170,10 +170,49 @@ export async function listBreezewayComments(taskId: string | number): Promise<{ 
   return { ok: true, comments }
 }
 
-export async function createBreezewayComment(taskId: string | number, body: string): Promise<{ ok: boolean; status: number; text: string }> {
+// Breezeway REQUIRES company_people_id on a comment (422 without it) - a comment belongs to a
+// person, not to an app. We map the StayBoard user to their Breezeway person: their profile name
+// or the email prefix, matched against the people list. app_settings can pin a fallback person
+// for staff who have no Breezeway account (see resolveCommentPerson in the comments route).
+let _peopleCache: { at: number; list: { id: number; name: string }[] } | null = null
+export async function breezewayPeopleLite(): Promise<{ id: number; name: string }[]> {
+  if (_peopleCache && Date.now() - _peopleCache.at < 10 * 60 * 1000) return _peopleCache.list
+  try {
+    const list = (await listBreezewayPeople()).map(p => ({ id: p.id, name: p.name }))
+    _peopleCache = { at: Date.now(), list }
+    return list
+  } catch { return _peopleCache ? _peopleCache.list : [] }
+}
+
+function normPerson(s: any): string { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim() }
+
+/** Best-effort match of a person NAME (or an email prefix like "jon.doe") to a Breezeway person id. */
+export async function matchBreezewayPerson(nameOrEmail: string): Promise<number | null> {
+  const raw = String(nameOrEmail || '')
+  const guess = normPerson(raw.includes('@') ? raw.split('@')[0].replace(/[._-]+/g, ' ') : raw)
+  if (!guess) return null
+  const people = await breezewayPeopleLite()
+  if (!people.length) return null
+  const exact = people.find(p => normPerson(p.name) === guess)
+  if (exact) return exact.id
+  const parts = guess.split(' ').filter(Boolean)
+  if (parts.length >= 2) {
+    const both = people.find(p => { const n = normPerson(p.name); return n.startsWith(parts[0]) && n.endsWith(parts[parts.length - 1]) })
+    if (both) return both.id
+  }
+  if (parts.length === 1 && parts[0].length > 2) {
+    const hits = people.filter(p => normPerson(p.name).split(' ')[0] === parts[0])
+    if (hits.length === 1) return hits[0].id   // only when the first name is unambiguous
+  }
+  return null
+}
+
+export async function createBreezewayComment(taskId: string | number, body: string, companyPeopleId?: number | null): Promise<{ ok: boolean; status: number; text: string }> {
+  const payload: Record<string, any> = { comment: String(body).slice(0, 2000) }
+  if (Number.isFinite(Number(companyPeopleId))) payload.company_people_id = Number(companyPeopleId)
   const r = await bzApi('/task/' + encodeURIComponent(String(taskId)) + '/comments', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment: String(body).slice(0, 2000) }),
+    body: JSON.stringify(payload),
   })
   return { ok: r.ok, status: r.status, text: r.text }
 }
