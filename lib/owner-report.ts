@@ -95,7 +95,13 @@ export type ReportContent = {
   } | null
   ahead: {
     headline: string; subtitle: string
-    months: { label: string; status: string; occPct: number; adr: string; revpar: string; note: string }[]
+    // adr/revpar are the stored (legacy-net) strings; the raw components below let the renderer
+    // re-derive them in whichever basis is selected, exactly like snaps and byListing.
+    months: {
+      label: string; status: string; occPct: number; adr: string; revpar: string; note: string
+      accomNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number
+      occNights?: number; availNights?: number
+    }[]
     strip: { month: string; occPct: number }[]
   }
   voices: {
@@ -109,12 +115,19 @@ export type ReportContent = {
     tracking: { title: string; body: string }[]
   }
   // Per-calendar-month breakdown for the "view by month" toggle; only set when the period spans 2+ months.
-  byMonth?: { label: string; monthIso: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string }[]
+  // Carries the raw basis components so these cards follow the basis picker instead of being frozen
+  // to legacy Net — without them the monthly cards silently disagreed with the snapshot above.
+  byMonth?: {
+    label: string; monthIso: string; revenue: string; grossRevenue: string
+    occPct: number; adr: string; grossAdr: string; revpar: string
+    accomNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number
+    occNights?: number; availNights?: number
+  }[]
   snaps?: { key?: string; label: string; from: string; to: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations?: number; units?: number; accomNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number; occNights?: number; availNights?: number }[]
   byListing?: { id: string; name: string; unit: string; bedrooms: number | null; building?: string; revenue: string; grossRevenue: string; occPct: number; adr: string; grossAdr: string; revpar: string; grossRevpar?: string; reservations: number; revNum: number; accomNum?: number; grossNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number; occNights?: number; availNights?: number }[]
   // Per-section revenue basis (see lib/basis.ts). default flows to every section unless overridden.
   // Snapshot cards show a big primary number with a secondary number beneath ('none' hides it).
-  basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis }
+  basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis; byMonth?: Basis; ahead?: Basis }
   // Listing ids blocked/off-market for the period — dropped from revenue and the occupancy denominator.
   excludeListings?: string[]
   // Legacy (pre-basis) flag; superseded by `basis` above. Kept so old reports still parse.
