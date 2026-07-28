@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
-import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
+import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment } from '@/lib/breezeway'
 import { getToken } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
@@ -80,7 +80,9 @@ export async function GET(req: NextRequest) {
       if (breezewayConfigured()) {
         const cur = await retrieveBreezewayTask(id)
         const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
-        if (t) breezeway = { taskId: id, name: str(t.name), description: str(t.description), url: 'https://app.breezeway.io/task/' + id }
+        if (t) breezeway = { taskId: id, name: str(t.name), description: str(t.description), url: 'https://app.breezeway.io/task/' + id, comments: [] as any[] }
+        // The field crew's own thread on the task — what they write in the Breezeway app.
+        try { const bc = await listBreezewayComments(id); if (breezeway && bc.ok) breezeway.comments = bc.comments } catch { /* best effort */ }
       }
     } catch { /* best effort */ }
     try {
@@ -147,7 +149,11 @@ export async function POST(req: NextRequest) {
   if (b.toBreezeway === true && bzTaskId && breezewayConfigured()) {
     breezeway = false
     try {
-      const cur = await retrieveBreezewayTask(bzTaskId)
+      // A real Breezeway COMMENT is what the crew sees and can reply to. Only if that endpoint
+      // fails do we fall back to stamping the description (the old behaviour).
+      const cr = await createBreezewayComment(bzTaskId, actorName + ': ' + body)
+      if (cr.ok) breezeway = true
+      const cur = cr.ok ? { ok: false, data: null } as any : await retrieveBreezewayTask(bzTaskId)
       const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
       if (t) {
         const stamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date())
