@@ -23,6 +23,10 @@
     {
       "path": "/api/cron/breezeway-tasks",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/sync/owner-statements",
+      "schedule": "20 * * * *"
     }
   ]
 }
