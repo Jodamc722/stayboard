@@ -18,7 +18,7 @@ import {
 } from '@/lib/owner-report'
 import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
-import { paceStatus } from '@/lib/pacing'
+import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL } from '@/lib/owner-statements'
 
 export const dynamic = 'force-dynamic'
@@ -333,6 +333,7 @@ export async function POST(req: NextRequest) {
     + '\n\nCOMPLETED WORK (date | unit | task):\n' + (taskLines || '(none)')
     + '\n\nOPEN ITEMS (date | unit | task):\n' + (openLines || '(none)')
     + '\n\nWEEK BUCKETS: ' + buckets.map(b => b.label).join(' ; ')
+    + '\n\n' + paceGuidance()
     + '\n\nReturn JSON with exactly these keys:\n'
     + '{"heroHeadline": one punchy sentence on the period, '
     + '"snapshotHeadline": one short sentence, '
@@ -514,8 +515,8 @@ export async function POST(req: NextRequest) {
       subtitle: 'On-the-books occupancy by stay month, as of ' + prettyDate(asOf),
       months: [
         cur ? { label: cur.label.toUpperCase(), status: paceStatus(cur.m.occupancyPct, true), occPct: cur.m.occupancyPct, adr: '$' + cur.m.adr, revpar: '$' + cur.m.revpar, note: str(ai.aheadNotes?.current).slice(0, 260), ...aheadRaw(cur.m) } : null,
-        nxt ? { label: nxt.label.toUpperCase(), status: paceStatus(nxt.m.occupancyPct, false), occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260), ...aheadRaw(nxt.m) } : null,
-        nxt2 ? { label: nxt2.label.toUpperCase(), status: paceStatus(nxt2.m.occupancyPct, false), occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260), ...aheadRaw(nxt2.m) } : null,
+        nxt ? { label: nxt.label.toUpperCase(), status: paceStatus(nxt.m.occupancyPct, false, 1), occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260), ...aheadRaw(nxt.m) } : null,
+        nxt2 ? { label: nxt2.label.toUpperCase(), status: paceStatus(nxt2.m.occupancyPct, false, 2), occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260), ...aheadRaw(nxt2.m) } : null,
       ].filter(Boolean) as any,
       strip: mAhead.map(m => ({ month: m.short, occPct: m.m.occupancyPct })),
     },
