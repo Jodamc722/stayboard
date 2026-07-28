@@ -181,7 +181,9 @@ export async function POST(req: NextRequest) {
   const theme = str(body?.theme) || 'capri'
   const pacingUrl = str(body?.pacingUrl)
   // Owner statements are now SELECTED from the Guesty mirror rather than uploaded as PDFs.
-  const statementIds: string[] = Array.isArray(body?.statementIds) ? body.statementIds.map((x: any) => String(x)).filter(Boolean).slice(0, 24) : []
+  // Cap matches the picker's own fetch limit (listStatements(ids, 60)) so choosing "All
+  // statements" pulls everything the picker offered instead of silently dropping the tail.
+  const statementIds: string[] = Array.isArray(body?.statementIds) ? body.statementIds.map((x: any) => String(x)).filter(Boolean).slice(0, 60) : []
   const heroImageUrl = str(body?.heroImageUrl)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd) {
     return NextResponse.json({ error: 'periodStart/periodEnd (YYYY-MM-DD) required' }, { status: 400 })
