@@ -4,11 +4,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { FileText, Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X } from 'lucide-react'
 
+type StatementPick = {
+  id: string; ownerId: string; ownerName: string; month: string; label: string
+  periodStart: string; periodEnd: string; dueToOwner: number
+  net: number | null; paid: number | null
+}
+
 type ReportRow = {
   id: string; code: string; title: string; scope_label: string | null
   period_start: string; period_end: string; as_of: string; theme: string; status: string
   created_at: string; updated_at: string
 }
+
+// Figures on statement rows are exact dollars from the recognised ledger; round for display
+// only, never for anything that is sent to the generator.
+const usd0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
 function monthDefaults(): { start: string; end: string } {
   const now = new Date()
@@ -30,11 +40,14 @@ export function ReportsDesk() {
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
   const [pacing, setPacing] = useState<{ name: string; url: string } | null>(null)
-  const [statements, setStatements] = useState<{ name: string; url: string }[]>([])
   const [heroImg, setHeroImg] = useState<{ name: string; url: string } | null>(null)
   const [uploading, setUploading] = useState<string>('')
+  // Real Guesty owner statements for the picked properties. Statements are SELECTED, never
+  // uploaded — the figures come from the recognised owner-ledger mirror.
+  const [stmtList, setStmtList] = useState<StatementPick[]>([])
+  const [stmtPicked, setStmtPicked] = useState<string[]>([])
+  const [stmtLoading, setStmtLoading] = useState(false)
   const pacingRef = useRef<HTMLInputElement>(null)
-  const stmtRef = useRef<HTMLInputElement>(null)
   const heroRef = useRef<HTMLInputElement>(null)
 
   async function uploadOne(file: File): Promise<{ name: string; url: string } | null> {
@@ -57,18 +70,8 @@ export function ReportsDesk() {
     setUploading('')
     e.target.value = ''
   }
-  async function onStatementsPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files ? Array.from(e.target.files).slice(0, 4) : []
-    if (!files.length) return
-    setUploading('statements')
-    const ups: { name: string; url: string }[] = []
-    for (const f of files) {
-      const up = await uploadOne(f)
-      if (up) ups.push(up)
-    }
-    setStatements(prev => [...prev, ...ups].slice(0, 4))
-    setUploading('')
-    e.target.value = ''
+  function toggleStatement(id: string) {
+    setStmtPicked(prev => prev.indexOf(id) >= 0 ? prev.filter(x => x !== id) : [...prev, id])
   }
   async function onHeroPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files && e.target.files[0]
@@ -93,6 +96,30 @@ export function ReportsDesk() {
     }).catch(() => {})
   }, [])
 
+  // Statements follow the property selection. Anything whose period sits inside the report
+  // window is preselected, since that is nearly always what the report is about. Statements
+  // whose month hasn't been swept into the ledger mirror can't be picked — the generator
+  // refuses them rather than report a silently empty ledger.
+  const pickedKey = picked.join(',')
+  useEffect(() => {
+    if (!picked.length) { setStmtList([]); setStmtPicked([]); return }
+    let cancelled = false
+    setStmtLoading(true)
+    fetch('/api/reports/statements?buildings=' + encodeURIComponent(pickedKey))
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return
+        const list: StatementPick[] = Array.isArray(d?.statements) ? d.statements : []
+        setStmtList(list)
+        const from = periodStart.slice(0, 7)
+        const to = periodEnd.slice(0, 7)
+        setStmtPicked(list.filter(s => s.net != null && s.month >= from && s.month <= to).map(s => s.id))
+      })
+      .catch(() => { if (!cancelled) { setStmtList([]); setStmtPicked([]) } })
+      .then(() => { if (!cancelled) setStmtLoading(false) })
+    return () => { cancelled = true }
+  }, [pickedKey, periodStart, periodEnd])
+
   function toggleBuilding(b: string) {
     setPicked(prev => prev.indexOf(b) >= 0 ? prev.filter(x => x !== b) : [...prev, b])
   }
@@ -107,7 +134,7 @@ export function ReportsDesk() {
         body: JSON.stringify({
           buildings: picked, periodStart, periodEnd,
           pacingUrl: pacing ? pacing.url : undefined,
-          statementUrls: statements.length ? statements.map(s => s.url) : undefined,
+          statementIds: stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
         }),
       })
@@ -174,26 +201,63 @@ export function ReportsDesk() {
               </button>
               <button onClick={() => { setShowNew(false); setMsg('') }} className="text-sm text-muted hover:text-ink px-2 py-2">Cancel</button>
             </div>
+            {picked.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                  <p className="text-[11px] uppercase tracking-wider text-muted font-semibold">
+                    Owner statements {stmtLoading && <Loader2 size={11} className="inline animate-spin ml-1" />}
+                  </p>
+                  {stmtList.length > 0 && (
+                    <div className="flex items-center gap-3 text-[11.5px]">
+                      <span className="text-muted">{stmtPicked.length} of {stmtList.length} selected</span>
+                      <button onClick={() => setStmtPicked(stmtList.filter(s => s.net != null).map(s => s.id))}
+                        className="font-semibold text-brand-700 hover:underline">All</button>
+                      <button onClick={() => setStmtPicked([])} className="font-semibold text-muted hover:underline">None</button>
+                    </div>
+                  )}
+                </div>
+                {!stmtLoading && !stmtList.length ? (
+                  <p className="text-[12px] text-muted italic">No Guesty owner statements found for these properties.</p>
+                ) : (
+                  <div className="rounded-xl border border-line divide-y divide-line max-h-64 overflow-y-auto">
+                    {stmtList.map(s => {
+                      const on = stmtPicked.indexOf(s.id) >= 0
+                      const synced = s.net != null
+                      return (
+                        <button key={s.id} onClick={() => synced && toggleStatement(s.id)} disabled={!synced}
+                          className={'w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ' + (synced ? 'hover:bg-app/60 ' : 'opacity-55 cursor-not-allowed ') + (on ? 'bg-brand-50' : 'bg-white')}>
+                          <span className={'shrink-0 h-4 w-4 rounded border flex items-center justify-center text-[10px] font-bold ' + (on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-transparent')}>&#10003;</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[13px] font-semibold text-ink truncate">{s.label}</span>
+                            <span className="block text-[11px] text-muted">
+                              {synced
+                                ? <>Net {usd0(s.net as number)} &middot; Paid {usd0(s.paid || 0)} &middot; Due to owner {usd0(s.dueToOwner)}</>
+                                : <>Not synced &mdash; run the owner-statement sync for {s.month}</>}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted mt-1.5">Figures come straight from the recognised Guesty owner ledger &mdash; net is what the owner earned, paid is what actually settled.</p>
+              </div>
+            )}
             <div>
               <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Optional attachments</p>
               <div className="flex flex-wrap items-center gap-2">
                 <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
-                <input ref={stmtRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onStatementsPick} />
                 <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
                 <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!uploading}
                   className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
                   {uploading === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} PriceLabs pacing PDF
-                </button>
-                <button onClick={() => stmtRef.current && stmtRef.current.click()} disabled={!!uploading}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
-                  {uploading === 'statements' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Owner statement PDFs
                 </button>
                 <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!uploading}
                   className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
                   {uploading === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
                 </button>
               </div>
-              {(pacing || statements.length > 0 || heroImg) && (
+              {(pacing || heroImg) && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {pacing && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
@@ -201,12 +265,6 @@ export function ReportsDesk() {
                       <button onClick={() => setPacing(null)} className="hover:text-red-600"><X size={11} /></button>
                     </span>
                   )}
-                  {statements.map((s, i) => (
-                    <span key={i} className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
-                      Statement: {s.name}
-                      <button onClick={() => setStatements(prev => prev.filter((_, j) => j !== i))} className="hover:text-red-600"><X size={11} /></button>
-                    </span>
-                  ))}
                   {heroImg && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
                       Hero: {heroImg.name}
@@ -217,7 +275,7 @@ export function ReportsDesk() {
               )}
             </div>
             {msg && <p className="text-[13px] text-amber-700">{msg}</p>}
-            <p className="text-[11px] text-muted">Performance vs Plan appears automatically when the property has a stored budget. Attach a PriceLabs pacing PDF to add &ldquo;Pacing vs Market&rdquo;, owner statement PDFs to add a statement summary, and a hero photo for the cover.</p>
+            <p className="text-[11px] text-muted">Performance vs Plan appears automatically when the property has a stored budget. Attach a PriceLabs pacing PDF to add &ldquo;Pacing vs Market&rdquo;, and a hero photo for the cover. The Owner Statement section is built from the statements selected above.</p>
           </div>
         )}
       </section>
