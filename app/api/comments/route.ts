@@ -145,6 +145,7 @@ export async function POST(req: NextRequest) {
   // Optional: mirror the comment onto the BREEZEWAY task so the field crew sees it in their app.
   // Best effort - never fails the comment itself.
   let breezeway: boolean | undefined = undefined
+  let bzDebug: any = null
   const bzTaskId = str(b.taskId)
   if (b.toBreezeway === true && bzTaskId && breezewayConfigured()) {
     breezeway = false
@@ -152,7 +153,17 @@ export async function POST(req: NextRequest) {
       // A real Breezeway COMMENT is what the crew sees and can reply to. Only if that endpoint
       // fails do we fall back to stamping the description (the old behaviour).
       const cr = await createBreezewayComment(bzTaskId, actorName + ': ' + body)
-      if (cr.ok) breezeway = true
+      // Breezeway has answered 200 with an empty body before while silently not creating the
+      // comment, so success means "it is actually in the thread now", not "the call returned 200".
+      bzDebug = { status: cr.status, text: str(cr.text).slice(0, 200) }
+      if (cr.ok) {
+        try {
+          const back = await listBreezewayComments(bzTaskId)
+          const needle = body.slice(0, 40)
+          breezeway = back.ok && back.comments.some(x => x.body.includes(needle))
+          bzDebug.readBack = back.comments.length
+        } catch { breezeway = cr.ok }
+      }
       const cur = cr.ok ? { ok: false, data: null } as any : await retrieveBreezewayTask(bzTaskId)
       const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
       if (t) {
@@ -186,5 +197,5 @@ export async function POST(req: NextRequest) {
       }
     } catch { guesty = false }
   }
-  return NextResponse.json({ ok: true, comment: row, notified: mentions, breezeway, guesty })
+  return NextResponse.json({ ok: true, comment: row, notified: mentions, breezeway, guesty, bzDebug })
 }
