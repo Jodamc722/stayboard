@@ -75,6 +75,12 @@ export function OrderDesk() {
   const [estMsg, setEstMsg] = useState('')
   const [owners, setOwners] = useState<{ id: string; name: string; listingIds: string[] }[]>([])
   const [ownerId, setOwnerId] = useState('')
+  // Auto-route: priced lines with no approval decision yet. New prices route themselves on save,
+  // so this count is the backlog from before the limits existed (or from a limits change).
+  const [autoPend, setAutoPend] = useState(0)
+  const [autoBusy, setAutoBusy] = useState(false)
+  const [autoMsg, setAutoMsg] = useState('')
+  const [reqCopied, setReqCopied] = useState(false)
 
   async function load() {
     try {
@@ -85,7 +91,20 @@ export function OrderDesk() {
     } catch { setErr('Network error - reload to retry.') }
     setLoading(false)
   }
-  useEffect(() => { load(); fetch('/api/orders/owners').then(r => r.json()).then(j => setOwners((j && Array.isArray(j.owners)) ? j.owners : [])).catch(() => {}) }, [])
+  function loadAuto() { fetch('/api/orders/auto-route', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.ok) setAutoPend(Number(j.pending) || 0) }).catch(() => {}) }
+  useEffect(() => { load(); loadAuto(); fetch('/api/orders/owners').then(r => r.json()).then(j => setOwners((j && Array.isArray(j.owners)) ? j.owners : [])).catch(() => {}) }, [])
+  async function autoRoute() {
+    if (autoBusy) return
+    setAutoBusy(true); setAutoMsg('')
+    try {
+      const r = await fetch('/api/orders/auto-route', { method: 'POST' })
+      const j = await r.json()
+      if (!r.ok || !j.ok) setAutoMsg((j && j.error) || 'failed')
+      else setAutoMsg(j.routed ? (j.gmApproved + ' approved · ' + j.toOwner + ' to owners ✓') : (j.note || 'nothing to route'))
+      await load(); loadAuto()
+    } catch { setAutoMsg('failed - retry') }
+    setAutoBusy(false)
+  }
 
   // Optimistic local patch so the desk feels instant; the POST is fire-and-forget.
   function patchLocal(ids: string[], fn: (it: Row) => Row) { const s = new Set(ids); setRows(list => list.map(x => s.has(x.id) ? fn(x) : x)) }
@@ -311,6 +330,12 @@ export function OrderDesk() {
       setOwnerCopied(true); setTimeout(() => setOwnerCopied(false), 1600)
     } catch { alert('Could not build the link - retry.') }
   }
+  // The field request link is permanent — the team bookmarks it once, so copying it is all the desk
+  // ever needs to do.
+  async function copyRequestLink() {
+    try { await navigator.clipboard.writeText(window.location.origin + '/new-order'); setReqCopied(true); setTimeout(() => setReqCopied(false), 1600) }
+    catch { alert('Could not copy - the link is ' + window.location.origin + '/new-order') }
+  }
   async function estimateCosts() {
     if (estBusy) return
     setEstBusy(true); setEstMsg('')
@@ -351,6 +376,8 @@ export function OrderDesk() {
           <input type="checkbox" checked={!!sel[it.id]} onChange={e => setSel(s => ({ ...s, [it.id]: e.target.checked }))} className="shrink-0" />
           <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded border ' + (it.kind === 'add' ? 'bg-sky-100 text-sky-800 border-sky-300' : 'bg-rose-100 text-rose-700 border-rose-300')}>{it.kind === 'add' ? 'Add' : 'Replace'}</span>
           <span className={'text-sm font-semibold ' + (dim ? 'text-muted' : 'text-ink')}>{it.qty && it.qty > 1 ? it.qty + '× ' : ''}{it.title}</span>
+          {it.details && it.details.restock ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-100 text-amber-800 border-amber-300" title={'Below par — ' + (it.details.have != null ? it.details.have : '?') + ' of ' + (it.details.par != null ? it.details.par : '?')}>Restock</span> : null}
+          {it.details && it.details.source === 'field_request' ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-violet-100 text-violet-800 border-violet-300" title={'Reported from the field' + (it.details.requestedBy ? ' by ' + it.details.requestedBy : '') + (it.details.ref ? ' · ' + it.details.ref : '')}>{it.details.ref || 'Field'}</span> : null}
           {showUnit ? <span className="text-[11px] text-muted">{it.unit}</span> : null}
           {it.room ? <span className="text-[11px] text-muted">{it.room}</span> : null}
           <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + STAGE_CLS[st]}>{STAGE_LABEL[st]}</span>
@@ -412,10 +439,14 @@ export function OrderDesk() {
         </select>
         {selOwner ? <button onClick={copyOwnerLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Share owner link'}</button> : null}
         <label className="text-xs text-muted flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> show installed</label>
+        {autoPend > 0 ? <button onClick={autoRoute} disabled={autoBusy} title="Send every priced line with no decision through the GM spend limits" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white disabled:opacity-50">{autoBusy ? 'Routing…' : '⚡ Auto-route ' + autoPend}</button> : null}
+        {autoMsg ? <span className="text-[11px] font-semibold text-violet-700">{autoMsg}</span> : null}
         <button onClick={() => setToolsOpen(o => !o)} className="ml-auto text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Tools {toolsOpen ? '▴' : '▾'}</button>
       </div>
       {toolsOpen ? (
         <div className="mb-4 rounded-xl border border-line bg-white p-3 flex flex-wrap items-center gap-2">
+          <a href="/new-order" target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Open request form</a>
+          <button onClick={copyRequestLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted" title="The link the field team uses to report what a unit needs">{reqCopied ? 'Request link copied ✓' : 'Copy request link'}</button>
           <a href="/delivery" target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Delivery plan</a>
           <button onClick={copyPlanLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">{planCopied ? 'Link copied ✓' : 'Copy plan link'}</button>
           <button onClick={copySheet} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{copied ? 'Copied ✓' : 'Copy order sheet'}</button>
