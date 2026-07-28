@@ -274,6 +274,152 @@ export function rollup(rowsIn: OwnerMonth[]): StatementRollup {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-unit and per-fee detail for the Owner Statement section.
+//
+// Jon's ask, verbatim: "I need to be able to select an individual report to review on the
+// owner thing that shows the key things: Individual unit performance / Expenses / All the
+// breakdown of fees / All of that stuff."
+//
+// Two things make this harder than a GROUP BY and both are handled explicitly rather than
+// papered over:
+//
+//   1. NOT EVERY LINE BELONGS TO A UNIT. AF, CMS, AFE, CF and the blank code are 100%
+//      listing-attributed, but 317 rows across the audited span are not — every OCR and FT
+//      row, and 250 "Owner charge" rows under OC. Over Dec-2025..Jun-2026 that is $194,976.81
+//      of movement. Spreading it across units would invent per-unit figures, and dropping it
+//      would stop the column footing to net. It gets its own PORTFOLIO line instead, so the
+//      unit column plus that line always equals net exactly.
+//
+//   2. CHARGE CODE IS NOT THE FEE. OC alone mixes "Owner charge" (-$270,189.30, a real owner
+//      expense) with "Airbnb cleaning channel fee" (+$101,934.37, a reimbursement TO the
+//      owner) and "Revenue Management Income". Grouping fees by charge_code would net those
+//      against each other and show one meaningless number. The real breakdown is Guesty's own
+//      line name, read from raw->>name, so the labels on the report are the labels on the
+//      statement rather than anything invented here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type UnitLine = {
+  listingId: string
+  name: string           // filled in by the caller from the listing mirror
+  rental: number         // owner earnings before expenses
+  commission: number     // Stay's PM commission
+  other: number          // charges and credits; POSITIVE is a credit to the owner
+  net: number            // rental - commission + other
+  nights: number         // AF lines, a proxy for booked nights
+  share: number          // percent of the scope's total net, 1dp
+  portfolio?: boolean    // true on the single not-unit-attributed line
+}
+
+export type FeeLine = {
+  label: string          // Guesty's own line name, or the charge code when names are absent
+  code: string
+  rows: number
+  amount: number         // owner effect: POSITIVE is money to the owner, negative is a cost
+  kind: 'rental' | 'commission' | 'charge' | 'credit'
+}
+
+export type StatementDetail = {
+  units: UnitLine[]      // biggest net first; the portfolio line always sorts last
+  fees: FeeLine[]        // biggest absolute owner effect first
+  totals: { rental: number; commission: number; other: number; net: number; units: number }
+  unattributed: number   // net sitting on the portfolio line
+  named: boolean         // false when the mirror would not give us line names
+}
+
+type DetailRow = { listing_id: string | null; charge_code: string | null; amount: number | null; name?: string | null }
+
+const FEE_COLS = 'listing_id, charge_code, amount, raw->>name'
+const FEE_COLS_PLAIN = 'listing_id, charge_code, amount'
+
+/**
+ * Ledger lines for a set of owner-months, rolled up by unit and by fee.
+ *
+ * The name column is a PostgREST JSON accessor. If the mirror ever refuses it this falls back
+ * to a plain select and groups fees by charge code — a coarser breakdown, but the unit numbers
+ * and the totals are unaffected, and a report is never lost over a label.
+ */
+export async function statementDetail(opts: { ownerIds: string[]; months: string[] }): Promise<StatementDetail> {
+  const sb = supabaseAdmin()
+  if (!opts.ownerIds.length || !opts.months.length) {
+    return { units: [], fees: [], totals: { rental: 0, commission: 0, other: 0, net: 0, units: 0 }, unattributed: 0, named: true }
+  }
+
+  let named = true
+  const rows: DetailRow[] = []
+  const PAGE = 1000
+  for (let off = 0; off < 200_000; off += PAGE) {
+    const run = (cols: string) => sb.from('guesty_owner_ledger').select(cols)
+      .eq('recognized', true)
+      .in('owner_id', opts.ownerIds)
+      .in('entry_month', opts.months)
+      .range(off, off + PAGE - 1)
+    let { data, error } = await run(named ? FEE_COLS : FEE_COLS_PLAIN)
+    if (error && named) {
+      // Only ever downgrade once, and only for the name column.
+      named = false
+      ;({ data, error } = await run(FEE_COLS_PLAIN))
+    }
+    if (error) throw new Error('ledger detail read: ' + error.message)
+    const batch = (data || []) as unknown as DetailRow[]
+    rows.push(...batch)
+    if (batch.length < PAGE) break
+  }
+
+  const PORTFOLIO = '__portfolio__'
+  const byUnit: Record<string, UnitLine> = {}
+  const byFee: Record<string, FeeLine> = {}
+  const t = { rental: 0, commission: 0, other: 0, net: 0 }
+
+  for (const r of rows) {
+    const code = String(r.charge_code || '')
+    const amt = Number(r.amount) || 0
+    // PO is a settlement movement, never earnings. It is excluded here for the same reason
+    // accumulate() returns early on it: counting a payout as a fee would double-count the month.
+    if (code === 'PO') continue
+
+    const id = String(r.listing_id || '') || PORTFOLIO
+    const u = byUnit[id] || (byUnit[id] = {
+      listingId: id, name: '', rental: 0, commission: 0, other: 0, net: 0, nights: 0, share: 0,
+      portfolio: id === PORTFOLIO || undefined,
+    })
+    if (code === 'AF') { u.rental = money(u.rental - amt); u.nights++; t.rental = money(t.rental - amt) }
+    else if (code === 'CMS') { u.commission = money(u.commission + amt); t.commission = money(t.commission + amt) }
+    else { u.other = money(u.other - amt); t.other = money(t.other - amt) }
+    u.net = money(u.net - amt)
+    t.net = money(t.net - amt)
+
+    const label = named ? String(r.name || '').trim() : ''
+    const key = (label || code || '(no code)') + '|' + code
+    const f = byFee[key] || (byFee[key] = {
+      label: label || code || 'Unclassified', code, rows: 0, amount: 0,
+      kind: code === 'AF' ? 'rental' : code === 'CMS' ? 'commission' : 'charge',
+    })
+    f.rows++
+    f.amount = money(f.amount - amt)
+  }
+
+  // Kind is decided on the TOTAL, not per row: a line that nets out as money arriving is a
+  // credit even when individual entries swing both ways.
+  for (const f of Object.values(byFee)) {
+    if (f.code === 'AF') f.kind = 'rental'
+    else if (f.code === 'CMS') f.kind = 'commission'
+    else f.kind = f.amount >= 0 ? 'credit' : 'charge'
+  }
+
+  const units = Object.values(byUnit)
+  for (const u of units) u.share = t.net ? Math.round((u.net / t.net) * 1000) / 10 : 0
+  units.sort((a, b) => (a.portfolio ? 1 : 0) - (b.portfolio ? 1 : 0) || b.net - a.net)
+
+  return {
+    units,
+    fees: Object.values(byFee).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
+    totals: { ...t, units: units.filter(u => !u.portfolio).length },
+    unattributed: byUnit[PORTFOLIO] ? byUnit[PORTFOLIO].net : 0,
+    named,
+  }
+}
+
 /** True when the mirror has ledger coverage for every month in the range. */
 export async function coverageFor(months: string[]): Promise<{ ready: boolean; missing: string[] }> {
   const sb = supabaseAdmin()
