@@ -4,7 +4,9 @@
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, RefreshCw, Search, X, Camera } from 'lucide-react'
+import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders } from 'lucide-react'
+import CommentThread from './CommentThread'
+import UnitCalendar from './UnitCalendar'
 
 type Glitch = {
   id: string; status: string; glitch_type: string | null; category: string | null
@@ -15,9 +17,29 @@ type Glitch = {
   recovery_cost: number | null; refund_approved: number | null; reported_by: string | null; guest_email: string | null
   breezeway_task_id: string | null; photos: string[] | null; task_status: string | null; task_report_url?: string | null
   reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
+  due_date?: string | null; assignee?: string | null; assignee_person_id?: number | null; details?: string | null; progress?: number | null
   created_at: string
 }
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
+
+// Progress is derived from where the card sits on the board, so the bar moves as work moves.
+// A manual `progress` on the row overrides it when someone wants to be explicit.
+const STAGE_PROGRESS: Record<string, number> = { pool: 5, ops: 30, guest_followup: 50, refund: 65, manager_review: 80, incident: 90, closed: 100 }
+function progressOf(g: Glitch): number {
+  const manual = Number(g.progress)
+  if (Number.isFinite(manual) && manual >= 0 && manual <= 100) return Math.round(manual)
+  return STAGE_PROGRESS[String(g.status)] ?? 0
+}
+function dueState(due: string | null | undefined, closed: boolean): { label: string; cls: string } | null {
+  if (!due) return null
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  const days = Math.round((new Date(due + 'T12:00:00').getTime() - new Date(today + 'T12:00:00').getTime()) / 86400000)
+  if (closed) return { label: 'due ' + due.slice(5), cls: 'bg-app text-muted border-line' }
+  if (days < 0) return { label: Math.abs(days) + 'd overdue', cls: 'bg-rose-600 text-white border-rose-600' }
+  if (days === 0) return { label: 'due today', cls: 'bg-amber-500 text-white border-amber-500' }
+  if (days === 1) return { label: 'due tomorrow', cls: 'bg-amber-50 text-amber-800 border-amber-300' }
+  return { label: 'due ' + due.slice(5) + ' (' + days + 'd)', cls: 'bg-white text-muted border-line' }
+}
 
 const COLS: { key: string; label: string }[] = [
   { key: 'pool', label: 'Glitch pool' },
@@ -125,6 +147,12 @@ export function GlitchBoard() {
                           {(g.photos || []).length > 0 && <span className="text-[9px] text-muted inline-flex items-center gap-0.5"><Camera size={9} />{(g.photos || []).length}</span>}
                           {g.breezeway_task_id && <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200')}>{g.task_status === 'completed' ? 'Task completed' : g.task_status === 'in_progress' ? 'Task in progress' : 'Task not started'}</span>}
                           {(g.refund_approved || 0) > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refund {money(g.refund_approved)}</span>}
+                          {(() => { const d = dueState(g.due_date, g.status === 'closed'); return d ? <span className={'text-[9px] font-bold px-1.5 py-0.5 rounded border ' + d.cls}>{d.label}</span> : null })()}
+                          {g.assignee && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-0.5"><User2 size={8} />{g.assignee.split(' ')[0]}</span>}
+                        </div>
+                        {/* progress: follows the board stage unless someone sets it by hand */}
+                        <div className="mt-1.5 h-1 rounded-full bg-app overflow-hidden" title={progressOf(g) + '% — ' + (COLS.filter(x => x.key === g.status)[0] || { label: g.status }).label}>
+                          <div className={'h-full transition-all ' + (g.status === 'closed' ? 'bg-emerald-500' : progressOf(g) >= 65 ? 'bg-brand-500' : 'bg-amber-400')} style={{ width: progressOf(g) + '%' }} />
                         </div>
                       </button>
                       {isOpen && (
@@ -152,7 +180,11 @@ export function GlitchBoard() {
                           </div>
                           {panel === g.id + ':push' && <PushPanel g={g} people={people} onDone={() => { setPanel(''); load() }} act={act} />}
                           {panel === g.id + ':edit' && <EditGlitch g={g} onDone={() => { setPanel(''); load() }} />}
-                          <GlitchComments g={g} />
+                          <GlitchManage g={g} people={people} onDone={load} />
+                          {/* One thread per glitch. When the glitch has a Breezeway task, the crew's
+                              Breezeway comments show here too and anything posted with Breezeway
+                              ticked lands in their app. */}
+                          <CommentThread type="glitch" id={g.id} label={(g.unit ? g.unit + ' \u2014 ' : '') + String(g.overview || 'glitch').split('\n')[0].slice(0, 60)} link="/glitches" taskId={g.breezeway_task_id || ''} reservationId={g.reservation_id || ''} />
                         </div>
                       )}
                     </div>
@@ -395,6 +427,73 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
 
 // Comments + @tags on a glitch — uses the SYSTEM-WIDE /api/comments (mentions notify via the
 // Shell bell). Tag with the picker or type @name in the text; the glitch creator is notified too.
+// OWNERSHIP + SCHEDULE for a glitch: who owns it, when it is due (on a calendar that shows the
+// unit's reservations so work is not booked into a guest's stay), how far along, and the running
+// detail notes. Everything writes straight to the glitch record the board reads.
+function GlitchManage({ g, people, onDone }: { g: Glitch; people: { id: number; name: string }[]; onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [cal, setCal] = useState(false)
+  const [due, setDue] = useState(g.due_date || '')
+  const [who, setWho] = useState(g.assignee || '')
+  const [prog, setProg] = useState<string>(g.progress == null ? '' : String(g.progress))
+  const [details, setDetails] = useState(g.details || '')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  useEffect(() => { setDue(g.due_date || ''); setWho(g.assignee || ''); setProg(g.progress == null ? '' : String(g.progress)); setDetails(g.details || '') }, [g.id, g.due_date, g.assignee, g.progress, g.details])
+
+  const save = async (patch: Record<string, any>, note: string) => {
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const person = people.filter(p => p.name === who)[0]
+      const body = Object.assign({ action: 'update', id: g.id, assigneePersonId: person ? person.id : null }, patch)
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Could not save'); setBusy(false); return }
+      setMsg(note); onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const pct = progressOf(g)
+  return (
+    <div className="rounded-lg border border-line bg-app/40 p-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Owner &amp; schedule</div>
+        <span className="text-[10px] text-muted">{pct}% {'\u00b7'} {(COLS.filter(x => x.key === g.status)[0] || { label: g.status }).label}</span>
+        <button onClick={() => setOpen(!open)} className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-app inline-flex items-center gap-1"><Sliders size={10} />{open ? 'Hide' : 'Edit'}</button>
+      </div>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <div className="flex gap-2 flex-wrap items-center">
+            <button onClick={() => setCal(!cal)} className="text-[11px] font-medium px-2 py-1.5 rounded-md border border-line bg-white hover:bg-app inline-flex items-center gap-1"><CalendarDays size={12} />{due ? 'Due ' + due : 'Set due date'}</button>
+            {due && <button onClick={() => { setDue(''); save({ dueDate: '' }, 'Due date cleared') }} className="text-[11px] text-muted hover:text-rose-700">clear</button>}
+            <input list="glitch-people" value={who} onChange={e => setWho(e.target.value)} placeholder="Assign to&hellip;" className="text-[11px] border border-line rounded-md px-2 py-1.5 bg-white w-40" />
+            <datalist id="glitch-people">{people.map(p => <option key={p.id} value={p.name} />)}</datalist>
+            <select value={prog} onChange={e => setProg(e.target.value)} className="text-[11px] border border-line rounded-md px-2 py-1.5 bg-white" title="Leave on Auto to follow the board stage">
+              <option value="">Auto ({STAGE_PROGRESS[g.status] ?? 0}%)</option>
+              {[0, 10, 25, 50, 75, 90, 100].map(v => <option key={v} value={v}>{v}%</option>)}
+            </select>
+            <button onClick={() => save({ dueDate: due, assignee: who, progress: prog === '' ? null : Number(prog) }, 'Saved')} disabled={busy} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
+          </div>
+          {cal && (
+            <UnitCalendar listingId={g.listing_id} value={due || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())} onChange={d => { setDue(d); setCal(false) }} compact />
+          )}
+          <textarea value={details} onChange={e => setDetails(e.target.value)} onBlur={() => { if ((g.details || '') !== details) save({ details }, 'Details saved') }} rows={3} placeholder="Add details — what has been tried, parts ordered, what the guest was told…" className="w-full text-xs border border-line rounded-md px-2 py-1.5 bg-white" />
+          {msg && <div className="text-[11px] text-emerald-700">{msg}</div>}
+          {err && <div className="text-[11px] text-rose-700">{err}</div>}
+        </div>
+      )}
+      {!open && (g.details || g.due_date || g.assignee) && (
+        <div className="mt-1 text-[11px] text-muted">
+          {g.assignee ? <span className="text-ink font-medium">{g.assignee}</span> : 'Unassigned'}
+          {g.due_date ? ' · due ' + g.due_date : ''}
+          {g.details ? ' · ' + String(g.details).slice(0, 90) + (String(g.details).length > 90 ? '…' : '') : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function GlitchComments({ g }: { g: Glitch }) {
   const [items, setItems] = useState<any[]>([])
   const [team, setTeam] = useState<string[]>([])
