@@ -74,7 +74,10 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
   const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
   const uid = type + '-' + id
   const lines = (s: string) => String(s || '').split('\n').map(x => x.trim()).filter(Boolean)
-  const bzLines = lines(bz && bz.description)
+  // Breezeway now returns its own comment thread; the description is only a fallback for tasks
+  // where nobody has commented yet (older notes were stamped into the description).
+  const bzComments: any[] = (bz && Array.isArray(bz.comments)) ? bz.comments : []
+  const bzLines = bzComments.length ? bzComments.map((x: any) => x.body) : lines(bz && bz.description)
   const gzLines = lines(gz && gz.notes)
   const shownApp = expanded ? items : items.slice(-3)
   const shownBz = expanded ? bzLines : bzLines.slice(0, 3)
@@ -109,10 +112,10 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
 
         {bz && (
           <div>
-            <div className="text-[9px] font-semibold uppercase tracking-wide text-brand-700 mb-0.5 flex items-center gap-1">On the Breezeway task{bz.url && <a href={bz.url} target="_blank" rel="noreferrer" className="font-medium underline decoration-dotted hover:text-brand-600">open</a>}</div>
+            <div className="text-[9px] font-semibold uppercase tracking-wide text-brand-700 mb-0.5 flex items-center gap-1">{bzComments.length ? 'Breezeway thread (field crew)' : 'On the Breezeway task'}{bz.url && <a href={bz.url} target="_blank" rel="noreferrer" className="font-medium underline decoration-dotted hover:text-brand-600">open</a>}</div>
             <div className="space-y-1">
               {shownBz.map((ln, i) => <div key={i} className="bg-white border border-brand-200/70 rounded-md px-2 py-1 text-[11px] text-ink whitespace-pre-wrap">{ln}</div>)}
-              {bzLines.length === 0 && <div className="text-[11px] text-muted">Nothing written on the task yet.</div>}
+              {bzLines.length === 0 && <div className="text-[11px] text-muted">No Breezeway comments yet {'\u00b7'} anything you post with Breezeway ticked lands in the crew&rsquo;s thread.</div>}
             </div>
           </div>
         )}
@@ -134,7 +137,7 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
           <input list={'cmt-team-' + uid} value={tagQ} onChange={e => { setTagQ(e.target.value); if (team.indexOf(e.target.value.trim().toLowerCase()) >= 0) addTag(e.target.value) }} placeholder={'Tag teammate…'} className="text-[11px] border border-line rounded-md px-2 py-1 bg-white w-40" />
           <datalist id={'cmt-team-' + uid}>{team.map(t => <option key={t} value={t} />)}</datalist>
           {tags.map(t2 => <span key={t2} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-1">@{who(t2)}<button onClick={() => setTags(prev => prev.filter(x => x !== t2))} className="hover:text-rose-600">{'×'}</button></span>)}
-          {(taskId || type === 'task') && <label className="text-[10px] font-medium text-brand-700 inline-flex items-center gap-1 cursor-pointer" title="Also append this onto the Breezeway task description so the field crew reads it in their app"><input type="checkbox" checked={toBz} onChange={e => setToBz(e.target.checked)} className="accent-brand-600" />Breezeway</label>}
+          {(taskId || type === 'task') && <label className="text-[10px] font-medium text-brand-700 inline-flex items-center gap-1 cursor-pointer" title="Post this as a comment on the Breezeway task - the field crew sees it in their app and can reply, and their reply comes back here"><input type="checkbox" checked={toBz} onChange={e => setToBz(e.target.checked)} className="accent-brand-600" />Breezeway</label>}
           {(reservationId || (gz && gz.reservationId)) && <label className="text-[10px] font-medium text-emerald-700 inline-flex items-center gap-1 cursor-pointer" title="Also append this to the reservation notes in Guesty"><input type="checkbox" checked={toGz} onChange={e => setToGz(e.target.checked)} className="accent-emerald-600" />Guesty</label>}
           <button onClick={post} disabled={busy || !body.trim()} className="ml-auto text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Posting…' : 'Post'}</button>
         </div>
