@@ -78,7 +78,9 @@ export function paceGuidance(): string {
     'For a month about 60 days out, roughly 20% or more is pacing well — that is as strong or stronger than 30%',
     'entering a month, because far more of the booking window is still open. Further out again, low-teens is healthy.',
     'Write it plainly and with confidence: "August is pacing well at 34% on the books with two months still to sell."',
-    'Never call a month soft, slow, weak, quiet, a shoulder season or a down month. If a month genuinely has little',
-    'on the books, say it is early in the booking window and note what is being done to fill it — then stop.',
+    'Never describe a month as soft, softening, softens, slow, slowing, weak, quiet, sluggish, tapering, dipping,',
+    'a shoulder season, a down month or anything similar — a later month having less on the books than a nearer one',
+    'is normal lead time, not weakness, so never frame it as a decline. If a month genuinely has little on the books,',
+    'say it is early in the booking window and note what is being done to fill it — then stop.',
   ].join(' ')
 }
