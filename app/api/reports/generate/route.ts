@@ -19,7 +19,7 @@ import {
 import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus, paceGuidance } from '@/lib/pacing'
-import { ownerMonths, rollup, coverageFor, MONTH_LABEL } from '@/lib/owner-statements'
+import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -130,6 +130,25 @@ async function buildStatementSection(statementIds: string[], scopeLabel: string)
 
   const r = rollup(rows)
   const t = r.totals
+
+  // Unit-level and fee-level detail for the same owner-months. Non-fatal by design: this is
+  // added depth on a section that already stands on its own, so a failure here must not cost
+  // the whole report.
+  let detail: Awaited<ReturnType<typeof statementDetail>> | null = null
+  try {
+    detail = await statementDetail({ ownerIds, months })
+  } catch { detail = null }
+  if (detail && detail.units.length) {
+    const ids = detail.units.filter(u => !u.portfolio).map(u => u.listingId)
+    if (ids.length) {
+      const { data: ls } = await sb.from('guesty_listings').select('id, title, nickname, unit').in('id', ids)
+      const nameOf: Record<string, string> = {}
+      for (const l of (ls || []) as any[]) nameOf[String(l.id)] = String(l.nickname || l.title || l.unit || l.id)
+      for (const u of detail.units) if (!u.portfolio) u.name = nameOf[u.listingId] || u.listingId
+    }
+    // Named so it reads as a deliberate line on the statement rather than a rounding plug.
+    for (const u of detail.units) if (u.portfolio) u.name = 'Portfolio-level — not unit-attributed'
+  }
   const spanLabel = r.span
     ? (r.span.first === r.span.last ? MONTH_LABEL(r.span.first) : MONTH_LABEL(r.span.first) + ' – ' + MONTH_LABEL(r.span.last))
     : ''
@@ -164,6 +183,10 @@ async function buildStatementSection(statementIds: string[], scopeLabel: string)
       net: o.net, paid: o.paid, months: o.months,
     })),
     totals: t,
+    units: detail ? detail.units : [],
+    fees: detail ? detail.fees : [],
+    unattributed: detail ? detail.unattributed : 0,
+    feeLabels: detail ? detail.named : false,
   }
 }
 
