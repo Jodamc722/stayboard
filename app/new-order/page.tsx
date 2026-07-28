@@ -13,11 +13,20 @@ import { useEffect, useRef, useState } from 'react'
 type Unit = { id: string; name: string; building: string }
 type Receipt = { ref: string; text: string }
 
-const KINDS: { k: string; label: string; hint: string }[] = [
-  { k: 'replace', label: 'Replace', hint: 'something is here but worn out, broken or wrong' },
-  { k: 'add', label: 'Add', hint: 'the unit is missing it entirely' },
-  { k: 'maintenance', label: 'Fix', hint: 'it needs repairing, not buying' },
+// ORDER is the umbrella for anything that COSTS MONEY; picking it reveals which kind of buy it is.
+// Fix and Clean are team work with nothing to purchase, so they sit ALONGSIDE Order, not under it.
+// Replace is preselected, so the common case is still zero extra taps.
+const BUYS: { k: string; label: string; hint: string }[] = [
+  { k: 'replace', label: 'Replace', hint: 'it is here but worn out, broken or wrong' },
+  { k: 'add', label: 'Add', hint: 'the unit does not have it, or needs more of them' },
 ]
+const WORK: { k: string; label: string; hint: string }[] = [
+  { k: 'maintenance', label: 'Fix', hint: 'it needs repairing, nothing to buy' },
+  { k: 'clean', label: 'Clean', hint: 'a cleanliness problem — stain, smell, left dirty' },
+]
+const KINDS = BUYS.concat(WORK)
+const kindLabel = (k: string) => (KINDS.find(x => x.k === k) || BUYS[0]).label
+const isBuy = (k: string) => BUYS.some(x => x.k === k)
 
 export default function NewOrderPage() {
   const [units, setUnits] = useState<Unit[]>([])
@@ -45,7 +54,10 @@ export default function NewOrderPage() {
       if (j && j.ok) { setUnits(j.units || []); setBuildings(j.buildings || []) }
       else setErr('Could not load the unit list — reload to retry.')
     }).catch(() => setErr('Network error — reload to retry.'))
-    try { const w = localStorage.getItem('stay_req_who'); if (w) setWho(w) } catch {}
+    // The name field starts EMPTY, deliberately. This is a shared link — cleaners, vendors and
+    // office staff all open it, often on the same phone or tablet. Remembering the last person's
+    // name would quietly file the next report under the wrong human, and attribution is the whole
+    // point of asking. Everyone types their own name, every time.
   }, [])
 
   // Photos upload against the unit's audit share code, so pick the unit first and fetch the code.
@@ -85,15 +97,13 @@ export default function NewOrderPage() {
       const j = await r.json()
       if (!r.ok || !j.ok) setErr(j.error || 'Could not send it — retry.')
       else {
-        try { if (who) localStorage.setItem('stay_req_who', who) } catch {}
         // Plain text on purpose: it has to survive a paste into Slack, WhatsApp or a text message
         // with no formatting, and still read cleanly to whoever picks it up.
         const ref = String(j.ref || '').toUpperCase()
-        const kindLabel = (KINDS.find(k => k.k === kind) || KINDS[0]).label
         const lines = [
-          'ORDER REQUEST ' + ref,
+          (isBuy(kind) ? 'ORDER REQUEST ' : 'WORK REQUEST ') + ref,
           'Unit: ' + (unit ? unit.name : '') + (unit && unit.building ? ' (' + unit.building + ')' : ''),
-          'Need: ' + kindLabel + ' — ' + title + (Number(qty) > 1 ? ' ×' + Number(qty) : ''),
+          'Need: ' + (isBuy(kind) ? 'Order · ' : '') + kindLabel(kind) + ' — ' + title + (Number(qty) > 1 ? ' ×' + Number(qty) : ''),
         ]
         if (room.trim()) lines.push('Room: ' + room.trim())
         if (sev === 'high') lines.push('Priority: URGENT — guest affected')
@@ -152,11 +162,19 @@ export default function NewOrderPage() {
           <div className="rounded-xl border border-neutral-200 bg-white p-3">
             <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1.5">What</div>
             <div className="flex gap-1.5">
-              {KINDS.map(k => (
+              <button onClick={() => { if (!isBuy(kind)) setKind('replace') }} className={'flex-1 text-[13px] font-semibold px-2 py-2 rounded-lg border ' + (isBuy(kind) ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-600 border-neutral-200')}>Order</button>
+              {WORK.map(k => (
                 <button key={k.k} onClick={() => setKind(k.k)} className={'flex-1 text-[13px] font-semibold px-2 py-2 rounded-lg border ' + (kind === k.k ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-600 border-neutral-200')}>{k.label}</button>
               ))}
             </div>
-            <div className="mt-1 text-[11px] text-neutral-400">{(KINDS.find(k => k.k === kind) || KINDS[0]).hint}</div>
+            {isBuy(kind) ? (
+              <div className="flex gap-1.5 mt-1.5 pl-3 border-l-2 border-neutral-900">
+                {BUYS.map(k => (
+                  <button key={k.k} onClick={() => setKind(k.k)} className={'flex-1 text-[13px] font-semibold px-2 py-1.5 rounded-lg border ' + (kind === k.k ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-neutral-600 border-neutral-200')}>{k.label}</button>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-1 text-[11px] text-neutral-400">{(KINDS.find(k => k.k === kind) || BUYS[0]).hint}</div>
             <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What is it? e.g. King mattress, shower curtain rod" className="mt-2 w-full text-[15px] rounded-lg border border-neutral-200 px-2.5 py-2.5" />
             <div className="mt-2 flex gap-2">
               <input value={room} onChange={e => setRoom(e.target.value)} placeholder="Which room?" className="flex-1 text-[15px] rounded-lg border border-neutral-200 px-2.5 py-2.5" />
