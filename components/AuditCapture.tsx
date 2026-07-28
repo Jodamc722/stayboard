@@ -118,6 +118,9 @@ export default function AuditCapture({ code }: { code: string }) {
   const [walkOK, setWalkOK] = useState<Record<string, boolean>>({})
   const [walkFlag, setWalkFlag] = useState('')
   const [flagKind, setFlagKind] = useState('maintenance')
+  // Urgent = a guest is being affected right now. It is a separate axis from WHAT the work is,
+  // so it is a toggle, not a fifth tag — anything can be urgent.
+  const [flagUrgent, setFlagUrgent] = useState(false)
   const [flagNote, setFlagNote] = useState('')
   const [flagPhoto, setFlagPhoto] = useState('')
   const [flagBusy, setFlagBusy] = useState(false)
@@ -209,7 +212,7 @@ export default function AuditCapture({ code }: { code: string }) {
   function wkKey(room: string, label: string) { return room + '|||' + label }
   function walkItemFor(room: string, label: string) { const l = label.toLowerCase(); return items.find(it => it.room === room && it.kind !== 'tag' && it.kind !== 'inventory' && String(it.title || '').toLowerCase().indexOf(l) >= 0) }
   function markGood(room: string, label: string) { setWalkOK(m => { const n = { ...m }; n[wkKey(room, label)] = true; return n }) }
-  function openFlag(room: string, label: string, dflt: string) { setWalkFlag(wkKey(room, label)); setFlagKind(dflt); setFlagNote(label); setFlagPhoto('') }
+  function openFlag(room: string, label: string, dflt: string) { setWalkFlag(wkKey(room, label)); setFlagKind(dflt); setFlagNote(label); setFlagPhoto(''); setFlagUrgent(false) }
   function flagShoot() { if (flagCamRef.current) { flagCamRef.current.value = ''; flagCamRef.current.click() } }
   async function onFlagPhoto(e: any) {
     const f = e.target.files && e.target.files[0]; if (!f) return
@@ -222,9 +225,9 @@ export default function AuditCapture({ code }: { code: string }) {
     setFlagBusy(true)
     try {
       const title = (flagNote.trim() || label).slice(0, 160)
-      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: flagKind, title, note: '', photoUrl: flagPhoto || '', dedupe: 1 }) })
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: flagKind, title, note: '', photoUrl: flagPhoto || '', severity: flagUrgent ? 'high' : '', dedupe: 1 }) })
       markGood(room, label)
-      setWalkFlag(''); setFlagPhoto(''); setFlagNote('')
+      setWalkFlag(''); setFlagPhoto(''); setFlagNote(''); setFlagUrgent(false)
       await load()
     } catch { alert('Failed - retry') }
     setFlagBusy(false)
@@ -789,9 +792,16 @@ function quickTags(r: string): string[] {
                         {flagging ? (
                           <div className="px-2 pb-2 pt-1.5 space-y-1.5 border-t border-neutral-100">
                             <div className="flex gap-1">
-                              {['maintenance', 'replace', 'add', 'clean'].map(k => <button key={k} onClick={() => setFlagKind(k)} className={'text-[10px] font-semibold px-1.5 py-1 rounded border ' + (flagKind === k ? KIND_META[k].cls : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k].label}</button>)}
+                              <button onClick={() => { if (flagKind !== 'replace' && flagKind !== 'add') setFlagKind('replace') }} className={'text-[10px] font-semibold px-1.5 py-1 rounded border ' + (flagKind === 'replace' || flagKind === 'add' ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-500 border-neutral-200')}>Order</button>
+                              {['maintenance', 'clean'].map(k => <button key={k} onClick={() => setFlagKind(k)} className={'text-[10px] font-semibold px-1.5 py-1 rounded border ' + (flagKind === k ? KIND_META[k].cls : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k].label}</button>)}
                             </div>
+                            {flagKind === 'replace' || flagKind === 'add' ? (
+                              <div className="flex gap-1 pl-2 border-l-2 border-neutral-900">
+                                {['replace', 'add'].map(k => <button key={k} onClick={() => setFlagKind(k)} className={'text-[10px] font-semibold px-1.5 py-1 rounded border ' + (flagKind === k ? KIND_META[k].cls : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k].label}{k === 'add' ? ' (rec)' : ''}</button>)}
+                              </div>
+                            ) : null}
                             <input value={flagNote} onChange={e => setFlagNote(e.target.value)} placeholder="What is wrong or needed?" className="w-full text-[13px] border border-neutral-200 rounded-lg px-2 py-1.5" />
+                            <button onClick={() => setFlagUrgent(u => !u)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagUrgent ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-neutral-500 border-neutral-200')}>{flagUrgent ? '⚠ Urgent - guest affected' : 'Mark urgent'}</button>
                             <div className="flex items-center gap-2">
                               <button onClick={flagShoot} disabled={flagBusy} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagPhoto ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-neutral-300 text-neutral-600')}>{flagBusy ? '…' : (flagPhoto ? '📷 Photo ✓ retake' : '📷 Add photo')}</button>
                               {flagPhoto ? <img src={flagPhoto} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="text-[10px] text-neutral-400">optional</span>}
