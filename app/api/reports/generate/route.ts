@@ -1,12 +1,14 @@
 // Owner Report generator. POST { listingIds?, buildings?, periodStart, periodEnd, asOf?, title?,
-// pacingUrl?, statementUrls?, heroImageUrl? }
+// pacingUrl?, statementIds?, heroImageUrl? }
 // -> assembles all sections from the Supabase mirrors (deterministic math in lib/owner-report),
 // runs ONE AI pass for narrative (headlines, quote picks, hearing/doing themes, project
 // categorization) in the deck's voice, inserts an owner_reports row and returns { id, code }.
 // Performance vs Plan is included ONLY when owner_budgets rows exist for the scope (17 West today).
 // pacingUrl (PriceLabs PDF, uploaded via /api/guidebook/upload) is AI-parsed into the Pacing vs
-// Market section; statementUrls (owner statement PDFs) into the Owner Statement section; both
-// sections stay null when nothing is uploaded, so they simply don't render.
+// Market section. statementIds are REAL Guesty owner statements picked in the generator (see
+// /api/reports/statements); the Owner Statement section is computed from the recognised
+// Owners-ledger mirror, with no AI anywhere near the figures. Both sections stay null when
+// nothing is supplied, so they simply don't render.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -17,6 +19,7 @@ import {
 import type { ReportContent, ReportListing } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus } from '@/lib/pacing'
+import { ownerMonths, rollup, coverageFor, MONTH_LABEL } from '@/lib/owner-statements'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -102,25 +105,66 @@ async function parsePacing(url: string, scopeLabel: string, periodLabel: string,
   }
 }
 
-// Owner statement PDFs -> summarized Statement items (owner-safe, figures only).
-async function parseStatements(urls: string[], scopeLabel: string) {
-  const blocks: any[] = []
-  for (const u of urls.slice(0, 4)) {
-    const b = await fetchDocBlock(u)
-    if (b) blocks.push(b)
+// Selected Guesty owner statements -> the Statement section, built from the recognised
+// Owners-ledger mirror rather than from a parsed PDF. No AI touches these numbers.
+//
+// The figures are the ones the account-wide audit established: AF is owner earnings before
+// expenses, CMS is Stay's commission, PO is the payout that actually moved. `dueToOwner` on
+// the statement is a settlement balance, so it is shown as a cross-check, never as earnings.
+const usd = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+
+async function buildStatementSection(statementIds: string[], scopeLabel: string) {
+  const sb = supabaseAdmin()
+  const { data } = await sb.from('guesty_owner_statements')
+    .select('id, owner_id, owner_name, period_month, period_start, period_end, due_to_owner')
+    .in('id', statementIds)
+  const stmts = (data || []) as any[]
+  if (!stmts.length) return null
+
+  const ownerIds = Array.from(new Set(stmts.map(s => String(s.owner_id || '')).filter(Boolean)))
+  const months = Array.from(new Set(stmts.map(s => String(s.period_month || '')).filter(Boolean)))
+  const picked = new Set(stmts.map(s => String(s.owner_id) + '|' + String(s.period_month)))
+  const all = await ownerMonths({ ownerIds, months })
+  const rows = all.filter(r => picked.has(r.key))
+  if (!rows.length) return null
+
+  const r = rollup(rows)
+  const t = r.totals
+  const spanLabel = r.span
+    ? (r.span.first === r.span.last ? MONTH_LABEL(r.span.first) : MONTH_LABEL(r.span.first) + ' – ' + MONTH_LABEL(r.span.last))
+    : ''
+  const ownerNames = Array.from(new Set(rows.map(x => x.ownerName))).filter(Boolean)
+  const scope = ownerNames.length <= 2 ? ownerNames.join(' + ') : ownerNames.length + ' owners'
+
+  // Settlement lags recognition, so a variance is normal; it is only worth a line when it is
+  // big enough to notice against net.
+  const varPct = t.net ? Math.abs(t.variance / t.net) * 100 : 0
+  const noteBits = [
+    'Recognised owner-ledger basis, direct from Guesty accounting.',
+    t.statements + ' statement' + (t.statements === 1 ? '' : 's') + ', ' + t.tied + ' tied to the cent.',
+  ]
+  if (varPct >= 1) {
+    noteBits.push('Payouts run ' + usd(Math.abs(t.variance)) + (t.variance >= 0 ? ' ahead of' : ' behind') + ' recognised earnings — settlement timing, not a shortfall.')
   }
-  if (!blocks.length) return null
-  const text = await anthropic({
-    model: DOC_MODEL, max_tokens: 1200,
-    system: 'You summarize owner statements for a property-management owner report. Data-forward, zero fluff, never speculate. Output STRICT JSON only.',
-    messages: [{ role: 'user', content: [...blocks, { type: 'text', text: 'These are owner statement(s) for "' + scopeLabel + '". For EACH document return one item. JSON: {"items": [{"title": short label like "June 2026 Owner Statement", "summary": 1-2 sentences with the key figures - gross rent collected, total expenses/management fees, and the net owner payout, using exact numbers from the document}]}.' }] }],
-  })
-  const j = parseJson(text)
-  const items = (Array.isArray(j?.items) ? j.items : []).slice(0, 4).map((it: any) => ({
-    title: str(it?.title).slice(0, 90), summary: str(it?.summary).slice(0, 400), url: null,
-  })).filter((it: any) => it.title && it.summary)
-  if (!items.length) return null
-  return { headline: 'Owner statement summary.', items }
+
+  return {
+    headline: 'Owner earnings of ' + usd(t.net) + ' net across ' + spanLabel + '.',
+    subtitle: 'Recognised Guesty accounting for ' + (scope || scopeLabel) + ' · ' + spanLabel,
+    scope: scope || scopeLabel,
+    note: noteBits.join(' '),
+    kpis: [
+      { label: 'Rental income', value: usd(t.rental), sub: 'Before expenses' },
+      { label: 'Management commission', value: usd(t.commission), sub: t.commissionPct + '% of rental' },
+      { label: 'Net to owner', value: usd(t.net), sub: 'After commission and charges' },
+      { label: 'Paid out', value: usd(t.paid), sub: 'Actually settled' },
+    ],
+    months: r.months,
+    owners: r.owners.map(o => ({
+      ownerName: o.ownerName, rental: o.rental, commission: o.commission,
+      net: o.net, paid: o.paid, months: o.months,
+    })),
+    totals: t,
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -136,13 +180,29 @@ export async function POST(req: NextRequest) {
   const asOf = str(body?.asOf) || etToday()
   const theme = str(body?.theme) || 'capri'
   const pacingUrl = str(body?.pacingUrl)
-  const statementUrls: string[] = Array.isArray(body?.statementUrls) ? body.statementUrls.filter((u: any) => typeof u === 'string' && u).slice(0, 4) : []
+  // Owner statements are now SELECTED from the Guesty mirror rather than uploaded as PDFs.
+  const statementIds: string[] = Array.isArray(body?.statementIds) ? body.statementIds.map((x: any) => String(x)).filter(Boolean).slice(0, 24) : []
   const heroImageUrl = str(body?.heroImageUrl)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd) {
     return NextResponse.json({ error: 'periodStart/periodEnd (YYYY-MM-DD) required' }, { status: 400 })
   }
   if (!listingIds.length && !buildings.length) {
     return NextResponse.json({ error: 'listingIds or buildings required' }, { status: 400 })
+  }
+
+  // A selected statement whose month has not been swept into the ledger mirror would aggregate
+  // to $0 without anything looking wrong. Refuse the generate rather than show an owner a
+  // number that is silently missing its ledger.
+  if (statementIds.length) {
+    const { data: chk } = await supabaseAdmin()
+      .from('guesty_owner_statements').select('period_month').in('id', statementIds)
+    const wantMonths = Array.from(new Set(((chk || []) as any[]).map(s => String(s.period_month || '')).filter(Boolean)))
+    const cov = await coverageFor(wantMonths)
+    if (!cov.ready) {
+      return NextResponse.json({
+        error: 'Owner-ledger data is not synced for ' + cov.missing.join(', ') + '. Run the owner-statement sync, then generate.',
+      }, { status: 409 })
+    }
   }
 
   // ---- scope ----
@@ -237,11 +297,11 @@ export async function POST(req: NextRequest) {
   const tasks = await pullTasks(ids, byId, periodStart, periodEnd)
   const buckets = weekBuckets(periodStart, periodEnd)
 
-  // ---- uploaded docs (optional): PriceLabs pacing + owner statements ----
+  // ---- PriceLabs pacing PDF (optional upload) + selected owner statements (from the mirror) ----
   const periodLabel = prettyDate(periodStart) + ' - ' + prettyDate(periodEnd)
   const [pacingSection, statementSection] = await Promise.all([
     pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel, period.occupancyPct) : Promise.resolve(null),
-    statementUrls.length ? parseStatements(statementUrls, scopeLabel) : Promise.resolve(null),
+    statementIds.length ? buildStatementSection(statementIds, scopeLabel) : Promise.resolve(null),
   ])
 
   // ---- AI narrative pass (single call; template fallback) ----
