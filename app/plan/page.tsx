@@ -31,7 +31,11 @@ export default function OpsPlanPage() {
     <Shell>
       <header className="mb-5">
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Today in Ops</h1>
+        <div className="flex items-center gap-3 flex-wrap mt-1">
+          <h1 className="text-3xl font-bold text-ink tracking-tight">Today in Ops</h1>
+          {/* Paper copy of the day for whoever is running the field. */}
+          <Link href="/plan/print" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5 text-muted hover:text-ink" title="Printable day sheet: arrivals, departures, owner stays, work orders, open issues and vacant units">Day sheet &rarr;</Link>
+        </div>
         <p className="text-sm text-muted mt-1">Live field board &mdash; cleans, maintenance, inspections and active guest glitches by market. Assign, reschedule, and see what needs attention.</p>
       </header>
 
