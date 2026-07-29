@@ -171,7 +171,10 @@ export default function DaySheetsPage() {
       {/* 2 — ARRIVALS TO VERIFY */}
       {on.arrivals && (() => {
         const arr = (d?.arrivals || [])
-        const noClean = arr.filter((a: any) => !a.cleanToday)
+        // An extension is NOT a unit to walk: the guest never left, so "walk it before check-in"
+        // would send somebody into an occupied unit. It is called out on the departure sheet instead.
+        const noClean = arr.filter((a: any) => !a.cleanToday && !a.extension)
+        const staying = arr.filter((a: any) => a.extension)
         const withClean = arr.filter((a: any) => a.cleanToday)
         return (
           <section className="ds-page-wrap">
@@ -193,6 +196,13 @@ export default function DaySheetsPage() {
                   </tr>
                 ))}
                 {noClean.length === 0 && <tr><td colSpan={8} className="ds-empty">Every arrival today follows a clean — nothing to verify.</td></tr>}
+                {staying.map((r: any, i: number) => (
+                  <tr key={'x' + i} className="ds-rowsd">
+                    <td />
+                    <td className="ds-unit">{r.unit}</td>
+                    <td colSpan={6}><b className="ds-ext">Same guest is staying on — do not enter.</b> <span className="ds-sub">{r.guest} re-booked, so nobody checks out. Ask them whether they want a clean.</span></td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             <div className="ds-h3">Arriving after a clean today ({withClean.length}) — covered on the departure sheet</div>
