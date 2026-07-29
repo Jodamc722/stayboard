@@ -348,7 +348,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       if (d.vendor) continue
       if (!d.clean) exceptions.push({ kind: 'No clean on the board', unit: d.unit, detail: 'Guest ' + d.guest + ' checks out today and there is no departure clean scheduled', severity: 'high' })
       else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') exceptions.push({ kind: 'Clean unassigned', unit: d.unit, detail: (d.clean.name || 'Departure clean') + ' has nobody on it', severity: 'high' })
-      if (d.extension) exceptions.push({ kind: 'Extension — guest stays', unit: d.unit, detail: d.guest + ' checks out and straight back in today. Do NOT strip the unit; only service it if the guest asks', severity: 'high' })
+      if (d.extension) exceptions.push({ kind: 'Extension — same guest re-booked', unit: d.unit, detail: d.guest + ' books straight back in today, so the guest never leaves. Do NOT strip the unit — ASK THE GUEST whether they want a clean, then schedule it if they do', severity: 'high' })
       else if (d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
       if (d.nights != null && d.nights >= 10) exceptions.push({ kind: 'Long stay out', unit: d.unit, detail: d.nights + '-night stay ended — heavier clean, allow extra time', severity: 'med' })
     }
