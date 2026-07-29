@@ -345,11 +345,13 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     // Computed here (one source) so the paper and the screen can never disagree.
     const exceptions: { kind: string; unit: string; detail: string; severity: 'high' | 'med' }[] = []
     for (const d of departures) {
+      // The extension warning comes BEFORE the vendor skip on purpose: a vendor crew stripping a
+      // unit the guest never left is the same incident, and Botanica is exactly where it showed up.
+      if (d.extension) exceptions.push({ kind: 'Extension — same guest re-booked', unit: d.unit, detail: d.guest + ' books straight back in today, so the guest never leaves. Do NOT strip the unit — ASK THE GUEST whether they want a clean, then schedule it if they do', severity: 'high' })
       if (d.vendor) continue
       if (!d.clean) exceptions.push({ kind: 'No clean on the board', unit: d.unit, detail: 'Guest ' + d.guest + ' checks out today and there is no departure clean scheduled', severity: 'high' })
       else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') exceptions.push({ kind: 'Clean unassigned', unit: d.unit, detail: (d.clean.name || 'Departure clean') + ' has nobody on it', severity: 'high' })
-      if (d.extension) exceptions.push({ kind: 'Extension — same guest re-booked', unit: d.unit, detail: d.guest + ' books straight back in today, so the guest never leaves. Do NOT strip the unit — ASK THE GUEST whether they want a clean, then schedule it if they do', severity: 'high' })
-      else if (d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
+      if (!d.extension && d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
       if (d.nights != null && d.nights >= 10) exceptions.push({ kind: 'Long stay out', unit: d.unit, detail: d.nights + '-night stay ended — heavier clean, allow extra time', severity: 'med' })
     }
     for (const a of arrivals) {
