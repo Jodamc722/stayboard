@@ -205,7 +205,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       const li = lmap[lid] || {}
       const who = (Array.isArray(t.assignees) ? t.assignees : []).map((p: any) => str(p.name)).filter(Boolean)
       const row = {
-        id: str(t.id), listingId: lid, unit: li.name || 'Unit', market: li.market || '',
+        id: str(t.id), listingId: lid, unit: li.name || 'Unknown unit', market: li.market || '',
         name: nm, label: taskLabel(nm), instructions: taskNotes(nm),
         dept: str(t.type_department), assignees: who,
         status: isDone(t.status) ? 'done' : (t.started_at ? 'in progress' : 'not started'),
@@ -257,7 +257,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       const ownerName = ownerOf[lid] || ''
       const ownerFlag = OWNER_SRC.test(src) ? 'owner booking' : MANUAL_SRC.test(src) ? 'manual / block' : (ownerName && nameMatches(r.guest_name, ownerName) ? 'name matches owner' : '')
       const base: any = {
-        listingId: lid, reservationId: str(r.id) || null, unit: li.name || 'Unit', market: li.market || '', building: li.building || '',
+        listingId: lid, reservationId: str(r.id) || null, unit: li.name || 'Unknown unit', market: li.market || '', building: li.building || '',
         guest: str(r.guest_name) || 'Guest', guestId: str(r.guest_id) || null, phone: str(r.guest_phone), nights: r.nights != null ? Number(r.nights) : null,
         source: src, checkIn: ci, checkOut: co, ownerFlag, owner: ownerName || null,
         notes: str(r.notes).slice(0, 160), vendor: li.vendor || null,
@@ -460,7 +460,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     for (const lid of Object.keys(cleanByListing)) {
       if (departures.some(d => d.listingId === lid)) continue
       const c = cleanByListing[lid]
-      add('med', 'Clean with no checkout', c.unit,
+      add('med', 'Clean with no checkout', c.unit === 'Unit' ? 'Unknown unit' : c.unit,
         'A ' + (c.label || 'clean').toLowerCase() + ' is booked today but nobody checked out of this unit.',
         'Either it was moved from another day, or it is on the wrong unit — check before sending anyone.')
     }
