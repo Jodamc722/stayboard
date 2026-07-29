@@ -116,8 +116,13 @@ export default function DaySheetsPage() {
                         {r.vendor && <span className="ds-tag">{r.vendor}</span>}
                         {r.doorCode && <div className="ds-sub">code {r.doorCode}</div>}
                       </td>
-                      <td className="ds-who">{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <span className="ds-warn">UNASSIGNED</span>) : <span className="ds-warn">NO CLEAN ON THE BOARD</span>}
+                      <td className="ds-who">{r.clean
+                        ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <span className="ds-warn">UNASSIGNED</span>)
+                        : r.vendor
+                          ? <span className="ds-vendorclean">{r.vendor} cleans this</span>
+                          : <span className="ds-warn">NO CLEAN ON THE BOARD</span>}
                         {r.clean && <div className="ds-sub">{r.clean.status}</div>}
+                        {!r.clean && r.vendor && <div className="ds-sub">not tracked in Breezeway</div>}
                       </td>
                       <td className="ds-num">{r.checkOutTime || '11:00'}</td>
                       <td>{r.guest}<div className="ds-sub">{r.nights != null ? r.nights + ' nights' : ''}</div></td>
@@ -156,7 +161,7 @@ export default function DaySheetsPage() {
                     <td>{r.guest}{r.phone ? <div className="ds-sub">{r.phone}</div> : null}</td>
                     <td className="ds-num">{r.checkInTime || '4:00 PM'}</td>
                     <td className="ds-num">{r.nights ?? '—'}{r.nights != null && r.nights >= 10 && <span className="ds-tag ds-warnTag">BIG</span>}</td>
-                    <td className="ds-sub">{r.lastCleanedAt ? shortDate(r.lastCleanedAt) : <span className="ds-warn">no record</span>}</td>
+                    <td className="ds-sub">{r.lastCleanedAt ? shortDate(r.lastCleanedAt) : (r.vendor ? r.vendor + ' cleans' : <span className="ds-warn">no record</span>)}</td>
                     <td className="ds-sub">{r.doorCode || '—'}</td>
                     <td />
                   </tr>
@@ -315,6 +320,7 @@ export default function DaySheetsPage() {
         .ds-rowcheck td { background:#fef2f2 !important; }
         .ds-sd { font-size:10px; color:#92400e; }
         .ds-sd b { font-size:9px; letter-spacing:.05em; }
+        .ds-vendorclean { color:#52525b; font-weight:600; }
         .ds-warnTag { border-color:#b45309; background:#b45309; color:#fff; }
         .ds-unit { font-weight:700; white-space:nowrap; }
         .ds-sub { color:#71717a; font-size:10px; }
