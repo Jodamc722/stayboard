@@ -1,31 +1,39 @@
 'use client'
-// DAY SHEET (print) — the ops manager's paper copy of the day. Everything that matters on one
-// document: arrivals, departures, owner stays, work orders, open glitches, vacant units, and
-// ruled space to write on. Screen shows a toolbar; @media print hides it and prints clean.
+// DAY SHEETS — the ops manager's paper. Five short sheets, each answering ONE question, each
+// printable on its own page. Roberto carries these; if a number here is wrong the day goes wrong,
+// so every sheet carries a freshness stamp, a reconciliation count, and explicit "unknown" text
+// instead of blank cells.
+//   1 Turn sheet     — departures by AREA, who cleans what, in driving order
+//   2 Arrivals       — who is coming, is the unit ready
+//   3 Work orders    — maintenance / inspections / everything that is not a turn
+//   4 Exceptions     — only what is wrong or could go wrong today
+//   5 Vacants, owner stays & handover
 import { useCallback, useEffect, useState } from 'react'
 import { Printer, RefreshCw, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
+import { clusterAreas } from '@/lib/geo-areas'
 
 function todayET() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
-function longDate(d: string) {
-  const x = new Date(d + 'T12:00:00')
-  return isNaN(x.getTime()) ? d : x.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
-}
-function shortDate(d: string | null) {
-  if (!d) return '—'
-  const x = new Date(d + 'T12:00:00')
-  return isNaN(x.getTime()) ? d : x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
+function longDate(d: string) { const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? d : x.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) }
+function shortDate(d: string | null) { if (!d) return '—'; const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? d : x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
+function minsAgo(iso: string | null): number | null { if (!iso) return null; const t = new Date(iso).getTime(); return isNaN(t) ? null : Math.round((Date.now() - t) / 60000) }
+function ago(iso: string | null) { const m = minsAgo(iso); if (m == null) return 'unknown'; if (m < 60) return m + ' min ago'; const h = Math.floor(m / 60); return h + 'h ' + (m % 60) + 'm ago' }
 
-// Ruled lines the manager writes on — the whole point of a paper sheet.
-function Lines({ n = 3 }: { n?: number }) {
-  return <div className="ds-lines">{Array.from({ length: n }).map((_, i) => <div key={i} className="ds-line" />)}</div>
-}
-function Box({ label }: { label: string }) { return <span className="ds-box" title={label} /> }
+function Lines({ n = 3 }: { n?: number }) { return <div className="ds-lines">{Array.from({ length: n }).map((_, i) => <div key={i} className="ds-line" />)}</div> }
+function Box() { return <span className="ds-box" /> }
 
-export default function DaySheetPage() {
+const SHEETS = [
+  { key: 'turn', name: 'Turn sheet' },
+  { key: 'arrivals', name: 'Arrivals & ready check' },
+  { key: 'work', name: 'Work orders' },
+  { key: 'exceptions', name: 'Exceptions' },
+  { key: 'closeout', name: 'Vacants, owner stays & handover' },
+]
+
+export default function DaySheetsPage() {
   const [date, setDate] = useState(todayET())
   const [market, setMarket] = useState('all')
+  const [on, setOn] = useState<Record<string, boolean>>({ turn: true, arrivals: true, work: true, exceptions: true, closeout: true })
   const [d, setD] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -35,7 +43,7 @@ export default function DaySheetPage() {
     try {
       const r = await fetch('/api/ops-today/daysheet?date=' + encodeURIComponent(dt) + '&market=' + encodeURIComponent(mk), { cache: 'no-store' })
       const j = await r.json()
-      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not build the day sheet')
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not build the day sheets')
       setD(j)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setLoading(false)
@@ -43,9 +51,33 @@ export default function DaySheetPage() {
   useEffect(() => { load(date, market) }, [date, market, load])
 
   const c = (d && d.counts) || {}
+  const stale = minsAgo(d && d.lastSync)
+  const isStale = stale != null && stale > 120
+  const active = SHEETS.filter(s => on[s.key])
+  const sheetNo = (key: string) => active.findIndex(s => s.key === key) + 1
+  const departures = (d?.departures || [])
+  const areas = clusterAreas(departures as any, 4)
+
+  // Every sheet carries the same header: what, when, how fresh, which page.
+  const Head = ({ title, sub, count }: { title: string; sub?: string; count?: string }) => (
+    <div className="ds-head">
+      <div>
+        <div className="ds-brand">STAY HOSPITALITY {'·'} DAILY OPERATIONS</div>
+        <div className="ds-title">{title}</div>
+        {sub && <div className="ds-sub">{sub}</div>}
+      </div>
+      <div className="ds-headright">
+        <div className="ds-date">{longDate(date)}</div>
+        <div className="ds-meta">{market === 'all' ? 'All markets' : market}{count ? ' · ' + count : ''}</div>
+        <div className={'ds-fresh ' + (isStale ? 'ds-freshbad' : '')}>Breezeway synced {ago(d && d.lastSync)} {'·'} printed {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{isStale ? ' — REFRESH BEFORE USING' : ''}</div>
+        <div className="ds-page">Sheet {sheetNo(titleKey(title))} of {active.length}</div>
+      </div>
+    </div>
+  )
+  function titleKey(t: string) { const s = SHEETS.filter(x => t.startsWith(x.name.split(' ')[0]))[0]; return s ? s.key : 'turn' }
+
   return (
     <div className="ds-root">
-      {/* toolbar — screen only */}
       <div className="ds-toolbar">
         <Link href="/plan" className="ds-btn"><ArrowLeft size={14} /> Today in Ops</Link>
         <input type="date" value={date} onChange={e => setDate(e.target.value || todayET())} className="ds-input" />
@@ -53,122 +85,100 @@ export default function DaySheetPage() {
           <option value="all">All markets</option>
           {((d && d.markets) || []).map((m: string) => <option key={m} value={m}>{m}</option>)}
         </select>
+        <span className="ds-picker">
+          {SHEETS.map(s => (
+            <label key={s.key} className={'ds-pick ' + (on[s.key] ? 'ds-pickon' : '')}>
+              <input type="checkbox" checked={!!on[s.key]} onChange={e => setOn(prev => ({ ...prev, [s.key]: e.target.checked }))} />{s.name}
+            </label>
+          ))}
+        </span>
         <button onClick={() => load(date, market)} className="ds-btn"><RefreshCw size={14} /> Refresh</button>
-        <button onClick={() => window.print()} className="ds-btn ds-btn-dark"><Printer size={14} /> Print</button>
+        <button onClick={() => window.print()} className="ds-btn ds-btn-dark"><Printer size={14} /> Print {active.length} sheet{active.length === 1 ? '' : 's'}</button>
         {loading && <span className="ds-muted">Building…</span>}
         {err && <span className="ds-err">{err}</span>}
       </div>
 
-      <div className="ds-page">
-        {/* header */}
-        <div className="ds-head">
-          <div>
-            <div className="ds-brand">STAY HOSPITALITY</div>
-            <div className="ds-title">Daily Operations Sheet</div>
-          </div>
-          <div className="ds-headright">
-            <div className="ds-date">{longDate(date)}</div>
-            <div className="ds-meta">{market === 'all' ? 'All markets' : market} · printed {new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
-            <div className="ds-sign">Manager on duty: <span className="ds-fill" /></div>
-          </div>
-        </div>
-
-        {/* at a glance */}
-        <div className="ds-stats">
-          <div className="ds-stat"><div className="ds-statn">{c.departures ?? '—'}</div><div className="ds-statl">Departures</div></div>
-          <div className="ds-stat"><div className="ds-statn">{c.arrivals ?? '—'}</div><div className="ds-statl">Arrivals</div></div>
-          <div className="ds-stat"><div className="ds-statn">{c.sameDayTurns ?? '—'}</div><div className="ds-statl">Same-day turns</div></div>
-          <div className="ds-stat"><div className="ds-statn">{c.cleansDone ?? 0}/{c.cleansTotal ?? 0}</div><div className="ds-statl">Cleans done</div></div>
-          <div className="ds-stat"><div className="ds-statn">{c.work ?? '—'}</div><div className="ds-statl">Work orders</div></div>
-          <div className="ds-stat"><div className="ds-statn">{c.ownerStays ?? '—'}</div><div className="ds-statl">Owner stays</div></div>
-          <div className="ds-stat"><div className="ds-statn">{c.vacants ?? '—'}</div><div className="ds-statl">Vacant</div></div>
-        </div>
-
-        {/* priorities — written by hand each morning */}
-        <section className="ds-sec ds-avoid">
-          <h2 className="ds-h2">Today&rsquo;s priorities</h2>
-          <Lines n={3} />
+      {/* 1 — TURN SHEET */}
+      {on.turn && (
+        <section className="ds-page-wrap">
+          <Head title="Turn sheet" sub="Departures in driving order — who cleans what" count={departures.length + ' departures · ' + (c.cleansDone ?? 0) + '/' + (c.cleansTotal ?? 0) + ' cleans done'} />
+          {areas.map((a: any) => (
+            <div key={a.key} className="ds-area">
+              <div className="ds-areahead"><span className="ds-arealabel">{a.label}</span><span className="ds-areacity">{a.city || ''}</span><span className="ds-areacount">{a.units.length} unit{a.units.length === 1 ? '' : 's'}</span></div>
+              <table className="ds-table">
+                <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest out</th><th>Out</th><th>Cleaner</th><th>Status</th><th>Next in</th><th className="ds-wn">Notes</th></tr></thead>
+                <tbody>
+                  {a.units.map((r: any, i: number) => (
+                    <tr key={i}>
+                      <td><Box /></td>
+                      <td className="ds-unit">{r.unit}
+                        {r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY</span>}
+                        {r.nights != null && r.nights >= 10 && <span className="ds-tag ds-hot">{r.nights}NT LONG</span>}
+                        {r.vendor && <span className="ds-tag">{r.vendor}</span>}
+                        {r.doorCode && <div className="ds-sub">code {r.doorCode}</div>}
+                      </td>
+                      <td>{r.guest}{r.nights != null && <span className="ds-sub"> {r.nights}nt</span>}</td>
+                      <td>{r.checkOutTime || '11:00'}</td>
+                      <td>{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <span className="ds-warn">UNASSIGNED</span>) : <span className="ds-warn">no clean</span>}</td>
+                      <td className="ds-sub">{r.clean ? r.clean.status : '—'}</td>
+                      <td>{shortDate(r.nextArrival)}</td>
+                      <td />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+          {departures.length === 0 && <div className="ds-empty">No departures today.</div>}
+          <div className="ds-recon">Reconciliation: {departures.length} departure rows printed {'·'} {areas.length} area{areas.length === 1 ? '' : 's'} {'·'} vendor-cleaned included</div>
+          <div className="ds-notes"><div className="ds-h3">Turn notes</div><Lines n={4} /></div>
         </section>
+      )}
 
-        {/* DEPARTURES */}
-        <section className="ds-sec">
-          <h2 className="ds-h2">Departures <span className="ds-count">{(d?.departures || []).length}</span></h2>
+      {/* 2 — ARRIVALS */}
+      {on.arrivals && (
+        <section className="ds-page-wrap">
+          <Head title="Arrivals & ready check" sub="Who is coming in — and is the unit actually ready" count={(d?.arrivals || []).length + ' arrivals'} />
           <table className="ds-table">
-            <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest out</th><th>Out by</th><th>Clean / assigned</th><th>Next arrival</th><th className="ds-wn">Notes</th></tr></thead>
+            <thead><tr><th className="ds-w1">READY</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Clean today</th><th>Code</th><th className="ds-wn">Notes</th></tr></thead>
             <tbody>
-              {(d?.departures || []).map((r: any, i: number) => (
-                <tr key={i}>
-                  <td><Box label="done" /></td>
-                  <td className="ds-unit">{r.unit}{r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY TURN</span>}{r.vendor && <span className="ds-tag">{r.vendor}</span>}</td>
-                  <td>{r.guest}{r.nights != null ? <span className={'ds-tag ' + (r.nights >= 10 ? 'ds-hot' : '')}>{r.nights} NT{r.nights >= 10 ? ' LONG STAY' : ''}</span> : null}</td>
-                  <td>{r.checkOutTime || '11:00 AM'}</td>
-                  <td>{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : 'unassigned') + ' · ' + r.clean.status : <span className="ds-warn">no clean on the board</span>}</td>
-                  <td>{shortDate(r.nextArrival)}</td>
-                  <td />
-                </tr>
-              ))}
-              {(d?.departures || []).length === 0 && <tr><td colSpan={7} className="ds-empty">No departures.</td></tr>}
+              {(d?.arrivals || []).map((r: any, i: number) => {
+                const dep = departures.filter((x: any) => x.unit === r.unit)[0]
+                return (
+                  <tr key={i}>
+                    <td><Box /></td>
+                    <td className="ds-unit">{r.unit}{r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY</span>}{r.ownerFlag && <span className="ds-tag">OWNER</span>}</td>
+                    <td>{r.guest}{r.phone ? <div className="ds-sub">{r.phone}</div> : null}</td>
+                    <td>{r.checkInTime || '4:00 PM'}</td>
+                    <td>{r.nights ?? '—'}{r.nights != null && r.nights >= 10 && <span className="ds-tag ds-hot">CHECK READY</span>}</td>
+                    <td className="ds-sub">{dep ? (dep.clean ? dep.clean.status + (dep.clean.assignees?.length ? ' · ' + dep.clean.assignees.join(', ') : '') : 'no clean scheduled') : 'no departure today'}</td>
+                    <td className="ds-sub">{r.doorCode || '—'}</td>
+                    <td />
+                  </tr>
+                )
+              })}
+              {(d?.arrivals || []).length === 0 && <tr><td colSpan={8} className="ds-empty">No arrivals today.</td></tr>}
             </tbody>
           </table>
+          <div className="ds-recon">Reconciliation: {(d?.arrivals || []).length} arrivals {'·'} {(d?.counts?.sameDayTurns ?? 0)} same-day turns</div>
+          <div className="ds-notes"><div className="ds-h3">Arrival notes / VIPs / early check-ins</div><Lines n={5} /></div>
         </section>
+      )}
 
-        {/* ARRIVALS */}
-        <section className="ds-sec">
-          <h2 className="ds-h2">Arrivals <span className="ds-count">{(d?.arrivals || []).length}</span></h2>
-          <table className="ds-table">
-            <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Source</th><th className="ds-wn">Notes</th></tr></thead>
-            <tbody>
-              {(d?.arrivals || []).map((r: any, i: number) => (
-                <tr key={i}>
-                  <td><Box label="ready" /></td>
-                  <td className="ds-unit">{r.unit}{r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY TURN</span>}{r.ownerFlag && <span className="ds-tag ds-own">OWNER</span>}</td>
-                  <td>{r.guest}{r.phone ? <span className="ds-sub"> {r.phone}</span> : null}</td>
-                  <td>{r.checkInTime || '4:00 PM'}</td>
-                  <td>{r.nights ?? '\u2014'}{r.nights != null && r.nights >= 10 ? <span className="ds-tag ds-hot">CHECK READY</span> : null}</td>
-                  <td className="ds-sub">{r.source || '—'}</td>
-                  <td />
-                </tr>
-              ))}
-              {(d?.arrivals || []).length === 0 && <tr><td colSpan={7} className="ds-empty">No arrivals.</td></tr>}
-            </tbody>
-          </table>
-        </section>
-
-        {/* OWNER STAYS */}
-        <section className="ds-sec ds-avoid">
-          <h2 className="ds-h2">Owner stays in house <span className="ds-count">{(d?.ownerStays || []).length}</span></h2>
-          <table className="ds-table">
-            <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest</th><th>Owner on file</th><th>Why flagged</th><th>Dates</th><th className="ds-wn">Notes</th></tr></thead>
-            <tbody>
-              {(d?.ownerStays || []).map((r: any, i: number) => (
-                <tr key={i}>
-                  <td><Box label="checked" /></td>
-                  <td className="ds-unit">{r.unit}</td>
-                  <td>{r.guest}</td>
-                  <td>{r.owner || '—'}</td>
-                  <td className="ds-sub">{r.ownerFlag}</td>
-                  <td className="ds-sub">{shortDate(r.checkIn)} – {shortDate(r.checkOut)}</td>
-                  <td />
-                </tr>
-              ))}
-              {(d?.ownerStays || []).length === 0 && <tr><td colSpan={7} className="ds-empty">No owner stays today.</td></tr>}
-            </tbody>
-          </table>
-        </section>
-
-        {/* WORK ORDERS */}
-        <section className="ds-sec">
-          <h2 className="ds-h2">Maintenance, inspections &amp; other work <span className="ds-count">{(d?.work || []).length}</span></h2>
+      {/* 3 — WORK ORDERS */}
+      {on.work && (
+        <section className="ds-page-wrap">
+          <Head title="Work orders" sub="Maintenance, inspections and everything that is not a turn" count={(d?.work || []).length + ' tasks'} />
           <table className="ds-table">
             <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Task</th><th>Dept</th><th>Assigned</th><th>Status</th><th className="ds-wn">Notes</th></tr></thead>
             <tbody>
               {(d?.work || []).map((r: any, i: number) => (
                 <tr key={i}>
-                  <td><Box label="done" /></td>
+                  <td><Box /></td>
                   <td className="ds-unit">{r.unit}</td>
                   <td>{r.name}</td>
                   <td className="ds-sub">{r.dept || '—'}</td>
-                  <td>{r.assignees?.length ? r.assignees.join(', ') : <span className="ds-warn">unassigned</span>}</td>
+                  <td>{r.assignees?.length ? r.assignees.join(', ') : <span className="ds-warn">UNASSIGNED</span>}</td>
                   <td className="ds-sub">{r.status}{r.startedAt ? ' · ' + r.startedAt : ''}</td>
                   <td />
                 </tr>
@@ -176,109 +186,132 @@ export default function DaySheetPage() {
               {(d?.work || []).length === 0 && <tr><td colSpan={7} className="ds-empty">No other work scheduled.</td></tr>}
             </tbody>
           </table>
+          <div className="ds-recon">Reconciliation: {(d?.work || []).length} work orders printed</div>
         </section>
+      )}
 
-        {/* GLITCHES */}
-        <section className="ds-sec ds-avoid">
-          <h2 className="ds-h2">Open guest issues <span className="ds-count">{(d?.glitches || []).length}</span></h2>
+      {/* 4 — EXCEPTIONS */}
+      {on.exceptions && (
+        <section className="ds-page-wrap">
+          <Head title="Exceptions" sub="Only what is wrong, or could go wrong today" count={(d?.exceptions || []).length + ' to resolve'} />
+          {(d?.exceptions || []).length === 0 && (d?.glitches || []).length === 0
+            ? <div className="ds-clear">Nothing flagged. Every departure has a clean, everything is assigned, no open guest issues.</div>
+            : (
+              <table className="ds-table">
+                <thead><tr><th className="ds-w1">✓</th><th>What</th><th>Unit</th><th>Detail</th><th className="ds-wn">Action taken</th></tr></thead>
+                <tbody>
+                  {(d?.exceptions || []).map((x: any, i: number) => (
+                    <tr key={i} className={x.severity === 'high' ? 'ds-rowhot' : ''}>
+                      <td><Box /></td>
+                      <td className="ds-unit">{x.severity === 'high' ? '● ' : ''}{x.kind}</td>
+                      <td>{x.unit}</td>
+                      <td>{x.detail}</td>
+                      <td />
+                    </tr>
+                  ))}
+                  {(d?.glitches || []).map((g: any, i: number) => (
+                    <tr key={'g' + i}>
+                      <td><Box /></td>
+                      <td className="ds-unit">Open guest issue</td>
+                      <td>{g.unit || '—'}</td>
+                      <td>{g.overview}<span className="ds-sub"> · {g.status} · raised {shortDate(g.at)}</span></td>
+                      <td />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          <div className="ds-recon">Checks run: departure without a clean {'·'} unassigned clean or task {'·'} same-day turn not finished {'·'} work booked into an occupied night {'·'} long stays {'·'} open guest issues</div>
+          <div className="ds-notes"><div className="ds-h3">Escalations</div><Lines n={4} /></div>
+        </section>
+      )}
+
+      {/* 5 — CLOSE-OUT */}
+      {on.closeout && (
+        <section className="ds-page-wrap">
+          <Head title="Vacants, owner stays & handover" sub="What is empty, who is in house, what rolls over" count={(d?.vacants || []).length + ' vacant'} />
+          <div className="ds-h3">Owner stays in house ({(d?.ownerStays || []).length})</div>
           <table className="ds-table">
-            <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Issue</th><th>Stage</th><th>Raised</th><th className="ds-wn">Notes</th></tr></thead>
+            <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest</th><th>Owner on file</th><th>Why flagged</th><th>Dates</th><th className="ds-wn">Notes</th></tr></thead>
             <tbody>
-              {(d?.glitches || []).slice(0, 14).map((g: any, i: number) => (
-                <tr key={i}>
-                  <td><Box label="handled" /></td>
-                  <td className="ds-unit">{g.unit || '—'}</td>
-                  <td>{g.overview}</td>
-                  <td className="ds-sub">{g.status}</td>
-                  <td className="ds-sub">{shortDate(g.at)}</td>
-                  <td />
-                </tr>
+              {(d?.ownerStays || []).map((r: any, i: number) => (
+                <tr key={i}><td><Box /></td><td className="ds-unit">{r.unit}</td><td>{r.guest}</td><td>{r.owner || '—'}</td><td className="ds-sub">{r.ownerFlag}</td><td className="ds-sub">{shortDate(r.checkIn)} – {shortDate(r.checkOut)}</td><td /></tr>
               ))}
-              {(d?.glitches || []).length === 0 && <tr><td colSpan={6} className="ds-empty">Nothing open.</td></tr>}
+              {(d?.ownerStays || []).length === 0 && <tr><td colSpan={7} className="ds-empty">No owner stays today.</td></tr>}
             </tbody>
           </table>
-        </section>
-
-        {/* VACANTS */}
-        <section className="ds-sec">
-          <h2 className="ds-h2">Vacant units <span className="ds-count">{(d?.vacants || []).length}</span></h2>
+          <div className="ds-h3">Vacant units ({(d?.vacants || []).length})</div>
           <div className="ds-vac">
             {(d?.vacants || []).map((v: any, i: number) => (
-              <div key={i} className="ds-vacrow"><Box label="checked" /><span className="ds-unit">{v.unit}</span><span className="ds-sub">{v.bedrooms != null ? (v.bedrooms === 0 ? 'Studio' : v.bedrooms + 'BR') : ''}</span><span className="ds-sub ds-right">next in {shortDate(v.nextArrival)}</span></div>
+              <div key={i} className="ds-vacrow"><Box /><span className="ds-unit">{v.unit}</span><span className="ds-sub">{v.bedrooms != null ? (v.bedrooms === 0 ? 'Studio' : v.bedrooms + 'BR') : ''}</span><span className="ds-sub ds-right">next {shortDate(v.nextArrival)}</span></div>
             ))}
             {(d?.vacants || []).length === 0 && <div className="ds-empty">Nothing vacant.</div>}
           </div>
-        </section>
-
-        {/* NOTES */}
-        <section className="ds-sec ds-avoid">
-          <h2 className="ds-h2">Notes, follow-ups &amp; escalations</h2>
-          <Lines n={8} />
-          <div className="ds-signrow">
-            <div>Completed by: <span className="ds-fill" /></div>
-            <div>Time finished: <span className="ds-fillsm" /></div>
-            <div>Reviewed by: <span className="ds-fill" /></div>
+          <div className="ds-notes"><div className="ds-h3">Handover — what rolls into tomorrow</div><Lines n={6} />
+            <div className="ds-signrow"><div>Completed by: <span className="ds-fill" /></div><div>Time: <span className="ds-fillsm" /></div><div>Reviewed by: <span className="ds-fill" /></div></div>
           </div>
         </section>
-      </div>
+      )}
 
       <style jsx global>{`
         .ds-root { background:#f4f4f5; min-height:100vh; padding:16px; }
         .ds-toolbar { max-width:1000px; margin:0 auto 12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
         .ds-btn { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:7px 12px; border-radius:9px; border:1px solid #d4d4d8; background:#fff; color:#3f3f46; text-decoration:none; cursor:pointer; }
-        .ds-btn:hover { background:#fafafa; }
         .ds-btn-dark { background:#18181b; color:#fff; border-color:#18181b; }
         .ds-input { font-size:13px; padding:6px 10px; border-radius:9px; border:1px solid #d4d4d8; background:#fff; }
-        .ds-muted { font-size:12px; color:#71717a; }
-        .ds-err { font-size:12px; color:#b91c1c; }
-        .ds-page { max-width:1000px; margin:0 auto; background:#fff; padding:28px 32px 36px; box-shadow:0 1px 3px rgba(0,0,0,.1); color:#18181b; font-size:11.5px; line-height:1.35; }
-        .ds-head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2.5px solid #18181b; padding-bottom:10px; margin-bottom:12px; gap:16px; }
-        .ds-brand { font-size:10px; font-weight:800; letter-spacing:.16em; color:#71717a; }
-        .ds-title { font-size:23px; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
+        .ds-picker { display:inline-flex; gap:4px; flex-wrap:wrap; }
+        .ds-pick { display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:600; padding:5px 8px; border-radius:8px; border:1px solid #d4d4d8; background:#fff; color:#71717a; cursor:pointer; }
+        .ds-pickon { background:#18181b; color:#fff; border-color:#18181b; }
+        .ds-muted { font-size:12px; color:#71717a; } .ds-err { font-size:12px; color:#b91c1c; }
+        .ds-page-wrap { max-width:1000px; margin:0 auto 16px; background:#fff; padding:26px 30px 30px; box-shadow:0 1px 3px rgba(0,0,0,.1); color:#18181b; font-size:11.5px; line-height:1.35; }
+        .ds-head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2.5px solid #18181b; padding-bottom:9px; margin-bottom:11px; gap:16px; }
+        .ds-brand { font-size:9px; font-weight:800; letter-spacing:.16em; color:#71717a; }
+        .ds-title { font-size:21px; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
+        .ds-sub { font-size:11px; color:#71717a; }
         .ds-headright { text-align:right; }
-        .ds-date { font-size:14px; font-weight:700; }
-        .ds-meta { font-size:10.5px; color:#71717a; margin-top:2px; }
-        .ds-sign { font-size:10.5px; color:#52525b; margin-top:8px; white-space:nowrap; }
-        .ds-fill { display:inline-block; width:150px; border-bottom:1px solid #a1a1aa; height:12px; margin-left:4px; }
-        .ds-fillsm { display:inline-block; width:80px; border-bottom:1px solid #a1a1aa; height:12px; margin-left:4px; }
-        .ds-stats { display:grid; grid-template-columns:repeat(7,1fr); gap:8px; margin-bottom:14px; }
-        .ds-stat { border:1px solid #e4e4e7; border-radius:7px; padding:6px 4px; text-align:center; }
-        .ds-statn { font-size:17px; font-weight:800; line-height:1.1; }
-        .ds-statl { font-size:8.5px; text-transform:uppercase; letter-spacing:.06em; color:#71717a; margin-top:1px; }
-        .ds-sec { margin-bottom:14px; }
-        .ds-h2 { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.1em; border-bottom:1.5px solid #18181b; padding-bottom:3px; margin-bottom:6px; }
-        .ds-count { float:right; font-weight:700; color:#71717a; letter-spacing:0; }
+        .ds-date { font-size:13px; font-weight:700; }
+        .ds-meta { font-size:10.5px; color:#52525b; margin-top:1px; }
+        .ds-fresh { font-size:9.5px; color:#71717a; margin-top:3px; }
+        .ds-freshbad { color:#b91c1c; font-weight:800; }
+        .ds-page { font-size:9.5px; color:#a1a1aa; margin-top:2px; }
+        .ds-area { margin-bottom:10px; break-inside:avoid; }
+        .ds-areahead { display:flex; align-items:baseline; gap:8px; border-bottom:1.5px solid #18181b; padding-bottom:2px; margin-bottom:3px; }
+        .ds-arealabel { font-size:12px; font-weight:800; }
+        .ds-areacity { font-size:10px; color:#71717a; }
+        .ds-areacount { font-size:10px; color:#71717a; margin-left:auto; }
+        .ds-h3 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.09em; margin:10px 0 4px; }
         .ds-table { width:100%; border-collapse:collapse; }
         .ds-table th { text-align:left; font-size:8.5px; text-transform:uppercase; letter-spacing:.07em; color:#71717a; font-weight:700; padding:3px 5px; border-bottom:1px solid #d4d4d8; }
         .ds-table td { padding:4px 5px; border-bottom:1px solid #ededf0; vertical-align:top; }
         .ds-table tr:nth-child(even) td { background:#fafafa; }
-        .ds-w1 { width:18px; }
-        .ds-wn { width:150px; }
+        .ds-rowhot td { background:#fff1f2 !important; }
+        .ds-w1 { width:34px; } .ds-wn { width:150px; }
         .ds-unit { font-weight:700; white-space:nowrap; }
-        .ds-sub { color:#71717a; font-size:10.5px; }
+        .ds-sub { color:#71717a; font-size:10px; }
         .ds-right { margin-left:auto; }
-        .ds-warn { color:#b45309; font-weight:600; }
+        .ds-warn { color:#b45309; font-weight:800; }
         .ds-empty { color:#a1a1aa; font-style:italic; padding:6px 5px; }
-        .ds-tag { display:inline-block; margin-left:5px; font-size:8px; font-weight:800; letter-spacing:.05em; border:1px solid #a1a1aa; border-radius:3px; padding:0 3px; vertical-align:middle; color:#3f3f46; }
+        .ds-clear { border:1.5px solid #16a34a; color:#15803d; font-weight:700; padding:10px; border-radius:6px; }
+        .ds-tag { display:inline-block; margin-left:4px; font-size:8px; font-weight:800; letter-spacing:.04em; border:1px solid #a1a1aa; border-radius:3px; padding:0 3px; vertical-align:middle; color:#3f3f46; }
         .ds-hot { border-color:#18181b; background:#18181b; color:#fff; }
-        .ds-own { border-color:#3f3f46; }
         .ds-box { display:inline-block; width:11px; height:11px; border:1.2px solid #52525b; border-radius:2px; }
-        .ds-lines { margin-top:4px; }
-        .ds-line { border-bottom:1px solid #d4d4d8; height:19px; }
-        .ds-vac { columns:3; column-gap:18px; }
+        .ds-lines { margin-top:3px; } .ds-line { border-bottom:1px solid #d4d4d8; height:18px; }
+        .ds-notes { margin-top:10px; break-inside:avoid; }
+        .ds-recon { margin-top:8px; font-size:9px; color:#a1a1aa; border-top:1px dotted #d4d4d8; padding-top:4px; }
+        .ds-vac { columns:3; column-gap:16px; }
         .ds-vacrow { display:flex; align-items:center; gap:6px; padding:2px 0; border-bottom:1px dotted #e4e4e7; break-inside:avoid; }
-        .ds-signrow { display:flex; gap:24px; margin-top:10px; font-size:10.5px; color:#52525b; }
+        .ds-fill { display:inline-block; width:140px; border-bottom:1px solid #a1a1aa; height:12px; margin-left:4px; }
+        .ds-fillsm { display:inline-block; width:70px; border-bottom:1px solid #a1a1aa; height:12px; margin-left:4px; }
+        .ds-signrow { display:flex; gap:22px; margin-top:9px; font-size:10.5px; color:#52525b; }
         @media print {
           @page { size: letter portrait; margin: 0.45in; }
           .ds-root { background:#fff; padding:0; }
           .ds-toolbar { display:none !important; }
-          .ds-page { box-shadow:none; max-width:none; padding:0; font-size:9.5px; }
-          .ds-sec { margin-bottom:11px; }
-          .ds-avoid, .ds-table thead { break-inside:avoid; }
-          .ds-table tr { break-inside:avoid; }
-          .ds-line { height:17px; }
+          .ds-page-wrap { box-shadow:none; max-width:none; padding:0; margin:0; font-size:9.5px; break-after:page; }
+          .ds-page-wrap:last-of-type { break-after:auto; }
+          .ds-table tr, .ds-area, .ds-notes { break-inside:avoid; }
           .ds-table tr:nth-child(even) td { background:#f7f7f7 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-          .ds-hot { background:#18181b !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+          .ds-hot, .ds-rowhot td { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
         }
       `}</style>
     </div>
