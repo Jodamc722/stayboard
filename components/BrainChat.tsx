@@ -45,7 +45,7 @@ export function BrainChat() {
 
   // The Command Center already embeds the full Eve console, so the floating pill there
   // is redundant and overlaps it. Hide the floater on /command, on public guest books (/g/), and on auth screens.
-  if (path === '/command' || (path || '').startsWith('/g/') || path === '/login' || path === '/no-access' || (path || '').startsWith('/signup')) return null
+  if (path === '/command' || (path || '').startsWith('/g/') || (path || '').startsWith('/guide/') || path === '/login' || path === '/no-access' || (path || '').startsWith('/signup')) return null
 
   return (
     <>
