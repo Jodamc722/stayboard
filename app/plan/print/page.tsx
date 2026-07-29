@@ -147,7 +147,9 @@ export default function DaySheetsPage() {
                       </td>
                       <td className="ds-num">{r.checkOutTime || '11:00'}</td>
                       <td>{r.guest}<div className="ds-sub">{r.nights != null ? r.nights + ' nights' : ''}</div></td>
-                      <td>{r.sameDayTurn
+                      <td>{r.extension
+                        ? <span className="ds-ext"><b>EXTENSION</b> {'\u2014'} same guest stays, do not strip</span>
+                        : r.sameDayTurn
                         ? <span className="ds-sd"><b>SAME DAY</b> {'\u2192'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}{r.sameDayNights >= 10 ? ' · BIG BOOKING' : ''}</span>
                         : <span className="ds-sub">{r.nextArrival ? 'next ' + shortDate(r.nextArrival) : 'no arrival booked'}</span>}</td>
                       <td />
@@ -338,6 +340,7 @@ export default function DaySheetsPage() {
         .ds-sub { font-size:11px; color:#71717a; }
         .ds-freshwarn { font-size:10px; font-weight:700; color:#b91c1c; margin-top:3px; max-width:320px; }
         .ds-vacsoon { background:#fef3c7; }
+        .ds-ext { font-weight:800; color:#5b21b6; }
         .ds-soon { color:#b45309; }
         .ds-muted2 { color:#a1a1aa; }
         .ds-headright { text-align:right; }
