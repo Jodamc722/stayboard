@@ -34,7 +34,7 @@ export type Guide = {
   quick: { title: string; items: Kv[] }
   activations: { title: string; note: string; items: Activation[] }
   venues: { title: string; note: string; items: { name: string; tagline: string; image: string; hours: Kv[]; note: string; phone: string; link: string; linkLabel: string }[] }
-  menu: { title: string; note: string; link: string; linkLabel: string; groups: { name: string; note: string; items: { name: string; desc: string; price: string }[] }[] }
+  menu: { title: string; note: string; link: string; linkLabel: string; groups: MenuGroup[] }
   quotes: { title: string; note: string; auto: boolean; keywords: string[]; items: { text: string; who: string; source: string; date: string }[] }
   todo: { title: string; note: string; groups: { name: string; items: { name: string; desc: string; meta: string; url: string }[] }[] }
   gallery: { title: string; note: string; images: { url: string; caption: string }[] }
@@ -114,12 +114,12 @@ export function minutesOf(a: Activation): number {
 }
 
 /**
- * The window an event actually occupies, so a card can say "happening now".
- * Reads both ends of the wording ("3 - 6 PM", "7 AM - 11 AM"); a single time gets a 2-hour window.
+ * Read a clock range out of free text: "3 - 6 PM", "7 AM - 11 AM", "Daily 7:30 AM - 10 PM".
+ * Returns null unless the text really looks like a range (so "All $8. Syrups +$1" is ignored).
  */
-export function windowOf(a: Activation): { start: number; end: number } {
-  const start = minutesOf(a)
-  const t = String(a.time || '')
+export function parseRange(text: string): { start: number; end: number } | null {
+  const t = String(text || '')
+  if (!/(am|pm)/i.test(t)) return null
   const hits: { h: number; m: number; mer: string }[] = []
   const re = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi
   let hit = re.exec(t)
@@ -127,16 +127,87 @@ export function windowOf(a: Activation): { start: number; end: number } {
     if (hit[0].trim()) hits.push({ h: Number(hit[1]), m: Number(hit[2] || 0), mer: String(hit[3] || '').toLowerCase() })
     hit = re.exec(t)
   }
-  if (hits.length >= 2) {
-    const last = hits[hits.length - 1]
-    const mer = last.mer || hits[0].mer
-    let h = last.h % 12
-    if (mer === 'pm') h += 12
-    const end = h * 60 + last.m
-    if (end > start) return { start, end }
-  }
+  if (hits.length < 2) return null
+  const a = hits[0]
+  const b = hits[hits.length - 1]
+  if (!b.mer) return null
+  const merA = a.mer || b.mer
+  let ha = a.h % 12; if (merA === 'pm') ha += 12
+  let hb = b.h % 12; if (b.mer === 'pm') hb += 12
+  const start = ha * 60 + a.m
+  const end = hb * 60 + b.m
+  if (end <= start) return null
+  return { start, end }
+}
+
+/**
+ * The window an event actually occupies, so a card can say "happening now".
+ * Reads both ends of the wording; a single time gets a 2-hour window.
+ */
+export function windowOf(a: Activation): { start: number; end: number } {
+  const start = minutesOf(a)
+  const t = String(a.time || '')
+  const r = parseRange(t)
+  if (r && r.start === start) return r
+  if (r && r.end > start) return { start, end: r.end }
   if (/all (day|evening|night)/i.test(t)) return { start, end: 23 * 60 + 30 }
   return { start, end: Math.min(start + 120, 23 * 60 + 59) }
+}
+
+// ---- menu service windows ---------------------------------------------------------------------
+// A menu section knows roughly when it is being served, so the page can open the one you would
+// actually order from right now and keep the rest tucked away.
+const MENU_DEFAULTS: { re: RegExp; start: number; end: number }[] = [
+  { re: /happy hour/i, start: 15 * 60, end: 18 * 60 },
+  { re: /brunch/i, start: 10 * 60, end: 14 * 60 },
+  { re: /breakfast|continental|morning/i, start: 7 * 60, end: 11 * 60 },
+  { re: /lunch/i, start: 11 * 60, end: 17 * 60 },
+  { re: /dinner|supper|evening/i, start: 17 * 60, end: 22 * 60 },
+  { re: /cafe|café|coffee|latte|espresso|juice|pastry|treat|smoothie/i, start: 7 * 60, end: 17 * 60 },
+  { re: /bar|cocktail|wine|drink/i, start: 15 * 60, end: 23 * 60 },
+]
+
+export type MenuGroup = { name: string; note: string; from?: string; to?: string; items: { name: string; desc: string; price: string }[] }
+
+const hhmm = (s?: string): number => {
+  const m = String(s || '').match(/^(\d{1,2}):(\d{2})$/)
+  return m ? Number(m[1]) * 60 + Number(m[2]) : -1
+}
+
+/** When this menu section is served. Explicit from/to wins, then the note's hours, then the name. */
+export function menuWindow(g: MenuGroup): { start: number; end: number } | null {
+  const a = hhmm(g && g.from); const b = hhmm(g && g.to)
+  if (a >= 0 && b > a) return { start: a, end: b }
+  const fromNote = parseRange((g && g.note) || '')
+  if (fromNote) return fromNote
+  const name = ((g && g.name) || '') + ' ' + ((g && g.note) || '')
+  for (const d of MENU_DEFAULTS) if (d.re.test(name)) return { start: d.start, end: d.end }
+  return null
+}
+
+/**
+ * Which menu sections to open. The ones being served right now; if the kitchen is between
+ * services, the next one coming up; before the clock is known, just the first section.
+ */
+export function openMenuGroups(groups: MenuGroup[], nowMin: number): number[] {
+  if (!groups || !groups.length) return []
+  if (nowMin < 0) return [0]
+  // Several sections can be on at once (the cafe runs all day under lunch). Open the most
+  // specific one - the narrowest window containing right now - and leave the rest folded.
+  let bestIdx = -1
+  let bestSpan = 99999
+  let nextIdx = -1
+  let nextStart = 99999
+  for (let i = 0; i < groups.length; i++) {
+    const w = menuWindow(groups[i])
+    if (!w) continue
+    if (nowMin >= w.start && nowMin <= w.end) {
+      const span = w.end - w.start
+      if (span < bestSpan) { bestSpan = span; bestIdx = i }
+    } else if (w.start > nowMin && w.start < nextStart) { nextStart = w.start; nextIdx = i }
+  }
+  if (bestIdx >= 0) return [bestIdx]
+  return nextIdx >= 0 ? [nextIdx] : [0]
 }
 
 /** Minutes past midnight right now, in the property's timezone. Client-side only (avoids SSR drift). */
