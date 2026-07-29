@@ -51,8 +51,12 @@ export default function DaySheetsPage() {
   useEffect(() => { load(date, market) }, [date, market, load])
 
   const c = (d && d.counts) || {}
+  const sync = (d && d.sync) || {}
   const stale = minsAgo(d && d.lastSync)
-  const isStale = stale != null && stale > 120
+  // Freshness is now judged on BOTH feeds. Breezeway decides what work exists; Guesty decides who
+  // is arriving. A fresh task list over a stale reservation list still hides a walk-in.
+  const isStale = !!sync.stale || (stale != null && stale > 150)
+  const freshLine = 'Breezeway ' + ago(sync.breezewayAt || (d && d.lastSync)) + ' · reservations ' + ago(sync.reservationsAt)
   const active = SHEETS.filter(s => on[s.key])
   const sheetNo = (key: string) => active.findIndex(s => s.key === key) + 1
   const departures = (d?.departures || [])
@@ -69,11 +73,28 @@ export default function DaySheetsPage() {
       <div className="ds-headright">
         <div className="ds-date">{longDate(date)}</div>
         <div className="ds-meta">{market === 'all' ? 'All markets' : market}{count ? ' · ' + count : ''}</div>
-        <div className={'ds-fresh ' + (isStale ? 'ds-freshbad' : '')}>Breezeway synced {ago(d && d.lastSync)} {'·'} printed {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{isStale ? ' — REFRESH BEFORE USING' : ''}</div>
+        <div className={'ds-fresh ' + (isStale ? 'ds-freshbad' : '')}>{freshLine} {'·'} printed {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{isStale ? ' — STALE, SYNC BEFORE USING' : ''}</div>
+        {isStale && <div className="ds-freshwarn">{sync.staleReason || 'a feed is behind'} — anything booked or changed since is NOT on this sheet</div>}
         <div className="ds-page">Sheet {sheetNo(titleKey(title))} of {active.length}</div>
       </div>
     </div>
   )
+  // WHEN WAS SOMEBODY LAST IN THIS UNIT? A clean, an inspection, a unit check, an audit or a
+  // maintenance visit all count — and the sheet says WHICH, because "cleaned 3 days ago" and
+  // "an electrician was in 3 days ago" are not the same assurance.
+  const LastTouch = ({ r }: { r: any }) => {
+    const t = r.lastTouch
+    if (t) return (
+      <>
+        <b className={t.daysAgo >= 14 ? 'ds-warn' : ''}>{shortDate(t.at)}</b>
+        <div className="ds-sub">{t.kind}{t.daysAgo != null ? ' · ' + (t.daysAgo === 0 ? 'today' : t.daysAgo === 1 ? 'yesterday' : t.daysAgo + 'd ago') : ''}{t.who && t.who.length ? ' · ' + t.who[0] : ''}</div>
+      </>
+    )
+    if (r.lastTouchReason === 'vendor' || r.vendor) return <span className="ds-vendorclean">{r.vendor} cleans this</span>
+    if (r.lastTouchReason === 'lookup-failed') return <span className="ds-warn">lookup failed — check Breezeway</span>
+    return <span className="ds-warn">nothing logged in 400 days</span>
+  }
+
   function titleKey(t: string) { const s = SHEETS.filter(x => t.startsWith(x.name.split(' ')[0]))[0]; return s ? s.key : 'turn' }
 
   return (
@@ -152,16 +173,16 @@ export default function DaySheetsPage() {
             <Head title="Arrivals to verify" sub="Guests arriving into units nobody is cleaning today — walk these before check-in" count={noClean.length + ' to verify · ' + arr.length + ' arrivals total'} />
             <div className="ds-h3">Nobody is cleaning these today ({noClean.length})</div>
             <table className="ds-table">
-              <thead><tr><th className="ds-w1">READY</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Last cleaned</th><th>Code</th><th className="ds-wn">What you found</th></tr></thead>
+              <thead><tr><th className="ds-w1">READY</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Last checked / cleaned</th><th>Code</th><th className="ds-wn">What you found</th></tr></thead>
               <tbody>
                 {noClean.map((r: any, i: number) => (
                   <tr key={i} className="ds-rowcheck">
                     <td><Box /></td>
-                    <td className="ds-unit">{r.unit}{r.ownerFlag && <span className="ds-tag">OWNER</span>}</td>
+                    <td className="ds-unit">{r.unit}{r.ownerFlag && <span className="ds-tag">OWNER</span>}{(r.bookedToday || r.bookedAfterSync) && <span className="ds-tag ds-hot">BOOKED TODAY</span>}</td>
                     <td>{r.guest}{r.phone ? <div className="ds-sub">{r.phone}</div> : null}</td>
                     <td className="ds-num">{r.checkInTime || '4:00 PM'}</td>
                     <td className="ds-num">{r.nights ?? '—'}{r.nights != null && r.nights >= 10 && <span className="ds-tag ds-warnTag">BIG</span>}</td>
-                    <td className="ds-sub">{r.lastCleanedAt ? shortDate(r.lastCleanedAt) : (r.vendor ? r.vendor + ' cleans' : <span className="ds-warn">no record</span>)}</td>
+                    <td className="ds-sub"><LastTouch r={r} /></td>
                     <td className="ds-sub">{r.doorCode || '—'}</td>
                     <td />
                   </tr>
@@ -271,10 +292,29 @@ export default function DaySheetsPage() {
           <div className="ds-h3">Vacant units ({(d?.vacants || []).length})</div>
           <div className="ds-vac">
             {(d?.vacants || []).map((v: any, i: number) => (
-              <div key={i} className="ds-vacrow"><Box /><span className="ds-unit">{v.unit}</span><span className="ds-sub">{v.bedrooms != null ? (v.bedrooms === 0 ? 'Studio' : v.bedrooms + 'BR') : ''}</span><span className="ds-sub ds-right">next {shortDate(v.nextArrival)}</span></div>
+              <div key={i} className={'ds-vacrow' + (v.arrivingSoon ? ' ds-vacsoon' : '')}>
+                <Box />
+                <span className="ds-unit">{v.unit}</span>
+                <span className="ds-sub">{v.bedrooms != null ? (v.bedrooms === 0 ? 'Studio' : v.bedrooms + 'BR') : ''}{v.departedToday ? ' · out today' : ''}</span>
+                <span className="ds-sub ds-right">
+                  {v.nextArrival
+                    ? <b className={v.arrivingSoon ? 'ds-soon' : ''}>{'in ' + (v.daysUntilArrival === 0 ? 'today' : v.daysUntilArrival === 1 ? 'tomorrow' : v.daysUntilArrival + 'd') + ' · ' + shortDate(v.nextArrival)}</b>
+                    : <span className="ds-muted2">no booking in 45 days</span>}
+                  {v.idleDays != null && v.idleDays >= 21 ? <span className="ds-sub"> {'·'} idle {v.idleDays}d</span> : null}
+                </span>
+              </div>
             ))}
             {(d?.vacants || []).length === 0 && <div className="ds-empty">Nothing vacant.</div>}
           </div>
+          {d?.audit && (
+            <div className={'ds-recon ' + (d.audit.balances ? '' : 'ds-freshbad')}>
+              Reconciliation: {d.audit.activeListings} active listings = {d.audit.occupiedTonight} occupied tonight + {d.audit.vacantTonight} vacant
+              {d.audit.balances ? ' ✓ balances' : ' ✗ DOES NOT BALANCE — do not trust this list, re-sync'}
+              {' · '}{d.audit.vacantsWithArrivalWithin7} of the vacants have a guest inside 7 days
+              {' · '}{d.audit.vacantsNoFutureBooking} have nothing booked in 45 days
+              {' · '}read from {d.audit.reservationsRead} current + {d.audit.futureReservationsRead} upcoming reservations
+            </div>
+          )}
           <div className="ds-notes"><div className="ds-h3">Handover — what rolls into tomorrow</div><Lines n={6} />
             <div className="ds-signrow"><div>Completed by: <span className="ds-fill" /></div><div>Time: <span className="ds-fillsm" /></div><div>Reviewed by: <span className="ds-fill" /></div></div>
           </div>
@@ -296,6 +336,10 @@ export default function DaySheetsPage() {
         .ds-brand { font-size:9px; font-weight:800; letter-spacing:.16em; color:#71717a; }
         .ds-title { font-size:22px; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
         .ds-sub { font-size:11px; color:#71717a; }
+        .ds-freshwarn { font-size:10px; font-weight:700; color:#b91c1c; margin-top:3px; max-width:320px; }
+        .ds-vacsoon { background:#fef3c7; }
+        .ds-soon { color:#b45309; }
+        .ds-muted2 { color:#a1a1aa; }
         .ds-headright { text-align:right; }
         .ds-date { font-size:13px; font-weight:700; }
         .ds-meta { font-size:10.5px; color:#52525b; margin-top:1px; }
