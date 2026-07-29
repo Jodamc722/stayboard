@@ -14,7 +14,7 @@ type Unit = { listingId: string; unit: string; market: string; guestOut: string 
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
-type Data = { longStayNights?: number; ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
+type Data = { longStayNights?: number; areaRadiusKm?: number; ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
 
 const TYPE_LABEL: Record<string, string> = {
   departure_clean: 'Departure clean', strip: 'Strip', deep_clean: 'Deep clean', inspection: 'Inspection',
@@ -174,7 +174,7 @@ export function TodayInOps() {
   const searched = baseUnits.filter(hit)
   // AREA = mini-market, worked out from real coordinates (a Broward building next to Eden belongs
   // with Eden, whatever city string Guesty carries). Each area is a run the team can drive.
-  const areas = groupBy === 'area' ? clusterAreas(searched as any, 1.2) : []
+  const areas = groupBy === 'area' ? clusterAreas(searched as any, data.areaRadiusKm || 4) : []
   const units = groupBy === 'area' ? (areas.flatMap(a => a.units) as Unit[]) : searched
   const doneCount = all.filter(u => u.allDone).length
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))

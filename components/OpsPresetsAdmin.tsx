@@ -297,6 +297,11 @@ function TimingSection({ p, edit, isOwner }: { p: OpsPresets; edit: (fn: (d: Ops
           {num(t.longStayNights, n => edit(d => { d.timing.longStayNights = n }), 2, 365, 'w-20')}
           <span className="text-muted">nights or more — flags the departure clean (more mess) and the arrival (bigger booking, make sure it is ready)</span>
         </label>
+        <label className="flex items-center gap-2 text-[12px] text-ink flex-wrap mt-2">
+          <span className="font-semibold w-40">Same area within</span>
+          {num(t.areaRadiusKm, n => edit(d => { d.timing.areaRadiusKm = n }), 1, 40, 'w-20')}
+          <span className="text-muted">km — buildings this close are one run in &quot;By area&quot; (Oasis↔Rustic is 1.8km, Hendricks↔Oasis 3.5km)</span>
+        </label>
       </div>
 
       <button disabled={!isOwner} onClick={() => edit(d => { d.timing = JSON.parse(JSON.stringify(DEFAULT_PRESETS.timing)) })}
