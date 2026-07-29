@@ -9,7 +9,11 @@
 // Styling is driven by CSS variables so a second property can look completely different from a
 // single theme object in lib/guide.ts.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Guide } from '@/lib/guide'
+import {
+  occurrencesIn, todayIso, dayLabel, shortDate, monthLabel, shiftMonth, monthOfIso,
+  daysInMonth, firstOfMonth, dowOfIso, runsOn, inferSchedule, repeatLabel,
+  DOW_SHORT, DOW_NAMES, type Guide, type Activation, type Occurrence,
+} from '@/lib/guide'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 
@@ -39,6 +43,13 @@ function getIn(obj: any, path: Path): any {
 }
 
 const telHref = (p: string) => 'tel:' + String(p || '').replace(/[^0-9+]/g, '')
+
+// How many upcoming occurrences show before "See more".
+const SHOW_N = 6
+const selStyle: any = { background: '#fff', border: '1px solid rgba(22,32,75,.2)', borderRadius: 8, padding: '4px 8px', fontSize: 13, color: 'inherit', font: 'inherit' }
+function tabStyle(on: boolean): any {
+  return { borderRadius: 999, padding: '6px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: on ? 'var(--ink)' : 'transparent', color: on ? '#fff' : 'rgba(22,32,75,.7)' }
+}
 
 // ---- editable primitives (module scope so typing never remounts them) --------------------------
 function Ed({ v, on, ph, cls, style, area, rows }: { v: string; on: (s: string) => void; ph?: string; cls?: string; style?: any; area?: boolean; rows?: number }) {
@@ -85,6 +96,12 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
   const [badImg, setBadImg] = useState<string[]>([])
   const imgOk = (u?: string) => !!u && badImg.indexOf(u) < 0
   const imgFailed = (u?: string) => { if (u) setBadImg(b => b.indexOf(u) < 0 ? b.concat(u) : b) }
+  // Calendar state. `today` is the property's date (America/New_York), fixed for the render.
+  const today = useMemo(() => todayIso(), [])
+  const [calOpen, setCalOpen] = useState(false)
+  const [calMonth, setCalMonth] = useState<string>(() => monthOfIso(todayIso()))
+  const [pickDay, setPickDay] = useState('')
+  const [showAll, setShowAll] = useState(false)
 
   const t = g.theme || {}
   const vars: any = {
@@ -169,6 +186,66 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
     if (j < 0 || j >= arr.length) return
     const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp
     set(path, arr)
+  }
+
+  // ---- calendar derivations -------------------------------------------------------------------
+  const acts: Activation[] = (g.activations && g.activations.items) || []
+  // Everyday things (happy hour) would otherwise fill the whole "up next" list with the same card,
+  // so they get their own always-on strip and the dated list keeps the specials.
+  const dailyActs = acts.filter(a => inferSchedule(a).repeat === 'daily' && runsOn(a, today))
+  const datedActs = acts.filter(a => inferSchedule(a).repeat !== 'daily')
+  // 90 days is enough for "what is on while I am here" without generating a year of rows.
+  const upcoming: Occurrence[] = useMemo(
+    () => occurrencesIn(pickDay ? acts : datedActs, today, 90),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [acts, today, pickDay],
+  )
+  const visible: Occurrence[] = pickDay
+    ? upcoming.filter(o => o.iso === pickDay)
+    : upcoming.slice(0, showAll ? 60 : SHOW_N)
+  const groupedUpcoming: { iso: string; items: Occurrence[] }[] = []
+  for (const o of visible) {
+    const last = groupedUpcoming[groupedUpcoming.length - 1]
+    if (last && last.iso === o.iso) last.items.push(o)
+    else groupedUpcoming.push({ iso: o.iso, items: [o] })
+  }
+  const monthCells: string[] = useMemo(() => {
+    const first = firstOfMonth(calMonth)
+    const cells: string[] = []
+    for (let i = 0; i < dowOfIso(first); i++) cells.push('')
+    const n = daysInMonth(calMonth)
+    for (let d = 1; d <= n; d++) cells.push(calMonth + '-' + (d < 10 ? '0' + d : String(d)))
+    return cells
+  }, [calMonth])
+  const byDay: Record<string, Occurrence[]> = useMemo(() => {
+    const m: Record<string, Occurrence[]> = {}
+    for (const o of occurrencesIn(acts, firstOfMonth(calMonth), daysInMonth(calMonth))) {
+      if (!m[o.iso]) m[o.iso] = []
+      m[o.iso].push(o)
+    }
+    return m
+  }, [acts, calMonth])
+
+  const actAt = (i: number): Activation => (acts[i] || ({} as Activation))
+  function addActivation(dateIso: string) {
+    const base: Activation = dateIso
+      ? { day: shortDate(dateIso), time: '6 PM', name: 'New activation', where: '', desc: '', repeat: 'once', date: dateIso, at: '18:00' }
+      : { day: 'Saturday', time: '6 PM', name: 'New activation', where: '', desc: '', repeat: 'weekly', dow: 6, at: '18:00' }
+    push(['activations', 'items'], base)
+    if (dateIso) setCalOpen(true)
+  }
+  // Writing the schedule also keeps `day` in step, so the wording and the calendar can never disagree.
+  function setRepeat(i: number, v: string) {
+    const it = actAt(i); const s = inferSchedule(it)
+    if (v === 'daily') set(['activations', 'items', i], { ...it, repeat: 'daily', day: 'Daily' })
+    else if (v === 'weekly') { const d = s.dow >= 0 ? s.dow : 6; set(['activations', 'items', i], { ...it, repeat: 'weekly', dow: d, day: DOW_NAMES[d] }) }
+    else { const date = s.date || pickDay || today; set(['activations', 'items', i], { ...it, repeat: 'once', date, day: shortDate(date) }) }
+  }
+  function setDow(i: number, d: number) {
+    set(['activations', 'items', i], { ...actAt(i), repeat: 'weekly', dow: d, day: DOW_NAMES[d] })
+  }
+  function setOnce(i: number, date: string) {
+    set(['activations', 'items', i], { ...actAt(i), repeat: 'once', date, day: date ? shortDate(date) : '' })
   }
 
   const nav = useMemo(() => ([
@@ -331,46 +408,172 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
         </section>
       ) : null}
 
-      {/* activations */}
+      {/* activations - real dates, driven by each item's schedule */}
       {!hidden('activations') || edit ? (
         <section className={wrap} style={{ paddingTop: 64 }}>
           <SectionHead id="week" k="activations" title={g.activations?.title || ''} note={g.activations?.note} />
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {(g.activations?.items || []).map((it, i) => (
-              <div key={i} className="gd-card" style={{ padding: 20, position: 'relative', overflow: 'hidden' }}>
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'var(--leaf)' }} />
-                {edit ? (
-                  <div className="space-y-1.5">
-                    <div className="flex gap-1.5"><Ed v={it.day} on={s => set(['activations', 'items', i, 'day'], s)} ph="Day" /><Ed v={it.time} on={s => set(['activations', 'items', i, 'time'], s)} ph="Time" /></div>
-                    <Ed v={it.name} on={s => set(['activations', 'items', i, 'name'], s)} ph="Event" />
-                    <Ed v={it.where} on={s => set(['activations', 'items', i, 'where'], s)} ph="Where" />
-                    <Ed v={it.desc} on={s => set(['activations', 'items', i, 'desc'], s)} ph="Description" area rows={2} />
-                    <div className="flex gap-1.5 pt-1">
-                      <Btn onClick={() => move(['activations', 'items'], i, -1)}>Up</Btn>
-                      <Btn onClick={() => move(['activations', 'items'], i, 1)}>Down</Btn>
-                      <Btn onClick={() => drop(['activations', 'items'], i)} tone="danger">Remove</Btn>
+
+          <div className="flex flex-wrap items-center gap-2 mb-5">
+            <div style={{ display: 'inline-flex', background: '#fff', border: '1px solid rgba(22,32,75,.12)', borderRadius: 999, padding: 3 }}>
+              <button type="button" onClick={() => setCalOpen(false)} style={tabStyle(!calOpen)}>Up next</button>
+              <button type="button" onClick={() => setCalOpen(true)} style={tabStyle(calOpen)}>Calendar</button>
+            </div>
+            {pickDay ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--ink)', color: '#fff', borderRadius: 999, padding: '6px 14px', fontSize: 13, fontWeight: 600 }}>
+                {dayLabel(pickDay, today)}
+                <button type="button" onClick={() => setPickDay('')} style={{ color: '#fff', opacity: .75 }}>x</button>
+              </span>
+            ) : null}
+            {edit ? <Btn onClick={() => addActivation(pickDay)} tone="solid">+ Add{pickDay ? ' on ' + shortDate(pickDay) : ' an activation'}</Btn> : null}
+          </div>
+
+          {/* month calendar */}
+          {calOpen ? (
+            <div className="gd-card" style={{ padding: 18, marginBottom: 22 }}>
+              <div className="flex items-center justify-between mb-3">
+                <Btn onClick={() => setCalMonth(shiftMonth(calMonth, -1))}>Prev</Btn>
+                <div style={{ fontFamily: SERIF, fontSize: 21 }}>{monthLabel(calMonth)}</div>
+                <div className="flex gap-2">
+                  <Btn onClick={() => { setCalMonth(monthOfIso(today)); setPickDay(today) }}>Today</Btn>
+                  <Btn onClick={() => setCalMonth(shiftMonth(calMonth, 1))}>Next</Btn>
+                </div>
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {DOW_SHORT.map(d => (
+                  <div key={d} style={{ fontSize: 10.5, letterSpacing: '.1em', textTransform: 'uppercase', fontWeight: 700, color: 'rgba(22,32,75,.45)', textAlign: 'center', paddingBottom: 4 }}>{d}</div>
+                ))}
+                {monthCells.map((iso, i) => {
+                  if (!iso) return <div key={'b' + i} />
+                  const evs = byDay[iso] || []
+                  const isToday = iso === today
+                  const isPick = iso === pickDay
+                  const past = iso < today
+                  return (
+                    <button key={iso} type="button" onClick={() => setPickDay(isPick ? '' : iso)}
+                      style={{
+                        textAlign: 'left', minHeight: 76, borderRadius: 12, padding: '6px 7px',
+                        border: '1px solid ' + (isPick ? 'var(--ink)' : isToday ? 'var(--leaf)' : 'rgba(22,32,75,.10)'),
+                        background: isPick ? 'var(--ink)' : (past ? 'rgba(22,32,75,.03)' : '#fff'),
+                        color: isPick ? '#fff' : 'inherit', opacity: past && !isToday && !isPick ? .6 : 1, cursor: 'pointer',
+                      }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: isPick ? '#fff' : (isToday ? 'var(--leaf)' : 'rgba(22,32,75,.6)') }}>
+                        {Number(iso.slice(8, 10))}
+                      </div>
+                      {evs.slice(0, 2).map((o, k) => (
+                        <div key={k} style={{ fontSize: 10.5, lineHeight: 1.25, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isPick ? 'rgba(255,255,255,.9)' : 'var(--ink)' }}>
+                          <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 999, background: isPick ? '#fff' : 'var(--leaf)', marginRight: 4, verticalAlign: 'middle' }} />
+                          {o.item.name}
+                        </div>
+                      ))}
+                      {evs.length > 2 ? <div style={{ fontSize: 10, marginTop: 2, color: isPick ? 'rgba(255,255,255,.75)' : 'rgba(22,32,75,.5)' }}>+{evs.length - 2} more</div> : null}
+                    </button>
+                  )
+                })}
+              </div>
+              {edit ? <p className="text-[12px] mt-3" style={{ color: 'rgba(22,32,75,.55)' }}>Tap a date to filter, then use Add to drop a one-off on that day. Weekly events keep repeating on their own.</p> : null}
+            </div>
+          ) : null}
+
+          {/* editor: every activation with its schedule */}
+          {edit ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {(g.activations?.items || []).map((it, i) => {
+                if (pickDay && !runsOn(it, pickDay)) return null
+                const sch = inferSchedule(it)
+                return (
+                  <div key={i} className="gd-card" style={{ padding: 18 }}>
+                    <div className="space-y-1.5">
+                      <Ed v={it.name} on={s => set(['activations', 'items', i, 'name'], s)} ph="Event" />
+                      <div className="flex gap-1.5">
+                        <select value={sch.repeat} onChange={e => setRepeat(i, e.target.value)} style={selStyle}>
+                          <option value="daily">Every day</option>
+                          <option value="weekly">Every week</option>
+                          <option value="once">One-off</option>
+                        </select>
+                        {sch.repeat === 'weekly' ? (
+                          <select value={String(sch.dow)} onChange={e => setDow(i, Number(e.target.value))} style={selStyle}>
+                            {DOW_NAMES.map((d, k) => <option key={d} value={String(k)}>{d}</option>)}
+                          </select>
+                        ) : null}
+                        {sch.repeat === 'once' ? (
+                          <input type="date" value={sch.date} onChange={e => setOnce(i, e.target.value)} style={selStyle} />
+                        ) : null}
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Ed v={it.time} on={s => set(['activations', 'items', i, 'time'], s)} ph="Time shown, e.g. 3 - 6 PM" />
+                        <input type="time" value={it.at || ''} onChange={e => set(['activations', 'items', i, 'at'], e.target.value)} style={selStyle} title="Sort time" />
+                      </div>
+                      <Ed v={it.where} on={s => set(['activations', 'items', i, 'where'], s)} ph="Where" />
+                      <Ed v={it.desc} on={s => set(['activations', 'items', i, 'desc'], s)} ph="Description" area rows={2} />
+                      <details>
+                        <summary style={{ fontSize: 12, color: 'rgba(22,32,75,.6)', cursor: 'pointer' }}>Runs between (optional)</summary>
+                        <div className="flex gap-1.5 pt-1.5">
+                          <input type="date" value={it.start || ''} onChange={e => set(['activations', 'items', i, 'start'], e.target.value)} style={selStyle} />
+                          <input type="date" value={it.end || ''} onChange={e => set(['activations', 'items', i, 'end'], e.target.value)} style={selStyle} />
+                        </div>
+                      </details>
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <span style={{ fontSize: 11, color: 'rgba(22,32,75,.5)', fontWeight: 600 }}>{repeatLabel(it)}</span>
+                        <span style={{ flex: 1 }} />
+                        <Btn onClick={() => drop(['activations', 'items'], i)} tone="danger">Remove</Btn>
+                      </div>
                     </div>
                   </div>
-                ) : (
-                  <>
-                    <div className="flex items-baseline gap-2">
-                      <span style={{ background: 'var(--ink)', color: '#fff', borderRadius: 999, padding: '3px 11px', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase' }}>{it.day}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--leaf)' }}>{it.time}</span>
-                    </div>
-                    <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 12 }}>{it.name}</div>
-                    {it.where ? <div style={{ fontSize: 13, color: 'rgba(22,32,75,.55)', marginTop: 2 }}>{it.where}</div> : null}
-                    {it.desc ? <p style={{ fontSize: 14, lineHeight: 1.55, color: 'rgba(22,32,75,.75)', marginTop: 10 }}>{it.desc}</p> : null}
-                  </>
-                )}
-              </div>
-            ))}
-            {edit ? (
-              <button type="button" onClick={() => push(['activations', 'items'], { day: 'Friday', time: '6 PM', name: 'New activation', where: '', desc: '' })}
-                className="gd-card" style={{ padding: 20, borderStyle: 'dashed', color: 'rgba(22,32,75,.6)', fontWeight: 600 }}>
-                + Add an activation
-              </button>
-            ) : null}
-          </div>
+                )
+              })}
+            </div>
+          ) : (
+            /* guest view: real dates, grouped by day */
+            <div className="space-y-6">
+              {!pickDay && dailyActs.length ? (
+                <div className="gd-card" style={{ padding: 18, display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--leaf)' }}>Every day</span>
+                  {dailyActs.map((a, i) => (
+                    <span key={i} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
+                      <span style={{ fontFamily: SERIF, fontSize: 18 }}>{a.name}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--leaf)' }}>{a.time}</span>
+                      {a.where ? <span style={{ fontSize: 12.5, color: 'rgba(22,32,75,.55)' }}>{a.where}</span> : null}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {groupedUpcoming.length === 0 ? (
+                <p style={{ color: 'rgba(22,32,75,.6)' }}>Nothing on the calendar for this day - the front desk always knows what is on.</p>
+              ) : null}
+              {groupedUpcoming.map(grp => (
+                <div key={grp.iso}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span style={{ fontSize: 12, letterSpacing: '.12em', textTransform: 'uppercase', fontWeight: 700, color: grp.iso === today ? 'var(--leaf)' : 'rgba(22,32,75,.55)' }}>
+                      {dayLabel(grp.iso, today)}
+                    </span>
+                    <span style={{ flex: 1, height: 1, background: 'rgba(22,32,75,.10)' }} />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {grp.items.map((o, k) => (
+                      <div key={k} className="gd-card" style={{ padding: 20, position: 'relative', overflow: 'hidden' }}>
+                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'var(--leaf)' }} />
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span style={{ background: 'var(--ink)', color: '#fff', borderRadius: 999, padding: '3px 11px', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase' }}>{shortDate(o.iso)}</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--leaf)' }}>{o.item.time}</span>
+                        </div>
+                        <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 12 }}>{o.item.name}</div>
+                        {o.item.where ? <div style={{ fontSize: 13, color: 'rgba(22,32,75,.55)', marginTop: 2 }}>{o.item.where}</div> : null}
+                        {o.item.desc ? <p style={{ fontSize: 14, lineHeight: 1.55, color: 'rgba(22,32,75,.75)', marginTop: 10 }}>{o.item.desc}</p> : null}
+                        <div style={{ fontSize: 11, color: 'rgba(22,32,75,.42)', marginTop: 10, fontWeight: 600 }}>{repeatLabel(o.item)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {!pickDay && upcoming.length > SHOW_N ? (
+                <div className="pt-1">
+                  <Btn onClick={() => setShowAll(!showAll)} tone="ghost">
+                    {showAll ? 'Show less' : 'See more upcoming (' + (upcoming.length - SHOW_N) + ')'}
+                  </Btn>
+                </div>
+              ) : null}
+            </div>
+          )}
         </section>
       ) : null}
 
