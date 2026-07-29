@@ -505,7 +505,9 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       }
       // An extension keeps the guest in the unit all day even though there IS a checkout on paper,
       // so the checkout no longer cancels this warning.
-      if (lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
+      // Only warn about work that still has to happen. A job finished at 2:45pm needs no
+      // "call the guest before entering" note — that is yesterday's problem, printed as today's.
+      if (w.status !== 'done' && lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
         (guestInHouse[lid] = guestInHouse[lid] || { unit: w.unit, jobs: [] }).jobs.push(w.label || w.name)
       }
     }
