@@ -3,3 +3,13 @@
 @tailwind utilities;
 
 html, body { font-family: 'Inter', system-ui, sans-serif; }
+
+/* Owner review sheet: printing it must produce the document an owner can sign off on, so the
+   controls drop out, every line opens, and cards do not break across pages. */
+@media print {
+  .no-print { display: none !important; }
+  .owner-sheet { max-width: none; padding: 0; }
+  .owner-sheet .rounded-xl { break-inside: avoid; page-break-inside: avoid; }
+  .owner-sheet img { max-height: 2.4in !important; }
+  a[href]:after { content: ''; }
+}
