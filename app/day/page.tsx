@@ -75,7 +75,10 @@ export default function DayLinkPage() {
   const work = (d?.work || [])
   const issues = (d?.exceptions || [])
   const c = d?.counts || {}
-  const stale = d?.lastSync ? (Date.now() - new Date(d.lastSync).getTime()) / 60000 > 120 : false
+  // Both feeds decide whether this page can be trusted: Breezeway for the work, Guesty for who is
+  // actually arriving. A stale reservation feed is how a walk-in gets missed.
+  const sync = d?.sync || {}
+  const stale = !!sync.stale
 
   const NoteBox = ({ id, unit }: { id: string; unit: string }) => (
     noteFor === id ? (
@@ -97,7 +100,8 @@ export default function DayLinkPage() {
         <div>
           <div className="dl-brand">STAY HOSPITALITY {'·'} THE DAY</div>
           <div className="dl-date">{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
-          <div className={'dl-fresh ' + (stale ? 'dl-stale' : '')}>Synced {ago(d?.lastSync)}{stale ? ' — pull to refresh' : ''}</div>
+          <div className={'dl-fresh ' + (stale ? 'dl-stale' : '')}>Tasks {ago(sync.breezewayAt || d?.lastSync)} {'·'} bookings {ago(sync.reservationsAt)}</div>
+          {stale && <div className="dl-stalebar">{sync.staleReason || 'a feed is behind'} — anything booked since then is not on this page</div>}
         </div>
         <div className="dl-topbtns">
           <input type="date" value={date} onChange={e => setDate(e.target.value || todayET())} className="dl-input dl-input-sm" />
@@ -144,8 +148,15 @@ export default function DayLinkPage() {
           {noClean.map((r: any, i: number) => (
             <div key={i} className="dl-card dl-check">
               <div className="dl-cardtop"><div className="dl-unit">{r.unit}</div><div className="dl-when">in {r.checkInTime || '4:00 PM'}</div></div>
+              {(r.bookedToday || r.bookedAfterSync) && <div className="dl-sd dl-walkin">BOOKED TODAY {'·'} walk-in — confirm the unit is ready</div>}
               <div className="dl-line"><span className="dl-lbl">Guest</span>{r.guest}{r.nights != null && <span className="dl-muted"> {'·'} {r.nights} nt{r.nights >= 10 ? ' · BIG' : ''}</span>}</div>
-              <div className="dl-line"><span className="dl-lbl">Last clean</span>{r.lastCleanedAt ? shortDate(r.lastCleanedAt) : (r.vendor ? r.vendor + ' cleans' : <b className="dl-warn">no record</b>)}</div>
+              <div className="dl-line"><span className="dl-lbl">Last check</span>{
+                r.lastTouch
+                  ? <>{shortDate(r.lastTouch.at)}<span className="dl-muted"> {'·'} {r.lastTouch.kind}{r.lastTouch.daysAgo != null ? ' · ' + (r.lastTouch.daysAgo === 0 ? 'today' : r.lastTouch.daysAgo === 1 ? 'yesterday' : r.lastTouch.daysAgo + 'd ago') : ''}</span></>
+                  : r.vendor ? <span className="dl-muted">{r.vendor} cleans this</span>
+                  : r.lastTouchReason === 'lookup-failed' ? <b className="dl-warn">lookup failed</b>
+                  : <b className="dl-warn">nothing logged in 400 days</b>
+              }</div>
               {r.doorCode && <div className="dl-line"><span className="dl-lbl">Code</span><b>{r.doorCode}</b></div>}
               <div className="dl-actions">
                 {r.phone && <a href={'tel:' + r.phone} className="dl-link">Call guest</a>}
@@ -212,7 +223,9 @@ const CSS = `
   .dl-brand { font-size:9.5px; font-weight:800; letter-spacing:.16em; color:#71717a; }
   .dl-date { font-size:19px; font-weight:800; letter-spacing:-.01em; }
   .dl-fresh { font-size:11px; color:#71717a; margin-top:1px; }
-  .dl-stale { color:#b91c1c; font-weight:700; }
+  .dl-walkin { background:#fee2e2 !important; color:#991b1b !important; }
+        .dl-stalebar { margin-top:4px; font-size:11px; font-weight:700; color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:5px 8px; }
+        .dl-stale { color:#b91c1c; font-weight:700; }
   .dl-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
   .dl-topbtns { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .dl-tabs { display:flex; gap:6px; margin-bottom:10px; overflow-x:auto; padding-bottom:2px; }
