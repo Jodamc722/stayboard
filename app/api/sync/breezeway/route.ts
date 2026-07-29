@@ -53,12 +53,15 @@ export async function POST(req: NextRequest) {
       if (!pid) return NextResponse.json({ error: 'Pass &property=<reference_property_id or home_id> (get one from ?probe=properties).' }, { status: 400 })
       const byHome = params.get('by') === 'home'
       const q = byHome ? `home_id=${encodeURIComponent(pid)}` : `reference_property_id=${encodeURIComponent(pid)}`
-      // Breezeway rejects created_at as a sort key (422 "created_at is invalid sort option"), which
-      // silently broke the only tool we have for checking the mirror against Breezeway itself.
-      const r = await bzApi(`/task/?${q}&limit=25&sort_by=scheduled_date&sort_order=desc`)
+      // Breezeway rejects BOTH created_at and scheduled_date as sort keys (422 "... is invalid sort
+      // option"), which silently broke the only tool we have for checking the mirror against
+      // Breezeway itself. The working calls elsewhere in this repo pass no sort at all.
+      const r = await bzApi(`/task/?${q}&limit=25`)
       if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
       const arr = asArray(r.data)
-      return NextResponse.json({ ok: true, count: arr.length, totalResults: r.data?.total_results ?? null, sampleKeys: arr[0] ? Object.keys(arr[0]) : [], sample: arr.slice(0, 3).map(mapBreezewayTask) })
+      const mapped = arr.map(mapBreezewayTask)
+        .sort((a: any, b: any) => String(b.scheduled_date || '').localeCompare(String(a.scheduled_date || '')))
+      return NextResponse.json({ ok: true, count: arr.length, totalResults: r.data?.total_results ?? null, sampleKeys: arr[0] ? Object.keys(arr[0]) : [], sample: mapped.slice(0, 8) })
     }
 
     // 4) People (cleaners / inspectors).
