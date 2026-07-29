@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   occurrencesIn, todayIso, dayLabel, shortDate, monthLabel, shiftMonth, monthOfIso,
-  daysInMonth, firstOfMonth, dowOfIso, runsOn, inferSchedule, repeatLabel,
+  daysInMonth, firstOfMonth, dowOfIso, runsOn, inferSchedule, repeatLabel, windowOf, nowMinutes,
   DOW_SHORT, DOW_NAMES, type Guide, type Activation, type Occurrence,
 } from '@/lib/guide'
 
@@ -101,7 +101,14 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
   const [calOpen, setCalOpen] = useState(false)
   const [calMonth, setCalMonth] = useState<string>(() => monthOfIso(todayIso()))
   const [pickDay, setPickDay] = useState('')
-  const [showAll, setShowAll] = useState(false)
+  // Clock for the "happening now" badge. Starts at -1 so the server and the first client render
+  // agree; it fills in after mount and ticks every minute.
+  const [nowMin, setNowMin] = useState(-1)
+  useEffect(() => {
+    setNowMin(nowMinutes())
+    const t = setInterval(() => setNowMin(nowMinutes()), 60000)
+    return () => clearInterval(t)
+  }, [])
 
   const t = g.theme || {}
   const vars: any = {
@@ -190,19 +197,32 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
 
   // ---- calendar derivations -------------------------------------------------------------------
   const acts: Activation[] = (g.activations && g.activations.items) || []
-  // Everyday things (happy hour) would otherwise fill the whole "up next" list with the same card,
-  // so they get their own always-on strip and the dated list keeps the specials.
-  const dailyActs = acts.filter(a => inferSchedule(a).repeat === 'daily' && runsOn(a, today))
-  const datedActs = acts.filter(a => inferSchedule(a).repeat !== 'daily')
-  // 90 days is enough for "what is on while I am here" without generating a year of rows.
-  const upcoming: Occurrence[] = useMemo(
-    () => occurrencesIn(pickDay ? acts : datedActs, today, 90),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [acts, today, pickDay],
+  // The cards are THIS WEEK only (today + 6 days). Everything beyond that lives in the calendar,
+  // so the page never turns into a scroll of a hundred repeats.
+  const week: Occurrence[] = useMemo(() => occurrencesIn(acts, today, 7), [acts, today])
+  const dayList: Occurrence[] = useMemo(
+    () => (pickDay ? occurrencesIn(acts, pickDay, 1) : []),
+    [acts, pickDay],
   )
-  const visible: Occurrence[] = pickDay
-    ? upcoming.filter(o => o.iso === pickDay)
-    : upcoming.slice(0, showAll ? 60 : SHOW_N)
+  // Six cards, variety first: one per event in date order, then the soonest repeats fill any gap.
+  const weekCards: Occurrence[] = useMemo(() => {
+    const used: number[] = []
+    const picked: Occurrence[] = []
+    for (const o of week) {
+      if (used.indexOf(o.idx) >= 0) continue
+      used.push(o.idx); picked.push(o)
+      if (picked.length >= SHOW_N) break
+    }
+    if (picked.length < SHOW_N) {
+      for (const o of week) {
+        if (picked.indexOf(o) >= 0) continue
+        picked.push(o)
+        if (picked.length >= SHOW_N) break
+      }
+    }
+    return picked.sort((a, b) => (a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : a.mins - b.mins))
+  }, [week])
+  const visible: Occurrence[] = pickDay ? dayList : weekCards
   const groupedUpcoming: { iso: string; items: Occurrence[] }[] = []
   for (const o of visible) {
     const last = groupedUpcoming[groupedUpcoming.length - 1]
@@ -415,7 +435,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
 
           <div className="flex flex-wrap items-center gap-2 mb-5">
             <div style={{ display: 'inline-flex', background: '#fff', border: '1px solid rgba(22,32,75,.12)', borderRadius: 999, padding: 3 }}>
-              <button type="button" onClick={() => setCalOpen(false)} style={tabStyle(!calOpen)}>Up next</button>
+              <button type="button" onClick={() => setCalOpen(false)} style={tabStyle(!calOpen)}>This week</button>
               <button type="button" onClick={() => setCalOpen(true)} style={tabStyle(calOpen)}>Calendar</button>
             </div>
             {pickDay ? (
@@ -525,18 +545,6 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
           ) : (
             /* guest view: real dates, grouped by day */
             <div className="space-y-6">
-              {!pickDay && dailyActs.length ? (
-                <div className="gd-card" style={{ padding: 18, display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center' }}>
-                  <span style={{ fontSize: 11, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--leaf)' }}>Every day</span>
-                  {dailyActs.map((a, i) => (
-                    <span key={i} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
-                      <span style={{ fontFamily: SERIF, fontSize: 18 }}>{a.name}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--leaf)' }}>{a.time}</span>
-                      {a.where ? <span style={{ fontSize: 12.5, color: 'rgba(22,32,75,.55)' }}>{a.where}</span> : null}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
               {groupedUpcoming.length === 0 ? (
                 <p style={{ color: 'rgba(22,32,75,.6)' }}>Nothing on the calendar for this day - the front desk always knows what is on.</p>
               ) : null}
@@ -549,26 +557,38 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                     <span style={{ flex: 1, height: 1, background: 'rgba(22,32,75,.10)' }} />
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {grp.items.map((o, k) => (
-                      <div key={k} className="gd-card" style={{ padding: 20, position: 'relative', overflow: 'hidden' }}>
+                    {grp.items.map((o, k) => {
+                      const win = windowOf(o.item)
+                      const isNow = o.iso === today && nowMin >= 0 && nowMin >= win.start && nowMin <= win.end
+                      const isToday = o.iso === today
+                      return (
+                      <div key={k} className="gd-card" style={{ padding: 20, position: 'relative', overflow: 'hidden', borderColor: isNow ? 'var(--leaf)' : undefined }}>
                         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'var(--leaf)' }} />
                         <div className="flex items-baseline gap-2 flex-wrap">
-                          <span style={{ background: 'var(--ink)', color: '#fff', borderRadius: 999, padding: '3px 11px', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase' }}>{shortDate(o.iso)}</span>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--leaf)' }}>{o.item.time}</span>
+                          {isNow ? (
+                            <span style={{ background: 'var(--leaf)', color: '#fff', borderRadius: 999, padding: '3px 11px', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ width: 6, height: 6, borderRadius: 999, background: '#fff', display: 'inline-block' }} />
+                              Happening now
+                            </span>
+                          ) : null}
+                          {/* the day header above already carries the date - the card only needs the hour */}
+                          <span style={{ fontSize: 14, fontWeight: 700, color: isToday ? 'var(--leaf)' : 'rgba(22,32,75,.7)' }}>{o.item.time}</span>
                         </div>
                         <div style={{ fontFamily: SERIF, fontSize: 22, marginTop: 12 }}>{o.item.name}</div>
                         {o.item.where ? <div style={{ fontSize: 13, color: 'rgba(22,32,75,.55)', marginTop: 2 }}>{o.item.where}</div> : null}
                         {o.item.desc ? <p style={{ fontSize: 14, lineHeight: 1.55, color: 'rgba(22,32,75,.75)', marginTop: 10 }}>{o.item.desc}</p> : null}
                         <div style={{ fontSize: 11, color: 'rgba(22,32,75,.42)', marginTop: 10, fontWeight: 600 }}>{repeatLabel(o.item)}</div>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               ))}
-              {!pickDay && upcoming.length > SHOW_N ? (
+              {/* "See more" opens the calendar rather than unrolling every future repeat. */}
+              {!pickDay && acts.length ? (
                 <div className="pt-1">
-                  <Btn onClick={() => setShowAll(!showAll)} tone="ghost">
-                    {showAll ? 'Show less' : 'See more upcoming (' + (upcoming.length - SHOW_N) + ')'}
+                  <Btn onClick={() => { setCalOpen(true); setCalMonth(monthOfIso(today)) }} tone="ghost">
+                    See more - pick a date
                   </Btn>
                 </div>
               ) : null}
