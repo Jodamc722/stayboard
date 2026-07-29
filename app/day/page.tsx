@@ -126,7 +126,7 @@ export default function DayLinkPage() {
                 <div className="dl-unit">{r.unit}</div>
                 <div className="dl-when">out {r.checkOutTime || '11:00'}</div>
               </div>
-              {r.extension && <div className="dl-sd dl-ext">EXTENSION {'\u2014'} {r.guest} stays, do not strip the unit</div>}
+              {r.extension && <div className="dl-sd dl-ext">EXTENSION {'\u2014'} {r.guest} re-booked {'\u00b7'} ask if they want a clean, do not strip</div>}
               {r.sameDayTurn && !r.extension && <div className="dl-sd">SAME DAY {'→'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}</div>}
               <div className="dl-line"><span className="dl-lbl">Cleaner</span>{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <b className="dl-warn">unassigned</b>) : (r.vendor ? <span className="dl-muted">{r.vendor} cleans this</span> : <b className="dl-warn">no clean on the board</b>)}{r.clean && <span className="dl-muted"> {'·'} {r.clean.status}</span>}</div>
               <div className="dl-line"><span className="dl-lbl">Out</span>{r.guest}{r.nights != null && <span className="dl-muted"> {'·'} {r.nights} nt{r.nights >= 10 ? ' · LONG STAY' : ''}</span>}</div>
