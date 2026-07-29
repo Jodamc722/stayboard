@@ -142,10 +142,13 @@ export default function DaySheetsPage() {
                         : r.vendor
                           ? <span className="ds-vendorclean">{r.vendor} cleans this</span>
                           : <span className="ds-warn">NO CLEAN ON THE BOARD</span>}
-                        {r.clean && <div className="ds-sub">{r.clean.status}</div>}
+                        {r.clean && <div className="ds-sub">{r.clean.status}{r.clean.instructions ? ' · ' + r.clean.instructions : ''}</div>}
                         {!r.clean && r.vendor && <div className="ds-sub">not tracked in Breezeway</div>}
+                        {(r.prep || []).map((p: any) => (
+                          <div key={p.id} className="ds-sub">also today: {p.label}{p.assignees?.length ? ' — ' + p.assignees.join(', ') : ''}</div>
+                        ))}
                       </td>
-                      <td className="ds-num">{r.checkOutTime || '11:00'}</td>
+                      <td className="ds-num">{r.checkOutTime || '11:00 AM'}</td>
                       <td>{r.guest}<div className="ds-sub">{r.nights != null ? r.nights + ' nights' : ''}</div></td>
                       <td>{r.extension
                         ? <span className="ds-ext"><b>EXTENSION</b> {'\u2014'} same guest re-booked<div className="ds-sub">ask the guest if they want a clean {'\u2014'} do not strip</div></span>
@@ -249,30 +252,30 @@ export default function DaySheetsPage() {
             ? <div className="ds-clear">Nothing flagged. Every departure has a clean, everything is assigned, no open guest issues.</div>
             : (
               <table className="ds-table">
-                <thead><tr><th className="ds-w1">✓</th><th>What</th><th>Unit</th><th>Detail</th><th className="ds-wn">Action taken</th></tr></thead>
+                <thead><tr><th className="ds-w1">✓</th><th className="ds-wu">Unit</th><th>What is wrong</th><th>What to do</th><th className="ds-wn">Done by / when</th></tr></thead>
                 <tbody>
                   {(d?.exceptions || []).map((x: any, i: number) => (
                     <tr key={i} className={x.severity === 'high' ? 'ds-rowhot' : ''}>
                       <td><Box /></td>
-                      <td className="ds-unit">{x.severity === 'high' ? '● ' : ''}{x.kind}</td>
-                      <td>{x.unit}</td>
-                      <td>{x.detail}</td>
+                      <td className="ds-unit">{x.unit}</td>
+                      <td><b>{x.severity === 'high' ? '● ' : ''}{x.kind}</b><div className="ds-sub">{x.detail}</div></td>
+                      <td className="ds-do">{x.action}</td>
                       <td />
                     </tr>
                   ))}
                   {(d?.glitches || []).map((g: any, i: number) => (
                     <tr key={'g' + i}>
                       <td><Box /></td>
-                      <td className="ds-unit">Open guest issue</td>
-                      <td>{g.unit || '—'}</td>
-                      <td>{g.overview}<span className="ds-sub"> · {g.status} · raised {shortDate(g.at)}</span></td>
+                      <td className="ds-unit">{g.unit || '—'}</td>
+                      <td><b>Guest reported a problem</b><div className="ds-sub">{g.overview}</div></td>
+                      <td className="ds-do">Still open since {shortDate(g.at)} ({g.status}) — close it out or say why it is waiting.</td>
                       <td />
                     </tr>
                   ))}
                 </tbody>
               </table>
             )}
-          <div className="ds-recon">Checks run: departure without a clean {'·'} unassigned clean or task {'·'} same-day turn not finished {'·'} work booked into an occupied night {'·'} long stays {'·'} open guest issues</div>
+          <div className="ds-recon">Checked for: a checkout with no clean booked {'·'} a clean with nobody on it {'·'} a same-day turn running late {'·'} a job booked while the guest is in house {'·'} a guest who never actually left {'·'} a stay booked today {'·'} a unit nobody has been inside {'·'} two cleans on one unit {'·'} stale data {'·'} open guest problems</div>
           <div className="ds-notes"><div className="ds-h3">Escalations</div><Lines n={4} /></div>
         </section>
       )}
@@ -343,6 +346,8 @@ export default function DaySheetsPage() {
         .ds-ext { font-weight:800; color:#5b21b6; }
         .ds-soon { color:#b45309; }
         .ds-muted2 { color:#a1a1aa; }
+        .ds-do { font-weight:600; }
+        .ds-wu { width:15%; }
         .ds-headright { text-align:right; }
         .ds-date { font-size:13px; font-weight:700; }
         .ds-meta { font-size:10.5px; color:#52525b; margin-top:1px; }
