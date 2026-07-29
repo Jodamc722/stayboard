@@ -102,6 +102,7 @@ export type Timing = {
   auditDueDays: number       // how often every unit gets audited
   longStayNights: number     // a stay at or over this many nights is a LONG STAY: more mess on the
                              // way out, and a bigger booking to have ready on the way in
+  areaRadiusKm: number       // how close two buildings must be to belong to the same runner's area
   cleanMinutes: { studio: number; two: number; threePlus: number; unknown: number }  // benchmark per clean
 }
 
@@ -110,6 +111,7 @@ export const DEFAULT_TIMING: Timing = {
   atRiskMin: 2 * 60,
   auditDueDays: 365,
   longStayNights: 10,
+  areaRadiusKm: 4,
   cleanMinutes: { studio: 90, two: 120, threePlus: 180, unknown: 120 },
 }
 
@@ -206,6 +208,7 @@ export function mergePresets(stored: any): OpsPresets {
       atRiskMin: num(t.atRiskMin, DEFAULT_TIMING.atRiskMin),
       auditDueDays: num(t.auditDueDays, DEFAULT_TIMING.auditDueDays),
       longStayNights: num(t.longStayNights, DEFAULT_TIMING.longStayNights),
+      areaRadiusKm: num(t.areaRadiusKm, DEFAULT_TIMING.areaRadiusKm),
       cleanMinutes: {
         studio: num(cm.studio, DEFAULT_TIMING.cleanMinutes.studio),
         two: num(cm.two, DEFAULT_TIMING.cleanMinutes.two),

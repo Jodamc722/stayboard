@@ -28,7 +28,8 @@ export function buildingOf(name: string): string | null {
   for (const w of words) {
     const clean = w.replace(/[^A-Za-z0-9]/g, '')
     if (clean.length < 3) continue
-    if (/^\d+$/.test(clean)) continue           // pure unit number
+    if (/^\d+$/.test(clean)) continue                        // pure unit number: 906, 101
+    if (/^\d+(br|bd|bed|beds|ba|bath|baths)$/i.test(clean)) continue   // size, not a building: 1BR, 2BD
     if (/^(bed|br|stu|studio|suite|king|queen|apt|unit)$/i.test(clean)) continue
     return clean
   }
@@ -36,7 +37,7 @@ export function buildingOf(name: string): string | null {
 }
 
 /** Group units into geographic areas. Units without coordinates fall back to city/building. */
-export function clusterAreas<T extends GeoUnit>(units: T[], radiusKm = 1.2): Area<T>[] {
+export function clusterAreas<T extends GeoUnit>(units: T[], radiusKm = 4): Area<T>[] {
   const geo = units.filter(u => u.lat != null && u.lng != null)
   const flat = units.filter(u => u.lat == null || u.lng == null)
   const parent: number[] = geo.map((_, i) => i)
