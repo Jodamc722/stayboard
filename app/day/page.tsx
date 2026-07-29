@@ -126,7 +126,8 @@ export default function DayLinkPage() {
                 <div className="dl-unit">{r.unit}</div>
                 <div className="dl-when">out {r.checkOutTime || '11:00'}</div>
               </div>
-              {r.sameDayTurn && <div className="dl-sd">SAME DAY {'→'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}</div>}
+              {r.extension && <div className="dl-sd dl-ext">EXTENSION {'\u2014'} {r.guest} stays, do not strip the unit</div>}
+              {r.sameDayTurn && !r.extension && <div className="dl-sd">SAME DAY {'→'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}</div>}
               <div className="dl-line"><span className="dl-lbl">Cleaner</span>{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <b className="dl-warn">unassigned</b>) : (r.vendor ? <span className="dl-muted">{r.vendor} cleans this</span> : <b className="dl-warn">no clean on the board</b>)}{r.clean && <span className="dl-muted"> {'·'} {r.clean.status}</span>}</div>
               <div className="dl-line"><span className="dl-lbl">Out</span>{r.guest}{r.nights != null && <span className="dl-muted"> {'·'} {r.nights} nt{r.nights >= 10 ? ' · LONG STAY' : ''}</span>}</div>
               {r.doorCode && <div className="dl-line"><span className="dl-lbl">Code</span><b>{r.doorCode}</b></div>}
@@ -223,7 +224,8 @@ const CSS = `
   .dl-brand { font-size:9.5px; font-weight:800; letter-spacing:.16em; color:#71717a; }
   .dl-date { font-size:19px; font-weight:800; letter-spacing:-.01em; }
   .dl-fresh { font-size:11px; color:#71717a; margin-top:1px; }
-  .dl-walkin { background:#fee2e2 !important; color:#991b1b !important; }
+  .dl-ext { background:#ede9fe !important; color:#5b21b6 !important; }
+        .dl-walkin { background:#fee2e2 !important; color:#991b1b !important; }
         .dl-stalebar { margin-top:4px; font-size:11px; font-weight:700; color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:5px 8px; }
         .dl-stale { color:#b91c1c; font-weight:700; }
   .dl-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
