@@ -10,12 +10,29 @@
 export type Cta = { label: string; url: string }
 export type Kv = { label: string; value: string; note?: string }
 
+// An activation is a SCHEDULE, not a label. `day`/`time` stay as the human wording shown on the
+// card; repeat/dow/date drive the real calendar. Old rows (day: 'Saturday') carry no schedule
+// fields, so inferSchedule() reads the wording - nothing already saved has to be re-entered.
+export type Activation = {
+  day: string          // display wording + legacy inference ('Daily', 'Saturday', 'Aug 3')
+  time: string         // display wording ('3 - 6 PM')
+  name: string
+  where: string
+  desc: string
+  repeat?: 'daily' | 'weekly' | 'once'
+  dow?: number         // 0 Sun .. 6 Sat, for weekly
+  date?: string        // YYYY-MM-DD, for one-off
+  start?: string       // optional first date it runs (seasonal)
+  end?: string         // optional last date it runs
+  at?: string          // HH:MM 24h, only for ordering within a day
+}
+
 export type Guide = {
   slug?: string
   theme?: { ink?: string; deep?: string; leaf?: string; sand?: string; accent?: string }
   hero: { eyebrow: string; title: string; subtitle: string; image: string; chips: string[]; ctas: Cta[] }
   quick: { title: string; items: Kv[] }
-  activations: { title: string; note: string; items: { day: string; time: string; name: string; where: string; desc: string }[] }
+  activations: { title: string; note: string; items: Activation[] }
   venues: { title: string; note: string; items: { name: string; tagline: string; image: string; hours: Kv[]; note: string; phone: string; link: string; linkLabel: string }[] }
   menu: { title: string; note: string; link: string; linkLabel: string; groups: { name: string; note: string; items: { name: string; desc: string; price: string }[] }[] }
   quotes: { title: string; note: string; auto: boolean; keywords: string[]; items: { text: string; who: string; source: string; date: string }[] }
@@ -33,6 +50,120 @@ export const GUIDE_SECTIONS = ['quick', 'activations', 'venues', 'menu', 'quotes
 
 export function guideKey(slug: string): string { return 'guide:' + normSlug(slug) }
 export function normSlug(slug: string): string { return String(slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40) }
+
+// ---------------------------------------------------------------------------
+// CALENDAR ENGINE - turns activations into real dated occurrences.
+// Dates are plain YYYY-MM-DD strings anchored at noon UTC so a timezone shift can never roll a
+// day over. "Today" is resolved in the property's timezone (America/New_York for the portfolio).
+// ---------------------------------------------------------------------------
+export const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+export const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+export function todayIso(tz = 'America/New_York'): string {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()) }
+  catch { return new Date().toISOString().slice(0, 10) }
+}
+export function addDaysIso(iso: string, n: number): string {
+  const d = new Date(iso + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+export function dowOfIso(iso: string): number { return new Date(iso + 'T12:00:00Z').getUTCDay() }
+export function monthOfIso(iso: string): string { return iso.slice(0, 7) }
+export function firstOfMonth(ym: string): string { return ym + '-01' }
+export function daysInMonth(ym: string): number {
+  const y = Number(ym.slice(0, 4)); const m = Number(ym.slice(5, 7))
+  return new Date(Date.UTC(y, m, 0)).getUTCDate()
+}
+export function shiftMonth(ym: string, n: number): string {
+  const y = Number(ym.slice(0, 4)); const m = Number(ym.slice(5, 7)) - 1 + n
+  const d = new Date(Date.UTC(y, m, 1))
+  return d.toISOString().slice(0, 7)
+}
+
+/** Schedule for an activation, inferred from the wording when the fields are not set. */
+export function inferSchedule(a: Activation): { repeat: 'daily' | 'weekly' | 'once'; dow: number; date: string } {
+  if (a.repeat === 'daily') return { repeat: 'daily', dow: -1, date: '' }
+  if (a.repeat === 'weekly') return { repeat: 'weekly', dow: typeof a.dow === 'number' ? a.dow : 6, date: '' }
+  if (a.repeat === 'once') return { repeat: 'once', dow: -1, date: a.date || '' }
+  const word = String(a.day || '').toLowerCase()
+  if (/daily|every ?day|all week/.test(word)) return { repeat: 'daily', dow: -1, date: '' }
+  for (let i = 0; i < DOW_NAMES.length; i++) {
+    if (word.indexOf(DOW_NAMES[i].toLowerCase()) >= 0) return { repeat: 'weekly', dow: i, date: '' }
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(a.day || '').trim())) return { repeat: 'once', dow: -1, date: String(a.day).trim() }
+  return { repeat: 'weekly', dow: 6, date: '' }
+}
+
+/** Minutes past midnight, only used to order a day's events. Reads `at`, else the time wording. */
+export function minutesOf(a: Activation): number {
+  const at = String(a.at || '')
+  const m24 = at.match(/^(\d{1,2}):(\d{2})$/)
+  if (m24) return Number(m24[1]) * 60 + Number(m24[2])
+  const t = String(a.time || '')
+  const m = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i)
+  if (m) {
+    let h = Number(m[1]) % 12
+    if (/pm/i.test(m[3])) h += 12
+    return h * 60 + Number(m[2] || 0)
+  }
+  if (/morning|breakfast/i.test(t)) return 9 * 60
+  if (/evening|night|dinner/i.test(t)) return 18 * 60
+  if (/afternoon/i.test(t)) return 14 * 60
+  return 12 * 60
+}
+
+export type Occurrence = { iso: string; idx: number; item: Activation; mins: number }
+
+/** Does this activation run on this date? */
+export function runsOn(a: Activation, iso: string): boolean {
+  if (a.start && iso < a.start) return false
+  if (a.end && iso > a.end) return false
+  const s = inferSchedule(a)
+  if (s.repeat === 'daily') return true
+  if (s.repeat === 'weekly') return dowOfIso(iso) === s.dow
+  return !!s.date && s.date === iso
+}
+
+/** Every occurrence in [fromIso, fromIso + days), date then time order. */
+export function occurrencesIn(items: Activation[], fromIso: string, days: number): Occurrence[] {
+  const out: Occurrence[] = []
+  for (let d = 0; d < days; d++) {
+    const iso = addDaysIso(fromIso, d)
+    const onDay: Occurrence[] = []
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      if (!it || !runsOn(it, iso)) continue
+      onDay.push({ iso, idx: i, item: it, mins: minutesOf(it) })
+    }
+    onDay.sort((x, y) => x.mins - y.mins)
+    for (const o of onDay) out.push(o)
+  }
+  return out
+}
+
+/** "Today" / "Tomorrow" / "Sat, Aug 1" */
+export function dayLabel(iso: string, today: string): string {
+  if (iso === today) return 'Today'
+  if (iso === addDaysIso(today, 1)) return 'Tomorrow'
+  const d = new Date(iso + 'T12:00:00Z')
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+export function shortDate(iso: string): string {
+  const d = new Date(iso + 'T12:00:00Z')
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+export function monthLabel(ym: string): string {
+  const d = new Date(ym + '-15T12:00:00Z')
+  return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+/** The recurrence in words, for the card and the editor summary. */
+export function repeatLabel(a: Activation): string {
+  const s = inferSchedule(a)
+  if (s.repeat === 'daily') return 'Every day'
+  if (s.repeat === 'weekly') return 'Every ' + DOW_NAMES[s.dow]
+  return s.date ? 'One-off ' + shortDate(s.date) : 'One-off'
+}
 
 // An empty page for a brand-new property. Admin fills it in on the live page.
 export function blankGuide(slug: string, name: string): Guide {
@@ -86,11 +217,11 @@ export const GARDEN: Guide = {
     title: 'This week at The Garden',
     note: 'Our weekly line-up. Times can shift with the weather - the front desk has the final word.',
     items: [
-      { day: 'Daily', time: '3 - 6 PM', name: 'Happy Hour', where: 'The Terrace', desc: 'Crafted cocktails, wine and cold beer as the afternoon winds down.' },
-      { day: 'Wednesday', time: 'All evening', name: 'Wine Wednesday', where: 'The Greenhouse', desc: 'A midweek pour worth staying in for.' },
-      { day: 'Saturday', time: '3 PM', name: 'Pool Golf', where: 'Main Pool', desc: 'Floating putting, questionable technique, prizes.' },
-      { day: 'Saturday', time: '6 - 9 PM', name: 'Live Music', where: 'The Terrace', desc: 'Local musicians, poolside, no cover.' },
-      { day: 'Sunday', time: '9 - 10 AM', name: 'Yoga', where: 'The Putting Green', desc: 'Open-air flow to start the day. Mats provided.' },
+      { day: 'Daily', time: '3 - 6 PM', name: 'Happy Hour', where: 'The Terrace', desc: 'Crafted cocktails, wine and cold beer as the afternoon winds down.', repeat: 'daily', at: '15:00' },
+      { day: 'Wednesday', time: 'All evening', name: 'Wine Wednesday', where: 'The Greenhouse', desc: 'A midweek pour worth staying in for.', repeat: 'weekly', dow: 3, at: '18:00' },
+      { day: 'Saturday', time: '3 PM', name: 'Pool Golf', where: 'Main Pool', desc: 'Floating putting, questionable technique, prizes.', repeat: 'weekly', dow: 6, at: '15:00' },
+      { day: 'Saturday', time: '6 - 9 PM', name: 'Live Music', where: 'The Terrace', desc: 'Local musicians, poolside, no cover.', repeat: 'weekly', dow: 6, at: '18:00' },
+      { day: 'Sunday', time: '9 - 10 AM', name: 'Yoga', where: 'The Putting Green', desc: 'Open-air flow to start the day. Mats provided.', repeat: 'weekly', dow: 0, at: '09:00' },
     ],
   },
   venues: {
