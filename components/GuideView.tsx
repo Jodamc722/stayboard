@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   occurrencesIn, todayIso, dayLabel, shortDate, monthLabel, shiftMonth, monthOfIso,
   daysInMonth, firstOfMonth, dowOfIso, runsOn, inferSchedule, repeatLabel, windowOf, nowMinutes,
+  menuWindow, openMenuGroups, type MenuGroup,
   DOW_SHORT, DOW_NAMES, type Guide, type Activation, type Occurrence,
 } from '@/lib/guide'
 
@@ -46,10 +47,16 @@ const telHref = (p: string) => 'tel:' + String(p || '').replace(/[^0-9+]/g, '')
 
 // How many upcoming occurrences show before "See more".
 const SHOW_N = 6
-const selStyle: any = { background: '#fff', border: '1px solid rgba(22,32,75,.2)', borderRadius: 8, padding: '4px 8px', fontSize: 13, color: 'inherit', font: 'inherit' }
+const hhmmLabel = (n: number) => {
+  const h = Math.floor(n / 60); const m = n % 60
+  const ampm = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return h12 + (m ? ':' + (m < 10 ? '0' + m : String(m)) : '') + ' ' + ampm
+}
 function tabStyle(on: boolean): any {
   return { borderRadius: 999, padding: '6px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: on ? 'var(--ink)' : 'transparent', color: on ? '#fff' : 'rgba(22,32,75,.7)' }
 }
+const selStyle: any = { background: '#fff', border: '1px solid rgba(22,32,75,.2)', borderRadius: 8, padding: '4px 8px', fontSize: 13, color: 'inherit', font: 'inherit' }
 
 // ---- editable primitives (module scope so typing never remounts them) --------------------------
 function Ed({ v, on, ph, cls, style, area, rows }: { v: string; on: (s: string) => void; ph?: string; cls?: string; style?: any; area?: boolean; rows?: number }) {
@@ -246,13 +253,25 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
     return m
   }, [acts, calMonth])
 
+  // ---- menu: open what is being served right now, keep the rest folded --------------------------
+  const menuGroups: MenuGroup[] = (g.menu && g.menu.groups) || []
+  const autoMenu = useMemo(() => openMenuGroups(menuGroups, nowMin), [menuGroups, nowMin])
+  const [menuPick, setMenuPick] = useState<number[] | null>(null)
+  const menuOpenIdx = menuPick || autoMenu
+  function toggleMenu(i: number) {
+    const cur = menuPick || autoMenu
+    setMenuPick(cur.indexOf(i) >= 0 ? cur.filter(x => x !== i) : cur.concat(i))
+  }
+
   const actAt = (i: number): Activation => (acts[i] || ({} as Activation))
+  // The calendar floats over the page, so opening it never shifts what is under it.
+  function openCal() { setCalMonth(monthOfIso(pickDay || today)); setCalOpen(true) }
   function addActivation(dateIso: string) {
     const base: Activation = dateIso
       ? { day: shortDate(dateIso), time: '6 PM', name: 'New activation', where: '', desc: '', repeat: 'once', date: dateIso, at: '18:00' }
       : { day: 'Saturday', time: '6 PM', name: 'New activation', where: '', desc: '', repeat: 'weekly', dow: 6, at: '18:00' }
     push(['activations', 'items'], base)
-    if (dateIso) setCalOpen(true)
+    setCalOpen(false)
   }
   // Writing the schedule also keeps `day` in step, so the wording and the calendar can never disagree.
   function setRepeat(i: number, v: string) {
@@ -435,8 +454,8 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
 
           <div className="flex flex-wrap items-center gap-2 mb-5">
             <div style={{ display: 'inline-flex', background: '#fff', border: '1px solid rgba(22,32,75,.12)', borderRadius: 999, padding: 3 }}>
-              <button type="button" onClick={() => setCalOpen(false)} style={tabStyle(!calOpen)}>This week</button>
-              <button type="button" onClick={() => setCalOpen(true)} style={tabStyle(calOpen)}>Calendar</button>
+              <button type="button" onClick={() => { setCalOpen(false); setPickDay('') }} style={tabStyle(!calOpen && !pickDay)}>This week</button>
+              <button type="button" onClick={openCal} style={tabStyle(calOpen || !!pickDay)}>Calendar</button>
             </div>
             {pickDay ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--ink)', color: '#fff', borderRadius: 999, padding: '6px 14px', fontSize: 13, fontWeight: 600 }}>
@@ -447,15 +466,19 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
             {edit ? <Btn onClick={() => addActivation(pickDay)} tone="solid">+ Add{pickDay ? ' on ' + shortDate(pickDay) : ' an activation'}</Btn> : null}
           </div>
 
-          {/* month calendar */}
+          {/* month calendar - floats over the page so nothing below it jumps */}
           {calOpen ? (
-            <div className="gd-card" style={{ padding: 18, marginBottom: 22 }}>
+            <div onClick={() => setCalOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(14,21,51,.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div className="gd-card gd-shadow" onClick={e => e.stopPropagation()}
+                style={{ padding: 18, width: '100%', maxWidth: 760, maxHeight: '88vh', overflowY: 'auto' }}>
               <div className="flex items-center justify-between mb-3">
                 <Btn onClick={() => setCalMonth(shiftMonth(calMonth, -1))}>Prev</Btn>
                 <div style={{ fontFamily: SERIF, fontSize: 21 }}>{monthLabel(calMonth)}</div>
                 <div className="flex gap-2">
-                  <Btn onClick={() => { setCalMonth(monthOfIso(today)); setPickDay(today) }}>Today</Btn>
+                  <Btn onClick={() => { setCalMonth(monthOfIso(today)); setPickDay(today); setCalOpen(false) }}>Today</Btn>
                   <Btn onClick={() => setCalMonth(shiftMonth(calMonth, 1))}>Next</Btn>
+                  <Btn onClick={() => setCalOpen(false)} tone="solid">Close</Btn>
                 </div>
               </div>
               <div className="grid grid-cols-7 gap-1">
@@ -469,7 +492,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                   const isPick = iso === pickDay
                   const past = iso < today
                   return (
-                    <button key={iso} type="button" onClick={() => setPickDay(isPick ? '' : iso)}
+                    <button key={iso} type="button" onClick={() => { setPickDay(isPick ? '' : iso); setCalOpen(false) }}
                       style={{
                         textAlign: 'left', minHeight: 76, borderRadius: 12, padding: '6px 7px',
                         border: '1px solid ' + (isPick ? 'var(--ink)' : isToday ? 'var(--leaf)' : 'rgba(22,32,75,.10)'),
@@ -490,7 +513,12 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                   )
                 })}
               </div>
-              {edit ? <p className="text-[12px] mt-3" style={{ color: 'rgba(22,32,75,.55)' }}>Tap a date to filter, then use Add to drop a one-off on that day. Weekly events keep repeating on their own.</p> : null}
+              <p className="text-[12px] mt-3" style={{ color: 'rgba(22,32,75,.55)' }}>
+                {edit
+                  ? 'Tap a date to see that day, then use Add to drop a one-off on it. Weekly events keep repeating on their own.'
+                  : 'Tap any date to see what is on that day.'}
+              </p>
+              </div>
             </div>
           ) : null}
 
@@ -584,14 +612,6 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                   </div>
                 </div>
               ))}
-              {/* "See more" opens the calendar rather than unrolling every future repeat. */}
-              {!pickDay && acts.length ? (
-                <div className="pt-1">
-                  <Btn onClick={() => { setCalOpen(true); setCalMonth(monthOfIso(today)) }} tone="ghost">
-                    See more - pick a date
-                  </Btn>
-                </div>
-              ) : null}
             </div>
           )}
         </section>
@@ -666,12 +686,22 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
         <section className={wrap} style={{ paddingTop: 72 }}>
           <SectionHead id="menu" k="menu" title={g.menu?.title || ''} note={g.menu?.note} />
           <div className="grid gap-5 lg:grid-cols-2">
-            {(g.menu?.groups || []).map((grp, gi) => (
-              <div key={gi} className="gd-card" style={{ padding: 22 }}>
+            {(g.menu?.groups || []).map((grp, gi) => {
+              const mw = menuWindow(grp)
+              const serving = !!mw && nowMin >= 0 && nowMin >= mw.start && nowMin <= mw.end
+              const open = edit || menuOpenIdx.indexOf(gi) >= 0
+              return (
+              <div key={gi} className="gd-card" style={{ padding: 22, borderColor: serving ? 'var(--leaf)' : undefined, alignSelf: 'start' }}>
                 {edit ? (
                   <div className="space-y-1.5 mb-3">
                     <Ed v={grp.name} on={s => set(['menu', 'groups', gi, 'name'], s)} ph="Section name" />
                     <Ed v={grp.note} on={s => set(['menu', 'groups', gi, 'note'], s)} ph="Note / hours" />
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ fontSize: 11, color: 'rgba(22,32,75,.55)', fontWeight: 600 }}>Served</span>
+                      <input type="time" value={grp.from || ''} onChange={e => set(['menu', 'groups', gi, 'from'], e.target.value)} style={selStyle} />
+                      <input type="time" value={grp.to || ''} onChange={e => set(['menu', 'groups', gi, 'to'], e.target.value)} style={selStyle} />
+                      <span style={{ fontSize: 11, color: 'rgba(22,32,75,.45)' }}>{grp.from || grp.to ? '' : mw ? 'auto ' + hhmmLabel(mw.start) + '-' + hhmmLabel(mw.end) : 'always'}</span>
+                    </div>
                     <div className="flex gap-1.5">
                       <Btn onClick={() => move(['menu', 'groups'], gi, -1)}>Up</Btn>
                       <Btn onClick={() => move(['menu', 'groups'], gi, 1)}>Down</Btn>
@@ -679,12 +709,21 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                     </div>
                   </div>
                 ) : (
-                  <div className="mb-4">
-                    <div style={{ fontFamily: SERIF, fontSize: 21 }}>{grp.name}</div>
-                    {grp.note ? <div style={{ fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--leaf)', fontWeight: 700, marginTop: 4 }}>{grp.note}</div> : null}
-                  </div>
+                  <button type="button" onClick={() => toggleMenu(gi)}
+                    style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer', marginBottom: open ? 16 : 0 }}>
+                    <span style={{ flex: 1 }}>
+                      <span style={{ fontFamily: SERIF, fontSize: 21, display: 'block' }}>{grp.name}</span>
+                      {grp.note ? <span style={{ fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--leaf)', fontWeight: 700, marginTop: 4, display: 'block' }}>{grp.note}</span> : null}
+                      {!open ? <span style={{ fontSize: 12.5, color: 'rgba(22,32,75,.5)', marginTop: 6, display: 'block' }}>{(grp.items || []).length} items - tap to open</span> : null}
+                    </span>
+                    {serving ? (
+                      <span style={{ background: 'var(--leaf)', color: '#fff', borderRadius: 999, padding: '3px 10px', fontSize: 10.5, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Serving now</span>
+                    ) : (
+                      <span style={{ fontSize: 18, color: 'rgba(22,32,75,.35)', lineHeight: 1 }}>{open ? '−' : '+'}</span>
+                    )}
+                  </button>
                 )}
-                <div className="space-y-3">
+                <div className="space-y-3" style={{ display: open ? undefined : 'none' }}>
                   {(grp.items || []).map((it, ii) => (
                     <div key={ii}>
                       {edit ? (
@@ -711,7 +750,8 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                   {edit ? <Btn onClick={() => push(['menu', 'groups', gi, 'items'], { name: 'New item', desc: '', price: '' })}>+ item</Btn> : null}
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
           <div className="flex flex-wrap items-center gap-3 mt-5">
             {edit ? (
