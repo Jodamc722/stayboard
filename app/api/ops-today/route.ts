@@ -271,7 +271,7 @@ export async function GET(req: NextRequest) {
     // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, deadline, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights })
+    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, deadline, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
