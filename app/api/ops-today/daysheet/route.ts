@@ -23,6 +23,17 @@ const hhmm = (iso: any) => { const d = new Date(str(iso)); return isNaN(d.getTim
 //   1. Guesty source is an owner booking ('owner', 'owner-guest')
 //   2. Guesty source is 'manual' (staff-created block / comp stay)
 //   3. the guest name matches the OWNER on file for that listing (guesty_owners.listing_ids)
+// Door code lives in a Guesty custom field — the same one the scheduler reads.
+const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
+function doorCodeOf(cf: any): string | null {
+  const arr = Array.isArray(cf) ? cf : []
+  for (const f of arr) {
+    const id = (f && f.fieldId && (f.fieldId._id || f.fieldId)) || (f && f._id)
+    if (String(id) === DOOR_CODE_FIELD) { const v = String(f.value ?? '').trim(); return v || null }
+  }
+  return null
+}
+
 const OWNER_SRC = /^owner/i
 const MANUAL_SRC = /^manual$/i
 function normName(s: string): string { return str(s).toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim() }
@@ -49,13 +60,14 @@ export async function GET(req: NextRequest) {
     const date = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : ymd(new Date())
     const marketQ = str(req.nextUrl.searchParams.get('market')) || 'all'
 
-    const [lRes, tRes, rRes, oRes, gRes] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
+    const [lRes, tRes, rRes, oRes, gRes, sRes] = await Promise.all([
+      db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields,lat:raw->address->>lat,lng:raw->address->>lng'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).limit(3000),
       db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name,guest_phone,nights,source,notes,money_total')
         .lte('check_in', addDays(date, 1)).gte('check_out', date).limit(3000),
       db.from('guesty_owners').select('id,full_name,listing_ids').limit(2000),
       db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id').not('status', 'in', '("done","resolved","closed")').limit(300),
+      db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1),
     ])
 
     const lmap: Record<string, any> = {}
@@ -69,6 +81,10 @@ export async function GET(req: NextRequest) {
         active: str(l.status).trim().toLowerCase() === 'active',
         bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null,
         checkIn: l.checkIn || null, checkOut: l.checkOut || null,
+        address: l.address_full || null,
+        doorCode: doorCodeOf(l.cf),
+        lat: Number.isFinite(Number(l.lat)) ? Number(l.lat) : null,
+        lng: Number.isFinite(Number(l.lng)) ? Number(l.lng) : null,
       }
     }
     // listing -> owner name
@@ -124,6 +140,7 @@ export async function GET(req: NextRequest) {
         source: src, checkIn: ci, checkOut: co, ownerFlag, owner: ownerName || null,
         notes: str(r.notes).slice(0, 160), vendor: li.vendor || null,
         checkInTime: li.checkIn || null, checkOutTime: li.checkOut || null, bedrooms: li.bedrooms ?? null,
+        address: li.address || null, doorCode: li.doorCode || null, lat: li.lat ?? null, lng: li.lng ?? null,
       }
       if (ci === date) arrivals.push(base)
       if (co === date) departures.push(base)
@@ -145,7 +162,7 @@ export async function GET(req: NextRequest) {
     // ---- vacant units (active, nobody in-house on the date)
     const vacants = Object.keys(lmap)
       .filter(id => lmap[id].active && !occupied[id] && inMarket(id))
-      .map(id => ({ unit: lmap[id].name, market: lmap[id].market, bedrooms: lmap[id].bedrooms, nextArrival: nextArrivalOf[id] || null, vendor: lmap[id].vendor || null }))
+      .map(id => ({ unit: lmap[id].name, market: lmap[id].market, bedrooms: lmap[id].bedrooms, nextArrival: nextArrivalOf[id] || null, vendor: lmap[id].vendor || null, address: lmap[id].address || null, lat: lmap[id].lat ?? null, lng: lmap[id].lng ?? null }))
       .sort((a, b) => (a.nextArrival || '9999').localeCompare(b.nextArrival || '9999') || a.unit.localeCompare(b.unit))
 
     // ---- open glitches (guest-reported issues still live)
@@ -153,17 +170,45 @@ export async function GET(req: NextRequest) {
       .map(g => ({ id: str(g.id), unit: str(g.unit), overview: str(g.overview).slice(0, 140), status: str(g.status), at: str(g.created_at).slice(0, 10), taskId: g.breezeway_task_id ? str(g.breezeway_task_id) : null }))
       .sort((a, b) => a.at.localeCompare(b.at))
 
+    // EXCEPTIONS — the cross-checks that decide whether the day is actually under control.
+    // Computed here (one source) so the paper and the screen can never disagree.
+    const exceptions: { kind: string; unit: string; detail: string; severity: 'high' | 'med' }[] = []
+    for (const d of departures) {
+      if (d.vendor) continue
+      if (!d.clean) exceptions.push({ kind: 'No clean on the board', unit: d.unit, detail: 'Guest ' + d.guest + ' checks out today and there is no departure clean scheduled', severity: 'high' })
+      else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') exceptions.push({ kind: 'Clean unassigned', unit: d.unit, detail: (d.clean.name || 'Departure clean') + ' has nobody on it', severity: 'high' })
+      if (d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
+      if (d.nights != null && d.nights >= 10) exceptions.push({ kind: 'Long stay out', unit: d.unit, detail: d.nights + '-night stay ended — heavier clean, allow extra time', severity: 'med' })
+    }
+    for (const a of arrivals) {
+      if (a.nights != null && a.nights >= 10) exceptions.push({ kind: 'Long booking arriving', unit: a.unit, detail: a.nights + ' nights' + (a.guest ? ' (' + a.guest + ')' : '') + ' — check the unit is fully ready', severity: 'med' })
+    }
+    for (const w of work) {
+      if (!w.assignees.length && w.status !== 'done') exceptions.push({ kind: 'Work unassigned', unit: w.unit, detail: w.name, severity: 'med' })
+    }
+    // work scheduled into an occupied night (nobody should walk in on a guest)
+    const occupiedNow = new Set(Object.keys(occupied))
+    for (const w of work) {
+      const lid = Object.keys(lmap).find(k => lmap[k].name === w.unit)
+      if (lid && occupiedNow.has(lid) && !departures.some(d => d.unit === w.unit)) {
+        exceptions.push({ kind: 'Guest in house', unit: w.unit, detail: w.name + ' — guest is still in the unit, confirm before entering', severity: 'high' })
+      }
+    }
+    const sevRank = (s: string) => (s === 'high' ? 0 : 1)
+    exceptions.sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.unit.localeCompare(b.unit))
+
+    const lastSync = ((sRes.data || []) as any[])[0]?.synced_at || null
     const markets = Array.from(new Set(Object.keys(lmap).map(k => lmap[k].market).filter(Boolean))).sort()
     return NextResponse.json({
       ok: true, date, market: marketQ, markets, generatedAt: new Date().toISOString(),
       counts: {
         arrivals: arrivals.length, departures: departures.length, ownerStays: ownerStays.length,
-        work: work.length, vacants: vacants.length, glitches: glitches.length,
+        work: work.length, vacants: vacants.length, glitches: glitches.length, exceptions: exceptions.length,
         sameDayTurns: departures.filter(d => d.sameDayTurn).length,
         cleansDone: Object.values(cleanByListing).filter((c: any) => c.status === 'done').length,
         cleansTotal: Object.keys(cleanByListing).length,
       },
-      arrivals, departures, ownerStays, work, vacants, glitches,
+      arrivals, departures, ownerStays, work, vacants, glitches, exceptions, lastSync,
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
