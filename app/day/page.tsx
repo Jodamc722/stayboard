@@ -71,7 +71,8 @@ export default function DayLinkPage() {
 
   const departures = (d?.departures || [])
   const arrivals = (d?.arrivals || [])
-  const noClean = arrivals.filter((a: any) => !a.cleanToday)
+  // An extension never leaves the unit, so it must not appear under "walk these before check-in".
+  const noClean = arrivals.filter((a: any) => !a.cleanToday && !a.extension)
   const work = (d?.work || [])
   const issues = (d?.exceptions || [])
   const c = d?.counts || {}
