@@ -4,12 +4,13 @@
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck, MessageSquare } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck, MessageSquare, Search, MapPin } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
+import { clusterAreas } from '@/lib/geo-areas'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null; arrivingGuest?: string | null; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; lat?: number | null; lng?: number | null }
+type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null; arrivingGuest?: string | null; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; address?: string | null; bedrooms?: number | null; building?: string | null; lat?: number | null; lng?: number | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
@@ -60,30 +61,6 @@ function statusText(t: Task) {
 // Order units by LOCATION: group by city (Pompano vs Fort Lauderdale), and within each city put
 // the properties closest to each other next to each other (nearest-neighbour chain on lat/lng).
 function dist2(a: Unit, b: Unit) { const dx = Number(a.lat) - Number(b.lat); const dy = Number(a.lng) - Number(b.lng); return dx * dx + dy * dy }
-function sortByArea(list: Unit[]): Unit[] {
-  const byCity: Record<string, Unit[]> = {}
-  for (const u of list) { const c = u.city || 'Other'; if (!byCity[c]) byCity[c] = []; byCity[c].push(u) }
-  const cities = Object.keys(byCity).sort()
-  const out: Unit[] = []
-  for (const c of cities) {
-    const geo = byCity[c].filter(u => u.lat != null && u.lng != null)
-    const rest = byCity[c].filter(u => u.lat == null || u.lng == null)
-    if (geo.length) {
-      const ordered: Unit[] = [geo[0]]
-      const remaining = geo.slice(1)
-      while (remaining.length) {
-        const last = ordered[ordered.length - 1]
-        let bi = 0, bd = Infinity
-        for (let i = 0; i < remaining.length; i++) { const dd = dist2(last, remaining[i]); if (dd < bd) { bd = dd; bi = i } }
-        ordered.push(remaining.splice(bi, 1)[0])
-      }
-      for (const u of ordered) out.push(u)
-    }
-    for (const u of rest) out.push(u)
-  }
-  return out
-}
-
 export function TodayInOps() {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
@@ -99,6 +76,8 @@ export function TodayInOps() {
   const [gl, setGl] = useState<any>(null)
   const [glStage, setGlStage] = useState<Record<string, string>>({})
   const [groupBy, setGroupBy] = useState<'urgency' | 'area'>('urgency')
+  // One box to find anything on the day: unit, guest, cleaner, or task name.
+  const [q, setQ] = useState('')
   // Comment threads on Breezeway tasks: which row is open + how many comments each row has,
   // so the team can talk about a task in the app and get the replies as notifications.
   const [cmtFor, setCmtFor] = useState('')
@@ -182,11 +161,95 @@ export function TodayInOps() {
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
   const all = tf === 'all' ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
   const baseUnits = showDone ? all : all.filter(u => !u.allDone)
-  const units = groupBy === 'area' ? sortByArea(baseUnits) : baseUnits
+  // SEARCH: unit, guest leaving, assignee, or task name. A unit stays if anything on it matches.
+  const needle = q.trim().toLowerCase()
+  const hit = (u: Unit) => {
+    if (!needle) return true
+    const hay = [u.unit, u.guestOut || '', u.market, u.city || '', (u as any).arrivingGuest || '']
+      .concat(u.tasks.map(t => t.name))
+      .concat(u.tasks.flatMap(t => t.assignees))
+      .join(' ').toLowerCase()
+    return hay.includes(needle)
+  }
+  const searched = baseUnits.filter(hit)
+  // AREA = mini-market, worked out from real coordinates (a Broward building next to Eden belongs
+  // with Eden, whatever city string Guesty carries). Each area is a run the team can drive.
+  const areas = groupBy === 'area' ? clusterAreas(searched as any, 1.2) : []
+  const units = groupBy === 'area' ? (areas.flatMap(a => a.units) as Unit[]) : searched
   const doneCount = all.filter(u => u.allDone).length
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
   const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
   const behind = d.late > 0 || d.atRisk > 0
+  const renderUnit = (u: Unit) => (
+          <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line bg-app/60 flex-wrap">
+              <span className="font-bold text-[15px] text-ink">{u.unit}</span>
+              <span className="text-xs text-muted">{u.market}</span>
+              {u.city && <span className="text-xs text-muted">&middot; {u.city}</span>}
+              {u.address && <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(u.address)} target="_blank" rel="noreferrer" title={u.address} className="text-[11px] text-muted hover:text-ink hover:underline inline-flex items-center gap-0.5"><MapPin size={10} />map</a>}
+              {u.bedrooms != null && <span className="text-[11px] text-muted">{u.bedrooms === 0 ? 'Studio' : u.bedrooms + 'BR'}</span>}
+              {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
+              {(() => {
+                // How long the guest who just left had been in. Long stays clean slower.
+                const LS = data.longStayNights || 10
+                const n = Number(u.nights)
+                if (!Number.isFinite(n) || n <= 0) return null
+                const long = n >= LS
+                return <span title={long ? n + '-night stay just ended — LONG STAY, expect a heavier clean (laundry, kitchen, fridge, bins). Give the cleaner more time.' : n + '-night stay'} className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ' + (long ? 'bg-amber-500 text-white border-amber-500' : 'bg-app text-muted border-line')}>{n} nt{long ? ' · long stay' : ''}</span>
+              })()}
+              {(() => {
+                // A long booking checking in today: the unit has to be properly ready.
+                const LS = data.longStayNights || 10
+                const n = Number(u.arrivingNights)
+                if (!Number.isFinite(n) || n < LS) return null
+                return <span title={'Arriving today: ' + n + '-night booking' + (u.arrivingGuest ? ' (' + u.arrivingGuest + ')' : '') + ' — big stay. Check the unit is fully ready: supplies stocked, everything working, no open issues.'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-violet-600 text-white border border-violet-600">{n}-nt arrival · check ready</span>
+              })()}
+              {u.untracked && <span title="Vendor-cleaned. The vendor doesn't close tasks in Breezeway, so status here isn't reliable and these aren't tracked against 4pm." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line">Vendor clean</span>}
+              {u.guestOut && <span className="text-xs text-muted">out: {u.guestOut}</span>}
+              {u.qc.map((q, i) => (
+                <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
+              ))}
+              <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
+              <span className={'ml-auto text-xs font-medium ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length + ' done'}</span>
+              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
+              <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
+            </div>
+            <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: (u.tasks.length ? Math.round((u.tasks.filter(t => t.done).length / u.tasks.length) * 100) : 0) + '%' }} /></div>
+            <div className="divide-y divide-line">
+              {orderedTasks(u).map((t, ti, arr) => (
+                <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
+                <div className="group flex items-center gap-3 px-4 py-2.5 text-sm">
+                  <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
+                    <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
+                  </div>
+                  <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-ink truncate">{t.name}</div>
+                    <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
+                      {t.guestyOnly ? <span className="text-[11px] text-muted">Vendor-cleaned {'\u00b7'} no Breezeway task</span> : <Assign task={t} people={people} onDone={load} />}
+                      <span>{t.finishedAt ? '· done ' + hhmm(t.finishedAt) : t.startedAt ? '· started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
+                    </div>
+                  </div>
+                  <span className={'text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ' + statusCls(t)}>{t.guestyOnly ? 'Vendor' : statusText(t)}</span>
+                  {t.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. Nothing to assign or track here." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-300 shrink-0">Guesty only</span>}
+                  {!t.guestyOnly && <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" title="Open the ADMIN task in Breezeway \u2014 edit, assign, modify, check" className="text-xs font-medium text-brand-600 hover:underline shrink-0 opacity-70 group-hover:opacity-100">admin</a>}
+                  {!t.guestyOnly && t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" title="View the field report" className="text-xs text-muted hover:underline shrink-0 opacity-70 group-hover:opacity-100">report</a>}
+                  {!t.done && !t.guestyOnly && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50') + ' opacity-70 group-hover:opacity-100'}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
+                  <button onClick={() => setCmtFor(cmtFor === t.id ? '' : t.id)} title="Comment on this task — teammates you tag get a notification, and everyone on the thread hears about replies" className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 inline-flex items-center gap-1 ' + (cmtFor === t.id ? 'bg-ink text-white border-ink' : cmtCounts[t.id] ? 'bg-sky-50 text-sky-700 border-sky-300' : 'bg-white text-muted border-line hover:bg-app opacity-70 group-hover:opacity-100')}><MessageSquare size={11} />{cmtCounts[t.id] ? cmtCounts[t.id] : ''}</button>
+                  {!t.done && !t.guestyOnly && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1 opacity-60 group-hover:opacity-100">✕</button>}
+                </div>
+                {cmtFor === t.id && <div className="px-4 pb-3"><CommentThread type="task" id={String(t.id)} label={u.unit + ' — ' + t.name} link="/plan" taskId={t.guestyOnly ? '' : String(t.id)} onCount={n => setCmtCounts(prev => ({ ...prev, [t.id]: n }))} /></div>}
+                </div>
+              ))}
+            </div>
+            {actFor === u.listingId && <SignalPanel s={sig[u.listingId]} seed={actSeed} listingId={u.listingId} unit={u.unit} today={data.today} people={people} onClose={() => setActFor('')} onDone={() => { setActFor(''); load() }} />}
+            {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} date={data.today} onDone={() => { setAddFor(''); load() }} />}
+            {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} onClose={() => setItemsFor('')} />}
+          </div>
+  )
+
+
   // apply the saved manual order to a unit's tasks (falls back to the API order)
   const orderedTasks = (u: Unit): Task[] => {
     const ids = taskOrder[u.listingId]
@@ -242,6 +305,13 @@ export function TodayInOps() {
           <button onClick={() => setShowDone(!showDone)} className={'text-[13px] font-medium px-3 py-1.5 ' + (showDone ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Show or hide units where everything is already done">Finished {doneCount}</button>
           <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-[13px] font-medium px-3 py-1.5 ' + (groupBy === 'area' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Group units by neighbourhood so runners drive less">By area</button>
         </span>
+        <span className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, cleaner, task…" title="Filters the board — matches the unit, the guest leaving or arriving, the person assigned, or the task name"
+            className="text-[13px] pl-7 pr-7 py-1.5 rounded-lg border border-line bg-white w-60 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          {q && <button onClick={() => setQ('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
+        </span>
+        {q && <span className="text-[12px] text-muted">{units.length} match{units.length === 1 ? '' : 'es'}</span>}
         <span className="ml-auto inline-flex items-center rounded-lg border border-line overflow-hidden divide-x divide-line">
           <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-[13px] font-medium px-2.5 py-1.5 bg-white hover:bg-app">&lsaquo;</button>
           <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-[13px] px-2 py-1.5 bg-white border-0 focus:outline-none" />
@@ -339,72 +409,22 @@ export function TodayInOps() {
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
 
       <div className="space-y-3">
-        {units.map(u => (
-          <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line bg-app/60 flex-wrap">
-              <span className="font-bold text-[15px] text-ink">{u.unit}</span>
-              <span className="text-xs text-muted">{u.market}</span>
-              {u.city && <span className="text-xs text-muted">&middot; {u.city}</span>}
-              {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
-              {(() => {
-                // How long the guest who just left had been in. Long stays clean slower.
-                const LS = data.longStayNights || 10
-                const n = Number(u.nights)
-                if (!Number.isFinite(n) || n <= 0) return null
-                const long = n >= LS
-                return <span title={long ? n + '-night stay just ended — LONG STAY, expect a heavier clean (laundry, kitchen, fridge, bins). Give the cleaner more time.' : n + '-night stay'} className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ' + (long ? 'bg-amber-500 text-white border-amber-500' : 'bg-app text-muted border-line')}>{n} nt{long ? ' · long stay' : ''}</span>
-              })()}
-              {(() => {
-                // A long booking checking in today: the unit has to be properly ready.
-                const LS = data.longStayNights || 10
-                const n = Number(u.arrivingNights)
-                if (!Number.isFinite(n) || n < LS) return null
-                return <span title={'Arriving today: ' + n + '-night booking' + (u.arrivingGuest ? ' (' + u.arrivingGuest + ')' : '') + ' — big stay. Check the unit is fully ready: supplies stocked, everything working, no open issues.'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-violet-600 text-white border border-violet-600">{n}-nt arrival · check ready</span>
-              })()}
-              {u.untracked && <span title="Vendor-cleaned. The vendor doesn't close tasks in Breezeway, so status here isn't reliable and these aren't tracked against 4pm." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line">Vendor clean</span>}
-              {u.guestOut && <span className="text-xs text-muted">out: {u.guestOut}</span>}
-              {u.qc.map((q, i) => (
-                <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
-              ))}
-              <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
-              <span className={'ml-auto text-xs font-medium ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length + ' done'}</span>
-              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
-              <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
+        {/* BY AREA: units grouped into mini-markets worked out from coordinates, each block a run. */}
+        {groupBy === 'area' && areas.map(a => (
+          <div key={a.key} className="space-y-2">
+            <div className="flex items-center gap-2 px-1">
+              <MapPin size={13} className="text-muted" />
+              <span className="text-[13px] font-bold text-ink">{a.label}</span>
+              {a.city && a.city !== a.label && <span className="text-[11px] text-muted">{a.city}</span>}
+              <span className="text-[11px] font-semibold text-muted">{a.units.length} unit{a.units.length === 1 ? '' : 's'}</span>
+              <span className="flex-1 h-px bg-line" />
+              {a.units.filter((u: any) => u.late).length > 0 && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">{a.units.filter((u: any) => u.late).length} late</span>}
+              <span className="text-[11px] text-muted">{a.units.reduce((s: number, u: any) => s + u.tasks.filter((t: any) => !t.done).length, 0)} open</span>
             </div>
-            <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: (u.tasks.length ? Math.round((u.tasks.filter(t => t.done).length / u.tasks.length) * 100) : 0) + '%' }} /></div>
-            <div className="divide-y divide-line">
-              {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
-                <div className="group flex items-center gap-3 px-4 py-2.5 text-sm">
-                  <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                    <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
-                    <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
-                  </div>
-                  <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-ink truncate">{t.name}</div>
-                    <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
-                      {t.guestyOnly ? <span className="text-[11px] text-muted">Vendor-cleaned {'\u00b7'} no Breezeway task</span> : <Assign task={t} people={people} onDone={load} />}
-                      <span>{t.finishedAt ? '· done ' + hhmm(t.finishedAt) : t.startedAt ? '· started ' + hhmm(t.startedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
-                    </div>
-                  </div>
-                  <span className={'text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ' + statusCls(t)}>{t.guestyOnly ? 'Vendor' : statusText(t)}</span>
-                  {t.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. Nothing to assign or track here." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-300 shrink-0">Guesty only</span>}
-                  {!t.guestyOnly && <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" title="Open the ADMIN task in Breezeway \u2014 edit, assign, modify, check" className="text-xs font-medium text-brand-600 hover:underline shrink-0 opacity-70 group-hover:opacity-100">admin</a>}
-                  {!t.guestyOnly && t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" title="View the field report" className="text-xs text-muted hover:underline shrink-0 opacity-70 group-hover:opacity-100">report</a>}
-                  {!t.done && !t.guestyOnly && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50') + ' opacity-70 group-hover:opacity-100'}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
-                  <button onClick={() => setCmtFor(cmtFor === t.id ? '' : t.id)} title="Comment on this task — teammates you tag get a notification, and everyone on the thread hears about replies" className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 inline-flex items-center gap-1 ' + (cmtFor === t.id ? 'bg-ink text-white border-ink' : cmtCounts[t.id] ? 'bg-sky-50 text-sky-700 border-sky-300' : 'bg-white text-muted border-line hover:bg-app opacity-70 group-hover:opacity-100')}><MessageSquare size={11} />{cmtCounts[t.id] ? cmtCounts[t.id] : ''}</button>
-                  {!t.done && !t.guestyOnly && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1 opacity-60 group-hover:opacity-100">✕</button>}
-                </div>
-                {cmtFor === t.id && <div className="px-4 pb-3"><CommentThread type="task" id={String(t.id)} label={u.unit + ' — ' + t.name} link="/plan" taskId={t.guestyOnly ? '' : String(t.id)} onCount={n => setCmtCounts(prev => ({ ...prev, [t.id]: n }))} /></div>}
-                </div>
-              ))}
-            </div>
-            {actFor === u.listingId && <SignalPanel s={sig[u.listingId]} seed={actSeed} listingId={u.listingId} unit={u.unit} today={data.today} people={people} onClose={() => setActFor('')} onDone={() => { setActFor(''); load() }} />}
-            {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} date={data.today} onDone={() => { setAddFor(''); load() }} />}
-            {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} onClose={() => setItemsFor('')} />}
+            <div className="space-y-3">{(a.units as Unit[]).map(u => renderUnit(u))}</div>
           </div>
         ))}
+        {groupBy !== 'area' && units.map(u => renderUnit(u))}
       </div>
     </div>
   )
