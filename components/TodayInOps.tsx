@@ -182,37 +182,43 @@ export function TodayInOps() {
   const behind = d.late > 0 || d.atRisk > 0
   const renderUnit = (u: Unit) => (
           <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line bg-app/60 flex-wrap">
-              <span className="font-bold text-[15px] text-ink">{u.unit}</span>
-              <span className="text-xs text-muted">{u.market}</span>
-              {u.city && <span className="text-xs text-muted">&middot; {u.city}</span>}
-              {u.address && <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(u.address)} target="_blank" rel="noreferrer" title={u.address} className="text-[11px] text-muted hover:text-ink hover:underline inline-flex items-center gap-0.5"><MapPin size={10} />map</a>}
-              {u.bedrooms != null && <span className="text-[11px] text-muted">{u.bedrooms === 0 ? 'Studio' : u.bedrooms + 'BR'}</span>}
-              {u.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
-              {(() => {
-                // How long the guest who just left had been in. Long stays clean slower.
-                const LS = data.longStayNights || 10
-                const n = Number(u.nights)
-                if (!Number.isFinite(n) || n <= 0) return null
-                const long = n >= LS
-                return <span title={long ? n + '-night stay just ended — LONG STAY, expect a heavier clean (laundry, kitchen, fridge, bins). Give the cleaner more time.' : n + '-night stay'} className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ' + (long ? 'bg-amber-500 text-white border-amber-500' : 'bg-app text-muted border-line')}>{n} nt{long ? ' · long stay' : ''}</span>
-              })()}
-              {(() => {
-                // A long booking checking in today: the unit has to be properly ready.
-                const LS = data.longStayNights || 10
-                const n = Number(u.arrivingNights)
-                if (!Number.isFinite(n) || n < LS) return null
-                return <span title={'Arriving today: ' + n + '-night booking' + (u.arrivingGuest ? ' (' + u.arrivingGuest + ')' : '') + ' — big stay. Check the unit is fully ready: supplies stocked, everything working, no open issues.'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-violet-600 text-white border border-violet-600">{n}-nt arrival · check ready</span>
-              })()}
-              {u.untracked && <span title="Vendor-cleaned. The vendor doesn't close tasks in Breezeway, so status here isn't reliable and these aren't tracked against 4pm." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line">Vendor clean</span>}
-              {u.guestOut && <span className="text-xs text-muted">out: {u.guestOut}</span>}
-              {u.qc.map((q, i) => (
-                <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
-              ))}
-              <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
-              <span className={'ml-auto text-xs font-medium ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length + ' done'}</span>
-              <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
-              <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
+            {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE. */}
+            <div className="px-4 pt-2.5 pb-2 border-b border-line bg-app/60">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-[15px] text-ink leading-none">{u.unit}</span>
+                {u.sameDayTurn && <span title="A guest checks in here today — this clean cannot slip" className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white">Same-day turn</span>}
+                {(() => {
+                  const LS = data.longStayNights || 10
+                  const n = Number(u.nights)
+                  if (!Number.isFinite(n) || n <= 0) return null
+                  if (n < LS) return null
+                  return <span title={n + '-night stay just ended — heavier clean (laundry, kitchen, fridge, bins). Give it extra time.'} className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">{n} nt long stay</span>
+                })()}
+                {(() => {
+                  const LS = data.longStayNights || 10
+                  const n = Number(u.arrivingNights)
+                  if (!Number.isFinite(n) || n < LS) return null
+                  return <span title={'Arriving today: ' + n + '-night booking' + (u.arrivingGuest ? ' (' + u.arrivingGuest + ')' : '') + ' — check the unit is fully ready.'} className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-600 text-white">{n} nt arrival {'\u00b7'} check ready</span>
+                })()}
+                {u.qc.map((q, i) => (
+                  <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
+                ))}
+                <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
+                <span className="ml-auto flex items-center gap-2">
+                  <span className={'text-xs font-semibold tabular-nums ' + (u.allDone ? 'text-emerald-700' : u.late ? 'text-rose-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length}</span>
+                  <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
+                  <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap mt-1 text-[11px] text-muted">
+                <span>{u.market}</span>
+                {u.city && <span>{'\u00b7'} {u.city}</span>}
+                {u.bedrooms != null && <span>{'\u00b7'} {u.bedrooms === 0 ? 'Studio' : u.bedrooms + 'BR'}</span>}
+                {u.nights != null && u.nights > 0 && <span>{'\u00b7'} {u.nights} nt stay</span>}
+                {u.guestOut && <span>{'\u00b7'} out: <span className="text-ink/70">{u.guestOut}</span></span>}
+                {u.untracked && <span title="Vendor-cleaned. The vendor does not close tasks in Breezeway, so status here is not reliable and these are not tracked against 4pm." className="text-slate-500">{'\u00b7'} vendor-cleaned</span>}
+                {u.address && <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(u.address)} target="_blank" rel="noreferrer" title={u.address} className="hover:text-ink hover:underline inline-flex items-center gap-0.5">{'\u00b7'} <MapPin size={10} />map</a>}
+              </div>
             </div>
             <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: (u.tasks.length ? Math.round((u.tasks.filter(t => t.done).length / u.tasks.length) * 100) : 0) + '%' }} /></div>
             <div className="divide-y divide-line">
