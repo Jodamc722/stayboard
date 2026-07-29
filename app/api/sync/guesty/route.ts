@@ -144,9 +144,24 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // RESERVATIONS ONLY.
+    //   default  → full current window (every stay checking out from 3 days ago onward). Thorough,
+    //              ~30s, right for the 2-hourly reconcile.
+    //   ?fast=1  → incremental: only what Guesty has touched since the last successful run, with a
+    //              30-minute overlap so a booking that lands mid-run is never skipped. Seconds, not
+    //              minutes — this is what lets the board pick up a walk-in inside 10 minutes
+    //              instead of up to 2 hours, which is how a same-day arrival went missing.
     if (params.get('only') === 'reservations') {
-      const n = await syncReservations(80, null)
-      return NextResponse.json({ ok: true, reservationsOnly: n, elapsed_ms: Date.now() - started })
+      const fast = params.get('fast') === '1'
+      let since: string | null = null
+      if (fast) {
+        const sb = supabaseAdmin()
+        const { data: st } = await sb.from('guesty_sync_status').select('last_sync_at,last_error').eq('entity', 'reservations').maybeSingle()
+        // A previous error means we cannot trust the watermark — fall back to the full window.
+        if (st && st.last_sync_at && !st.last_error) since = new Date(new Date(st.last_sync_at).getTime() - 30 * 60_000).toISOString()
+      }
+      const n = await syncReservations(fast ? 20 : 80, since)
+      return NextResponse.json({ ok: true, reservationsOnly: n, mode: since ? 'incremental' : 'full-window', since, elapsed_ms: Date.now() - started })
     }
 
     if (params.get('only') === 'reviews') {
