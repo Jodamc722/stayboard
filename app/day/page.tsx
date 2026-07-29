@@ -124,7 +124,7 @@ export default function DayLinkPage() {
             <div key={i} className={'dl-card ' + (r.sameDayTurn ? 'dl-hot' : '')}>
               <div className="dl-cardtop">
                 <div className="dl-unit">{r.unit}</div>
-                <div className="dl-when">out {r.checkOutTime || '11:00'}</div>
+                <div className="dl-when">out {r.checkOutTime || '11:00 AM'}</div>
               </div>
               {r.extension && <div className="dl-sd dl-ext">EXTENSION {'\u2014'} {r.guest} re-booked {'\u00b7'} ask if they want a clean, do not strip</div>}
               {r.sameDayTurn && !r.extension && <div className="dl-sd">SAME DAY {'→'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}</div>}
@@ -195,7 +195,7 @@ export default function DayLinkPage() {
             <div key={i} className={'dl-card ' + (x.severity === 'high' ? 'dl-check' : '')}>
               <div className="dl-cardtop"><div className="dl-unit">{x.unit}</div><div className="dl-when">{x.severity === 'high' ? 'urgent' : ''}</div></div>
               <div className="dl-line"><b>{x.kind}</b></div>
-              <div className="dl-line dl-muted">{x.detail}</div>
+              <div className="dl-line dl-muted">{x.detail}{x.action ? <div className="dl-do">{x.action}</div> : null}</div>
               <div className="dl-actions"><NoteBox id={'u:' + x.unit} unit={x.unit} /></div>
             </div>
           ))}
@@ -224,7 +224,8 @@ const CSS = `
   .dl-brand { font-size:9.5px; font-weight:800; letter-spacing:.16em; color:#71717a; }
   .dl-date { font-size:19px; font-weight:800; letter-spacing:-.01em; }
   .dl-fresh { font-size:11px; color:#71717a; margin-top:1px; }
-  .dl-ext { background:#ede9fe !important; color:#5b21b6 !important; }
+  .dl-do { margin-top:3px; font-weight:700; }
+        .dl-ext { background:#ede9fe !important; color:#5b21b6 !important; }
         .dl-walkin { background:#fee2e2 !important; color:#991b1b !important; }
         .dl-stalebar { margin-top:4px; font-size:11px; font-weight:700; color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:5px 8px; }
         .dl-stale { color:#b91c1c; font-weight:700; }
