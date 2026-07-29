@@ -113,6 +113,41 @@ export function minutesOf(a: Activation): number {
   return 12 * 60
 }
 
+/**
+ * The window an event actually occupies, so a card can say "happening now".
+ * Reads both ends of the wording ("3 - 6 PM", "7 AM - 11 AM"); a single time gets a 2-hour window.
+ */
+export function windowOf(a: Activation): { start: number; end: number } {
+  const start = minutesOf(a)
+  const t = String(a.time || '')
+  const hits: { h: number; m: number; mer: string }[] = []
+  const re = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi
+  let hit = re.exec(t)
+  while (hit) {
+    if (hit[0].trim()) hits.push({ h: Number(hit[1]), m: Number(hit[2] || 0), mer: String(hit[3] || '').toLowerCase() })
+    hit = re.exec(t)
+  }
+  if (hits.length >= 2) {
+    const last = hits[hits.length - 1]
+    const mer = last.mer || hits[0].mer
+    let h = last.h % 12
+    if (mer === 'pm') h += 12
+    const end = h * 60 + last.m
+    if (end > start) return { start, end }
+  }
+  if (/all (day|evening|night)/i.test(t)) return { start, end: 23 * 60 + 30 }
+  return { start, end: Math.min(start + 120, 23 * 60 + 59) }
+}
+
+/** Minutes past midnight right now, in the property's timezone. Client-side only (avoids SSR drift). */
+export function nowMinutes(tz = 'America/New_York'): number {
+  try {
+    const s = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' }).format(new Date())
+    const m = s.match(/(\d{1,2}):(\d{2})/)
+    return m ? (Number(m[1]) % 24) * 60 + Number(m[2]) : -1
+  } catch { return -1 }
+}
+
 export type Occurrence = { iso: string; idx: number; item: Activation; mins: number }
 
 /** Does this activation run on this date? */
