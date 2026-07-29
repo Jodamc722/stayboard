@@ -146,15 +146,42 @@ export async function GET(req: NextRequest) {
       if (co === date) departures.push(base)
       if (ownerFlag && ci <= date && co > date) ownerStays.push(base)
     }
+    // LAST CLEANED — for an arrival with no clean today, the only honest answer to "is it ready?"
+    // is when it was last actually cleaned. Read from finished Breezeway cleans before today.
+    const lastCleanOf: Record<string, string> = {}
+    try {
+      const { data: prior } = await db.from('breezeway_tasks_sync')
+        .select('reference_property_id,name,scheduled_date,finished_at,status')
+        .in('reference_property_id', Object.keys(lmap)).lt('scheduled_date', date).gte('scheduled_date', addDays(date, -60)).limit(6000)
+      for (const t of ((prior || []) as any[])) {
+        const nm = str(t.name)
+        if (!/departure clean|turnover clean|deep clean/i.test(nm)) continue
+        if (!t.finished_at && !isDone(t.status)) continue
+        const k = str(t.reference_property_id)
+        const when = str(t.finished_at || t.scheduled_date).slice(0, 10)
+        if (when && (!lastCleanOf[k] || when > lastCleanOf[k])) lastCleanOf[k] = when
+      }
+    } catch { /* best effort - the sheet says "unknown" rather than guessing */ }
+
     // enrich departures with the clean and the next arrival
     for (const d of departures) {
       const lid = d.listingId
       const c = cleanByListing[lid]
       d.clean = c ? { status: c.status, assignees: c.assignees, name: c.name } : null
       d.nextArrival = nextArrivalOf[lid] || null
-      d.sameDayTurn = !!arrivals.find(a => a.listingId === lid)
+      const arr = arrivals.find(a => a.listingId === lid)
+      d.sameDayTurn = !!arr
+      d.sameDayGuest = arr ? arr.guest : null
+      d.sameDayIn = arr ? (arr.checkInTime || '4:00 PM') : null
+      d.sameDayNights = arr ? arr.nights : null
     }
-    for (const a of arrivals) a.sameDayTurn = !!departures.find(d => d.listingId === a.listingId)
+    for (const a of arrivals) {
+      const dep = departures.find(d => d.listingId === a.listingId)
+      a.sameDayTurn = !!dep
+      // The question that matters on the arrivals sheet: is anyone touching this unit today?
+      a.cleanToday = dep && dep.clean ? { status: dep.clean.status, assignees: dep.clean.assignees } : null
+      a.lastCleanedAt = lastCleanOf[a.listingId] || null
+    }
 
     const sortUnit = (a: any, b: any) => (a.market || '').localeCompare(b.market || '') || a.unit.localeCompare(b.unit)
     arrivals.sort(sortUnit); departures.sort(sortUnit); ownerStays.sort(sortUnit)
