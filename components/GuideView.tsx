@@ -23,6 +23,8 @@ const GUIDE_CSS = [
   '.gd-card{background:#fff;border:1px solid rgba(22,32,75,.10);border-radius:20px}',
   '.gd-shadow{box-shadow:0 18px 40px -28px rgba(14,21,51,.55)}',
   '.gd-link{color:var(--ink);text-decoration:none;border-bottom:1px solid rgba(22,32,75,.25)}',
+  '.gd-tap{transition:box-shadow .15s,transform .15s,border-color .15s}',
+  '.gd-tap:hover{border-color:var(--leaf);box-shadow:0 12px 30px -22px rgba(14,21,51,.6);transform:translateY(-1px)}',
   'html{scroll-behavior:smooth}',
   '@media print{.gd-noprint{display:none!important}}',
 ].join('')
@@ -266,6 +268,12 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
     const cur = menuPick || autoMenu
     setMenuPick(cur.indexOf(i) >= 0 ? cur.filter(x => x !== i) : cur.concat(i))
   }
+
+  // Maps link for a nearby place: the name plus the property's city, so "Las Olas Boulevard"
+  // lands in the right Fort Lauderdale rather than somewhere else.
+  const cityHint = String((g.place && (g.place.address || g.place.mapQuery)) || '').split(',').slice(1).join(',').trim()
+  const mapSearch = (name: string) =>
+    'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(String(name || '') + (cityHint ? ', ' + cityHint : ''))
 
   const actAt = (i: number): Activation => (acts[i] || ({} as Activation))
   // The calendar floats over the page, so opening it never shifts what is under it.
@@ -872,30 +880,50 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                   {edit ? <Btn onClick={() => drop(['todo', 'groups'], gi)} tone="danger">Remove group</Btn> : null}
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {(grp.items || []).map((it, ii) => (
-                    <div key={ii} className="gd-card" style={{ padding: 18 }}>
-                      {edit ? (
-                        <div className="space-y-1.5">
-                          <Ed v={it.name} on={s => set(['todo', 'groups', gi, 'items', ii, 'name'], s)} ph="Name" />
-                          <Ed v={it.desc} on={s => set(['todo', 'groups', gi, 'items', ii, 'desc'], s)} ph="Description" area rows={2} />
-                          <div className="flex gap-1.5">
-                            <Ed v={it.meta} on={s => set(['todo', 'groups', gi, 'items', ii, 'meta'], s)} ph="Distance / tag" />
-                            <Ed v={it.url} on={s => set(['todo', 'groups', gi, 'items', ii, 'url'], s)} ph="Link" />
-                          </div>
-                          <Btn onClick={() => drop(['todo', 'groups', gi, 'items'], ii)} tone="danger">Remove</Btn>
+                  {(grp.items || []).map((it, ii) => {
+                    // Anything off-property is tappable: its own site if we have one, otherwise
+                    // straight into Maps near the property. On-property lines stay plain.
+                    const onsite = /on ?property|on-?site|at the (hotel|resort)|amenit|included/i.test(grp.name || '')
+                    const href = it.url ? it.url : (onsite ? '' : mapSearch(it.name))
+                    const linkLabel = it.url ? 'Visit site' : 'Open in Maps'
+                    const body = (
+                      <>
+                        <div className="flex items-start justify-between gap-2">
+                          <div style={{ fontWeight: 600, fontSize: 16 }}>{it.name}</div>
+                          {it.meta ? <span style={{ background: 'var(--sand)', border: '1px solid rgba(22,32,75,.1)', borderRadius: 999, padding: '2px 9px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{it.meta}</span> : null}
                         </div>
-                      ) : (
-                        <>
-                          <div className="flex items-start justify-between gap-2">
-                            <div style={{ fontWeight: 600, fontSize: 16 }}>{it.name}</div>
-                            {it.meta ? <span style={{ background: 'var(--sand)', border: '1px solid rgba(22,32,75,.1)', borderRadius: 999, padding: '2px 9px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{it.meta}</span> : null}
+                        {it.desc ? <p style={{ fontSize: 13.5, lineHeight: 1.55, color: 'rgba(22,32,75,.7)', marginTop: 6 }}>{it.desc}</p> : null}
+                        {href ? (
+                          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--leaf)', marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            {linkLabel}
+                            <span aria-hidden="true">&rarr;</span>
+                          </span>
+                        ) : null}
+                      </>
+                    )
+                    if (edit) {
+                      return (
+                        <div key={ii} className="gd-card" style={{ padding: 18 }}>
+                          <div className="space-y-1.5">
+                            <Ed v={it.name} on={s => set(['todo', 'groups', gi, 'items', ii, 'name'], s)} ph="Name" />
+                            <Ed v={it.desc} on={s => set(['todo', 'groups', gi, 'items', ii, 'desc'], s)} ph="Description" area rows={2} />
+                            <div className="flex gap-1.5">
+                              <Ed v={it.meta} on={s => set(['todo', 'groups', gi, 'items', ii, 'meta'], s)} ph="Distance / tag" />
+                              <Ed v={it.url} on={s => set(['todo', 'groups', gi, 'items', ii, 'url'], s)} ph="Website (blank = Maps)" />
+                            </div>
+                            <Btn onClick={() => drop(['todo', 'groups', gi, 'items'], ii)} tone="danger">Remove</Btn>
                           </div>
-                          {it.desc ? <p style={{ fontSize: 13.5, lineHeight: 1.55, color: 'rgba(22,32,75,.7)', marginTop: 6 }}>{it.desc}</p> : null}
-                          {it.url ? <a href={it.url} target="_blank" rel="noreferrer" className="gd-link" style={{ fontSize: 13, display: 'inline-block', marginTop: 8 }}>Open</a> : null}
-                        </>
-                      )}
-                    </div>
-                  ))}
+                        </div>
+                      )
+                    }
+                    if (!href) return <div key={ii} className="gd-card" style={{ padding: 18 }}>{body}</div>
+                    return (
+                      <a key={ii} href={href} target="_blank" rel="noreferrer" className="gd-card gd-tap"
+                        style={{ padding: 18, display: 'block', textDecoration: 'none', color: 'inherit' }}>
+                        {body}
+                      </a>
+                    )
+                  })}
                   {edit ? <Btn onClick={() => push(['todo', 'groups', gi, 'items'], { name: 'New thing to do', desc: '', meta: '', url: '' })}>+ item</Btn> : null}
                 </div>
               </div>
