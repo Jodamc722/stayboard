@@ -5,7 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, vendorNameOf } from '@/lib/ops-presets'
-import { isLiveStay } from '@/lib/stay-status'
+import { isLiveStay, staySpans } from '@/lib/stay-status'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -16,6 +16,28 @@ function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.
 const isLive = (s: string) => isLiveStay(s)
 const isDone = (s: string) => /complete|finish|close|approv/.test(str(s).toLowerCase())
 const isGone = (s: string) => /delete|cancel/.test(str(s).toLowerCase())
+// Jon asked for 12-hour time everywhere. Guesty stores check-in as "16:00"; nobody reading a sheet
+// at speed parses that as four in the afternoon.
+function fmt12(v: any): string | null {
+  const t = str(v).trim()
+  if (!t) return null
+  if (/[ap]\.?m\.?$/i.test(t)) return t.toUpperCase().replace(/\s*([AP])\.?M\.?$/i, ' $1M')
+  const m = t.match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return t
+  let h = Number(m[1]); const mm = m[2]
+  const ap = h >= 12 ? 'PM' : 'AM'
+  h = h % 12; if (h === 0) h = 12
+  return h + ':' + mm + ' ' + ap
+}
+// Breezeway task names carry the crew's instructions after a slash:
+//   "Departure Clean Checklist / bring extra amenities / long stay arrival on friday"
+// The JOB is the first part; the rest is instruction. Printing the raw string reads like noise,
+// which is exactly what made the exceptions sheet hard to follow.
+function taskLabel(name: string): string { return (str(name).split('/')[0] || '').trim() || str(name).trim() }
+function taskNotes(name: string): string { return str(name).split('/').slice(1).map(x => x.trim()).filter(Boolean).join(' · ') }
+// A timestamptz sliced to 10 chars is a UTC date. Anything finished or booked after 8pm ET would
+// land on tomorrow. Always convert through the ET formatter first.
+function etDate(ts: any): string { const d = new Date(str(ts)); return isNaN(d.getTime()) ? '' : ymd(d) }
 const hhmm = (iso: any) => { const d = new Date(str(iso)); return isNaN(d.getTime()) ? null : new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d) }
 
 // OWNER STAY detection, all three signals Jon asked for:
@@ -74,6 +96,21 @@ function daysBetween(from: string, to: string): number {
   return Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 86400000)
 }
 
+// WHAT IS *THE* CLEAN? lib/breezeway.ts already ruled on this: a strip, a walkthrough or an
+// inspection is NOT the departure clean. The day sheet used to count them as one, which produced
+// two harms at once — a unit with only a strip booked looked covered, and a unit with a real clean
+// PLUS a strip raised a bogus "two cleans, one is probably a duplicate" alarm.
+const NOT_THE_CLEAN = /strip|walk-?through|inspect|unit check/i
+const IS_THE_CLEAN = /departure clean|turnover clean|check-?out clean|move-?out clean|deep clean|limpieza/i
+function isDepartureClean(name: string, dept: string): boolean {
+  const nm = str(name)
+  if (NOT_THE_CLEAN.test(nm)) return false
+  if (IS_THE_CLEAN.test(nm)) return true
+  return /housekeep|clean/i.test(str(dept)) && /clean/i.test(nm)
+}
+// Prep work that happens around a checkout but is not the clean itself.
+const IS_PREP = /strip|walk-?through/i
+
 export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(str(dateIn)) ? str(dateIn) : ymd(new Date())
   const marketQ = str(marketIn) || 'all'
@@ -83,19 +120,21 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
 
     const [lRes, tRes, rRes, oRes, gRes, sRes, fRes, gsRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields,lat:raw->address->>lat,lng:raw->address->>lng'),
-      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).limit(3000),
-      db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name,guest_phone,nights,source,notes,money_total,created_at')
-        .lte('check_in', addDays(date, 1)).gte('check_out', date).limit(3000),
+      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).order('reference_property_id', { ascending: true }).limit(3000),
+      db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_id,guest_name,guest_phone,nights,source,notes,money_total,created_at')
+        .lte('check_in', addDays(date, 1)).gte('check_out', date).order('check_in', { ascending: true }).limit(3000),
       db.from('guesty_owners').select('id,full_name,listing_ids').limit(2000),
-      db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id').not('status', 'in', '("done","resolved","closed")').limit(300),
+      db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id').not('status', 'in', '("done","resolved","closed")').order('created_at', { ascending: false }).limit(300),
       db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1),
       // NEXT ARRIVAL — a separate forward look. The day window above stops at tomorrow, so the
       // vacant list used to sort on a next-arrival it could not actually see.
       db.from('guesty_reservations').select('listing_id,check_in,status')
-        .gt('check_in', date).lte('check_in', addDays(date, 45)).limit(4000),
+        // ordered so that if the cap is ever reached it drops the FURTHEST-OUT arrivals, which are
+        // the ones nobody is planning around today.
+        .gt('check_in', date).lte('check_in', addDays(date, 45)).order('check_in', { ascending: true }).limit(4000),
       // How fresh is the RESERVATION feed? Breezeway freshness alone says nothing about whether a
       // booking made an hour ago is on this sheet.
-      db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(20),
+      db.from('guesty_sync_status').select('entity,last_sync_at,last_error').eq('entity', 'reservations').maybeSingle(),
     ])
 
     const lmap: Record<string, any> = {}
@@ -126,22 +165,26 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
 
     // ---- HOW FRESH IS THIS SHEET? Two independent feeds, reported separately, because they fail
     // separately: Breezeway decides what work exists, Guesty decides who is arriving.
-    const syncRows = ((gsRes.data || []) as any[])
-    const resSyncRow = syncRows.find(r => str(r.entity) === 'reservations')
+    const resSyncRow: any = (gsRes as any).data || null
     const bzSyncAt = ((sRes.data || []) as any[])[0]?.synced_at || null
     const resSyncAt = resSyncRow ? str(resSyncRow.last_sync_at) || null : null
     const ageMin = (iso: any) => { const t = new Date(str(iso)).getTime(); return Number.isFinite(t) ? Math.round((Date.now() - t) / 60000) : null }
     const bzAge = ageMin(bzSyncAt), resAge = ageMin(resSyncAt)
-    const STALE_MIN = 150   // the Breezeway cron runs every 2h; 2.5h means a run was missed
+    // Per-feed thresholds, sized to each cron. Reservations pull every 10 min, so 35 minutes means
+    // three runs in a row were missed. Breezeway tasks pull every 30 min.
+    const RES_STALE_MIN = 35, BZ_STALE_MIN = 75
+    const resErr = resSyncRow ? (str(resSyncRow.last_error) || null) : null
     const sync = {
       breezewayAt: bzSyncAt, breezewayAgeMin: bzAge,
       reservationsAt: resSyncAt, reservationsAgeMin: resAge,
-      reservationsError: resSyncRow ? (str(resSyncRow.last_error) || null) : null,
-      stale: (bzAge == null || bzAge > STALE_MIN) || (resAge == null || resAge > STALE_MIN),
+      reservationsError: resErr,
+      // An ERRORING sync still stamps its timestamp, so "4 minutes ago" can be a lie. A recorded
+      // error counts as stale on its own — that was the whole failure this block exists to catch.
+      stale: (bzAge == null || bzAge > BZ_STALE_MIN) || (resAge == null || resAge > RES_STALE_MIN) || !!resErr,
       staleReason: [
-        bzAge == null ? 'Breezeway sync time unknown' : bzAge > STALE_MIN ? 'Breezeway last synced ' + bzAge + ' min ago' : '',
-        resAge == null ? 'Reservation sync time unknown' : resAge > STALE_MIN ? 'Guesty reservations last synced ' + resAge + ' min ago' : '',
-        resSyncRow && str(resSyncRow.last_error) ? 'Reservation sync error: ' + str(resSyncRow.last_error).slice(0, 120) : '',
+        bzAge == null ? 'Breezeway sync time unknown' : bzAge > BZ_STALE_MIN ? 'Breezeway tasks last synced ' + bzAge + ' min ago' : '',
+        resAge == null ? 'Booking sync time unknown' : resAge > RES_STALE_MIN ? 'Bookings last synced ' + resAge + ' min ago' : '',
+        resErr ? 'The booking sync is FAILING: ' + resErr.slice(0, 120) : '',
       ].filter(Boolean).join(' · ') || null,
     }
     // A booking made after the last reservation sync CANNOT be on this sheet. Say so out loud.
@@ -151,6 +194,9 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     const tasks = ((tRes.data || []) as any[]).filter(t => !isGone(t.status))
     const cleanByListing: Record<string, any> = {}
     const dupCleans: { unit: string; a: string; b: string }[] = []
+    // strip / walkthrough — real work, but not the clean. Shown ON the departure row, not as a
+    // separate mystery line in the work orders.
+    const prepByListing: Record<string, any[]> = {}
     const work: any[] = []
     for (const t of tasks) {
       const lid = String(t.reference_property_id)
@@ -159,20 +205,25 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       const li = lmap[lid] || {}
       const who = (Array.isArray(t.assignees) ? t.assignees : []).map((p: any) => str(p.name)).filter(Boolean)
       const row = {
-        id: str(t.id), listingId: lid, unit: li.name || 'Unit', market: li.market || '', name: nm,
+        id: str(t.id), listingId: lid, unit: li.name || 'Unit', market: li.market || '',
+        name: nm, label: taskLabel(nm), instructions: taskNotes(nm),
         dept: str(t.type_department), assignees: who,
         status: isDone(t.status) ? 'done' : (t.started_at ? 'in progress' : 'not started'),
         startedAt: hhmm(t.started_at), finishedAt: hhmm(t.finished_at), reportUrl: t.report_url || null,
       }
-      if (/departure clean|turnover clean|strip|walkthrough/i.test(nm)) {
-        // Two cleans on one unit on one day is a data problem, not a plan. Keep the one that is
+      if (isDepartureClean(nm, row.dept)) {
+        // Two REAL cleans on one unit on one day is a data problem, not a plan. Keep the one that is
         // furthest along so the sheet never reports "not started" while a clean is finished, and
-        // record the collision so it surfaces in the exceptions block.
+        // record the collision once per unit so it surfaces in the exceptions block.
         const cur = cleanByListing[lid]
         const rank = (x: any) => (x.status === 'done' ? 2 : x.status === 'in progress' ? 1 : 0)
         if (!cur) cleanByListing[lid] = row
-        else { dupCleans.push({ unit: row.unit, a: cur.name, b: row.name }); if (rank(row) > rank(cur)) cleanByListing[lid] = row }
+        else {
+          if (!dupCleans.some(x => x.unit === row.unit)) dupCleans.push({ unit: row.unit, a: taskLabel(cur.name), b: taskLabel(row.name) })
+          if (rank(row) > rank(cur)) cleanByListing[lid] = row
+        }
       }
+      else if (IS_PREP.test(nm)) (prepByListing[lid] = prepByListing[lid] || []).push(row)
       else work.push(row)
     }
     work.sort((a, b) => (a.dept || '').localeCompare(b.dept || '') || a.unit.localeCompare(b.unit))
@@ -184,6 +235,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     const occupied: Record<string, boolean> = {}
     const nextArrivalOf: Record<string, string> = {}
     const checkoutIds = new Set<string>()
+    const unknownListings = new Set<string>()
     for (const r of ((fRes.data || []) as any[])) {
       if (!isLive(r.status)) continue
       const lid = String(r.listing_id), ci = str(r.check_in).slice(0, 10)
@@ -194,25 +246,28 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       const lid = String(r.listing_id)
       const li = lmap[lid] || {}
       const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
-      if (ci <= date && co > date) occupied[lid] = true
+      // staySpans is the shared rule and it guards against missing dates: a reservation with a null
+      // check-in used to satisfy ('' <= date) and silently hold a unit off the vacant list.
+      if (staySpans(r, date)) occupied[lid] = true
       if (ci > date && (!nextArrivalOf[lid] || ci < nextArrivalOf[lid])) nextArrivalOf[lid] = ci
       if (co === date) checkoutIds.add(lid)
+      if (!lmap[lid]) unknownListings.add(lid)
       if (!inMarket(lid)) continue
       const src = str(r.source)
       const ownerName = ownerOf[lid] || ''
       const ownerFlag = OWNER_SRC.test(src) ? 'owner booking' : MANUAL_SRC.test(src) ? 'manual / block' : (ownerName && nameMatches(r.guest_name, ownerName) ? 'name matches owner' : '')
       const base: any = {
         listingId: lid, reservationId: str(r.id) || null, unit: li.name || 'Unit', market: li.market || '', building: li.building || '',
-        guest: str(r.guest_name) || 'Guest', phone: str(r.guest_phone), nights: r.nights != null ? Number(r.nights) : null,
+        guest: str(r.guest_name) || 'Guest', guestId: str(r.guest_id) || null, phone: str(r.guest_phone), nights: r.nights != null ? Number(r.nights) : null,
         source: src, checkIn: ci, checkOut: co, ownerFlag, owner: ownerName || null,
         notes: str(r.notes).slice(0, 160), vendor: li.vendor || null,
         bookedAt: str(r.created_at) || null,
         // WALK-IN WATCH: a stay booked today (or booked after the last sync) is the one the field
         // team has not heard about. These are the arrivals that break a day.
-        bookedToday: str(r.created_at).slice(0, 10) === ymd(new Date()),
+        bookedToday: !!r.created_at && etDate(r.created_at) === ymd(new Date()),
         bookedAfterSync: !!(cutoffIso && r.created_at && new Date(str(r.created_at)).getTime() > new Date(cutoffIso).getTime()),
-        lateBooking: !!(r.created_at && ci && daysBetween(str(r.created_at).slice(0, 10), ci) <= 1),
-        checkInTime: li.checkIn || null, checkOutTime: li.checkOut || null, bedrooms: li.bedrooms ?? null,
+        lateBooking: !!(r.created_at && ci && daysBetween(etDate(r.created_at), ci) <= 1),
+        checkInTime: fmt12(li.checkIn), checkOutTime: fmt12(li.checkOut), bedrooms: li.bedrooms ?? null,
         address: li.address || null, doorCode: li.doorCode || null, lat: li.lat ?? null, lng: li.lng ?? null,
       }
       if (ci === date) arrivals.push(base)
@@ -236,6 +291,14 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     const lastTouchOf: Record<string, any> = {}
     const lastCleanOf: Record<string, any> = {}
     let touchLookupOk = true
+    const take = (k: string, when: string, nm: string, dept: string, assignees: any) => {
+      if (!k || !when) return
+      const { kind, clean } = classifyTouch(nm, dept)
+      const who = (Array.isArray(assignees) ? assignees : []).map((p: any) => str(p.name)).filter(Boolean)
+      const row = { at: when, kind, name: taskLabel(nm).slice(0, 80), who, daysAgo: daysBetween(when, date) }
+      if (!lastTouchOf[k] || when > lastTouchOf[k].at) lastTouchOf[k] = row
+      if (clean && (!lastCleanOf[k] || when > lastCleanOf[k].at)) lastCleanOf[k] = row
+    }
     try {
       const needIds = Array.from(new Set([
         ...arrivals.map(a => a.listingId),
@@ -260,16 +323,20 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
           if (isGone(st)) continue
           // it only counts if it actually HAPPENED
           if (!t.finished_at && !isDone(st)) continue
-          const when = str(t.finished_at || t.scheduled_date).slice(0, 10)
+          // finished_at is a UTC timestamp: anything finished after 8pm ET reads as tomorrow unless
+          // it is converted first.
+          const when = t.finished_at ? etDate(t.finished_at) : str(t.scheduled_date).slice(0, 10)
           if (!when) continue
-          const k = str(t.reference_property_id)
-          const nm = str(t.name)
-          const { kind, clean } = classifyTouch(nm, str(t.type_department))
-          const who = (Array.isArray(t.assignees) ? t.assignees : []).map((p: any) => str(p.name)).filter(Boolean)
-          const row = { at: when, kind, name: nm.slice(0, 80), who, daysAgo: daysBetween(when, date) }
-          if (!lastTouchOf[k] || when > lastTouchOf[k].at) lastTouchOf[k] = row
-          if (clean && (!lastCleanOf[k] || when > lastCleanOf[k].at)) lastCleanOf[k] = row
+          take(str(t.reference_property_id), when, str(t.name), str(t.type_department), t.assignees)
         }
+      }
+      // Work FINISHED TODAY counts too — a unit inspected at 9am with a 4pm arrival was reporting a
+      // touch from days ago, and could even raise a "never checked" alarm.
+      for (const t of tasks) {
+        const st = str(t.status).toLowerCase()
+        if (isGone(st)) continue
+        if (!t.finished_at && !isDone(st)) continue
+        take(str(t.reference_property_id), t.finished_at ? etDate(t.finished_at) : date, str(t.name), str(t.type_department), t.assignees)
       }
     } catch { touchLookupOk = false }
 
@@ -277,7 +344,10 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     for (const d of departures) {
       const lid = d.listingId
       const c = cleanByListing[lid]
-      d.clean = c ? { id: c.id, status: c.status, assignees: c.assignees, name: c.name } : null
+      d.clean = c ? { id: c.id, status: c.status, assignees: c.assignees, name: c.name, label: c.label, instructions: c.instructions } : null
+      // strip / walkthrough booked on the same unit — real work, shown here rather than dumped into
+      // the work-order sheet where it looked like a mystery duplicate clean.
+      d.prep = (prepByListing[lid] || []).map((x: any) => ({ id: x.id, label: x.label, instructions: x.instructions, status: x.status, assignees: x.assignees }))
       d.nextArrival = nextArrivalOf[lid] || null
       const arr = arrivals.find(a => a.listingId === lid)
       // EXTENSION, NOT A TURNOVER. When the same guest checks out and straight back in on the same
@@ -287,7 +357,16 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
         const x = str(a).replace(/\D/g, ''), y = str(b).replace(/\D/g, '')
         return x.length >= 9 && y.length >= 9 && x.slice(-9) === y.slice(-9)
       }
-      d.extension = !!(arr && (nameMatches(d.guest, arr.guest) || samePhone(d.phone, arr.phone)))
+      // IDENTITY, NOT RESEMBLANCE. The first version matched on surname + first initial, which makes
+      // "Jose Garcia" out and "Juan Garcia" in the same person — and two bookings with no guest name
+      // both normalise to "Guest", so every nameless pair looked like an extension. Getting this
+      // wrong stands a cleaner down on a real turnover, so it now needs a hard identifier.
+      const realName = (x: any) => { const n = str(x).trim(); return n && n.toLowerCase() !== 'guest' ? n.toLowerCase().replace(/\s+/g, ' ') : '' }
+      d.extension = !!(arr && (
+        (d.guestId && arr.guestId && d.guestId === arr.guestId) ||
+        samePhone(d.phone, arr.phone) ||
+        (realName(d.guest) !== '' && realName(d.guest) === realName(arr.guest))
+      ))
       if (arr) arr.extension = d.extension
       d.sameDayTurn = !!arr
       d.sameDayGuest = arr ? arr.guest : null
@@ -299,7 +378,10 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       const dep = departures.find(d => d.listingId === a.listingId)
       a.sameDayTurn = !!dep
       // The question that matters on the arrivals sheet: is anyone touching this unit today?
-      a.cleanToday = dep && dep.clean ? { status: dep.clean.status, assignees: dep.clean.assignees } : null
+      // Read the clean directly: a unit can have a clean booked today with no checkout today (the
+      // guest left yesterday), and that arrival was being sent to the "nobody is cleaning this" list.
+      const ct = cleanByListing[a.listingId]
+      a.cleanToday = ct ? { status: ct.status, assignees: ct.assignees, label: ct.label } : null
       const touch = lastTouchOf[a.listingId] || null
       const cl = lastCleanOf[a.listingId] || null
       a.lastTouch = touch                                  // anybody in the unit, of any kind
@@ -341,56 +423,123 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       .map(g => ({ id: str(g.id), unit: str(g.unit), overview: str(g.overview).slice(0, 140), status: str(g.status), at: str(g.created_at).slice(0, 10), taskId: g.breezeway_task_id ? str(g.breezeway_task_id) : null }))
       .sort((a, b) => a.at.localeCompare(b.at))
 
-    // EXCEPTIONS — the cross-checks that decide whether the day is actually under control.
-    // Computed here (one source) so the paper and the screen can never disagree.
-    const exceptions: { kind: string; unit: string; detail: string; severity: 'high' | 'med' }[] = []
+    // EXCEPTIONS — the cross-checks that decide whether the day is under control.
+    // Jon: "it needs to be easy to understand." So every row is now plain English and split in two:
+    // PROBLEM says what is wrong, ACTION says what to do about it. No task jargon, no raw Breezeway
+    // strings, no "confirm in Breezeway" hand-waving.
+    type Exc = { kind: string; unit: string; detail: string; action: string; severity: 'high' | 'med' }
+    const exceptions: Exc[] = []
+    const add = (severity: 'high' | 'med', kind: string, unit: string, detail: string, action: string) =>
+      exceptions.push({ kind, unit, detail, action, severity })
+
+    const extensionListings = new Set(departures.filter(d => d.extension).map(d => d.listingId))
+
     for (const d of departures) {
-      // The extension warning comes BEFORE the vendor skip on purpose: a vendor crew stripping a
-      // unit the guest never left is the same incident, and Botanica is exactly where it showed up.
-      if (d.extension) exceptions.push({ kind: 'Extension — same guest re-booked', unit: d.unit, detail: d.guest + ' books straight back in today, so the guest never leaves. Do NOT strip the unit — ASK THE GUEST whether they want a clean, then schedule it if they do', severity: 'high' })
+      // The extension warning sits ABOVE the vendor skip on purpose: a vendor crew stripping a unit
+      // the guest never left is the same incident, and Botanica is exactly where it showed up.
+      if (d.extension) add('high', 'Guest is staying on', d.unit,
+        d.guest + ' checks out and books straight back in today, so nobody actually leaves.',
+        'Do not strip the unit. Ask ' + d.guest + ' whether they want a clean, then book one if they say yes.')
+      if (d.nights != null && d.nights >= 10) add('med', 'Long stay ending', d.unit,
+        d.guest + ' was here ' + d.nights + ' nights.',
+        'Allow extra time — laundry, fridge, kitchen and bins all take longer after a long stay.')
       if (d.vendor) continue
-      if (!d.clean) exceptions.push({ kind: 'No clean on the board', unit: d.unit, detail: 'Guest ' + d.guest + ' checks out today and there is no departure clean scheduled', severity: 'high' })
-      else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') exceptions.push({ kind: 'Clean unassigned', unit: d.unit, detail: (d.clean.name || 'Departure clean') + ' has nobody on it', severity: 'high' })
-      if (!d.extension && d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
-      if (d.nights != null && d.nights >= 10) exceptions.push({ kind: 'Long stay out', unit: d.unit, detail: d.nights + '-night stay ended — heavier clean, allow extra time', severity: 'med' })
+      if (!d.clean) add('high', 'No clean booked', d.unit,
+        d.guest + ' checks out at ' + (d.checkOutTime || '11:00 AM') + ' and nothing is on the board to clean it.',
+        d.sameDayTurn ? 'Book a clean now — a guest arrives at ' + (d.sameDayIn || '4:00 PM') + ' today.' : 'Book a clean in Breezeway.')
+      else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') add('high', 'Nobody assigned', d.unit,
+        'The ' + (d.clean.label || 'departure clean').toLowerCase() + ' has no cleaner on it.',
+        'Assign a cleaner in the scheduler.')
+      if (!d.extension && d.sameDayTurn && d.clean && d.clean.status !== 'done') add('high', 'Same-day turn running late', d.unit,
+        'A guest arrives at ' + (d.sameDayIn || '4:00 PM') + ' and the clean is ' + d.clean.status + '.',
+        'Chase the cleaner now or move someone onto it.')
     }
+
+    // A clean booked on a unit with no checkout today used to appear on no sheet at all — the
+    // cleaner would be standing in a unit Roberto's paper never mentioned.
+    for (const lid of Object.keys(cleanByListing)) {
+      if (departures.some(d => d.listingId === lid)) continue
+      const c = cleanByListing[lid]
+      add('med', 'Clean with no checkout', c.unit,
+        'A ' + (c.label || 'clean').toLowerCase() + ' is booked today but nobody checked out of this unit.',
+        'Either it was moved from another day, or it is on the wrong unit — check before sending anyone.')
+    }
+
     for (const a of arrivals) {
-      if (a.nights != null && a.nights >= 10) exceptions.push({ kind: 'Long booking arriving', unit: a.unit, detail: a.nights + ' nights' + (a.guest ? ' (' + a.guest + ')' : '') + ' — check the unit is fully ready', severity: 'med' })
+      if (a.nights != null && a.nights >= 10) add('med', 'Long booking arriving', a.unit,
+        a.guest + ' is booked for ' + a.nights + ' nights, arriving ' + (a.checkInTime || '4:00 PM') + '.',
+        'Walk the unit properly — a long stay notices everything.')
+      if (a.bookedAfterSync || a.bookedToday) add('high', 'Booked today (walk-in)', a.unit,
+        a.guest + ' booked this stay TODAY (' + (a.nights || '?') + ' nights, in at ' + (a.checkInTime || '4:00 PM') + ').',
+        'Nobody planned for this one. Check the unit is clean and someone is covering it.')
+      // No clean today, and not an extension, so the only assurance is when somebody was last inside.
+      if (a.cleanToday || a.vendor || a.extension) continue
+      if (!a.lastTouch) add('high', 'Nobody has been in this unit', a.unit,
+        'No clean, inspection or visit on record, and nothing booked today.',
+        'Walk it before ' + (a.checkInTime || '4:00 PM') + '.')
+      else if (a.lastTouch.daysAgo >= 14) add('med', 'Empty for ' + a.lastTouch.daysAgo + ' days', a.unit,
+        'Last touched ' + a.lastTouch.daysAgo + ' days ago (' + a.lastTouch.kind.toLowerCase() + ').',
+        'Run the water, check the A/C and dust before ' + (a.checkInTime || 'check-in') + '.')
     }
-    for (const a of arrivals) {
-      // Nobody is cleaning it today — so the only assurance the unit is fit for a guest is when
-      // somebody was last in it. Nothing in 400 days, or an old touch, is a walk-the-unit order.
-      if (a.cleanToday || a.vendor) continue
-      if (!a.lastTouch) {
-        exceptions.push({ kind: 'Never checked', unit: a.unit, detail: 'No clean, inspection or visit on record and no clean today — walk it before ' + (a.checkInTime || '4:00 PM'), severity: 'high' })
-      } else if (a.lastTouch.daysAgo >= 14) {
-        exceptions.push({ kind: 'Unit sat idle', unit: a.unit, detail: 'Last touched ' + a.lastTouch.daysAgo + ' days ago (' + a.lastTouch.kind.toLowerCase() + ') — dust, water, A/C before ' + (a.checkInTime || 'check-in'), severity: 'med' })
-      }
-    }
-    for (const a of arrivals) {
-      if (a.bookedAfterSync || a.bookedToday) {
-        exceptions.push({ kind: 'Booked today', unit: a.unit, detail: 'Walk-in / same-day booking (' + a.guest + ', ' + (a.nights || '?') + ' nt) — confirm the unit is ready and staffed', severity: 'high' })
-      }
-    }
-    for (const dc of dupCleans) {
-      exceptions.push({ kind: 'Two cleans on one unit', unit: dc.unit, detail: dc.a + ' + ' + dc.b + ' — one is probably a duplicate, confirm in Breezeway', severity: 'med' })
-    }
-    if (sync.stale) {
-      exceptions.push({ kind: 'Data may be stale', unit: '—', detail: (sync.staleReason || 'a feed is behind') + ' — anything booked or changed since then is NOT on this sheet', severity: 'high' })
-    }
-    for (const w of work) {
-      if (!w.assignees.length && w.status !== 'done') exceptions.push({ kind: 'Work unassigned', unit: w.unit, detail: w.name, severity: 'med' })
-    }
-    // work scheduled into an occupied night (nobody should walk in on a guest)
+
+    for (const dc of dupCleans) add('med', 'Two cleans booked', dc.unit,
+      'Two separate cleans are on this unit today: ' + dc.a + ' and ' + dc.b + '.',
+      'One is probably a duplicate — cancel the extra so two cleaners are not sent.')
+
+    if (unknownListings.size) add('high', 'Booking on an unknown unit', '—',
+      unknownListings.size + ' booking' + (unknownListings.size === 1 ? '' : 's') + ' point at a listing that is not in our listing list, so the unit name, door code and address are missing.',
+      'Re-sync listings from Guesty; if it persists the listing was deleted or renamed.')
+    if (sync.stale) add('high', 'This sheet may be out of date', '—',
+      sync.staleReason || 'One of the feeds is behind.',
+      'Press Refresh. Anything booked or changed since then is NOT on this sheet.')
+
+    // One row per unit rather than one per task: a unit with four open jobs was printing four
+    // near-identical "guest in house" lines.
+    const guestInHouse: Record<string, { unit: string; jobs: string[] }> = {}
+    const unassigned: Record<string, { unit: string; jobs: string[] }> = {}
     const occupiedNow = new Set(Object.keys(occupied))
     for (const w of work) {
       const lid = w.listingId
-      if (lid && occupiedNow.has(lid) && !checkoutIds.has(lid)) {
-        exceptions.push({ kind: 'Guest in house', unit: w.unit, detail: w.name + ' — guest is still in the unit, confirm before entering', severity: 'high' })
+      if (!w.assignees.length && w.status !== 'done') {
+        (unassigned[lid] = unassigned[lid] || { unit: w.unit, jobs: [] }).jobs.push(w.label || w.name)
+      }
+      // An extension keeps the guest in the unit all day even though there IS a checkout on paper,
+      // so the checkout no longer cancels this warning.
+      if (lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
+        (guestInHouse[lid] = guestInHouse[lid] || { unit: w.unit, jobs: [] }).jobs.push(w.label || w.name)
       }
     }
+    const jobList = (j: string[]) => j.slice(0, 4).join(', ') + (j.length > 4 ? ' and ' + (j.length - 4) + ' more' : '')
+    for (const k of Object.keys(guestInHouse)) {
+      const g = guestInHouse[k]
+      add('high', 'Guest is still in the unit', g.unit,
+        g.jobs.length + (g.jobs.length === 1 ? ' job is' : ' jobs are') + ' booked while the guest is in house: ' + jobList(g.jobs) + '.',
+        'Call or message the guest before anyone enters.')
+    }
+    for (const k of Object.keys(unassigned)) {
+      const u = unassigned[k]
+      add('med', 'Nobody assigned', u.unit,
+        u.jobs.length + (u.jobs.length === 1 ? ' job has' : ' jobs have') + ' no name on them: ' + jobList(u.jobs) + '.',
+        'Assign someone or move it to another day.')
+    }
+
     const sevRank = (s: string) => (s === 'high' ? 0 : 1)
     exceptions.sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.unit.localeCompare(b.unit))
+
+    // Independent recount straight off the raw reservation rows.
+    const recountIds = new Set<string>()
+    for (const r of ((rRes.data || []) as any[])) {
+      const lid = String(r.listing_id)
+      if (!lmap[lid] || !lmap[lid].active || !inMarket(lid)) continue
+      if (staySpans(r, date)) recountIds.add(lid)
+    }
+    const recountOccupied = recountIds.size
+    // If a query came back at its cap we cannot promise the list is complete — say so out loud.
+    const reservationsTruncated = ((rRes.data || []) as any[]).length >= 3000
+    const futureTruncated = ((fRes.data || []) as any[]).length >= 4000
+    if (reservationsTruncated || futureTruncated) add('high', 'Booking list may be incomplete', '—',
+      'The sheet hit its limit while reading bookings, so some may be missing.',
+      'Tell Jon — this needs a code change, do not plan the day off this sheet alone.')
 
     const lastSync = bzSyncAt
     const markets = Array.from(new Set(Object.keys(lmap).map(k => lmap[k].market).filter(Boolean))).sort()
@@ -415,8 +564,13 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
         activeListings: Object.keys(lmap).filter(id => lmap[id].active && inMarket(id)).length,
         occupiedTonight: Object.keys(lmap).filter(id => lmap[id].active && occupied[id] && inMarket(id)).length,
         vacantTonight: vacants.length,
-        balances: Object.keys(lmap).filter(id => lmap[id].active && inMarket(id)).length ===
-          Object.keys(lmap).filter(id => lmap[id].active && occupied[id] && inMarket(id)).length + vacants.length,
+        // A REAL cross-check, not arithmetic that cannot fail. `occupied` is built inside the
+        // reservation loop; this recounts occupancy from the raw rows through the shared staySpans
+        // rule and from a separate truncation guard. If those disagree, the vacant list is wrong and
+        // the sheet says so instead of printing a reassuring tick.
+        balances: recountOccupied === Object.keys(lmap).filter(id => lmap[id].active && occupied[id] && inMarket(id)).length
+          && !reservationsTruncated && !futureTruncated,
+        recountOccupied, reservationsTruncated, futureTruncated,
         vacantsWithArrivalWithin7: vacants.filter(v => v.daysUntilArrival != null && v.daysUntilArrival <= 7).length,
         vacantsNoFutureBooking: vacants.filter(v => !v.nextArrival).length,
         reservationsRead: ((rRes.data || []) as any[]).length,
