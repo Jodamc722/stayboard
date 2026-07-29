@@ -192,8 +192,9 @@ export function menuWindow(g: MenuGroup): { start: number; end: number } | null 
 export function openMenuGroups(groups: MenuGroup[], nowMin: number): number[] {
   if (!groups || !groups.length) return []
   if (nowMin < 0) return [0]
-  // Several sections can be on at once (the cafe runs all day under lunch). Open the most
-  // specific one - the narrowest window containing right now - and leave the rest folded.
+  // Several sections can be on at once (the cafe runs all day, straight through lunch). Open only
+  // the most specific one - the narrowest window containing right now. Every live section still
+  // gets its "Serving now" badge; the rest stay a tap away, which is how Jon wants it to read.
   let bestIdx = -1
   let bestSpan = 99999
   let nextIdx = -1
@@ -388,21 +389,18 @@ export const GARDEN: Guide = {
     linkLabel: 'See the full menu',
     groups: [
       {
-        name: 'Breakfast - continental and light',
+        name: 'Breakfast',
         note: 'Daily 7 - 11 AM',
+        from: '07:00', to: '11:00',
         items: [
+          { name: '## Continental and light', desc: '', price: '' },
           { name: 'Greenhouse Breakfast', desc: 'Mini croissant, pain au chocolat, baguette with butter and jam, seasonal fruit, two pasture-raised eggs any style', price: '$17' },
           { name: 'Petit-Dejeuner Continental', desc: 'Mini-pastries, toasted baguette, butter and artisanal jam', price: '$12' },
           { name: 'Acai Bowl', desc: 'Acai puree, granola, berries, banana, shaved coconut, honey - gluten free', price: '$16' },
           { name: 'Farmhouse Granola Parfait', desc: 'Greek yogurt, almond butter, granola, seasonal fruit compote - gluten free', price: '$12' },
           { name: 'Overnight Oats', desc: 'Coconut milk, chia, oats, toasted coconut, sliced almonds, mixed berries - vegan', price: '$11' },
           { name: 'Creme Fraiche Pancakes', desc: 'Caramelized bananas, roasted pecans, maple syrup', price: '$15' },
-        ],
-      },
-      {
-        name: 'Breakfast - savory',
-        note: '',
-        items: [
+          { name: '## Savory', desc: '', price: '' },
           { name: 'Broken Yolk Sandwich', desc: 'Bacon, cheddar, spinach, roasted cherry tomatoes, sunny-side egg on toasted baguette', price: '$15' },
           { name: 'Smashed Avocado Tartine', desc: 'Toasted sourdough, roasted cherry tomatoes, avocado - vegan. Add egg $2, bacon $5, smoked salmon $6.50', price: '$14' },
           { name: 'Smoked Salmon Bagel', desc: 'Smoked salmon, chive cream cheese, red onion, capers', price: '$17' },
@@ -412,8 +410,87 @@ export const GARDEN: Guide = {
         ],
       },
       {
-        name: 'Cafe - coffee',
+        name: 'Lunch',
+        note: 'Daily 11 AM - 5 PM',
+        from: '11:00', to: '17:00',
+        items: [
+          { name: '## Appetizers', desc: '', price: '' },
+          { name: 'Shrimp Cocktail', desc: 'Chilled poached shrimp, cocktail sauce, lemon', price: '$16' },
+          { name: 'Fried Calamari', desc: 'Golden calamari, zucchini shoestrings, spicy marinara', price: '$15' },
+          { name: 'Flatbread', desc: 'Mozzarella, tomato sauce, garden basil - margherita, cheese or pepperoni. Gluten-free option available', price: '$14' },
+          { name: 'Cauliflower Bites', desc: 'Crispy cauliflower florets, house sauce', price: '$12' },
+          { name: 'Moroccan Cigars', desc: 'Crispy rolls filled with spiced ground beef, house sauce', price: '$18' },
+          { name: 'Octopus Carpaccio', desc: 'Tomato, cucumber, red onion, lemon vinaigrette', price: '$19' },
+          { name: 'Mediterranean Chicken Wings', desc: 'Herb-marinated and char-grilled, lemon, feta, tahini dipping sauce. Buffalo and BBQ on request', price: '$15' },
+          { name: 'Mediterranean Trio of Dips', desc: 'House-made hummus, baba ghanoush and matbucha with pita and crudites', price: '$19' },
+          { name: '## Salads', desc: 'Add chicken +$6, salmon +$8, shrimp +$6, smoked salmon +$6.50', price: '' },
+          { name: 'Classic Caesar', desc: 'Romaine, shaved parmesan, country bread croutons', price: '$13' },
+          { name: 'Farmers', desc: 'Mixed seasonal greens, cherry tomatoes, cucumber, feta, red onion, glazed walnuts', price: '$12' },
+          { name: 'Cob', desc: 'Grilled chicken, bacon, egg, avocado, tomato, green onion, blue cheese, vinaigrette', price: '$19' },
+          { name: '## Handhelds', desc: 'Served with fries or mixed greens. Gluten-free bread available', price: '' },
+          { name: 'Wagyu Cheeseburger', desc: 'Lettuce, tomato, red onion, cheddar, pickle chips, chipotle aioli', price: '$21' },
+          { name: 'Crispy Fish Sandwich', desc: 'Mahi-mahi, lettuce, tomato, red onion, cole slaw, tartar sauce', price: '$18' },
+          { name: 'Merguez Sandwich', desc: 'Spicy North African beef and lamb sausages, crusty baguette, harissa aioli', price: '$16' },
+          { name: 'B.L.A.T.', desc: 'Bacon, lettuce, avocado, tomato, chipotle aioli, toasted sourdough', price: '$15' },
+          { name: 'Pesto Chicken Baguette', desc: 'Mozzarella, tomato, arugula', price: '$15' },
+          { name: 'Croque Monsieur', desc: 'Classic Parisian grilled ham and cheese, bechamel, French bread. Croque Madame +$2', price: '$15' },
+          { name: 'Tuna Salad Sandwich', desc: 'Tuna salad, tomato, lettuce, red onion, toasted French baguette', price: '$15' },
+          { name: 'Chicken Tenders', desc: 'Golden fried, fries, honey mustard', price: '$18' },
+          { name: 'Vegetarian Wrap', desc: 'Hummus, avocado, spinach, cucumber, roasted cherry tomatoes, shredded carrot, red onion, avocado lemonette', price: '$13' },
+          { name: '## Meat and fish', desc: '', price: '' },
+          { name: 'Salmon', desc: 'Grilled salmon, mashed potatoes, asparagus', price: '$24' },
+          { name: 'Fish and Chips', desc: 'Crispy cod filet, fries, cole slaw, tartar sauce', price: '$22' },
+          { name: 'Ribeye Steak (10oz)', desc: 'Boneless chimichurri-brushed ribeye, seasonal roasted vegetables and potatoes', price: '$39' },
+          { name: 'Boneless Chicken Breast', desc: 'Herb-marinated chicken breast, roasted potatoes', price: '$19' },
+        ],
+      },
+      {
+        name: 'Dinner',
+        note: 'Sun - Thu 5 - 10 PM / Fri - Sat 5 - 11 PM',
+        from: '17:00', to: '22:00',
+        items: [
+          { name: '## Appetizers', desc: '', price: '' },
+          { name: 'Shrimp Cocktail', desc: 'Chilled poached shrimp, cocktail sauce, lemon - gluten free', price: '$16' },
+          { name: 'Fried Calamari', desc: 'Golden calamari, zucchini shoestrings, tomato sauce, harissa aioli', price: '$15' },
+          { name: 'Moroccan Cigars', desc: 'Crispy rolls filled with spiced ground beef, harissa aioli', price: '$18' },
+          { name: 'Octopus Carpaccio', desc: 'Tomato, cucumber, red onion, lemon vinaigrette', price: '$19' },
+          { name: 'Roasted Eggplant', desc: 'Israeli salad, tahini, pita - vegetarian', price: '$12' },
+          { name: 'Merguez Sausage', desc: 'Spicy North African beef and lamb sausages, harissa aioli', price: '$13' },
+          { name: 'Royal Mediterranean Mezze', desc: 'House-made salads and dips with pita and crudites: hummus, tzatziki, baba ghanoush, Israeli salad, kalamata olives, matboucha. Select 3 for $19, 6 for $35', price: '$19' },
+          { name: '## Salads', desc: 'Add chicken +$6, salmon +$8, shrimp +$6, smoked salmon +$6.50', price: '' },
+          { name: 'Classic Caesar', desc: 'Romaine, shaved parmesan, country bread croutons', price: '$13' },
+          { name: 'Wedge', desc: 'Iceberg, bacon, cherry tomatoes, red onion, blue cheese dressing - gluten free', price: '$15' },
+          { name: 'Farmers', desc: 'Mixed seasonal greens, cherry tomatoes, cucumber, feta, red onion, glazed walnuts, honey mustard vinaigrette - vegetarian, gluten free', price: '$12' },
+          { name: '## Pasta', desc: 'Add chicken +$6, salmon +$8, shrimp +$6. Gluten-free penne on request', price: '' },
+          { name: 'Linguini with Wild Mushrooms', desc: 'White wine, parmesan', price: '$18' },
+          { name: 'Pesto Penne', desc: 'Cherry tomatoes, roasted pine nuts, shaved parmesan', price: '$16' },
+          { name: '## Handhelds', desc: 'Served with fries or mixed greens. Gluten-free bread available', price: '' },
+          { name: 'Wagyu Cheeseburger', desc: 'Lettuce, tomato, red onion, cheddar, pickle, house sauce', price: '$21' },
+          { name: 'Crispy Fish Sandwich', desc: 'Mahi-mahi, lettuce, tomato, red onion, cole slaw, tartar sauce', price: '$18' },
+          { name: 'Pesto Chicken Baguette', desc: 'Mozzarella, tomato, arugula', price: '$15' },
+          { name: '## Meat and fish', desc: '', price: '' },
+          { name: 'Filet Mignon au Poivre (8oz)', desc: 'Peppercorn sauce, mashed potatoes', price: '$44' },
+          { name: 'Ribeye Steak (10oz)', desc: 'Boneless chimichurri-brushed ribeye, loaded baked potato', price: '$42' },
+          { name: 'Lamb Chops', desc: 'Red wine sauce, rice pilaf - gluten free', price: '$39' },
+          { name: 'Salmon', desc: 'Grilled, fingerling potatoes - gluten free', price: '$31' },
+          { name: 'Red Snapper', desc: 'Pan-seared, lemon-caper sauce, lyonnaise potatoes', price: '$28' },
+          { name: 'Fish and Chips', desc: 'Crispy cod filet, fries, cole slaw, tartar sauce', price: '$22' },
+          { name: 'Roasted Half Chicken', desc: 'Herb-marinated, roasted potatoes, chicken au jus - gluten free', price: '$22' },
+          { name: 'Boneless Chicken Breast', desc: 'Herb-marinated, seasonal roasted vegetables and potatoes', price: '$19' },
+        ],
+      },
+      {
+        name: 'Happy hour',
+        note: 'Daily 3 - 6 PM on The Terrace',
+        from: '15:00', to: '18:00',
+        items: [
+          { name: 'Crafted cocktails, wine and cold beer', desc: 'The easy handoff from an afternoon by the pool to a slow evening. Ask the bar for the current pour.', price: '' },
+        ],
+      },
+      {
+        name: 'Cafe and coffee',
         note: 'Daily 7 AM - 5 PM at The Greenhouse Cafe',
+        from: '07:00', to: '17:00',
         items: [
           { name: 'Espresso / Double', desc: '', price: '$4 / $5' },
           { name: 'Americano', desc: '', price: '$4.50' },
@@ -423,12 +500,7 @@ export const GARDEN: Guide = {
           { name: 'Iced Cold Brew', desc: '', price: '$6' },
           { name: 'Matcha Latte', desc: '', price: '$7' },
           { name: 'Affogato', desc: '', price: '$6' },
-        ],
-      },
-      {
-        name: 'House lattes',
-        note: 'All $8. Syrups +$1, milk alternatives and cold foam +$1',
-        items: [
+          { name: '## House lattes', desc: 'All $8. Syrups +$1, milk alternatives and cold foam +$1', price: '' },
           { name: 'Biscoff Latte', desc: 'Cookie butter, vanilla syrup, double espresso, cold foam, Biscoff crumbles', price: '$8' },
           { name: 'Tiramisu Latte', desc: 'Double espresso, vanilla cold foam, cocoa powder, lady finger', price: '$8' },
           { name: 'Iced Lavender Matcha Latte', desc: 'Ceremonial matcha, oat milk, lavender cold foam', price: '$8' },
@@ -437,32 +509,28 @@ export const GARDEN: Guide = {
         ],
       },
       {
-        name: 'Fresh and cold-pressed juice',
-        note: '',
+        name: 'Juice, pastry and drinks',
+        note: 'Daily 7 AM - 5 PM',
+        from: '07:00', to: '17:00',
         items: [
+          { name: '## Fresh and cold-pressed', desc: '', price: '' },
           { name: 'Fresh squeezed orange juice', desc: 'By the glass', price: '$7' },
           { name: 'Cold pressed juice', desc: 'Orange, watermelon, pineapple or apple - by the glass', price: '$11' },
           { name: 'Cold pressed bottles', desc: 'Le Carrot, Le Green, Le Beet, Le Celery - 12oz', price: '$12' },
           { name: 'Wellness shot', desc: 'Ginger turmeric - 2oz', price: '$7' },
-        ],
-      },
-      {
-        name: 'Pastry and treats',
-        note: '',
-        items: [
+          { name: '## Pastry and treats', desc: '', price: '' },
           { name: 'Croissant / Pain au Chocolat', desc: '', price: '$5' },
           { name: 'Madeleine', desc: '', price: '$3' },
           { name: 'Financier', desc: '', price: '$5' },
           { name: 'Brownie', desc: '', price: '$5' },
-        ],
-      },
-      {
-        name: 'Lunch and dinner',
-        note: 'Lunch daily 11 AM - 5 PM / Dinner from 5 PM',
-        items: [
-          { name: 'Lunch', desc: 'Lean and energizing - salads, bowls, sandwiches and shareable plates. Vegan, vegetarian and gluten-free options always available.', price: '' },
-          { name: 'Dinner', desc: 'Relaxed cafe dining with thoughtful entrees and small plates, indoors or poolside on The Terrace.', price: '' },
-          { name: 'Happy hour', desc: 'Crafted cocktails, wine and cold beer, daily 3 - 6 PM.', price: '' },
+          { name: '## Mocktails', desc: 'All $12', price: '' },
+          { name: 'Amalfi Mint Cooler', desc: '', price: '$12' },
+          { name: 'Mediterranean Garden Fizz', desc: '', price: '$12' },
+          { name: 'Frozen Strawberry Daiquiri', desc: '', price: '$12' },
+          { name: 'Frozen Pina Colada', desc: '', price: '$12' },
+          { name: 'Frozen Miami Vice', desc: '', price: '$12' },
+          { name: '## Soft drinks', desc: 'All $4.50', price: '' },
+          { name: 'Coke Classic, Diet Coke, Coke Zero, Sprite, Fanta Orange, unsweet tea', desc: '', price: '$4.50' },
         ],
       },
     ],
