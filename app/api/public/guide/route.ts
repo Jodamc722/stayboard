@@ -68,7 +68,8 @@ function sentenceWith(text: string, words: string[]): string {
   for (const p of parts) {
     const low = p.toLowerCase()
     for (const w of words) if (w && low.indexOf(w.toLowerCase()) >= 0) {
-      const clean = p.trim().replace(/\s+/g, ' ')
+      let clean = p.trim().replace(/\s+/g, ' ').replace(/^[\s\-–—*.,:;]+/, '')
+      if (clean && /[a-z]/.test(clean.charAt(0))) clean = clean.charAt(0).toUpperCase() + clean.slice(1)
       if (clean.length >= 25 && clean.length <= 260) return clean
     }
   }
