@@ -280,6 +280,15 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       d.clean = c ? { id: c.id, status: c.status, assignees: c.assignees, name: c.name } : null
       d.nextArrival = nextArrivalOf[lid] || null
       const arr = arrivals.find(a => a.listingId === lid)
+      // EXTENSION, NOT A TURNOVER. When the same guest checks out and straight back in on the same
+      // day, Guesty has two reservations but the field sees one stay: the guest and their luggage
+      // never leave. Calling that a same-day turn sends a cleaner in to strip an occupied unit.
+      const samePhone = (a: any, b: any) => {
+        const x = str(a).replace(/\D/g, ''), y = str(b).replace(/\D/g, '')
+        return x.length >= 9 && y.length >= 9 && x.slice(-9) === y.slice(-9)
+      }
+      d.extension = !!(arr && (nameMatches(d.guest, arr.guest) || samePhone(d.phone, arr.phone)))
+      if (arr) arr.extension = d.extension
       d.sameDayTurn = !!arr
       d.sameDayGuest = arr ? arr.guest : null
       d.sameDayIn = arr ? (arr.checkInTime || '4:00 PM') : null
@@ -339,7 +348,8 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       if (d.vendor) continue
       if (!d.clean) exceptions.push({ kind: 'No clean on the board', unit: d.unit, detail: 'Guest ' + d.guest + ' checks out today and there is no departure clean scheduled', severity: 'high' })
       else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') exceptions.push({ kind: 'Clean unassigned', unit: d.unit, detail: (d.clean.name || 'Departure clean') + ' has nobody on it', severity: 'high' })
-      if (d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
+      if (d.extension) exceptions.push({ kind: 'Extension — guest stays', unit: d.unit, detail: d.guest + ' checks out and straight back in today. Do NOT strip the unit; only service it if the guest asks', severity: 'high' })
+      else if (d.sameDayTurn && d.clean && d.clean.status !== 'done') exceptions.push({ kind: 'Same-day turn not done', unit: d.unit, detail: 'Guest arrives today; clean is ' + d.clean.status, severity: 'high' })
       if (d.nights != null && d.nights >= 10) exceptions.push({ kind: 'Long stay out', unit: d.unit, detail: d.nights + '-night stay ended — heavier clean, allow extra time', severity: 'med' })
     }
     for (const a of arrivals) {
@@ -389,7 +399,8 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
         work: work.length, vacants: vacants.length, glitches: glitches.length, exceptions: exceptions.length,
         walkIns: arrivals.filter(a => a.bookedToday || a.bookedAfterSync).length,
         neverChecked: arrivals.filter(a => !a.cleanToday && !a.vendor && !a.lastTouch).length,
-        sameDayTurns: departures.filter(d => d.sameDayTurn).length,
+        sameDayTurns: departures.filter(d => d.sameDayTurn && !d.extension).length,
+        extensions: departures.filter(d => d.extension).length,
         cleansDone: Object.values(cleanByListing).filter((c: any) => c.status === 'done').length,
         cleansTotal: Object.keys(cleanByListing).length,
       },
