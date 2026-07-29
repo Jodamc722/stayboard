@@ -204,9 +204,13 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
 
   // ---- calendar derivations -------------------------------------------------------------------
   const acts: Activation[] = (g.activations && g.activations.items) || []
+  // Everyday things (happy hour) get ONE "every day" block. Repeating them as a card per day
+  // is noise - the dated cards are for what is special about a given day.
+  const dailyActs = acts.filter(a => inferSchedule(a).repeat === 'daily' && runsOn(a, today))
+  const datedActs = acts.filter(a => inferSchedule(a).repeat !== 'daily')
   // The cards are THIS WEEK only (today + 6 days). Everything beyond that lives in the calendar,
   // so the page never turns into a scroll of a hundred repeats.
-  const week: Occurrence[] = useMemo(() => occurrencesIn(acts, today, 7), [acts, today])
+  const week: Occurrence[] = useMemo(() => occurrencesIn(datedActs, today, 7), [acts, today])
   const dayList: Occurrence[] = useMemo(
     () => (pickDay ? occurrencesIn(acts, pickDay, 1) : []),
     [acts, pickDay],
@@ -573,6 +577,30 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
           ) : (
             /* guest view: real dates, grouped by day */
             <div className="space-y-6">
+              {!pickDay && dailyActs.length ? (
+                <div className="gd-card" style={{ padding: 20 }}>
+                  <div style={{ fontSize: 11, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--leaf)', marginBottom: 12 }}>Every day</div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {dailyActs.map((a, i) => {
+                      const w = windowOf(a)
+                      const live = nowMin >= 0 && nowMin >= w.start && nowMin <= w.end
+                      return (
+                        <div key={i}>
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span style={{ fontFamily: SERIF, fontSize: 19 }}>{a.name}</span>
+                            {live ? (
+                              <span style={{ background: 'var(--leaf)', color: '#fff', borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase' }}>Now</span>
+                            ) : null}
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--leaf)', marginTop: 3 }}>{a.time}</div>
+                          {a.where ? <div style={{ fontSize: 12.5, color: 'rgba(22,32,75,.55)', marginTop: 1 }}>{a.where}</div> : null}
+                          {a.desc ? <p style={{ fontSize: 13, lineHeight: 1.5, color: 'rgba(22,32,75,.7)', marginTop: 6 }}>{a.desc}</p> : null}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : null}
               {groupedUpcoming.length === 0 ? (
                 <p style={{ color: 'rgba(22,32,75,.6)' }}>Nothing on the calendar for this day - the front desk always knows what is on.</p>
               ) : null}
@@ -714,7 +742,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                     <span style={{ flex: 1 }}>
                       <span style={{ fontFamily: SERIF, fontSize: 21, display: 'block' }}>{grp.name}</span>
                       {grp.note ? <span style={{ fontSize: 12, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--leaf)', fontWeight: 700, marginTop: 4, display: 'block' }}>{grp.note}</span> : null}
-                      {!open ? <span style={{ fontSize: 12.5, color: 'rgba(22,32,75,.5)', marginTop: 6, display: 'block' }}>{(grp.items || []).length} items - tap to open</span> : null}
+                      {!open ? <span style={{ fontSize: 12.5, color: 'rgba(22,32,75,.5)', marginTop: 6, display: 'block' }}>{(grp.items || []).filter(x => String(x.name || '').indexOf('## ') !== 0).length} items - tap to open</span> : null}
                     </span>
                     {serving ? (
                       <span style={{ background: 'var(--leaf)', color: '#fff', borderRadius: 999, padding: '3px 10px', fontSize: 10.5, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Serving now</span>
@@ -734,6 +762,14 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                             <Btn onClick={() => drop(['menu', 'groups', gi, 'items'], ii)} tone="danger">x</Btn>
                           </div>
                           <Ed v={it.desc} on={s => set(['menu', 'groups', gi, 'items', ii, 'desc'], s)} ph="Ingredients / description" />
+                        </div>
+                      ) : (it.name || '').indexOf('## ') === 0 ? (
+                        /* a course divider inside a section - "## Salads" */
+                        <div style={{ paddingTop: ii ? 10 : 0 }}>
+                          <div style={{ fontSize: 11.5, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--leaf)', borderTop: ii ? '1px solid rgba(22,32,75,.10)' : undefined, paddingTop: ii ? 12 : 0 }}>
+                            {it.name.slice(3)}
+                          </div>
+                          {it.desc ? <div style={{ fontSize: 12.5, color: 'rgba(22,32,75,.55)', marginTop: 3 }}>{it.desc}</div> : null}
                         </div>
                       ) : (
                         <>
