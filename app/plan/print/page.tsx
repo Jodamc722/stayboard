@@ -23,8 +23,8 @@ function Lines({ n = 3 }: { n?: number }) { return <div className="ds-lines">{Ar
 function Box() { return <span className="ds-box" /> }
 
 const SHEETS = [
-  { key: 'turn', name: 'Turn sheet' },
-  { key: 'arrivals', name: 'Arrivals & ready check' },
+  { key: 'turn', name: 'Departure cleans' },
+  { key: 'arrivals', name: 'Arrivals to verify' },
   { key: 'work', name: 'Work orders' },
   { key: 'exceptions', name: 'Exceptions' },
   { key: 'closeout', name: 'Vacants, owner stays & handover' },
@@ -98,30 +98,32 @@ export default function DaySheetsPage() {
         {err && <span className="ds-err">{err}</span>}
       </div>
 
-      {/* 1 — TURN SHEET */}
+      {/* 1 — DEPARTURE CLEANS */}
       {on.turn && (
         <section className="ds-page-wrap">
-          <Head title="Turn sheet" sub="Departures in driving order — who cleans what" count={departures.length + ' departures · ' + (c.cleansDone ?? 0) + '/' + (c.cleansTotal ?? 0) + ' cleans done'} />
+          <Head title="Departure cleans" sub="Every clean today, in driving order — same-day arrivals called out on the row" count={departures.length + ' cleans · ' + (c.cleansDone ?? 0) + ' done · ' + (c.sameDayTurns ?? 0) + ' same-day'} />
           {areas.map((a: any) => (
             <div key={a.key} className="ds-area">
-              <div className="ds-areahead"><span className="ds-arealabel">{a.label}</span><span className="ds-areacity">{a.city || ''}</span><span className="ds-areacount">{a.units.length} unit{a.units.length === 1 ? '' : 's'}</span></div>
+              <div className="ds-areahead"><span className="ds-arealabel">{a.label}</span><span className="ds-areacity">{a.city || ''}</span><span className="ds-areacount">{a.units.length}</span></div>
               <table className="ds-table">
-                <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest out</th><th>Out</th><th>Cleaner</th><th>Status</th><th>Next in</th><th className="ds-wn">Notes</th></tr></thead>
+                <thead><tr><th className="ds-w1">DONE</th><th>Unit</th><th>Cleaner</th><th>Out by</th><th>Guest leaving</th><th className="ds-wsd">Arriving today</th><th className="ds-wn">Notes</th></tr></thead>
                 <tbody>
                   {a.units.map((r: any, i: number) => (
-                    <tr key={i}>
+                    <tr key={i} className={r.sameDayTurn ? 'ds-rowsd' : ''}>
                       <td><Box /></td>
                       <td className="ds-unit">{r.unit}
-                        {r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY</span>}
-                        {r.nights != null && r.nights >= 10 && <span className="ds-tag ds-hot">{r.nights}NT LONG</span>}
+                        {r.nights != null && r.nights >= 10 && <span className="ds-tag ds-warnTag">{r.nights}NT LONG</span>}
                         {r.vendor && <span className="ds-tag">{r.vendor}</span>}
                         {r.doorCode && <div className="ds-sub">code {r.doorCode}</div>}
                       </td>
-                      <td>{r.guest}{r.nights != null && <span className="ds-sub"> {r.nights}nt</span>}</td>
-                      <td>{r.checkOutTime || '11:00'}</td>
-                      <td>{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <span className="ds-warn">UNASSIGNED</span>) : <span className="ds-warn">no clean</span>}</td>
-                      <td className="ds-sub">{r.clean ? r.clean.status : '—'}</td>
-                      <td>{shortDate(r.nextArrival)}</td>
+                      <td className="ds-who">{r.clean ? (r.clean.assignees?.length ? r.clean.assignees.join(', ') : <span className="ds-warn">UNASSIGNED</span>) : <span className="ds-warn">NO CLEAN ON THE BOARD</span>}
+                        {r.clean && <div className="ds-sub">{r.clean.status}</div>}
+                      </td>
+                      <td className="ds-num">{r.checkOutTime || '11:00'}</td>
+                      <td>{r.guest}<div className="ds-sub">{r.nights != null ? r.nights + ' nights' : ''}</div></td>
+                      <td>{r.sameDayTurn
+                        ? <span className="ds-sd"><b>SAME DAY</b> {'\u2192'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}{r.sameDayNights >= 10 ? ' · BIG BOOKING' : ''}</span>
+                        : <span className="ds-sub">{r.nextArrival ? 'next ' + shortDate(r.nextArrival) : 'no arrival booked'}</span>}</td>
                       <td />
                     </tr>
                   ))}
@@ -129,41 +131,62 @@ export default function DaySheetsPage() {
               </table>
             </div>
           ))}
-          {departures.length === 0 && <div className="ds-empty">No departures today.</div>}
-          <div className="ds-recon">Reconciliation: {departures.length} departure rows printed {'·'} {areas.length} area{areas.length === 1 ? '' : 's'} {'·'} vendor-cleaned included</div>
-          <div className="ds-notes"><div className="ds-h3">Turn notes</div><Lines n={4} /></div>
+          {departures.length === 0 && <div className="ds-empty">No departure cleans today.</div>}
+          <div className="ds-recon">Reconciliation: {departures.length} cleans printed {'·'} {areas.length} area{areas.length === 1 ? '' : 's'} {'·'} {(c.sameDayTurns ?? 0)} same-day turns {'·'} vendor-cleaned units included and labelled</div>
+          <div className="ds-notes"><div className="ds-h3">Notes</div><Lines n={4} /></div>
         </section>
       )}
 
-      {/* 2 — ARRIVALS */}
-      {on.arrivals && (
-        <section className="ds-page-wrap">
-          <Head title="Arrivals & ready check" sub="Who is coming in — and is the unit actually ready" count={(d?.arrivals || []).length + ' arrivals'} />
-          <table className="ds-table">
-            <thead><tr><th className="ds-w1">READY</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Clean today</th><th>Code</th><th className="ds-wn">Notes</th></tr></thead>
-            <tbody>
-              {(d?.arrivals || []).map((r: any, i: number) => {
-                const dep = departures.filter((x: any) => x.unit === r.unit)[0]
-                return (
-                  <tr key={i}>
+      {/* 2 — ARRIVALS TO VERIFY */}
+      {on.arrivals && (() => {
+        const arr = (d?.arrivals || [])
+        const noClean = arr.filter((a: any) => !a.cleanToday)
+        const withClean = arr.filter((a: any) => a.cleanToday)
+        return (
+          <section className="ds-page-wrap">
+            <Head title="Arrivals to verify" sub="Guests arriving into units nobody is cleaning today — walk these before check-in" count={noClean.length + ' to verify · ' + arr.length + ' arrivals total'} />
+            <div className="ds-h3">Nobody is cleaning these today ({noClean.length})</div>
+            <table className="ds-table">
+              <thead><tr><th className="ds-w1">READY</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Last cleaned</th><th>Code</th><th className="ds-wn">What you found</th></tr></thead>
+              <tbody>
+                {noClean.map((r: any, i: number) => (
+                  <tr key={i} className="ds-rowcheck">
                     <td><Box /></td>
-                    <td className="ds-unit">{r.unit}{r.sameDayTurn && <span className="ds-tag ds-hot">SAME-DAY</span>}{r.ownerFlag && <span className="ds-tag">OWNER</span>}</td>
+                    <td className="ds-unit">{r.unit}{r.ownerFlag && <span className="ds-tag">OWNER</span>}</td>
                     <td>{r.guest}{r.phone ? <div className="ds-sub">{r.phone}</div> : null}</td>
-                    <td>{r.checkInTime || '4:00 PM'}</td>
-                    <td>{r.nights ?? '—'}{r.nights != null && r.nights >= 10 && <span className="ds-tag ds-hot">CHECK READY</span>}</td>
-                    <td className="ds-sub">{dep ? (dep.clean ? dep.clean.status + (dep.clean.assignees?.length ? ' · ' + dep.clean.assignees.join(', ') : '') : 'no clean scheduled') : 'no departure today'}</td>
+                    <td className="ds-num">{r.checkInTime || '4:00 PM'}</td>
+                    <td className="ds-num">{r.nights ?? '—'}{r.nights != null && r.nights >= 10 && <span className="ds-tag ds-warnTag">BIG</span>}</td>
+                    <td className="ds-sub">{r.lastCleanedAt ? shortDate(r.lastCleanedAt) : <span className="ds-warn">no record</span>}</td>
                     <td className="ds-sub">{r.doorCode || '—'}</td>
                     <td />
                   </tr>
-                )
-              })}
-              {(d?.arrivals || []).length === 0 && <tr><td colSpan={8} className="ds-empty">No arrivals today.</td></tr>}
-            </tbody>
-          </table>
-          <div className="ds-recon">Reconciliation: {(d?.arrivals || []).length} arrivals {'·'} {(d?.counts?.sameDayTurns ?? 0)} same-day turns</div>
-          <div className="ds-notes"><div className="ds-h3">Arrival notes / VIPs / early check-ins</div><Lines n={5} /></div>
-        </section>
-      )}
+                ))}
+                {noClean.length === 0 && <tr><td colSpan={8} className="ds-empty">Every arrival today follows a clean — nothing to verify.</td></tr>}
+              </tbody>
+            </table>
+            <div className="ds-h3">Arriving after a clean today ({withClean.length}) — covered on the departure sheet</div>
+            <table className="ds-table">
+              <thead><tr><th className="ds-w1">✓</th><th>Unit</th><th>Guest in</th><th>In after</th><th>Nights</th><th>Clean status</th><th className="ds-wn">Notes</th></tr></thead>
+              <tbody>
+                {withClean.map((r: any, i: number) => (
+                  <tr key={i}>
+                    <td><Box /></td>
+                    <td className="ds-unit">{r.unit}<span className="ds-tag ds-hot">SAME-DAY</span></td>
+                    <td>{r.guest}</td>
+                    <td className="ds-num">{r.checkInTime || '4:00 PM'}</td>
+                    <td className="ds-num">{r.nights ?? '—'}</td>
+                    <td className="ds-sub">{r.cleanToday.status}{r.cleanToday.assignees?.length ? ' · ' + r.cleanToday.assignees.join(', ') : ' · unassigned'}</td>
+                    <td />
+                  </tr>
+                ))}
+                {withClean.length === 0 && <tr><td colSpan={7} className="ds-empty">None.</td></tr>}
+              </tbody>
+            </table>
+            <div className="ds-recon">Reconciliation: {arr.length} arrivals {'='} {noClean.length} to verify {'+'} {withClean.length} following a clean</div>
+            <div className="ds-notes"><div className="ds-h3">Early check-ins, VIPs, anything the front desk should know</div><Lines n={5} /></div>
+          </section>
+        )
+      })()}
 
       {/* 3 — WORK ORDERS */}
       {on.work && (
@@ -266,7 +289,7 @@ export default function DaySheetsPage() {
         .ds-page-wrap { max-width:1000px; margin:0 auto 16px; background:#fff; padding:26px 30px 30px; box-shadow:0 1px 3px rgba(0,0,0,.1); color:#18181b; font-size:11.5px; line-height:1.35; }
         .ds-head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2.5px solid #18181b; padding-bottom:9px; margin-bottom:11px; gap:16px; }
         .ds-brand { font-size:9px; font-weight:800; letter-spacing:.16em; color:#71717a; }
-        .ds-title { font-size:21px; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
+        .ds-title { font-size:22px; font-weight:800; letter-spacing:-.02em; margin-top:2px; }
         .ds-sub { font-size:11px; color:#71717a; }
         .ds-headright { text-align:right; }
         .ds-date { font-size:13px; font-weight:700; }
@@ -281,11 +304,18 @@ export default function DaySheetsPage() {
         .ds-areacount { font-size:10px; color:#71717a; margin-left:auto; }
         .ds-h3 { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.09em; margin:10px 0 4px; }
         .ds-table { width:100%; border-collapse:collapse; }
-        .ds-table th { text-align:left; font-size:8.5px; text-transform:uppercase; letter-spacing:.07em; color:#71717a; font-weight:700; padding:3px 5px; border-bottom:1px solid #d4d4d8; }
-        .ds-table td { padding:4px 5px; border-bottom:1px solid #ededf0; vertical-align:top; }
+        .ds-table th { text-align:left; font-size:8px; text-transform:uppercase; letter-spacing:.07em; color:#71717a; font-weight:700; padding:3px 5px; border-bottom:1px solid #d4d4d8; }
+        .ds-table td { padding:4.5px 6px; border-bottom:1px solid #ededf0; vertical-align:top; }
         .ds-table tr:nth-child(even) td { background:#fafafa; }
         .ds-rowhot td { background:#fff1f2 !important; }
-        .ds-w1 { width:34px; } .ds-wn { width:150px; }
+        .ds-w1 { width:34px; } .ds-wn { width:140px; } .ds-wsd { width:190px; }
+        .ds-num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+        .ds-who { font-weight:600; }
+        .ds-rowsd td { background:#fffbeb !important; }
+        .ds-rowcheck td { background:#fef2f2 !important; }
+        .ds-sd { font-size:10px; color:#92400e; }
+        .ds-sd b { font-size:9px; letter-spacing:.05em; }
+        .ds-warnTag { border-color:#b45309; background:#b45309; color:#fff; }
         .ds-unit { font-weight:700; white-space:nowrap; }
         .ds-sub { color:#71717a; font-size:10px; }
         .ds-right { margin-left:auto; }
