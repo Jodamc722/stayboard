@@ -13,14 +13,15 @@ import { useEffect, useState } from 'react'
 
 type Row = { id: string; audit_id: string; listing_id: string; room: string; kind: string; title: string | null; qty: number | null; note: string | null; photo_url: string | null; severity?: string | null; status: string; details: any; created_at: string; unit: string; building: string; breezeway_task_id?: string | null; report_url?: string | null }
 
-type Stage = 'blocked' | 'owner' | 'ready' | 'ordered' | 'arriving' | 'received' | 'installed'
+type Stage = 'blocked' | 'owner' | 'supply' | 'later' | 'ready' | 'ordered' | 'arriving' | 'received' | 'installed'
 
-const STAGE_LABEL: Record<Stage, string> = { blocked: 'Needs approval', owner: 'Awaiting owner', ready: 'Ready to buy', ordered: 'Ordered', arriving: 'Arriving', received: 'Received', installed: 'Installed' }
-const STAGE_CLS: Record<Stage, string> = { blocked: 'bg-amber-100 text-amber-800', owner: 'bg-violet-100 text-violet-700', ready: 'bg-emerald-100 text-emerald-800', ordered: 'bg-sky-100 text-sky-800', arriving: 'bg-indigo-100 text-indigo-800', received: 'bg-teal-100 text-teal-800', installed: 'bg-neutral-200 text-neutral-600' }
+const STAGE_LABEL: Record<Stage, string> = { blocked: 'Needs approval', owner: 'Awaiting owner', supply: 'Owner supplying', later: 'Owner deferred', ready: 'Ready to buy', ordered: 'Ordered', arriving: 'Arriving', received: 'Received', installed: 'Installed' }
+const STAGE_CLS: Record<Stage, string> = { blocked: 'bg-amber-100 text-amber-800', owner: 'bg-violet-100 text-violet-700', supply: 'bg-sky-100 text-sky-800', later: 'bg-neutral-100 text-neutral-500', ready: 'bg-emerald-100 text-emerald-800', ordered: 'bg-sky-100 text-sky-800', arriving: 'bg-indigo-100 text-indigo-800', received: 'bg-teal-100 text-teal-800', installed: 'bg-neutral-200 text-neutral-600' }
 // The filter strip, left to right, and which stages roll into each bucket.
 const FILTERS: { key: string; label: string; stages: Stage[] }[] = [
-  { key: 'all', label: 'All open', stages: ['blocked', 'owner', 'ready', 'ordered', 'arriving', 'received'] },
+  { key: 'all', label: 'All open', stages: ['blocked', 'owner', 'supply', 'later', 'ready', 'ordered', 'arriving', 'received'] },
   { key: 'blocked', label: 'Needs approval', stages: ['blocked', 'owner'] },
+  { key: 'owner_said', label: 'Owner answered', stages: ['supply', 'later'] },
   { key: 'ready', label: 'Ready to buy', stages: ['ready'] },
   { key: 'ordered', label: 'Ordered', stages: ['ordered'] },
   { key: 'arriving', label: 'Arriving', stages: ['arriving'] },
@@ -42,6 +43,11 @@ function stageOf(it: Row): Stage {
   if (it.status === 'arriving') return 'arriving'
   if (it.status === 'ordered') return 'ordered'
   if (approvalOf(it) === 'declined') return 'blocked'
+  // The owner answered something other than yes. These are NOT "needs approval" — they are
+  // answered, and burying them back in the approval pile is exactly how "I will handle it"
+  // became a dropped thread.
+  if (approvalOf(it) === 'owner_supply') return 'supply'
+  if (approvalOf(it) === 'owner_later') return 'later'
   if (approvalOf(it) === 'owner_pending') return 'owner'
   return isBuyable(it) ? 'ready' : 'blocked'
 }
@@ -73,6 +79,8 @@ export function OrderDesk() {
   const [ownerCopied, setOwnerCopied] = useState(false)
   const [estBusy, setEstBusy] = useState(false)
   const [estMsg, setEstMsg] = useState('')
+  const [briefBusy, setBriefBusy] = useState(false)
+  const [briefMsg, setBriefMsg] = useState('')
   const [owners, setOwners] = useState<{ id: string; name: string; listingIds: string[] }[]>([])
   const [ownerId, setOwnerId] = useState('')
   // Auto-route: priced lines with no approval decision yet. New prices route themselves on save,
@@ -201,11 +209,12 @@ export function OrderDesk() {
     return true
   })
   // Counts for the status strip (over ALL rows, not just the current filter).
-  const counts: Record<string, number> = { all: 0, blocked: 0, ready: 0, ordered: 0, arriving: 0, received: 0, installed: 0 }
+  const counts: Record<string, number> = { all: 0, blocked: 0, owner_said: 0, ready: 0, ordered: 0, arriving: 0, received: 0, installed: 0 }
   let outstanding = 0
   for (const it of rows) {
     const st = stageOf(it)
     if (st !== 'installed') counts.all++
+    if (st === 'supply' || st === 'later') counts.owner_said++
     if (st === 'blocked' || st === 'owner') counts.blocked++
     else if (st === 'ready') counts.ready++
     else if (st === 'ordered') counts.ordered++
@@ -383,6 +392,20 @@ export function OrderDesk() {
     } catch { setEstMsg('failed - retry') }
     setEstBusy(false)
   }
+  // Fills why / price options / cost-of-doing-nothing across the current scope. This is what turns
+  // the owner link from a price list into an argument, so it is worth one AI pass before sharing.
+  async function ownerBrief() {
+    if (briefBusy) return
+    setBriefBusy(true); setBriefMsg('')
+    try {
+      const r = await fetch('/api/orders/brief', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: ownerScope() || 'all' }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setBriefMsg((j && j.error) || 'failed'); setBriefBusy(false); return }
+      setBriefMsg(j.briefed ? j.briefed + ' line' + (j.briefed === 1 ? '' : 's') + ' briefed ✓' : (j.note || 'nothing to brief'))
+      await load()
+    } catch { setBriefMsg('failed - retry') }
+    setBriefBusy(false)
+  }
 
   if (loading) return <div className="text-sm text-muted">Loading orders…</div>
   if (err) return <div className="text-sm text-rose-600">{err}</div>
@@ -397,8 +420,45 @@ export function OrderDesk() {
       </span>
     )
     if (st === 'owner') return <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">Override ✓</button>
+    // Owner said "I will supply it" — the desk's job is to close the loop, not to buy. Arrived
+    // marks it received so it still gets an install task; Buy anyway takes it back over.
+    if (st === 'supply') return (
+      <span className="flex items-center gap-1">
+        <button onClick={() => markReceived(it)} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-teal-600 text-white disabled:opacity-50">Arrived</button>
+        <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">Buy anyway</button>
+      </span>
+    )
+    if (st === 'later') return (
+      <span className="flex items-center gap-1">
+        <button onClick={() => setApproval(it, 'owner_pending')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-violet-300 text-violet-700 disabled:opacity-50">Ask again</button>
+        <button onClick={() => setStatus(it, 'dismissed')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">Close</button>
+      </span>
+    )
     if (st === 'installed') return <span className="text-[11px] font-semibold text-emerald-700">Installed ✓</span>
     return <button onClick={() => advance(it)} disabled={busy === it.id} className={'text-[11px] font-semibold px-2 py-1 rounded-lg text-white disabled:opacity-50 ' + (st === 'ready' ? 'bg-emerald-600' : 'bg-ink')}>{busy === it.id ? '…' : advLabel(st)}</button>
+  }
+
+  // What the owner actually said on the review sheet, verbatim, on the row itself. An answer that
+  // only lives in a status pill is an answer nobody acts on.
+  const SUPPLY_SAID: Record<string, string> = { link: 'wants a link from us', self: 'buying it themselves', ordered: 'already ordered it' }
+  const ownerSaid = (it: Row) => {
+    const d = (it.details && typeof it.details === 'object') ? it.details : {}
+    const o = d.owner && typeof d.owner === 'object' ? d.owner : null
+    const qs: any[] = Array.isArray(d.questions) ? d.questions : []
+    if (!o && !qs.length) return null
+    const bits: string[] = []
+    if (o && o.choice === 'supply') bits.push('Owner is supplying — ' + (SUPPLY_SAID[String(o.supply || '')] || 'no state given'))
+    else if (o && o.choice === 'later') bits.push('Owner deferred this')
+    else if (o && o.choice === 'approve') bits.push('Owner approved' + (o.option ? ' the ' + String(o.option) + ' option' : ''))
+    else if (o && o.choice === 'no') bits.push('Owner declined')
+    if (o && o.note) bits.push(String(o.note))
+    return (
+      <div className="mt-1.5 ml-6 rounded-lg border border-sky-200 bg-sky-50/70 px-2 py-1.5">
+        {bits.length ? <div className="text-[11px] font-semibold text-sky-900">{bits.join(' · ')}</div> : null}
+        {o && o.link ? <a href={String(o.link)} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-sky-700 break-all">{String(o.link)}</a> : null}
+        {qs.map((qq: any, i: number) => <div key={i} className="text-[11px] text-ink"><span className="font-bold">Owner asked:</span> {String(qq && qq.q)}</div>)}
+      </div>
+    )
   }
 
   const rowCard = (it: Row, showUnit: boolean) => {
@@ -430,6 +490,7 @@ export function OrderDesk() {
             <button onClick={() => setMoreFor(m => m === it.id ? '' : it.id)} className="text-[11px] font-semibold px-1.5 py-1 rounded-lg border border-line text-muted">⋯</button>
           </span>
         </div>
+        {ownerSaid(it)}
         {moreFor === it.id ? (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-6">
             {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer"><img src={it.photo_url} alt="" className="h-7 w-7 rounded object-cover" /></a> : null}
@@ -537,6 +598,8 @@ export function OrderDesk() {
           </select>
           <button onClick={exportExcel} disabled={xlBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{xlBusy ? 'Building…' : 'Download .xlsx'}</button>
           <button onClick={estimateCosts} disabled={estBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">{estBusy ? 'Estimating…' : '✨ Estimate costs'}</button>
+          <button onClick={ownerBrief} disabled={briefBusy} title="Fill why, price options and the cost of doing nothing on every line, so the owner sheet argues the case" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">{briefBusy ? 'Writing…' : '✨ Owner brief'}</button>
+          {briefMsg ? <span className="text-[11px] font-semibold text-brand-700">{briefMsg}</span> : null}
           <button onClick={copyOwnerLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Copy owner link'}</button>
           {estMsg ? <span className="text-[11px] font-semibold text-emerald-700">{estMsg}</span> : null}
         </div>
