@@ -14,6 +14,7 @@ const LINKS = [
   { v: 'amrit-capri-lucerne', label: 'Amrit / Capri / Lucerne' },
   { v: 'salato', label: 'Salato (front desk)' },
   { v: 'botanica-report', label: 'Botanica report (Margaux)', path: '/report/botanica' },
+  { v: 'garden-guide', label: 'The Garden - guest guide (public)', path: '/guide/garden' },
 ]
 
 export async function GET() {
