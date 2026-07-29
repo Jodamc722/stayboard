@@ -148,7 +148,7 @@ export default function DaySheetsPage() {
                       <td className="ds-num">{r.checkOutTime || '11:00'}</td>
                       <td>{r.guest}<div className="ds-sub">{r.nights != null ? r.nights + ' nights' : ''}</div></td>
                       <td>{r.extension
-                        ? <span className="ds-ext"><b>EXTENSION</b> {'\u2014'} same guest stays, do not strip</span>
+                        ? <span className="ds-ext"><b>EXTENSION</b> {'\u2014'} same guest re-booked<div className="ds-sub">ask the guest if they want a clean {'\u2014'} do not strip</div></span>
                         : r.sameDayTurn
                         ? <span className="ds-sd"><b>SAME DAY</b> {'\u2192'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}{r.sameDayNights >= 10 ? ' · BIG BOOKING' : ''}</span>
                         : <span className="ds-sub">{r.nextArrival ? 'next ' + shortDate(r.nextArrival) : 'no arrival booked'}</span>}</td>
