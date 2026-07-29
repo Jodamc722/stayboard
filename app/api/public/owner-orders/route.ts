@@ -24,12 +24,27 @@ const LIVE_STATUS = ['open', 'approved', 'ordered', 'arriving', 'task_created', 
 /** Same normalisation the desk uses to roll identical needs together. */
 function nrm(x: any): string { return String(x || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim() }
 
-const STOP = ['the', 'and', 'for', 'with', 'new', 'unit', 'room', 'from', 'that', 'this', 'need', 'needs', 'each', 'set', 'per', 'one', 'two', 'add', 'replace', 'small', 'large', 'white', 'black']
-/** Words worth searching a guest review for - long enough to be a real noun, not a filler. */
-function keywords(title: string): string[] {
+// Only a PRODUCT noun may pull a guest quote onto a line. Rooms, verbs, sizes and filler all appear
+// in half of every review, so matching on them attaches an unrelated complaint to an unrelated item -
+// which is worse than showing no quote at all, because it costs the whole sheet its credibility.
+const STOP = [
+  'the', 'and', 'for', 'with', 'new', 'from', 'that', 'this', 'need', 'needs', 'each', 'set', 'per', 'one', 'two',
+  'add', 'replace', 'repair', 'install', 'move', 'hang', 'fix', 'clean', 'check', 'order', 'buy', 'swap', 'mount', 'mounted',
+  'unit', 'room', 'rooms', 'bedroom', 'bathroom', 'kitchen', 'living', 'dining', 'balcony', 'patio', 'closet', 'hallway',
+  'entry', 'garage', 'laundry', 'apartment', 'condo', 'house', 'home', 'place', 'stay', 'area', 'space', 'wall', 'walls',
+  'small', 'large', 'medium', 'white', 'black', 'grey', 'gray', 'blue', 'more', 'extra', 'inch', 'inches', 'main', 'second',
+]
+/** Words worth searching a guest review for - a real product noun, not a room or an instruction. */
+function keywords(title: string, room: string): string[] {
   const out: string[] = []
+  const roomWords = nrm(room).split(' ')
   const parts = nrm(title).split(' ')
-  for (const w of parts) { if (w.length >= 4 && STOP.indexOf(w) < 0 && out.indexOf(w) < 0) out.push(w) }
+  for (const w of parts) {
+    if (w.length < 4) continue
+    if (STOP.indexOf(w) >= 0) continue
+    if (roomWords.indexOf(w) >= 0) continue
+    if (out.indexOf(w) < 0) out.push(w)
+  }
   return out.slice(0, 4)
 }
 
@@ -94,7 +109,9 @@ export async function GET(req: NextRequest) {
     // Everything ever flagged for these units - this is what turns "buy a new one" into
     // "we have already repaired this three times".
     db.from('audit_items').select('listing_id,kind,title,status,created_at').in('listing_id', scope.ids).in('kind', ['replace', 'add', 'maintenance']).order('created_at', { ascending: true }).limit(4000),
-    db.from('guesty_reviews').select('listing_id,rating,content,created_at').in('listing_id', scope.ids).lte('rating', 4).order('created_at', { ascending: false }).limit(400),
+    // 18 months: old enough to catch a recurring complaint, recent enough that the owner cannot
+    // fairly say "that was fixed years ago".
+    db.from('guesty_reviews').select('listing_id,rating,content,created_at').in('listing_id', scope.ids).lte('rating', 4).gte('created_at', new Date(Date.now() - 550 * 86400000).toISOString()).order('created_at', { ascending: false }).limit(400),
     // Fix and Clean sit ALONGSIDE orders, not underneath them - they cost labour, not money, so they
     // never reach the buying desk. The owner still deserves to see them, priceless and decision-free,
     // so the property total reads as work-in-hand rather than a bill.
@@ -140,7 +157,7 @@ export async function GET(req: NextRequest) {
     // The guest review behind the line, if there is one. A quote from a real stay is the single
     // most persuasive thing on the sheet - and the only one we do not have to argue for.
     let review: any = null
-    const kws = keywords(x.title || '')
+    const kws = keywords(x.title || '', x.room || '')
     if (kws.length) {
       for (const r of reviewRows) {
         if (String(r.listing_id) !== lid) continue
