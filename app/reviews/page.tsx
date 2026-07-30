@@ -3,6 +3,7 @@ import { Star } from 'lucide-react'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ReviewsPanel } from '@/app/command/ReviewsPanel'
+import { ReviewKpis } from '@/components/ReviewKpis'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,6 +25,8 @@ export default async function ReviewsPage() {
           buttons on each review to draft and approve before anything goes out.
         </p>
       </header>
+
+      <ReviewKpis />
 
       <div className="grid grid-cols-1">
         <ReviewsPanel />
