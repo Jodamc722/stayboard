@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
+import { buildingOf } from '@/lib/geo-areas'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -103,23 +104,40 @@ export async function GET(req: NextRequest) {
   const prevFrom = addDays(today, -days * 2)
   const db = supabaseAdmin()
 
-  const [rRes, lRes, resRes] = await Promise.all([
-    db.from('guesty_reviews')
-      .select('id,listing_id,rating,content,channel,guest_name,created_at,has_reply,raw')
-      .gte('created_at', prevFrom + 'T00:00:00Z')
-      .order('created_at', { ascending: false })
-      .limit(6000),
+  // PostgREST caps ANY single request at 1000 rows regardless of .limit(), so both of these are
+  // paged. The first version of this route reported exactly 1000 reviews and a 149% review rate —
+  // the classic symptom, and the same truncation bug that made the day sheet lie.
+  async function page(table: string, select: string, apply: (q: any) => any): Promise<any[]> {
+    const out: any[] = []
+    for (let i = 0; i < 12; i++) {
+      const q = apply(db.from(table).select(select)).range(i * 1000, i * 1000 + 999)
+      const { data, error } = await q
+      if (error) break
+      const rows = (data || []) as any[]
+      out.push(...rows)
+      if (rows.length < 1000) break
+    }
+    return out
+  }
+  const [reviewRows, lRes, stayRows] = await Promise.all([
+    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,raw',
+      q => q.gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false })),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
-    // Review RATE needs the denominator: how many stays actually ended in the window.
-    db.from('guesty_reservations').select('id,listing_id,check_out,status')
-      .gte('check_out', from).lte('check_out', today).limit(6000),
+    // Review RATE needs a denominator: stays that ENDED early enough to have been reviewed. Guests
+    // take up to a fortnight to write one, so the window is shifted back rather than matched exactly.
+    page('guesty_reservations', 'id,listing_id,check_out,status',
+      q => q.gte('check_out', addDays(from, -14)).lte('check_out', addDays(today, -3)).order('check_out', { ascending: false })),
   ])
+  const rRes = { data: reviewRows }
+  const resRes = { data: stayRows }
 
   const lmap: Record<string, any> = {}
   for (const l of ((lRes.data || []) as any[])) {
     const name = l.nickname || l.title || 'Unit'
+    // The raw Guesty `building` field is per-listing text and produced 65 "buildings" — unusable as
+    // a grouping. buildingOf() is the same rollup the areas and glitch boards use.
     lmap[String(l.id)] = {
-      name, building: str(l.building) || 'Other',
+      name, building: buildingOf(str(l.building)) || buildingOf(name) || str(l.building) || 'Other',
       market: marketOf(l.building, l.address_city, name),
       active: str(l.status).trim().toLowerCase() === 'active',
     }
@@ -270,6 +288,7 @@ export async function GET(req: NextRequest) {
       awaitingReply: cur.filter(r => !r.has_reply).length,
       staysEnded: stays.length,
       reviewRate: stays.length ? round((overall.n / stays.length) * 100, 1) : null,
+      reviewRateNote: 'reviews received in this window against stays that ended in time to be reviewed',
     },
     months,
     buildings,
