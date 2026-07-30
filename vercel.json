@@ -33,6 +33,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/reservation-notices",
+      "schedule": "*/20 * * * *"
+    },
+    {
       "path": "/api/sync/owner-statements",
       "schedule": "20 * * * *"
     },
