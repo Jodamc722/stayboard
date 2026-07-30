@@ -12,6 +12,11 @@
 //   *   -> other       owner charges / channel-fee reimbursements
 //   net = rental - commission - other  (computed by the same running sum as the audit)
 //
+// One exception to the AF/CMS split, and it matters: see the PASS-THROUGH block below. A
+// reservation whose CMS total is ~100% of its AF total is a wash, not revenue with a fee on
+// it, and counting it as both overstated the rental and commission lines while leaving net
+// correct.
+//
 // Two findings from that audit are baked in and must not be undone:
 //   1. `dueToOwner` on a statement is a settlement BALANCE, not earnings. Of 59 owner-months
 //      that failed to tie on dueToOwner, 40 tie exactly against the PO total. So `net` is the
@@ -60,14 +65,84 @@ type LedgerRow = {
   entry_month: string | null
   charge_code: string | null
   amount: number | null
+  res?: string | null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PASS-THROUGH RESERVATIONS
+//
+// Guesty books some reservations as a matched pair on the same date, with
+// consecutive ledger ids: an AF "Net Rental Nightly Income" line, and a CMS
+// line ("Commission" by name, "Management fee" by description) of the same
+// amount with the opposite sign. The fee is 100% of the rental and the owner
+// nets zero. On 906/3 - Studio, reservation HMT8QTKCS4 is $6,887.76 of rental
+// against $6,887.76 of commission — 70 mirrored row pairs plus 172 adjustment
+// pairs that offset the same way.
+//
+// Because the two legs cancel, every statement still tied to Guesty's own
+// dueToOwner to the penny (906's owner: 0.00 delta in Dec, Jan and Feb) while
+// the rental and commission LINES were both overstated by the same amount.
+// That is what produced the $8,869 commission on a studio: not a Guesty error,
+// a parsing error here.
+//
+// Measured on the whole account:
+//   906/3 - Studio      42.75% -> 15.00% exactly
+//   units over 21%      11     -> 0
+//   of those 11, 10 land on exactly 15.0%; the eleventh on its own 7.9% rate
+//
+// The rows are NOT dropped. They are routed to `other`, where the two legs
+// cancel, so net is bit-for-bit unchanged and rental - commission + other
+// still holds by construction. Only the rental, commission and nights figures
+// change, and they change to the truth.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PASSTHRU_LO = 0.9        // CMS/AF at or above this is a fee, not a commission
+const PASSTHRU_HI = 1.1        // guard against anything stranger than a clean wash
+const PASSTHRU_FLOOR = 1       // ignore rounding-scale reservations
+export const PASSTHRU_LABEL = 'Pass-through reservations (rental fully offset by fee)'
+
+type PairRow = { listing_id?: string | null; charge_code: string | null; amount: number | null; res?: string | null }
+
+const pairKey = (r: PairRow) => String(r.listing_id || '') + '|' + String(r.res || '')
+
+/**
+ * The set of listing|reservation keys whose CMS total is ~100% of its AF total.
+ * Reservation-level, deliberately: matching individual rows on equal absolute
+ * amounts over-matches badly (it drags the account rate down to 8.96%, well
+ * under every contract rate) because it also cancels legitimate commission
+ * that happens to tie to a nightly figure. At reservation grain the separation
+ * is clean — 188 reservations across the account, and each flagged unit lands
+ * back on its own contract rate.
+ */
+function passthruKeys(rows: PairRow[]): Set<string> {
+  const acc: Record<string, { rental: number; cms: number }> = {}
+  for (const r of rows) {
+    if (!String(r.res || '')) continue      // an unlinked line can never be paired
+    const code = String(r.charge_code || '')
+    if (code !== 'AF' && code !== 'CMS') continue
+    const a = acc[pairKey(r)] || (acc[pairKey(r)] = { rental: 0, cms: 0 })
+    const amt = Number(r.amount) || 0
+    if (code === 'AF') a.rental -= amt
+    else a.cms += amt
+  }
+  const out = new Set<string>()
+  for (const k of Object.keys(acc)) {
+    const a = acc[k]
+    if (a.rental <= PASSTHRU_FLOOR) continue
+    const ratio = a.cms / a.rental
+    if (ratio >= PASSTHRU_LO && ratio <= PASSTHRU_HI) out.add(k)
+  }
+  return out
 }
 
 /** Running-sum accumulator, identical in behaviour to the audit's addTo(). */
-function accumulate(m: OwnerMonth, chargeCode: string, amount: number) {
+function accumulate(m: OwnerMonth, chargeCode: string, amount: number, passthru = false) {
   m.rows++
   if (chargeCode === 'PO') { m.paid = money(m.paid + amount); return }
-  if (chargeCode === 'AF') m.rental = money(m.rental - amount)
-  else if (chargeCode === 'CMS') m.commission = money(m.commission + amount)
+  // A pass-through leg falls through to `other`, where its partner cancels it.
+  const code = passthru && (chargeCode === 'AF' || chargeCode === 'CMS') ? '' : chargeCode
+  if (code === 'AF') m.rental = money(m.rental - amount)
+  else if (code === 'CMS') m.commission = money(m.commission + amount)
   else m.other = money(m.other - amount)
   m.net = money(m.net - amount)
 }
@@ -150,6 +225,12 @@ export async function listStatements(listingIds: string[], limit = 60): Promise<
   })
 }
 
+// The reservation code lives only inside raw, as an object — raw->>'reservationConfirmationCode'
+// hands back the whole JSON blob, so the scalar needs the ->'…'->>'title' path. There is no
+// reservation_id column on the table to use instead.
+const LEDGER_COLS = 'owner_id, listing_id, entry_month, charge_code, amount, res:raw->reservationConfirmationCode->>title'
+const LEDGER_COLS_PLAIN = 'owner_id, listing_id, entry_month, charge_code, amount'
+
 /**
  * Aggregate recognised ledger rows into owner-months. Filters are ANDed; every one is
  * optional. Orphan owner-months (earnings with no statement) come back too, flagged
@@ -165,22 +246,34 @@ export async function ownerMonths(opts: {
   const sb = supabaseAdmin()
   const rows: LedgerRow[] = []
   const PAGE = 1000
+  // Reservation code lives only inside raw — the table has no reservation_id column. If the
+  // mirror ever refuses the accessor we fall back to a plain select and skip the pass-through
+  // correction rather than losing the read: net is identical either way.
+  let paired = true
   for (let off = 0; off < 200_000; off += PAGE) {
-    let q = sb.from('guesty_owner_ledger')
-      .select('owner_id, listing_id, entry_month, charge_code, amount')
-      .eq('recognized', true)
-      .range(off, off + PAGE - 1)
-    if (opts.ownerIds?.length) q = q.in('owner_id', opts.ownerIds)
-    if (opts.listingIds?.length) q = q.in('listing_id', opts.listingIds)
-    if (opts.months?.length) q = q.in('entry_month', opts.months)
-    if (opts.from) q = q.gte('entry_month', opts.from)
-    if (opts.to) q = q.lte('entry_month', opts.to)
-    const { data, error } = await q
+    const run = (cols: string) => {
+      let q = sb.from('guesty_owner_ledger').select(cols)
+        .eq('recognized', true)
+        .range(off, off + PAGE - 1)
+      if (opts.ownerIds?.length) q = q.in('owner_id', opts.ownerIds)
+      if (opts.listingIds?.length) q = q.in('listing_id', opts.listingIds)
+      if (opts.months?.length) q = q.in('entry_month', opts.months)
+      if (opts.from) q = q.gte('entry_month', opts.from)
+      if (opts.to) q = q.lte('entry_month', opts.to)
+      return q
+    }
+    let { data, error } = await run(paired ? LEDGER_COLS : LEDGER_COLS_PLAIN)
+    if (error && paired) {
+      paired = false
+      ;({ data, error } = await run(LEDGER_COLS_PLAIN))
+    }
     if (error) throw new Error('ledger read: ' + error.message)
-    const batch = (data || []) as LedgerRow[]
+    const batch = (data || []) as unknown as LedgerRow[]
     rows.push(...batch)
     if (batch.length < PAGE) break
   }
+
+  const pt = paired ? passthruKeys(rows) : new Set<string>()
 
   const agg: Record<string, OwnerMonth> = {}
   for (const r of rows) {
@@ -188,7 +281,10 @@ export async function ownerMonths(opts: {
     const month = String(r.entry_month || '')
     if (!ownerId || !month) continue          // rows with a listing but no owner link are
     const key = ownerId + '|' + month         // real but unattributable; excluded by design
-    accumulate(agg[key] || (agg[key] = blank(ownerId, month)), String(r.charge_code || ''), Number(r.amount) || 0)
+    accumulate(
+      agg[key] || (agg[key] = blank(ownerId, month)),
+      String(r.charge_code || ''), Number(r.amount) || 0, pt.has(pairKey(r)),
+    )
   }
   const out = Object.values(agg)
   if (!out.length) return out
@@ -325,11 +421,20 @@ export type StatementDetail = {
   totals: { rental: number; commission: number; other: number; net: number; units: number }
   unattributed: number   // net sitting on the portfolio line
   named: boolean         // false when the mirror would not give us line names
+  // Present when pass-through reservations were found and held out of rental/commission.
+  // Optional so every existing caller keeps compiling and rendering unchanged.
+  passthru?: { reservations: number; rental: number }
 }
 
-type DetailRow = { listing_id: string | null; charge_code: string | null; amount: number | null; name?: string | null }
+type DetailRow = {
+  listing_id: string | null
+  charge_code: string | null
+  amount: number | null
+  name?: string | null
+  res?: string | null
+}
 
-const FEE_COLS = 'listing_id, charge_code, amount, raw->>name'
+const FEE_COLS = 'listing_id, charge_code, amount, raw->>name, res:raw->reservationConfirmationCode->>title'
 const FEE_COLS_PLAIN = 'listing_id, charge_code, amount'
 
 /**
@@ -366,6 +471,12 @@ export async function statementDetail(opts: { ownerIds: string[]; months: string
     if (batch.length < PAGE) break
   }
 
+  // Same reservation-level rule as ownerMonths, so the unit table and the month rollup can
+  // never disagree about what counts as revenue.
+  const pt = named ? passthruKeys(rows) : new Set<string>()
+  const ptRes = new Set<string>()
+  let ptRental = 0
+
   const PORTFOLIO = '__portfolio__'
   const byUnit: Record<string, UnitLine> = {}
   const byFee: Record<string, FeeLine> = {}
@@ -383,17 +494,27 @@ export async function statementDetail(opts: { ownerIds: string[]; months: string
       listingId: id, name: '', rental: 0, commission: 0, other: 0, net: 0, nights: 0, share: 0,
       portfolio: id === PORTFOLIO || undefined,
     })
-    if (code === 'AF') { u.rental = money(u.rental - amt); u.nights++; t.rental = money(t.rental - amt) }
-    else if (code === 'CMS') { u.commission = money(u.commission + amt); t.commission = money(t.commission + amt) }
+    // A pass-through leg is neither rental nor commission. Both legs land in `other`, where
+    // they cancel, so net is bit-for-bit what it was and rental - commission + other still
+    // holds. Nights are not incremented either: a washed reservation earned no night.
+    const isPt = (code === 'AF' || code === 'CMS') && pt.has(pairKey(r))
+    if (isPt) {
+      ptRes.add(pairKey(r))
+      if (code === 'AF') ptRental = money(ptRental - amt)
+    }
+
+    if (!isPt && code === 'AF') { u.rental = money(u.rental - amt); u.nights++; t.rental = money(t.rental - amt) }
+    else if (!isPt && code === 'CMS') { u.commission = money(u.commission + amt); t.commission = money(t.commission + amt) }
     else { u.other = money(u.other - amt); t.other = money(t.other - amt) }
     u.net = money(u.net - amt)
     t.net = money(t.net - amt)
 
-    const label = named ? String(r.name || '').trim() : ''
-    const key = (label || code || '(no code)') + '|' + code
+    const label = isPt ? PASSTHRU_LABEL : named ? String(r.name || '').trim() : ''
+    const feeCode = isPt ? 'PT' : code
+    const key = (label || feeCode || '(no code)') + '|' + feeCode
     const f = byFee[key] || (byFee[key] = {
-      label: label || code || 'Unclassified', code, rows: 0, amount: 0,
-      kind: code === 'AF' ? 'rental' : code === 'CMS' ? 'commission' : 'charge',
+      label: label || feeCode || 'Unclassified', code: feeCode, rows: 0, amount: 0,
+      kind: feeCode === 'AF' ? 'rental' : feeCode === 'CMS' ? 'commission' : 'charge',
     })
     f.rows++
     f.amount = money(f.amount - amt)
@@ -402,7 +523,8 @@ export async function statementDetail(opts: { ownerIds: string[]; months: string
   // Kind is decided on the TOTAL, not per row: a line that nets out as money arriving is a
   // credit even when individual entries swing both ways.
   for (const f of Object.values(byFee)) {
-    if (f.code === 'AF') f.kind = 'rental'
+    if (f.code === 'PT') f.kind = 'charge'      // a wash: both legs are already inside it
+    else if (f.code === 'AF') f.kind = 'rental'
     else if (f.code === 'CMS') f.kind = 'commission'
     else f.kind = f.amount >= 0 ? 'credit' : 'charge'
   }
@@ -417,6 +539,7 @@ export async function statementDetail(opts: { ownerIds: string[]; months: string
     totals: { ...t, units: units.filter(u => !u.portfolio).length },
     unattributed: byUnit[PORTFOLIO] ? byUnit[PORTFOLIO].net : 0,
     named,
+    passthru: ptRes.size ? { reservations: ptRes.size, rental: ptRental } : undefined,
   }
 }
 
