@@ -7,7 +7,7 @@ import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -28,6 +28,7 @@ const SECTIONS: {
     title: 'Guests',
     items: [
       { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
+      { to: '/reservation-emails', label: 'Reservation Emails', Icon: Mail },
       { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
