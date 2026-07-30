@@ -49,6 +49,12 @@ export default function DaySheetsPage() {
     setLoading(false)
   }, [])
   useEffect(() => { load(date, market) }, [date, market, load])
+  // Paper is always pulled fresh at the moment Print is pressed (see the button), but this page also
+  // gets left open on a monitor, so refresh it every 5 minutes while it is visible.
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load(date, market) }, 5 * 60 * 1000)
+    return () => clearInterval(t)
+  }, [date, market, load])
 
   const c = (d && d.counts) || {}
   const sync = (d && d.sync) || {}
@@ -114,7 +120,7 @@ export default function DaySheetsPage() {
           ))}
         </span>
         <button onClick={() => load(date, market)} className="ds-btn"><RefreshCw size={14} /> Refresh</button>
-        <button onClick={() => window.print()} className="ds-btn ds-btn-dark"><Printer size={14} /> Print {active.length} sheet{active.length === 1 ? '' : 's'}</button>
+        <button onClick={async () => { await load(date, market); setTimeout(() => window.print(), 250) }} className="ds-btn ds-btn-dark"><Printer size={14} /> Print {active.length} sheet{active.length === 1 ? '' : 's'}</button>
         {loading && <span className="ds-muted">Building…</span>}
         {err && <span className="ds-err">{err}</span>}
       </div>
