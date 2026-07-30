@@ -534,6 +534,35 @@ async function copyText(t: string): Promise<boolean> {
   }
 }
 
+// WHAT DID WE SEE LAST TIME WE WERE IN HERE? The coordinator's own inspection notes, on the unit,
+// next to the tasks — so a pattern ("third time the mirrors") is visible at the moment somebody is
+// deciding what to do about this unit today.
+function UnitInspections({ unit }: { unit: string }) {
+  const [rows, setRows] = useState<any[]>([])
+  useEffect(() => {
+    let dead = false
+    fetch('/api/inspections?days=180&unit=' + encodeURIComponent(unit), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { if (!dead && j && j.ok) setRows((j.rows || []).slice(0, 3)) }).catch(() => {})
+    return () => { dead = true }
+  }, [unit])
+  if (!rows.length) return null
+  return (
+    <div className="mb-2 bg-white border border-line rounded-md px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1">Last inspections</div>
+      {rows.map(r => (
+        <div key={r.id} className="text-[12px] text-ink py-0.5">
+          <span className="text-muted">{String(r.inspected_on).slice(5)}</span>
+          {r.rating != null && <span className={'ml-1.5 font-semibold ' + (r.rating <= 2 ? 'text-rose-700' : r.rating === 3 ? 'text-amber-700' : 'text-emerald-700')}>{r.rating}/5</span>}
+          {r.cleaner && <span className="text-muted"> {'\u00b7'} {r.cleaner}</span>}
+          {r.follow_up && !r.taskId && <span className="ml-1.5 text-[9.5px] uppercase font-bold px-1 py-0.5 rounded bg-amber-500 text-white">open</span>}
+          <div className="text-muted">{String(r.notes).slice(0, 140)}</div>
+        </div>
+      ))}
+      <a href="/inspections" className="text-[11px] font-semibold text-ink underline">Log another {'\u2192'}</a>
+    </div>
+  )
+}
+
 // Two buttons, one decision each: send someone, or tell someone.
 function ReviewActions({ unit, rev }: { unit: string; rev: any }) {
   const [copied, setCopied] = useState<'msg' | 'sms' | null>(null)
@@ -626,6 +655,8 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
           </div>
         </div>
       )}
+
+      <UnitInspections unit={unit} />
 
       {s.review && (
         <div className="mb-2 text-[12px] bg-white border border-rose-200 rounded-md px-2 py-1.5">

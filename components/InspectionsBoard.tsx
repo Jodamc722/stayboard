@@ -9,6 +9,25 @@ type Row = any
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 const pretty = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 
+// DIRECT THE TEAM. A note nobody acts on is a diary entry. Every inspection gets an explicit next
+// step, decided by the score and whether it was flagged — so the coordinator does not have to.
+function nextStep(r: any): { text: string; tone: 'bad' | 'warn' | 'ok'; task?: { title: string; department: string; priority: string } } {
+  const rating = r.rating == null ? null : Number(r.rating)
+  if (rating != null && rating <= 2) return {
+    text: 'Re-clean this unit before the next guest arrives.', tone: 'bad',
+    task: { title: 'Re-clean — failed inspection', department: 'housekeeping', priority: 'high' },
+  }
+  if (r.follow_up) return {
+    text: 'Raise a task and put a name on it.', tone: 'warn',
+    task: { title: 'Follow-up from inspection', department: 'maintenance', priority: 'normal' },
+  }
+  if (rating === 3) return {
+    text: 'Spot-check ' + (r.cleaner ? r.cleaner + "'s" : 'the') + ' next turn in this unit and talk it through.', tone: 'warn',
+    task: { title: 'Quality spot-check', department: 'inspection', priority: 'normal' },
+  }
+  return { text: 'Nothing to do — logged for training.', tone: 'ok' }
+}
+
 export function InspectionsBoard() {
   const [rows, setRows] = useState<Row[]>([])
   const [cleaners, setCleaners] = useState<any[]>([])
@@ -178,12 +197,81 @@ export function InspectionsBoard() {
                     {r.inspector && <span className="ml-auto text-[11px] text-muted">{r.inspector}</span>}
                   </div>
                   <div className="text-[12.5px] text-ink mt-1 whitespace-pre-wrap">{r.notes}</div>
+                  <ActRow r={r} people={people} onDone={load} />
                 </div>
               ))}
             </div>
           </div>
         ))}
       </section>
+    </div>
+  )
+}
+
+
+// The bridge between "I saw something" and "someone is doing something about it". Creating the task
+// here writes the same Breezeway task Today in Ops would, carrying the inspection notes across, and
+// the row then shows the link so nobody raises it twice.
+function ActRow({ r, people, onDone }: { r: any; people: string[]; onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [date, setDate] = useState(todayET())
+  const [who, setWho] = useState(r.cleaner || '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const step = nextStep(r)
+  const tone = step.tone === 'bad' ? 'text-rose-700' : step.tone === 'warn' ? 'text-amber-700' : 'text-muted'
+
+  const create = async () => {
+    if (!step.task) return
+    setBusy(true); setErr('')
+    try {
+      const description = 'Raised from an inspection on ' + r.inspected_on + (r.cleaner ? ' (cleaned by ' + r.cleaner + ')' : '')
+        + (r.rating != null ? ' — scored ' + r.rating + '/5' : '') + '.\n\nWhat was found:\n' + r.notes
+      const pr = await fetch('/api/breezeway/people', { cache: 'no-store' }).then(x => x.json()).catch(() => null)
+      const match = ((pr?.people || pr || []) as any[]).find((p: any) => String(p.name || '').toLowerCase() === who.trim().toLowerCase())
+      const res = await fetch('/api/ops-today/add-task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: r.listing_id, title: step.task.title + ' — ' + r.unit,
+          department: step.task.department, priority: step.task.priority,
+          description, date, assigneeIds: match ? [match.id] : [],
+        }),
+      })
+      const j = await res.json()
+      if (!j.ok && !j.task) throw new Error(j.error || 'Could not create the task')
+      const taskId = String(j.taskId || j.task?.id || j.id || '')
+      if (taskId) await fetch('/api/inspections', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: r.id, taskId }) })
+      setOpen(false); onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+
+  return (
+    <div className="mt-1.5 pt-1.5 border-t border-line/60">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={'text-[11.5px] font-semibold ' + tone}>{'\u2192'} {step.text}</span>
+        {r.taskId ? (
+          <a href={'https://app.breezeway.io/task/' + r.taskId} target="_blank" rel="noreferrer"
+            className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">Task raised {'\u2197'}</a>
+        ) : step.task ? (
+          <button onClick={() => setOpen(!open)} className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white border border-line hover:bg-slate-50">{open ? 'Cancel' : 'Create the task'}</button>
+        ) : null}
+        {err && <span className="text-[11px] text-rose-700">{err}</span>}
+      </div>
+      {open && step.task && (
+        <div className="mt-1.5 flex flex-wrap items-end gap-2 bg-slate-50 border border-line rounded-md p-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-muted font-semibold">When</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value || todayET())} className="text-[12.5px] border border-line rounded-md px-2 py-1" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-muted font-semibold">Who</label>
+            <input list="insp-people" value={who} onChange={e => setWho(e.target.value)} placeholder="leave blank to assign later" className="text-[12.5px] border border-line rounded-md px-2 py-1 w-56" />
+          </div>
+          <div className="text-[11px] text-muted pb-1">{step.task.title} {'\u00b7'} {step.task.department}</div>
+          <button onClick={create} disabled={busy} className="ml-auto text-[12px] font-semibold px-3 py-1.5 rounded-md bg-ink text-white disabled:opacity-50">{busy ? 'Creating…' : 'Create in Breezeway'}</button>
+        </div>
+      )}
     </div>
   )
 }
