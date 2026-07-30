@@ -8,6 +8,7 @@ import { ReviewVoiceAdmin } from '@/components/ReviewVoiceAdmin'
 import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
 import { ParAdmin } from '@/components/ParAdmin'
 import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
+import { ReservationEmailsAdmin } from '@/components/ReservationEmailsAdmin'
 import { ShareLinksCard } from '@/components/ShareLinksCard'
 import { ShieldAlert } from 'lucide-react'
 import { redirect } from 'next/navigation'
@@ -34,6 +35,7 @@ export default async function UsersPage() {
           <ParAdmin isOwner={isSuperadmin(access.email)} />
           <ApprovalLimitsAdmin isOwner={isSuperadmin(access.email)} />
           <ReviewVoiceAdmin />
+          <ReservationEmailsAdmin isOwner={isSuperadmin(access.email)} />
           <ShareLinksCard />
         </div>
       )}
