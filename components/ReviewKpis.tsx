@@ -28,6 +28,11 @@ export function ReviewKpis() {
   const [days, setDays] = useState(90)
   const [market, setMarket] = useState('all')
   const [building, setBuilding] = useState('all')
+  const [channel, setChannel] = useState('all')
+  // An explicit range beats a rolling window when you are looking at a specific month or a period
+  // you are being asked about. Setting either date switches the whole page onto that range.
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [tab, setTab] = useState<'units' | 'buildings' | 'why' | 'cleaners'>('units')
   const [d, setD] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -36,13 +41,15 @@ export function ReviewKpis() {
   const load = useCallback(async () => {
     setLoading(true); setErr('')
     try {
-      const r = await fetch('/api/reviews/kpi?days=' + days + '&market=' + encodeURIComponent(market) + '&building=' + encodeURIComponent(building), { cache: 'no-store' })
+      const range = from && to ? '&from=' + from + '&to=' + to : ''
+      const r = await fetch('/api/reviews/kpi?days=' + days + '&market=' + encodeURIComponent(market)
+        + '&building=' + encodeURIComponent(building) + '&channel=' + encodeURIComponent(channel) + range, { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load the review numbers')
       setD(j)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setLoading(false)
-  }, [days, market, building])
+  }, [days, market, building, channel, from, to])
   useEffect(() => { load() }, [load])
 
   const h = (d && d.headline) || {}
@@ -59,6 +66,10 @@ export function ReviewKpis() {
             <button key={p.d} onClick={() => setDays(p.d)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (days === p.d ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{p.l}</button>
           ))}
         </div>
+        <select value={channel} onChange={e => setChannel(e.target.value)} className="text-[12px] border border-line rounded-md px-2 py-1 bg-white">
+          <option value="all">All channels</option>
+          {(d?.channelList || []).map((c: string) => <option key={c} value={c}>{c}</option>)}
+        </select>
         <select value={market} onChange={e => { setMarket(e.target.value); setBuilding('all') }} className="text-[12px] border border-line rounded-md px-2 py-1 bg-white">
           <option value="all">All markets</option>
           {(d?.markets || []).map((m: string) => <option key={m} value={m}>{m}</option>)}
@@ -67,9 +78,24 @@ export function ReviewKpis() {
           <option value="all">All buildings</option>
           {(d?.buildingList || []).map((b: string) => <option key={b} value={b}>{b}</option>)}
         </select>
+        <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="text-[12px] border border-line rounded-md px-1.5 py-1 bg-white" />
+          <span>to</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} className="text-[12px] border border-line rounded-md px-1.5 py-1 bg-white" />
+          {(from || to) && <button onClick={() => { setFrom(''); setTo('') }} className="text-[11px] font-semibold text-ink underline">clear</button>}
+        </span>
         {loading && <span className="text-[11px] text-muted">Working…</span>}
         {err && <span className="text-[11px] text-rose-700">{err}</span>}
       </div>
+
+      {d && (
+        <div className="text-[11.5px] text-muted mb-2">
+          {(from && to) ? 'Reviews received ' + from + ' to ' + to : 'Reviews received in the last ' + d.days + ' days'}
+          {' '}({d.from} {'\u2192'} {d.to}), compared with the {d.days} days before that.
+          {channel !== 'all' ? ' ' + channel + ' only.' : ''}
+          {market !== 'all' ? ' ' + market + '.' : ''}{building !== 'all' ? ' ' + building + '.' : ''}
+        </div>
+      )}
 
       {/* HEADLINE — five-star share leads, average sits beside it */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
@@ -118,7 +144,11 @@ export function ReviewKpis() {
               </div>
             ))}
           </div>
-          <div className="text-[10.5px] text-muted mt-1">Bar height is five-star share; the number above each bar is the average.</div>
+          <div className="text-[10.5px] text-muted mt-1">
+            Each bar is one month: height and colour are the five-star share (green 80%+, amber 65%+, red below),
+            the number above is the average, the number below is how many reviews it is based on. A month with a
+            handful of reviews will swing — check the count before reading anything into it.
+          </div>
         </div>
       )}
 
