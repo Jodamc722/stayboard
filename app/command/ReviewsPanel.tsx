@@ -377,37 +377,82 @@ export function ReviewsPanel() {
 }
 
 
-// A reply is only half the answer. If a guest said the unit was dirty, somebody has to go and look
-// at it — so the review row can raise the Breezeway task itself, with a date and a name on it, and
-// hand you a message to paste to whoever needs to know.
+// A reply is only half the answer. A bad review usually needs two more things: somebody to go and
+// look at the unit, and somebody TOLD — the field team, or the owner. Both are written here, because
+// composing them by hand is exactly the friction that stops it happening.
+type Audience = 'team' | 'owner' | 'cleaner'
+
+function draftFor(a: Audience, r: Review): string {
+  const unit = r.listing_name || 'the unit'
+  const stars = r.rating != null ? r.rating + '-star' : 'low'
+  const when = r.created_at ? ' on ' + new Date(String(r.created_at)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+  const via = r.channel ? ' (' + r.channel + ')' : ''
+  const quote = r.content ? '\n\n"' + String(r.content).trim().replace(/\s+/g, ' ').slice(0, 500) + '"' : ''
+
+  if (a === 'owner') return [
+    'Hi — wanted to flag a guest review on ' + unit + when + via + '.',
+    quote,
+    '\n\nWe have scheduled an inspection of the unit and will confirm once anything raised has been',
+    ' addressed. I will follow up with what we find and what we have done about it.',
+  ].join('')
+
+  if (a === 'cleaner') return [
+    'Hi — a guest left a ' + stars + ' review on ' + unit + when + ' and mentioned the following:',
+    quote,
+    '\n\nNothing to worry about, but can we go over this together so we know what to look for on the',
+    ' next turn there? I will walk it with you if that is easier.',
+  ].join('')
+
+  return [
+    '*' + unit + '* — ' + stars + ' review' + (r.guest ? ' from ' + r.guest : '') + when + via + '.',
+    quote,
+    '\n\nCan someone walk the unit before the next guest and confirm this is sorted? Reply here with what you find.',
+  ].join('')
+}
+
 function ReviewFollowUp({ r }: { r: Review }) {
-  const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<'' | 'task' | 'share'>('')
+  const [audience, setAudience] = useState<Audience>('team')
+  const [text, setText] = useState('')
   const [date, setDate] = useState(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()))
   const [who, setWho] = useState('')
   const [people, setPeople] = useState<any[]>([])
+  const [owner, setOwner] = useState<{ name: string | null; email: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
+  const [note, setNote] = useState('')
   const [err, setErr] = useState('')
-  const [copied, setCopied] = useState(false)
 
+  useEffect(() => { setText(draftFor(audience, r)) }, [audience, r])
+  // Look the owner up as soon as the owner draft is chosen, so Email opens already addressed.
   useEffect(() => {
-    if (!open || people.length) return
+    if (audience !== 'owner' || owner || !r.listingId) return
+    fetch('/api/reviews/share?listingId=' + encodeURIComponent(r.listingId), { cache: 'no-store' })
+      .then(x => x.json()).then(j => setOwner(j?.owner || { name: null, email: null })).catch(() => {})
+  }, [audience, owner, r.listingId])
+  useEffect(() => {
+    if (mode !== 'task' || people.length) return
     fetch('/api/breezeway/people', { cache: 'no-store' }).then(x => x.json())
       .then(j => setPeople(((j?.people || j || []) as any[]).filter((p: any) => p && p.name))).catch(() => {})
-  }, [open, people.length])
+  }, [mode, people.length])
 
-  const message = [
-    (r.listing_name || 'A unit') + ' — ' + (r.rating != null ? r.rating + '-star review' : 'low review')
-      + (r.guest ? ' from ' + r.guest : '') + (r.channel ? ' (' + r.channel + ')' : '') + '.',
-    r.content ? '\n\n"' + String(r.content).trim().replace(/\s+/g, ' ').slice(0, 400) + '"' : '',
-    '\n\nCan we walk the unit before the next guest and confirm this is fixed? Reply here with what you find.',
-  ].join('')
+  const flash = (m: string) => { setNote(m); setTimeout(() => setNote(''), 2200) }
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(message); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { setErr('Could not copy') }
+    try { await navigator.clipboard.writeText(text); flash('Copied — paste it wherever you need it') }
+    catch { setErr('Could not copy — select the text and copy it manually') }
   }
-
-  const create = async () => {
+  const toSlack = async () => {
+    setBusy(true); setErr('')
+    try {
+      const res = await fetch('/api/reviews/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+      const j = await res.json()
+      if (j.ok) flash('Sent to Slack')
+      else setErr(j.error || 'Could not send')
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const createTask = async () => {
     setBusy(true); setErr('')
     try {
       const match = people.find((p: any) => String(p.name).toLowerCase() === who.trim().toLowerCase())
@@ -418,35 +463,39 @@ function ReviewFollowUp({ r }: { r: Review }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           listingId: r.listingId, title: 'Guest-feedback inspection — ' + (r.listing_name || 'unit'),
-          department: 'inspection', priority: 'normal', description, date,
-          assigneeIds: match ? [match.id] : [],
+          department: 'inspection', priority: 'normal', description, date, assigneeIds: match ? [match.id] : [],
         }),
       })
       const j = await res.json()
       if (!j.ok && !j.task && !j.taskId) throw new Error(j.error || 'Could not create the task')
-      setDone(String(j.taskId || j.task?.id || '') || 'created')
-      setOpen(false)
+      setDone(String(j.taskId || j.task?.id || '') || 'created'); setMode('')
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
 
   if (!r.listingId && !done) return null
+  const tab = (k: Audience, label: string) => (
+    <button key={k} onClick={() => setAudience(k)}
+      className={`text-[11px] font-semibold px-2 py-1 rounded-md border ${audience === k ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:bg-app'}`}>{label}</button>
+  )
+
   return (
     <div className="mt-2 pt-2 border-t border-line/60">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-muted font-semibold">Follow up</span>
+        <span className="text-[10px] uppercase tracking-wide text-muted font-semibold">Do something about it</span>
         {done ? (
           done !== 'created'
             ? <a href={'https://app.breezeway.io/task/' + done} target="_blank" rel="noreferrer" className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">Task created {'\u2197'}</a>
             : <span className="text-[11px] font-semibold text-emerald-700">Task created</span>
         ) : (
-          <button onClick={() => setOpen(!open)} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">{open ? 'Cancel' : 'Create inspection task'}</button>
+          <button onClick={() => setMode(mode === 'task' ? '' : 'task')} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">Push to Breezeway</button>
         )}
-        <button onClick={copy} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">{copied ? 'Copied \u2713' : 'Copy message'}</button>
-        <a href={'sms:?&body=' + encodeURIComponent(message)} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">Text it</a>
+        <button onClick={() => setMode(mode === 'share' ? '' : 'share')} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">Draft a message</button>
+        {note && <span className="text-[11px] font-semibold text-emerald-700">{note}</span>}
         {err && <span className="text-[11px] text-red-700">{err}</span>}
       </div>
-      {open && (
+
+      {mode === 'task' && (
         <div className="mt-2 flex flex-wrap items-end gap-2 bg-app border border-line rounded-lg p-2">
           <div>
             <label className="block text-[10px] uppercase tracking-wide text-muted font-semibold">When</label>
@@ -457,7 +506,33 @@ function ReviewFollowUp({ r }: { r: Review }) {
             <input list="rev-people" value={who} onChange={e => setWho(e.target.value)} placeholder="leave blank to assign later" className="text-xs border border-line rounded-md px-2 py-1 bg-white w-56" />
             <datalist id="rev-people">{people.map((p: any) => <option key={p.id} value={p.name} />)}</datalist>
           </div>
-          <button onClick={create} disabled={busy} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">{busy ? 'Creating…' : 'Create in Breezeway'}</button>
+          <span className="text-[10px] text-muted pb-1">Guest-feedback inspection {'\u00b7'} inspection</span>
+          <button onClick={createTask} disabled={busy} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">{busy ? 'Creating…' : 'Create in Breezeway'}</button>
+        </div>
+      )}
+
+      {mode === 'share' && (
+        <div className="mt-2 bg-app border border-line rounded-lg p-2">
+          <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-muted font-semibold mr-1">Written for</span>
+            {tab('team', 'The team')}{tab('owner', 'The owner')}{tab('cleaner', 'The cleaner')}
+          </div>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={6}
+            className="w-full text-xs text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            <button onClick={copy} className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-ink text-white">Copy</button>
+            <button onClick={toSlack} disabled={busy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white disabled:opacity-50">{busy ? 'Sending…' : 'Send to Slack'}</button>
+            <a href={'sms:?&body=' + encodeURIComponent(text)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white">Text it</a>
+            <a href={'mailto:' + (audience === 'owner' && owner?.email ? owner.email : '') + '?subject=' + encodeURIComponent((r.listing_name || 'Unit') + ' — guest review') + '&body=' + encodeURIComponent(text)}
+              className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white">Email it</a>
+            {audience === 'owner' && (
+              <span className="text-[10px] text-muted">
+                {owner?.email ? 'Email opens addressed to ' + (owner.name ? owner.name + ' (' + owner.email + ')' : owner.email) + '.'
+                  : owner ? 'No owner email on file for this unit — add it in Guesty and it will fill itself in.' : 'Looking up the owner…'}
+              </span>
+            )}
+            <span className="text-[10px] text-muted">Edit it first if you want — nothing sends until you press a button.</span>
+          </div>
         </div>
       )}
     </div>
