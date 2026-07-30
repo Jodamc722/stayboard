@@ -493,6 +493,11 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       'Two separate cleans are on this unit today: ' + dc.a + ' and ' + dc.b + '.',
       'One is probably a duplicate — cancel the extra so two cleaners are not sent.')
 
+    // A background feed that quietly stopped is invisible until something looks wrong on the floor.
+    const deadFeeds = (sync.feeds || []).filter((f: any) => f.entity !== 'auth' && (f.ageMin == null || f.ageMin > 24 * 60))
+    if (deadFeeds.length) add('med', 'A background sync has stopped', '—',
+      deadFeeds.map((f: any) => f.entity + ' (' + (f.ageMin == null ? 'never' : Math.round(f.ageMin / 60) + 'h ago') + ')').join(', ') + '.',
+      'Bookings and tasks are still current, but unit names, door codes and reviews may be out of date. Tell Jon.')
     if (unknownListings.size) add('high', 'Booking on an unknown unit', '—',
       unknownListings.size + ' booking' + (unknownListings.size === 1 ? '' : 's') + ' point at a listing that is not in our listing list, so the unit name, door code and address are missing.',
       'Re-sync listings from Guesty; if it persists the listing was deleted or renamed.')
