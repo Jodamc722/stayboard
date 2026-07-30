@@ -410,6 +410,20 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       d.sameDayIn = arr ? (arr.checkInTime || '4:00 PM') : null
       d.sameDayNights = arr ? arr.nights : null
       d.lastTouch = lastTouchOf[lid] || null
+
+      // ONE WORD FOR WHERE THIS UNIT STANDS. The sheet made you assemble this out of four columns
+      // and a sentence — who the cleaner is, what time checkout is, and prose in the arrivals
+      // column. It is the first question anyone asks, so it is now the first thing on the row, from
+      // a fixed vocabulary that reads the same on every sheet.
+      d.status = d.extension ? 'STAYING ON'
+        : d.sameDayTurn ? (d.clean && d.clean.status === 'done' ? 'READY' : 'TURNING')
+        : (d.clean && d.clean.status === 'done') ? 'READY'
+        : 'CHECKING OUT'
+      // NEXT GUEST is one kind of fact: a time if they arrive today, otherwise a date, otherwise
+      // nothing booked. It used to hold four different kinds of thing in the same column.
+      d.nextGuest = d.sameDayTurn && !d.extension ? (d.sameDayIn || '4:00 PM') + ' today'
+        : d.nextArrival ? new Date(d.nextArrival + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : null
     }
     for (const a of arrivals) {
       const dep = departures.find(d => d.listingId === a.listingId)
@@ -425,6 +439,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       a.lastClean = cl                                     // the last actual clean
       a.lastCleanedAt = cl ? cl.at : null                  // kept for older callers
       // Why is there no answer? An honest reason beats a blank.
+      a.status = a.extension ? 'STAYING ON' : a.cleanToday ? 'TURNING' : 'ARRIVING'
       a.lastTouchReason = touch ? null
         : a.vendor ? 'vendor'                              // vendor cleans it, nothing lands in Breezeway
         : !touchLookupOk ? 'lookup-failed'                 // say so rather than imply neglect
@@ -447,6 +462,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
           nextArrival: na, daysUntilArrival: na ? daysBetween(date, na) : null,
           arrivingSoon: !!(na && daysBetween(date, na) <= 3),
           departedToday: checkoutIds.has(id),
+          status: 'AVAILABLE',
           lastTouch: touch, lastTouchAt: touch ? touch.at : null,
           idleDays: touch ? touch.daysAgo : null,
           vendor: lmap[id].vendor || null, address: lmap[id].address || null,
