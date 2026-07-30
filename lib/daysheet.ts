@@ -568,7 +568,11 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
 
     // One row per unit rather than one per task: a unit with four open jobs was printing four
     // near-identical "guest in house" lines.
-    const guestInHouse: Record<string, { unit: string; jobs: string[] }> = {}
+    // Not every job means walking into somebody's living room. Trash rounds, hallways, the pool and
+    // the grounds happen around a guest, not through them — 30 rows of "call before entering" for
+    // common-area work is how a real warning gets skimmed past.
+    const COMMON_AREA = /common area|hallway|corridor|exterior|lobby|garage|grounds|landscap|pool|stairwell|elevator|building check|trash (pickup|round|check)/i
+    const guestInHouse: Record<string, { unit: string; jobs: string[]; urgent: boolean }> = {}
     const unassigned: Record<string, { unit: string; jobs: string[] }> = {}
     const occupiedNow = new Set(Object.keys(occupied))
     for (const w of work) {
@@ -584,14 +588,16 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       // "call before entering" warning is noise.
       const dep = departures.find(x => x.listingId === lid)
       const guestLeft = !!dep && !dep.extension && nowMin >= (minutesOfDay(dep.checkOutTime) ?? 11 * 60) + GRACE
-      if (w.status !== 'done' && !guestLeft && lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
-        (guestInHouse[lid] = guestInHouse[lid] || { unit: w.unit, jobs: [] }).jobs.push(w.label || w.name)
+      if (w.status !== 'done' && !guestLeft && !COMMON_AREA.test(str(w.name)) && lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
+        (guestInHouse[lid] = guestInHouse[lid] || { unit: w.unit, jobs: [], urgent: false }).jobs.push(w.label || w.name)
+        // A repair is a different conversation from a routine look-round.
+        if (/repair|fix|leak|broken|replace|install|a\/?c|plumb|electric|glitch|guest reported/i.test(str(w.name))) guestInHouse[lid].urgent = true
       }
     }
     const jobList = (j: string[]) => j.slice(0, 4).join(', ') + (j.length > 4 ? ' and ' + (j.length - 4) + ' more' : '')
     for (const k of Object.keys(guestInHouse)) {
       const g = guestInHouse[k]
-      add('high', 'Guest is still in the unit', g.unit,
+      add(g.urgent ? 'high' : 'med', 'Guest is still in the unit', g.unit,
         g.jobs.length + (g.jobs.length === 1 ? ' job is' : ' jobs are') + ' booked while the guest is in house: ' + jobList(g.jobs) + '.',
         'Call or message the guest before anyone enters.')
     }
