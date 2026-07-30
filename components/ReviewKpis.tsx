@@ -197,7 +197,7 @@ export function ReviewKpis() {
             A low score can be a bad clean or a broken A/C — open the reviews before drawing a conclusion.
             Anyone under {d.minTurns} turns is listed but not ranked.
           </div>
-          {(d.cleaners || []).map((c: any) => (
+          {[...(d.cleaners || [])].sort((a: any, b: any) => (a.ranked === b.ranked ? a.score - b.score : a.ranked ? -1 : 1)).map((c: any) => (
             <div key={c.name} className="border border-line rounded-lg px-3 py-2 mb-1.5">
               <div className="flex items-center gap-2">
                 <div className="font-semibold text-ink text-[13px]">{c.name}</div>
