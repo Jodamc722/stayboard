@@ -507,6 +507,46 @@ const TEMPLATES: { key: string; label: string; department: string; priority: str
   { key: 'deepclean', label: 'Deep clean', department: 'housekeeping', priority: 'normal', title: 'Deep Clean', base: 'Deep clean (beyond the turnover standard): inside appliances, behind and under furniture, grout and caulk, vents, baseboards, windows and tracks, upholstery and mattress protectors.' },
 ]
 
+// COPY AND SEND. A bad review usually needs two things: a task for the field, and a message to a
+// person — the owner, the GM, the cleaner's lead — pasted into Slack or a text. Building that by
+// hand from the review panel is exactly the friction that stops it happening, so the board writes
+// it. Plain text, no markdown, because it has to survive SMS as well as Slack.
+function reviewMessage(unit: string, rev: any): string {
+  const stars = (rev.rating != null ? rev.rating + '-star' : 'low') + ' review'
+  const when = rev.at ? ' on ' + new Date(String(rev.at) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+  const who = rev.guest ? ' from ' + rev.guest : ''
+  const via = rev.channel ? ' (' + rev.channel + ')' : ''
+  const quote = rev.excerpt ? '\n\n"' + String(rev.excerpt).trim().replace(/\s+/g, ' ').slice(0, 400) + '"' : ''
+  return [
+    unit + ' — ' + stars + who + when + via + '.',
+    quote,
+    '\n\nCan we walk the unit before the next guest and confirm this is fixed? Reply here with what you find.',
+  ].join('')
+}
+async function copyText(t: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(t); return true } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta); ta.select()
+      const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok
+    } catch { return false }
+  }
+}
+
+// Two buttons, one decision each: send someone, or tell someone.
+function ReviewActions({ unit, rev }: { unit: string; rev: any }) {
+  const [copied, setCopied] = useState<'msg' | 'sms' | null>(null)
+  const msg = reviewMessage(unit, rev)
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5 items-center">
+      <button onClick={async () => { const ok = await copyText(msg); setCopied(ok ? 'msg' : null); setTimeout(() => setCopied(null), 2000) }} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-white border border-line text-ink hover:bg-slate-50">{copied === 'msg' ? 'Copied \u2713' : 'Copy message'}</button>
+      <a href={'sms:?&body=' + encodeURIComponent(msg)} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-white border border-line text-ink hover:bg-slate-50">Text it</a>
+      <span className="text-[10.5px] text-muted">paste into Slack, or send as a text {'\u2014'} the inspection task is the button below</span>
+    </div>
+  )
+}
+
 // A signal is something the board noticed on its own. Each one is a CHIP on the unit header that
 // opens the action panel pre-loaded with the right task - see it, decide, schedule it, move on.
 function SignalChips({ s, onAct }: { s: any; onAct: (seed: any) => void }) {
@@ -592,6 +632,7 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
           <span className="font-semibold text-rose-700">{s.review.rating}{'\u2605'}</span>
           <span className="text-muted"> {'\u00b7'} {s.review.at}{s.review.guest ? ' \u00b7 ' + s.review.guest : ''}{s.review.channel ? ' \u00b7 ' + s.review.channel : ''}</span>
           {s.review.excerpt && <div className="text-ink mt-0.5">{'\u201c'}{s.review.excerpt}{'\u201d'}</div>}
+          <ReviewActions unit={unit} rev={s.review} />
         </div>
       )}
 

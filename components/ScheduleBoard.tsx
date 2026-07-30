@@ -213,6 +213,12 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       setOverrides({}); setCleared({}); setPushMsg(null)
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
   }
+  // Two people planning the same day used to work from whatever each had loaded. Refresh in the
+  // background every 5 minutes, but only when the tab is visible and nothing is mid-edit.
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load(view, date) }, 5 * 60 * 1000)
+    return () => clearInterval(t)
+  }, [view, date])
   useEffect(() => { const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); setView('day'); setDate(_d); load('day', _d) }, [])
 
   async function sync() {
