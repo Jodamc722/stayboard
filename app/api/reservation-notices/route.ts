@@ -71,17 +71,23 @@ export async function GET(req: NextRequest) {
   for (const p of properties) byId[p.id] = p
 
   const sp = req.nextUrl.searchParams
-  const showSent = sp.get('sent') === '1'
   const q = trimmed(sp.get('q'), 80).toLowerCase()
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  const back = new Date(); back.setDate(back.getDate() - 60)
+  const floor = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(back)
 
   try {
-    let query = supabaseAdmin().from(TABLE).select('*').is('deleted_at', null).limit(1000)
-    // Open work reads soonest-arrival-first (what to do next); history reads newest-first.
-    query = showSent
-      ? query.not('sent_at', 'is', null).order('sent_at', { ascending: false })
-      : query.is('sent_at', null).order('arrival_date', { ascending: true })
-
-    const { data, error } = await query
+    // ONE fetch, split into Today and Upcoming below.
+    //
+    // The window is bounded at 60 days back so sent history cannot grow without limit, but note
+    // what survives the filter afterwards: today's notices (sent or not) AND anything older that
+    // was never sent. A missed notice from a previous day must never quietly disappear — that is
+    // the exact failure this whole screen exists to catch.
+    const { data, error } = await supabaseAdmin().from(TABLE).select('*')
+      .is('deleted_at', null)
+      .gte('arrival_date', floor)
+      .order('arrival_date', { ascending: true })
+      .limit(1000)
     // The table only exists after migration 015 — say so plainly instead of throwing a 500.
     if (error) {
       return NextResponse.json({
@@ -103,6 +109,9 @@ export async function GET(req: NextRequest) {
         leadHours: p ? p.leadHours : null,
         urgency: p ? urgencyOf(r as Notice, p.leadHours, now) : 'upcoming',
         attach: p ? p.attachPdf : false,
+        // Only auto-build where the building actually wants a form AND auto-build is left on.
+        autoBuild: !!(p && p.attachPdf && p.autoBuildForm),
+        propertyOrder: p ? properties.findIndex(x => x.id === p.id) : 999,
         hasRecipient: !!(p && p.to.trim()),
         draft,
       }
@@ -112,14 +121,29 @@ export async function GET(req: NextRequest) {
       rows = rows.filter(r => (str(r.guest_name) + ' ' + str(r.unit_no) + ' ' + str(r.propertyName) + ' ' + str(r.confirmation_code)).toLowerCase().includes(q))
     }
 
-    const open = rows.filter(r => !r.sent_at)
+    const onDay = (r: any) => String(r.arrival_date || '').slice(0, 10)
+    // TODAY = arriving today, plus anything already overdue and still unsent.
+    const today_ = rows.filter(r => onDay(r) === today || (onDay(r) < today && !r.sent_at))
+    const upcoming = rows.filter(r => onDay(r) > today)
+    // Unsent first inside each section — the work sorts above the record of work done.
+    // Grouped by building, then work above done, then soonest first.
+    const bySend = (a: any, b: any) =>
+      (a.propertyOrder - b.propertyOrder) ||
+      ((a.sent_at ? 1 : 0) - (b.sent_at ? 1 : 0)) ||
+      onDay(a).localeCompare(onDay(b))
+    today_.sort(bySend); upcoming.sort(bySend)
+
+    const openToday = today_.filter(r => !r.sent_at)
     return NextResponse.json({
-      ok: true, rows, properties,
+      ok: true, today: today_, upcoming, rows, properties, todayDate: today,
       counts: {
-        open: open.length,
-        late: open.filter(r => r.urgency === 'late').length,
-        due: open.filter(r => r.urgency === 'due').length,
-        blocked: open.filter(r => !r.hasRecipient).length,
+        toSend: openToday.length,
+        sentToday: today_.length - openToday.length,
+        upcoming: upcoming.length,
+        upcomingToSend: upcoming.filter(r => !r.sent_at).length,
+        late: openToday.filter(r => r.urgency === 'late').length,
+        due: openToday.filter(r => r.urgency === 'due').length,
+        blocked: today_.concat(upcoming).filter(r => !r.sent_at && !r.hasRecipient).length,
       },
     })
   } catch (e: any) {
