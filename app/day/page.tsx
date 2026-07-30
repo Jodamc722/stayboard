@@ -36,6 +36,16 @@ export default function DayLinkPage() {
     setLoading(false)
   }, [])
   useEffect(() => { load(date) }, [date, load])
+  // KEEP THE PHONE HONEST. A field sheet left open on a phone all morning is worse than no sheet:
+  // it looks current. Refresh every 3 minutes while the page is actually visible, and immediately
+  // when the phone wakes or the tab comes back to the front.
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible') load(date) }
+    const t = setInterval(tick, 3 * 60 * 1000)
+    document.addEventListener('visibilitychange', tick)
+    window.addEventListener('focus', tick)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick) }
+  }, [date, load])
 
   const signIn = async () => {
     setPwErr('')
