@@ -92,6 +92,26 @@ function classifyTouch(name: string, dept: string): { kind: string; clean: boole
   if (/maint/.test(d)) return { kind: 'Maintenance', clean: false }
   return { kind: 'Visit', clean: false }
 }
+// WHAT TIME IS IT, AND HAS THIS ALREADY HAPPENED?
+// Jon: "the team knows when checkouts happen. If we pull the sheet at 9am and they check out at 11,
+// that should not be on the exception sheet." A cleaner cannot start a clean while the guest is
+// still in bed, so anything that reads as a failure BEFORE its own deadline is a false alarm — and a
+// sheet that cries wolf at 9am gets ignored by 10.
+function minutesOfDay(v: any): number | null {
+  const t = str(v).trim(); if (!t) return null
+  const m = t.match(/^(\d{1,2}):(\d{2})\s*([ap]\.?m\.?)?/i)
+  if (!m) return null
+  let h = Number(m[1]); const mm = Number(m[2]); const ap = (m[3] || '').toLowerCase()
+  if (ap.startsWith('p') && h < 12) h += 12
+  if (ap.startsWith('a') && h === 12) h = 0
+  return h * 60 + mm
+}
+function nowMinutesET(): number {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+  const h = Number(p.find(x => x.type === 'hour')?.value || 0)
+  const mi = Number(p.find(x => x.type === 'minute')?.value || 0)
+  return h * 60 + mi
+}
 function daysBetween(from: string, to: string): number {
   return Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 86400000)
 }
@@ -118,7 +138,7 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     const presets = await getOpsPresets()
     const VENDOR_RE = vendorRegex(presets.vendorBuildings)
 
-    const [lRes, tRes, rRes, oRes, gRes, sRes, fRes, gsRes] = await Promise.all([
+    const [lRes, tRes, rRes, oRes, gRes, sRes, fRes, gsRes, iRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields,lat:raw->address->>lat,lng:raw->address->>lng'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).order('reference_property_id', { ascending: true }).limit(3000),
       db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_id,guest_name,guest_phone,nights,source,notes,money_total,created_at')
@@ -137,6 +157,10 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       // All feeds, not just reservations: when one cron silently stops, the fastest way to see it is
       // a list of every feed and when it last actually ran. Seven rows, so this stays free.
       db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(50),
+      // The coordinator's own notes from walking units today. The table only exists after migration
+      // 014, so a failure here must never take the day sheet down with it.
+      db.from('unit_inspections').select('id,unit,cleaner,rating,notes,follow_up,inspector')
+        .eq('inspected_on', date).order('created_at', { ascending: false }).limit(200),
     ])
 
     const lmap: Record<string, any> = {}
@@ -196,6 +220,12 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     }
     // A booking made after the last reservation sync CANNOT be on this sheet. Say so out loud.
     const cutoffIso = resSyncAt || null
+
+    // Time gating only applies to TODAY. A sheet for yesterday or for a future date is judged on the
+    // whole day, otherwise last week's sheet would look like everything was fine at 9am.
+    const isToday = date === ymd(new Date())
+    const nowMin = isToday ? nowMinutesET() : 24 * 60
+    const GRACE = 30   // minutes after checkout before "not started" means anything
 
     // ---- tasks for the day, split into cleans vs everything else
     const tasks = ((tRes.data || []) as any[]).filter(t => !isGone(t.status))
@@ -451,15 +481,40 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
         d.guest + ' was here ' + d.nights + ' nights.',
         'Allow extra time — laundry, fridge, kitchen and bins all take longer after a long stay.')
       if (d.vendor) continue
-      if (!d.clean) add('high', 'No clean booked', d.unit,
-        d.guest + ' checks out at ' + (d.checkOutTime || '11:00 AM') + ' and nothing is on the board to clean it.',
-        d.sameDayTurn ? 'Book a clean now — a guest arrives at ' + (d.sameDayIn || '4:00 PM') + ' today.' : 'Book a clean in Breezeway.')
+      // Has this guest actually left yet?
+      const outMin = minutesOfDay(d.checkOutTime) ?? 11 * 60
+      const inMin = minutesOfDay(d.sameDayIn) ?? 16 * 60
+      const gone = nowMin >= outMin + GRACE
+
+      if (!d.clean) {
+        // A missing clean is a PLANNING failure and worth raising whatever the hour — but before the
+        // guest has left it is a "book it" note, not an alarm, unless someone arrives today.
+        if (d.sameDayTurn) add('high', 'No clean booked', d.unit,
+          d.guest + ' checks out at ' + (d.checkOutTime || '11:00 AM') + ' and a guest arrives at ' + (d.sameDayIn || '4:00 PM') + ' — nothing is on the board to clean it.',
+          'Book a clean and put a name on it now.')
+        else add(gone ? 'high' : 'med', 'No clean booked', d.unit,
+          d.guest + (gone ? ' has checked out' : ' checks out at ' + (d.checkOutTime || '11:00 AM')) + ' and nothing is on the board to clean it.',
+          'Book a clean in Breezeway.')
+      }
       else if (!(d.clean.assignees || []).length && d.clean.status !== 'done') add('high', 'Nobody assigned', d.unit,
         'The ' + (d.clean.label || 'departure clean').toLowerCase() + ' has no cleaner on it.',
         'Assign a cleaner in the scheduler.')
-      if (!d.extension && d.sameDayTurn && d.clean && d.clean.status !== 'done') add('high', 'Same-day turn running late', d.unit,
-        'A guest arrives at ' + (d.sameDayIn || '4:00 PM') + ' and the clean is ' + d.clean.status + '.',
-        'Chase the cleaner now or move someone onto it.')
+
+      // NOT STARTED IS ONLY LATE ONCE THE UNIT IS EMPTY. Before checkout the cleaner is not allowed
+      // in, so flagging it just trains people to ignore the sheet.
+      if (!d.extension && d.sameDayTurn && d.clean && d.clean.status !== 'done') {
+        if (d.clean.status === 'in progress') {
+          // running, but is there enough runway before the arrival?
+          if (nowMin > inMin - 90) add('high', 'Same-day turn running late', d.unit,
+            'A guest arrives at ' + (d.sameDayIn || '4:00 PM') + ' and the clean is still in progress.',
+            'Check with the cleaner — it needs to be finished and inspected before they arrive.')
+        } else if (gone) {
+          add('high', 'Clean not started', d.unit,
+            d.guest + ' left at ' + (d.checkOutTime || '11:00 AM') + ', a guest arrives at ' + (d.sameDayIn || '4:00 PM') + ', and nobody has started.',
+            'Get someone into the unit now.')
+        }
+        // before checkout + grace: not an exception. The guest is still in the unit.
+      }
     }
 
     // A clean booked on a unit with no checkout today used to appear on no sheet at all — the
@@ -498,6 +553,12 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     if (deadFeeds.length) add('med', 'A background sync has stopped', '—',
       deadFeeds.map((f: any) => f.entity + ' (' + (f.ageMin == null ? 'never' : Math.round(f.ageMin / 60) + 'h ago') + ')').join(', ') + '.',
       'Bookings and tasks are still current, but unit names, door codes and reviews may be out of date. Tell Jon.')
+    for (const ins of (((iRes as any).data || []) as any[])) {
+      if (!ins.follow_up) continue
+      add('med', 'Inspection needs a follow-up', str(ins.unit),
+        str(ins.inspector || 'The coordinator') + ' flagged this after walking the unit' + (ins.cleaner ? ' (cleaned by ' + str(ins.cleaner) + ')' : '') + ': ' + str(ins.notes).slice(0, 160),
+        'Decide whether it needs a task, a re-clean, or a word with the cleaner.')
+    }
     if (unknownListings.size) add('high', 'Booking on an unknown unit', '—',
       unknownListings.size + ' booking' + (unknownListings.size === 1 ? '' : 's') + ' point at a listing that is not in our listing list, so the unit name, door code and address are missing.',
       'Re-sync listings from Guesty; if it persists the listing was deleted or renamed.')
@@ -519,7 +580,11 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       // so the checkout no longer cancels this warning.
       // Only warn about work that still has to happen. A job finished at 2:45pm needs no
       // "call the guest before entering" note — that is yesterday's problem, printed as today's.
-      if (w.status !== 'done' && lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
+      // If the unit has a checkout today and that hour has passed, the guest is gone and the
+      // "call before entering" warning is noise.
+      const dep = departures.find(x => x.listingId === lid)
+      const guestLeft = !!dep && !dep.extension && nowMin >= (minutesOfDay(dep.checkOutTime) ?? 11 * 60) + GRACE
+      if (w.status !== 'done' && !guestLeft && lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
         (guestInHouse[lid] = guestInHouse[lid] || { unit: w.unit, jobs: [] }).jobs.push(w.label || w.name)
       }
     }
@@ -570,6 +635,11 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
         cleansTotal: Object.keys(cleanByListing).length,
       },
       arrivals, departures, ownerStays, work, vacants, glitches, exceptions, lastSync, sync,
+      inspections: ((iRes as any).data || []).map((r: any) => ({
+        id: str(r.id), unit: str(r.unit), cleaner: str(r.cleaner) || null,
+        rating: r.rating == null ? null : Number(r.rating), notes: str(r.notes),
+        followUp: !!r.follow_up, inspector: str(r.inspector) || null,
+      })),
       // walk-in watch, surfaced as its own number so it can be read at a glance
       walkIns: arrivals.filter(a => a.bookedToday || a.bookedAfterSync).length,
       // SELF-AUDIT: the sheet shows its own arithmetic so a wrong number is visible, not hidden.

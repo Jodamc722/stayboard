@@ -11,6 +11,11 @@ export type Market = 'Miami' | 'Broward' | 'North'
 
 // Building/name keywords.
 const NORTH_BUILDINGS = ['capri', 'lucerne', 'lucenre', 'amrit']
+// BUILDING BEATS CITY. Market is normally derived from the unit's city so it stays right as the
+// portfolio grows, but a single listing with a blank or wrong city then lands in the wrong market
+// while its neighbours are correct — Waves 15 was reading Miami while every other Waves unit read
+// Broward. A building sits in exactly one place, so name it here and it stops drifting.
+const BROWARD_BUILDINGS = ['waves', 'eden', 'oasis', 'rustic', 'hendricks', 'pelican']
 const VENDOR_BUILDINGS = ['capri', 'lucerne', 'lucenre', 'amrit', 'park tower', 'park towers', 'pt-', 'pt ']
 const LUX_BUILDINGS = ['elser', 'amrit', 'nomad', 'arya', '17 west', '17west', 'district 225', 'district225', 'dist 225']
 
@@ -34,6 +39,7 @@ export function isVendorManaged(building?: string | null, name?: string | null):
 export function marketOf(building?: string | null, city?: string | null, name?: string | null): Market {
   const b = norm(building) + ' ' + norm(name)
   if (matchAny(b, NORTH_BUILDINGS)) return 'North'
+  if (matchAny(b, BROWARD_BUILDINGS)) return 'Broward'
   if (matchAny(norm(city), BROWARD_CITIES)) return 'Broward'
   return 'Miami'
 }
