@@ -628,14 +628,22 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     }
     for (const k of Object.keys(dueBefore)) {
       const g = dueBefore[k]
-      add('med', 'Guest checks in at ' + g.at, g.unit,
-        'The unit is empty now. ' + g.jobs.length + (g.jobs.length === 1 ? ' job is' : ' jobs are') + ' still open: ' + jobList(g.jobs) + '.',
+      // Say ARRIVAL TODAY in the headline. "Guest checks in at 4pm" could be read as any booking;
+      // the thing that changes today's plan is that it is today.
+      add('med', 'Arrival today', g.unit,
+        'Guest checks in at ' + g.at + '. The unit is empty right now and ' + g.jobs.length
+          + (g.jobs.length === 1 ? ' job is' : ' jobs are') + ' still open: ' + jobList(g.jobs) + '.',
         'Get it finished before ' + g.at + ' — after that you are working around a guest.')
     }
     for (const k of Object.keys(unassigned)) {
       const u = unassigned[k]
+      const na = nextArrivalOf[k]
+      const runway = arrivals.some(a => a.listingId === k)
+        ? ' A guest arrives today.'
+        : na ? ' No arrival today — next guest ' + new Date(na + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + '.'
+        : ' No arrival today and nothing booked in the next 45 days.'
       add('med', 'Nobody assigned', u.unit,
-        u.jobs.length + (u.jobs.length === 1 ? ' job has' : ' jobs have') + ' no name on them: ' + jobList(u.jobs) + '.',
+        u.jobs.length + (u.jobs.length === 1 ? ' job has' : ' jobs have') + ' no name on them: ' + jobList(u.jobs) + '.' + runway,
         'Assign someone or move it to another day.')
     }
 
