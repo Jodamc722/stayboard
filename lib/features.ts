@@ -14,6 +14,7 @@ export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command' },
   { key: 'home',          label: 'Home',              path: '/' },
   { key: 'reservations',  label: 'Reservations',      path: '/reservations' },
+  { key: 'reservation-emails', label: 'Reservation Emails', path: '/reservation-emails' },
   { key: 'messages',      label: 'Messages',          path: '/messages' },
   { key: 'reviews',       label: 'Reviews',           path: '/reviews' },
   { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls' },
@@ -47,7 +48,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
     pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
-    pages: ['home', 'reservations', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests'] },
+    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
     pages: ['home', 'revenue', 'channels', 'reports', 'health', 'buildings', 'listings'] },
 ]
