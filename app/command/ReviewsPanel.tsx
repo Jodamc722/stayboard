@@ -265,6 +265,10 @@ export function ReviewsPanel() {
                 ) : (
                   <p className="text-[10px] text-muted mt-1.5 italic">Reply posted (text not returned by the channel).</p>
                 )}
+                {/* A reply does not fix a dirty unit. On a low review the follow-up matters MORE once
+                    the public answer is out, so the actions live here too — but only where the score
+                    warrants it, otherwise every five-star review grows buttons nobody needs. */}
+                {isLow(r.rating) && <ReviewFollowUp r={r} />}
               </li>
             ))}
           </ul>
