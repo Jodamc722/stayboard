@@ -380,7 +380,11 @@ export function ReviewsPanel() {
 // A reply is only half the answer. A bad review usually needs two more things: somebody to go and
 // look at the unit, and somebody TOLD — the field team, or the owner. Both are written here, because
 // composing them by hand is exactly the friction that stops it happening.
-type Audience = 'team' | 'owner' | 'cleaner'
+// OWNERS ARE NOT AN AUDIENCE FOR A SINGLE REVIEW. Jon 2026-07-30: an owner should never be sent a
+// one-off guest complaint — it reads as blame and it is not decision-grade. What an owner needs is
+// the PATTERN across their own property, in a report, which is where the case for spending money
+// belongs. So the drafts here are internal only.
+type Audience = 'team' | 'vendor' | 'cleaner'
 
 function draftFor(a: Audience, r: Review): string {
   const unit = r.listing_name || 'the unit'
@@ -389,11 +393,14 @@ function draftFor(a: Audience, r: Review): string {
   const via = r.channel ? ' (' + r.channel + ')' : ''
   const quote = r.content ? '\n\n"' + String(r.content).trim().replace(/\s+/g, ' ').slice(0, 500) + '"' : ''
 
-  if (a === 'owner') return [
-    'Hi — wanted to flag a guest review on ' + unit + when + via + '.',
+  // Vendor partners manage and clean some of these buildings (Botanica, Park Towers, Capri,
+  // Lucerne, Amrit). They are a partner company, not staff — so this reads as a professional
+  // hand-off with a specific ask and a deadline, not an instruction.
+  if (a === 'vendor') return [
+    'Hi — flagging a guest review on ' + unit + when + via + ' so your team can take a look.',
     quote,
-    '\n\nWe have scheduled an inspection of the unit and will confirm once anything raised has been',
-    ' addressed. I will follow up with what we find and what we have done about it.',
+    '\n\nCould someone check the unit before the next arrival and confirm back what was found and',
+    ' what was done? Happy to jump on a call if it is easier.',
   ].join('')
 
   if (a === 'cleaner') return [
@@ -417,19 +424,12 @@ function ReviewFollowUp({ r }: { r: Review }) {
   const [date, setDate] = useState(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()))
   const [who, setWho] = useState('')
   const [people, setPeople] = useState<any[]>([])
-  const [owner, setOwner] = useState<{ name: string | null; email: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
 
   useEffect(() => { setText(draftFor(audience, r)) }, [audience, r])
-  // Look the owner up as soon as the owner draft is chosen, so Email opens already addressed.
-  useEffect(() => {
-    if (audience !== 'owner' || owner || !r.listingId) return
-    fetch('/api/reviews/share?listingId=' + encodeURIComponent(r.listingId), { cache: 'no-store' })
-      .then(x => x.json()).then(j => setOwner(j?.owner || { name: null, email: null })).catch(() => {})
-  }, [audience, owner, r.listingId])
   useEffect(() => {
     if (mode !== 'task' || people.length) return
     fetch('/api/breezeway/people', { cache: 'no-store' }).then(x => x.json())
@@ -515,7 +515,7 @@ function ReviewFollowUp({ r }: { r: Review }) {
         <div className="mt-2 bg-app border border-line rounded-lg p-2">
           <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
             <span className="text-[10px] uppercase tracking-wide text-muted font-semibold mr-1">Written for</span>
-            {tab('team', 'The team')}{tab('owner', 'The owner')}{tab('cleaner', 'The cleaner')}
+            {tab('team', 'Our team')}{tab('vendor', 'Vendor partner')}{tab('cleaner', 'The cleaner')}
           </div>
           <textarea value={text} onChange={e => setText(e.target.value)} rows={6}
             className="w-full text-xs text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
@@ -523,14 +523,8 @@ function ReviewFollowUp({ r }: { r: Review }) {
             <button onClick={copy} className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-ink text-white">Copy</button>
             <button onClick={toSlack} disabled={busy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white disabled:opacity-50">{busy ? 'Sending…' : 'Send to Slack'}</button>
             <a href={'sms:?&body=' + encodeURIComponent(text)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white">Text it</a>
-            <a href={'mailto:' + (audience === 'owner' && owner?.email ? owner.email : '') + '?subject=' + encodeURIComponent((r.listing_name || 'Unit') + ' — guest review') + '&body=' + encodeURIComponent(text)}
+            <a href={'mailto:?subject=' + encodeURIComponent((r.listing_name || 'Unit') + ' — guest review') + '&body=' + encodeURIComponent(text)}
               className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white">Email it</a>
-            {audience === 'owner' && (
-              <span className="text-[10px] text-muted">
-                {owner?.email ? 'Email opens addressed to ' + (owner.name ? owner.name + ' (' + owner.email + ')' : owner.email) + '.'
-                  : owner ? 'No owner email on file for this unit — add it in Guesty and it will fill itself in.' : 'Looking up the owner…'}
-              </span>
-            )}
             <span className="text-[10px] text-muted">Edit it first if you want — nothing sends until you press a button.</span>
           </div>
         </div>
