@@ -1,5 +1,6 @@
 import { bzApi, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getSetting, setSetting } from '@/lib/app-settings'
 
 // Mirror refresh for breezeway_tasks_sync. Pulls each relevant property's Breezeway
 // tasks (including assignees) and upserts them, so the scheduler shows current
@@ -28,7 +29,7 @@ function addDays(iso: string, n: number): string {
 
 export async function syncBreezewayTasks(
   budgetMs = 250000
-): Promise<{ ok: boolean; upserted: number; properties: number; total: number; done: boolean; reason?: string }> {
+): Promise<{ ok: boolean; upserted: number; properties: number; total: number; done: boolean; reason?: string; sweepFrom?: number; sweepSize?: number }> {
   if (!breezewayConfigured()) return { ok: false, upserted: 0, properties: 0, total: 0, done: false, reason: 'not configured' }
   const db = supabaseAdmin()
 
@@ -75,6 +76,30 @@ export async function syncBreezewayTasks(
   // Fallback: if we somehow found none, refresh everything.
   if (!ordered.length) ordered = active
 
+  // COVERAGE SWEEP.
+  // The window above only touches units with a checkout in the next three weeks, so a unit that has
+  // sat empty for months was NEVER refreshed. That is exactly the unit the day sheet is asked about
+  // ("when was anyone last in here?"), and a mirror gap there reads as neglect. So after the urgent
+  // properties, each run also sweeps the next slice of the whole portfolio, round-robin via a
+  // cursor. 30 per run on a 30-minute cron covers all ~232 units roughly every 4 hours.
+  const SWEEP = 30
+  const all = (active.length ? active : Array.from(propByRef.values()))
+    .slice()
+    .sort((a, b) => String(a.home_id).localeCompare(String(b.home_id)))
+  let cursor = 0
+  if (all.length) {
+    cursor = Number(await getSetting<number>('breezeway_sweep_cursor', 0)) || 0
+    if (!Number.isFinite(cursor) || cursor < 0 || cursor >= all.length) cursor = 0
+    const inOrder = new Set(ordered.map((p: any) => String(p.home_id)))
+    for (let n = 0; n < SWEEP; n++) {
+      const p = all[(cursor + n) % all.length]
+      if (p && !inOrder.has(String(p.home_id))) { ordered.push(p); inOrder.add(String(p.home_id)) }
+    }
+    // Advance the cursor up front: a run that dies half way should still move on rather than
+    // re-sweeping the same slice forever.
+    try { await setSetting('breezeway_sweep_cursor', (cursor + SWEEP) % all.length, 'cron') } catch {}
+  }
+
   const started = Date.now()
   let i = 0
   let upserted = 0
@@ -112,5 +137,5 @@ export async function syncBreezewayTasks(
       // keep going; a single property failure should not abort the whole refresh
     }
   }
-  return { ok: true, upserted, properties: i, total: ordered.length, done: i >= ordered.length }
+  return { ok: true, upserted, properties: i, total: ordered.length, done: i >= ordered.length, sweepFrom: cursor, sweepSize: SWEEP }
 }

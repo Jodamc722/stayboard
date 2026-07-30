@@ -134,7 +134,9 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
         .gt('check_in', date).lte('check_in', addDays(date, 45)).order('check_in', { ascending: true }).limit(4000),
       // How fresh is the RESERVATION feed? Breezeway freshness alone says nothing about whether a
       // booking made an hour ago is on this sheet.
-      db.from('guesty_sync_status').select('entity,last_sync_at,last_error').eq('entity', 'reservations').maybeSingle(),
+      // All feeds, not just reservations: when one cron silently stops, the fastest way to see it is
+      // a list of every feed and when it last actually ran. Seven rows, so this stays free.
+      db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(50),
     ])
 
     const lmap: Record<string, any> = {}
@@ -165,7 +167,8 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
 
     // ---- HOW FRESH IS THIS SHEET? Two independent feeds, reported separately, because they fail
     // separately: Breezeway decides what work exists, Guesty decides who is arriving.
-    const resSyncRow: any = (gsRes as any).data || null
+    const syncRows = ((gsRes as any).data || []) as any[]
+    const resSyncRow: any = syncRows.find(r => str(r.entity) === 'reservations') || null
     const bzSyncAt = ((sRes.data || []) as any[])[0]?.synced_at || null
     const resSyncAt = resSyncRow ? str(resSyncRow.last_sync_at) || null : null
     const ageMin = (iso: any) => { const t = new Date(str(iso)).getTime(); return Number.isFinite(t) ? Math.round((Date.now() - t) / 60000) : null }
@@ -181,6 +184,10 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       // An ERRORING sync still stamps its timestamp, so "4 minutes ago" can be a lie. A recorded
       // error counts as stale on its own — that was the whole failure this block exists to catch.
       stale: (bzAge == null || bzAge > BZ_STALE_MIN) || (resAge == null || resAge > RES_STALE_MIN) || !!resErr,
+      // every feed, oldest first, so a cron that quietly died is visible at a glance
+      feeds: syncRows
+        .map(r => ({ entity: str(r.entity), at: str(r.last_sync_at) || null, ageMin: ageMin(r.last_sync_at), error: str(r.last_error) || null }))
+        .sort((a, b) => (b.ageMin ?? 1e9) - (a.ageMin ?? 1e9)),
       staleReason: [
         bzAge == null ? 'Breezeway sync time unknown' : bzAge > BZ_STALE_MIN ? 'Breezeway tasks last synced ' + bzAge + ' min ago' : '',
         resAge == null ? 'Booking sync time unknown' : resAge > RES_STALE_MIN ? 'Bookings last synced ' + resAge + ' min ago' : '',
