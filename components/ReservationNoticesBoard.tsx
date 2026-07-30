@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Mail, Loader2, Check, AlertTriangle, Plus, RefreshCw, Search, Paperclip, Copy,
-  Trash2, X, Clock, Undo2, Settings,
+  Trash2, X, Clock, Undo2, Settings, FileText, Download,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -19,6 +19,7 @@ type Row = {
   adults?: number | null; children?: number | null; pets?: string | null; pet_breed?: string | null
   confirmation_code?: string | null; channel?: string | null
   sent_at?: string | null; sent_by?: string | null
+  doc_path?: string | null; doc_name?: string | null
   leadHours: number | null; urgency: 'sent' | 'late' | 'due' | 'upcoming'
   attach: boolean; hasRecipient: boolean; draft: Draft | null
 }
@@ -62,6 +63,7 @@ export function ReservationNoticesBoard() {
   const [editing, setEditing] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [openDraft, setOpenDraft] = useState<string | null>(null)
+  const [pdfBusy, setPdfBusy] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
@@ -124,6 +126,46 @@ export function ReservationNoticesBoard() {
       const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Could not delete.')
       load()
     } catch (e: any) { setErr(e.message || String(e)) }
+  }
+
+  /**
+   * Generate the registration form: download it so it can be attached to the email, AND file it to
+   * StayBoard's document store so there is a record of exactly what the building was sent.
+   *
+   * Built once and used twice — regenerating for the upload would risk the stored copy differing
+   * from the one that actually went out.
+   */
+  async function makePdf(r: Row) {
+    setPdfBusy(r.id); setErr(null); setMsg(null)
+    try {
+      const mod = await import('@/lib/elser-pdf')
+      const doc = await mod.buildElserPdf(r as any)
+      const name = mod.elserPdfName(r as any)
+      doc.save(name)
+      const raw = String(doc.output('datauristring'))
+      const b64 = raw.slice(raw.indexOf(',') + 1)
+      const res = await fetch('/api/reservation-notices/document', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: r.id, name, pdfBase64: b64 }),
+      })
+      const j = await res.json()
+      // The download already happened, so a failed FILING must not read as total failure.
+      if (!j.ok) { setErr('Form downloaded, but it could not be filed: ' + (j.error || 'unknown error')); return }
+      setMsg('Form downloaded and filed. Attach it to the email before sending.')
+      load()
+    } catch (e: any) {
+      setErr('Could not build the form: ' + String(e?.message || e))
+    } finally { setPdfBusy(null) }
+  }
+
+  /** Re-open a form filed earlier. Links are signed and short-lived, so one is minted on demand. */
+  async function openFiled(r: Row) {
+    setErr(null)
+    try {
+      const j = await fetch('/api/reservation-notices/document?id=' + encodeURIComponent(r.id), { cache: 'no-store' }).then(x => x.json())
+      if (!j.ok || !j.url) throw new Error(j.error || 'No document filed yet.')
+      window.open(j.url, '_blank', 'noopener')
+    } catch (e: any) { setErr(String(e?.message || e)) }
   }
 
   function copyDraft(d: Draft) {
@@ -263,6 +305,20 @@ export function ReservationNoticesBoard() {
                   </div>
                 </div>
                 <button onClick={() => startEdit(r)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Edit</button>
+                {r.attach && (
+                  <button onClick={() => makePdf(r)} disabled={pdfBusy === r.id}
+                    title={r.doc_path ? 'Rebuild the registration form and replace the filed copy' : 'Build the registration form, download it and file it'}
+                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
+                    {pdfBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                    {r.doc_path ? 'Rebuild form' : 'Build form'}
+                  </button>
+                )}
+                {r.attach && r.doc_path && (
+                  <button onClick={() => openFiled(r)} title={r.doc_name || 'Filed form'}
+                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                    <Download size={13} /> Filed
+                  </button>
+                )}
                 {r.draft && (
                   <button onClick={() => setOpenDraft(openDraft === r.id ? null : r.id)}
                     className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50">
@@ -283,9 +339,12 @@ export function ReservationNoticesBoard() {
                       <div><strong>CC:</strong> {r.draft.cc}</div>
                       <div><strong>Subject:</strong> {r.draft.subject}</div>
                       {r.draft.attach && (
-                        <div className="text-amber-800 flex items-start gap-1.5 pt-1">
+                        <div className={'flex items-start gap-1.5 pt-1 ' + (r.doc_path ? 'text-emerald-700' : 'text-amber-800')}>
                           <Paperclip size={12} className="mt-0.5 flex-shrink-0" />
-                          <span><strong>Attach {r.draft.attachName}</strong> before sending — a mail link can&apos;t carry the file.</span>
+                          <span>
+                            <strong>Attach {r.draft.attachName}</strong> before sending — a mail link can&apos;t carry the file.
+                            {r.doc_path ? ' It is filed and in your downloads.' : ' Hit Build form first.'}
+                          </span>
                         </div>
                       )}
                     </div>
