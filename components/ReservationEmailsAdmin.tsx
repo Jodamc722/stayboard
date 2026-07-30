@@ -83,7 +83,8 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
     if (!id || props.some(p => p.id === id)) { setErr('That building is already on the list.'); return }
     setProps(list => list.concat([{
       id, name, enabled: false, match: [name.toLowerCase()], to: '', cc: '',
-      subject: DEFAULT_SUBJECT, body: STANDARD_BODY, leadHours: 2, attachPdf: false,
+      subject: DEFAULT_SUBJECT, body: STANDARD_BODY, leadHours: 2, timing: 'arrival-day',
+      autoCreate: true, autoBuildForm: false, attachPdf: false,
       folder: name + '/Reservations', extraLines: '',
     }]))
     setOpen(id)
@@ -173,6 +174,14 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
                           onChange={e => patch(p.id, { leadHours: Math.max(0, Math.min(168, Math.round(Number(e.target.value) || 0))) })}
                           className={field} />
                         <span className="text-[11px] text-muted mt-1 block">Warn if unsent this close to check-in.</span>
+                        {/* Decides how far ahead the auto-pull files this building's bookings. Elser is
+                            told on the day; Salato, Nomad and District 225 as soon as the booking exists. */}
+                        <span className={label + ' mt-2'}>Tell them</span>
+                        <select value={p.timing} disabled={!isOwner}
+                          onChange={e => patch(p.id, { timing: e.target.value as any })} className={field}>
+                          <option value="arrival-day">On the day of arrival</option>
+                          <option value="on-booking">As soon as it&apos;s booked</option>
+                        </select>
                       </div>
                       <div>
                         <span className={label}>Document folder</span>
@@ -182,6 +191,16 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
                           <input type="checkbox" checked={p.attachPdf} disabled={!isOwner}
                             onChange={e => patch(p.id, { attachPdf: e.target.checked })} />
                           Attach registration form
+                        </label>
+                        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink cursor-pointer">
+                          <input type="checkbox" checked={p.autoCreate} disabled={!isOwner}
+                            onChange={e => patch(p.id, { autoCreate: e.target.checked })} />
+                          Create notices automatically
+                        </label>
+                        <label className={'inline-flex items-center gap-1.5 text-[12px] cursor-pointer ' + (p.attachPdf ? 'text-ink' : 'text-muted')}>
+                          <input type="checkbox" checked={p.autoBuildForm} disabled={!isOwner || !p.attachPdf}
+                            onChange={e => patch(p.id, { autoBuildForm: e.target.checked })} />
+                          Build today&apos;s forms automatically
                         </label>
                       </div>
                     </div>

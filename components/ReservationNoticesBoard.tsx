@@ -1,13 +1,17 @@
 'use client'
-// THE DESK — every booking we still owe a building an email about, soonest arrival first.
+// THE DESK — today's building notifications, and what is coming after.
 //
 // The job this screen exists to prevent: a notice sitting unsent until the guest is at the door.
-// So urgency leads (red = the guest is arriving and nothing went out), and a building with no
-// recipient configured is called out on the row rather than failing silently at send time.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+// TODAY leads, because that is the work; a sent notice STAYS on the day's list wearing a Sent chip
+// rather than vanishing, so the day reads as a complete picture of who has been told and who has
+// not. Anything overdue and still unsent is dragged into Today no matter how old it is.
+//
+// Elser is told on the day the guest arrives, so today's Elser forms build themselves on load —
+// by the time anyone looks, the PDF is already made and filed.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Mail, Loader2, Check, AlertTriangle, Plus, RefreshCw, Search, Paperclip, Copy,
-  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud,
+  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, CalendarClock,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -21,9 +25,10 @@ type Row = {
   sent_at?: string | null; sent_by?: string | null
   doc_path?: string | null; doc_name?: string | null
   leadHours: number | null; urgency: 'sent' | 'late' | 'due' | 'upcoming'
-  attach: boolean; hasRecipient: boolean; draft: Draft | null
+  attach: boolean; autoBuild?: boolean; propertyOrder?: number; hasRecipient: boolean; draft: Draft | null
 }
-type Property = { id: string; name: string; enabled: boolean; attachPdf: boolean; leadHours: number; to: string }
+type Property = { id: string; name: string; enabled: boolean; attachPdf: boolean; leadHours: number; to: string; timing?: string }
+type Counts = { toSend: number; sentToday: number; upcoming: number; upcomingToSend: number; late: number; due: number; blocked: number }
 
 const field = 'w-full rounded-lg border border-line px-2.5 py-1.5 text-[13px] bg-white'
 const lbl = 'text-[11px] uppercase tracking-wider text-muted font-semibold mb-1 block'
@@ -50,14 +55,15 @@ const EMPTY = {
 }
 
 export function ReservationNoticesBoard() {
-  const [rows, setRows] = useState<Row[]>([])
+  const [today, setToday] = useState<Row[]>([])
+  const [upcoming, setUpcoming] = useState<Row[]>([])
   const [props, setProps] = useState<Property[]>([])
-  const [counts, setCounts] = useState({ open: 0, late: 0, due: 0, blocked: 0 })
+  const [counts, setCounts] = useState<Counts>({ toSend: 0, sentToday: 0, upcoming: 0, upcomingToSend: 0, late: 0, due: 0, blocked: 0 })
   const [loading, setLoading] = useState(true)
   const [needsMigration, setNeedsMigration] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
-  const [showSent, setShowSent] = useState(false)
+  const [showUpcoming, setShowUpcoming] = useState(false)
   const [q, setQ] = useState('')
   const [form, setForm] = useState<any | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
@@ -69,15 +75,16 @@ export function ReservationNoticesBoard() {
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
     try {
-      const r = await fetch('/api/reservation-notices?sent=' + (showSent ? '1' : '0'), { cache: 'no-store' })
+      const r = await fetch('/api/reservation-notices', { cache: 'no-store' })
       const j = await r.json()
       setProps(Array.isArray(j.properties) ? j.properties : [])
-      setRows(Array.isArray(j.rows) ? j.rows : [])
-      setCounts(j.counts || { open: 0, late: 0, due: 0, blocked: 0 })
+      setToday(Array.isArray(j.today) ? j.today : [])
+      setUpcoming(Array.isArray(j.upcoming) ? j.upcoming : [])
+      setCounts(j.counts || { toSend: 0, sentToday: 0, upcoming: 0, upcomingToSend: 0, late: 0, due: 0, blocked: 0 })
       setNeedsMigration(!!j.needsMigration)
       if (!j.ok && !j.needsMigration && j.error) setErr(j.error)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
-  }, [showSent])
+  }, [])
 
   useEffect(() => { load() }, [load])
   // Arrival days move; a desk left open overnight should not still be showing yesterday's urgency.
@@ -87,11 +94,43 @@ export function ReservationNoticesBoard() {
     return () => { document.removeEventListener('visibilitychange', onFocus); window.removeEventListener('focus', onFocus) }
   }, [load])
 
-  const shown = useMemo(() => {
+  /**
+   * TODAY'S FORMS BUILD THEMSELVES.
+   *
+   * Elser is told on the day the guest arrives and the email needs the registration form attached,
+   * so waiting for someone to press a button just adds a step that can be forgotten. Anything
+   * arriving today that needs a form and hasn't got one gets built and filed on load.
+   *
+   * Deliberately: only TODAY (never the upcoming list), only unsent rows, only buildings with
+   * auto-build left on in Users & admin, one at a time so a dozen arrivals don't fire a dozen
+   * uploads at once, and each row is attempted once per session — a failing row must not retry
+   * forever on every refresh.
+   */
+  const autoTried = useRef<Set<string>>(new Set())
+  const autoRunning = useRef(false)
+  useEffect(() => {
+    const queue = today.filter(r => r.autoBuild && !r.doc_path && !r.sent_at && !autoTried.current.has(r.id))
+    if (!queue.length || autoRunning.current) return
+    autoRunning.current = true
+    ;(async () => {
+      let built = 0
+      for (const r of queue) {
+        autoTried.current.add(r.id)
+        try { if (await makePdf(r, true)) built++ } catch { /* row-level, keep going */ }
+      }
+      autoRunning.current = false
+      if (built) { setMsg('Built ' + built + " form" + (built === 1 ? '' : 's') + " for today's arrivals — downloaded and filed."); load() }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [today])
+
+  const match = useCallback((r: Row) => {
     const needle = q.trim().toLowerCase()
-    if (!needle) return rows
-    return rows.filter(r => (r.guest_name + ' ' + r.unit_no + ' ' + r.propertyName + ' ' + (r.confirmation_code || '')).toLowerCase().includes(needle))
-  }, [rows, q])
+    if (!needle) return true
+    return (r.guest_name + ' ' + r.unit_no + ' ' + r.propertyName + ' ' + (r.confirmation_code || '')).toLowerCase().includes(needle)
+  }, [q])
+  const todayShown = useMemo(() => today.filter(match), [today, match])
+  const upcomingShown = useMemo(() => upcoming.filter(match), [upcoming, match])
 
   async function save() {
     if (!form) return
@@ -108,14 +147,43 @@ export function ReservationNoticesBoard() {
     } catch (e: any) { setErr(e.message || String(e)) } finally { setSaving(false) }
   }
 
-  async function markSent(id: string, sent: boolean) {
+  /**
+   * Mark a notice sent.
+   *
+   * Initials are asked for every time and are required — "sent" with nobody's name against it is
+   * the record that falls apart the moment a building says it never arrived. The last initials used
+   * are remembered so it is one keystroke, not an interrogation.
+   *
+   * The same action writes Guesty's "reservation email sent" custom field, so the booking itself
+   * shows it too. If that write fails the notice is STILL marked sent here and the banner says the
+   * write-back missed — losing our own record because an external API blipped would be worse.
+   */
+  async function markSent(r: Row) {
+    setErr(null); setMsg(null)
+    const last = (() => { try { return localStorage.getItem('rn_initials') || '' } catch { return '' } })()
+    const initials = (window.prompt('Your initials — recorded against ' + r.guest_name + ' · ' + r.propertyName + ' ' + r.unit_no, last) || '').trim()
+    if (!initials) return
+    try { localStorage.setItem('rn_initials', initials.toUpperCase()) } catch { /* private mode */ }
+    try {
+      const j = await fetch('/api/reservation-notices/mark-sent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: r.id, initials }),
+      }).then(x => x.json())
+      if (!j.ok) throw new Error(j.error || 'Could not mark it sent.')
+      setMsg('Marked sent by ' + j.initials + '.' + (j.guesty?.ok ? ' Guesty updated.' : ' Guesty not updated — ' + (j.guesty?.note || 'unknown reason') + '.'))
+      load()
+    } catch (e: any) { setErr(e.message || String(e)) }
+  }
+
+  /** Undo — puts the notice back on the list as work. */
+  async function unmarkSent(id: string) {
     setErr(null)
     try {
-      const r = await fetch('/api/reservation-notices', {
+      const j = await fetch('/api/reservation-notices', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, markSent: sent }),
-      })
-      const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Could not update.')
+        body: JSON.stringify({ id, markSent: false }),
+      }).then(x => x.json())
+      if (!j.ok) throw new Error(j.error || 'Could not update.')
       load()
     } catch (e: any) { setErr(e.message || String(e)) }
   }
@@ -159,8 +227,8 @@ export function ReservationNoticesBoard() {
    * Built once and used twice — regenerating for the upload would risk the stored copy differing
    * from the one that actually went out.
    */
-  async function makePdf(r: Row) {
-    setPdfBusy(r.id); setErr(null); setMsg(null)
+  async function makePdf(r: Row, silent = false) {
+    setPdfBusy(r.id); if (!silent) { setErr(null); setMsg(null) }
     try {
       const mod = await import('@/lib/elser-pdf')
       const doc = await mod.buildElserPdf(r as any)
@@ -175,10 +243,11 @@ export function ReservationNoticesBoard() {
       const j = await res.json()
       // The download already happened, so a failed FILING must not read as total failure.
       if (!j.ok) { setErr('Form downloaded, but it could not be filed: ' + (j.error || 'unknown error')); return }
-      setMsg('Form downloaded and filed. Attach it to the email before sending.')
-      load()
+      if (!silent) setMsg('Form downloaded and filed. Attach it to the email before sending.')
+      return true
     } catch (e: any) {
-      setErr('Could not build the form: ' + String(e?.message || e))
+      if (!silent) setErr('Could not build the form: ' + String(e?.message || e))
+      return false
     } finally { setPdfBusy(null) }
   }
 
@@ -234,10 +303,6 @@ export function ReservationNoticesBoard() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building…"
             className="rounded-lg border border-line pl-8 pr-2.5 py-1.5 text-[13px] w-56" />
         </div>
-        <button onClick={() => setShowSent(s => !s)}
-          className={'text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (showSent ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink')}>
-          {showSent ? 'Showing sent' : 'Show sent'}
-        </button>
         <button onClick={pull} disabled={pulling}
           title="File any upcoming Guesty arrival that isn't on the desk yet. Runs automatically every 20 minutes."
           className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
@@ -249,7 +314,7 @@ export function ReservationNoticesBoard() {
         <div className="ml-auto flex items-center gap-2 text-[12px]">
           {counts.late > 0 && <span className="px-2 py-1 rounded-lg bg-rose-100 text-rose-700 font-semibold">{counts.late} arriving, unsent</span>}
           {counts.due > 0 && <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 font-semibold">{counts.due} past cutoff</span>}
-          <span className="text-muted">{counts.open} open</span>
+          <span className="text-muted">{counts.toSend} to send today{counts.sentToday ? ' · ' + counts.sentToday + ' sent' : ''}</span>
         </div>
       </div>
 
@@ -308,17 +373,25 @@ export function ReservationNoticesBoard() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-line bg-white overflow-hidden">
-        {loading && rows.length === 0 ? (
-          <div className="px-4 py-8 text-center text-[13px] text-muted"><Loader2 size={16} className="animate-spin inline mr-2" /> Loading…</div>
-        ) : shown.length === 0 ? (
-          <div className="px-4 py-8 text-center text-[13px] text-muted">
-            {showSent ? 'Nothing sent yet.' : 'Nothing waiting — every building has been told.'}
-          </div>
-        ) : shown.map(r => {
-          const u = URGENCY[r.urgency] || URGENCY.upcoming
-          return (
-            <div key={r.id} className="border-b border-line last:border-b-0">
+      {section('Today', todayShown, loading)}
+      {(counts.upcoming > 0 || upcomingShown.length > 0) && (
+        <div>
+          <button onClick={() => setShowUpcoming(v => !v)}
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink mb-2">
+            <CalendarClock size={13} />
+            {showUpcoming ? 'Hide upcoming' : 'Upcoming'} · {counts.upcomingToSend} to send
+          </button>
+          {showUpcoming && section('Upcoming', upcomingShown, false)}
+        </div>
+      )}
+    </div>
+  )
+
+  // One row, used by both sections.
+  function renderRow(r: Row) {
+    const u = URGENCY[r.sent_at ? 'sent' : r.urgency] || URGENCY.upcoming
+    return (
+            <div key={r.id} className={'border-b border-line last:border-b-0 ' + (r.sent_at ? 'bg-emerald-50/30' : '')}>
               <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -358,8 +431,8 @@ export function ReservationNoticesBoard() {
                   </button>
                 )}
                 {r.sent_at
-                  ? <button onClick={() => markSent(r.id, false)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink"><Undo2 size={13} /> Not sent</button>
-                  : <button onClick={() => markSent(r.id, true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50"><Check size={13} /> Mark sent</button>}
+                  ? <button onClick={() => unmarkSent(r.id)} title="Put it back on the list as still to send" className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink"><Undo2 size={13} /> Not sent</button>
+                  : <button onClick={() => markSent(r)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50"><Check size={13} /> Mark sent</button>}
                 <button onClick={() => remove(r.id, r.guest_name)} className="text-muted hover:text-rose-600" title="Delete"><Trash2 size={14} /></button>
               </div>
 
@@ -394,9 +467,53 @@ export function ReservationNoticesBoard() {
                 </div>
               )}
             </div>
-          )
-        })}
+    )
+  }
+
+  /**
+   * A titled block of rows. Sent notices STAY here rather than disappearing — the day should read
+   * as a complete record of who has been told and who has not.
+   */
+  function section(title: string, list: Row[], busy: boolean) {
+    return (
+      <div>
+        <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">
+          {title} <span className="text-muted/70">· {list.filter(r => !r.sent_at).length} to send{list.some(r => r.sent_at) ? ' · ' + list.filter(r => r.sent_at).length + ' sent' : ''}</span>
+        </div>
+        <div className="rounded-2xl border border-line bg-white overflow-hidden">
+          {busy && list.length === 0 ? (
+            <div className="px-4 py-8 text-center text-[13px] text-muted"><Loader2 size={16} className="animate-spin inline mr-2" /> Loading…</div>
+          ) : list.length === 0 ? (
+            <div className="px-4 py-8 text-center text-[13px] text-muted">
+              {title === 'Today' ? 'Nothing arriving today — every building has been told.' : 'Nothing upcoming.'}
+            </div>
+          ) : groupByProperty(list).map(g => (
+            <div key={g.name}>
+              {/* One block per building. Jon reads this list building by building, not as one
+                  undifferentiated queue — each has its own recipients, wording and lead time. */}
+              <div className="px-4 py-1.5 bg-app border-b border-line flex items-center gap-2">
+                <span className="text-[12px] font-bold text-ink">{g.name}</span>
+                <span className="text-[11px] text-muted">
+                  {g.rows.filter(r => !r.sent_at).length} to send{g.rows.some(r => r.sent_at) ? ' · ' + g.rows.filter(r => r.sent_at).length + ' sent' : ''}
+                </span>
+              </div>
+              {g.rows.map(renderRow)}
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  /** Rows split into building blocks, keeping the order the API already sorted them into. */
+  function groupByProperty(list: Row[]): { name: string; rows: Row[] }[] {
+    const out: { name: string; rows: Row[] }[] = []
+    for (const r of list) {
+      const name = r.propertyName || 'Unassigned'
+      const last = out[out.length - 1]
+      if (last && last.name === name) last.rows.push(r)
+      else out.push({ name, rows: [r] })
+    }
+    return out
+  }
 }
