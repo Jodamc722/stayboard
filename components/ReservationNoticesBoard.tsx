@@ -188,9 +188,12 @@ export function ReservationNoticesBoard() {
 
   if (needsMigration) {
     return (
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] text-amber-900">
-        <div className="font-semibold mb-1 flex items-center gap-2"><AlertTriangle size={15} /> One migration to run first</div>
-        Run <code className="px-1 rounded bg-white border border-amber-200">supabase/migrations/015_reservation_notices.sql</code> in the Supabase SQL editor, then reload this page.
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] text-amber-900 space-y-2">
+        <div className="font-semibold flex items-center gap-2"><AlertTriangle size={15} /> One migration to run first</div>
+        <div>Run <code className="px-1 rounded bg-white border border-amber-200">supabase/migrations/015_reservation_notices.sql</code> in the Supabase SQL editor, then reload this page.</div>
+        {/* PostgREST caches the schema, so a freshly-created table still reads as missing until it
+            reloads. Same trap as migration 013 — say the fix here rather than let it look broken. */}
+        <div>Already ran it and still seeing this? PostgREST is holding a stale schema. Run <code className="px-1 rounded bg-white border border-amber-200">NOTIFY pgrst, &apos;reload schema&apos;;</code> and reload.</div>
       </div>
     )
   }
