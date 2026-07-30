@@ -93,12 +93,14 @@ function markedSentInGuesty(r: any, nameMap: Record<string, string>): boolean {
  */
 export async function pullNotices(days = 30): Promise<PullResult> {
   const from = todayET()
-  const to = addDays(from, Math.max(1, Math.min(120, days)))
+  const to = addDays(from, Math.max(0, Math.min(120, days)))
   const empty: PullResult = { ok: false, from, to, scanned: 0, created: 0, existing: 0, alreadySent: 0, byProperty: {}, properties: [] }
 
   const all = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
-  const props = all.filter(p => p.enabled)
-  if (!props.length) return { ...empty, ok: true, error: 'No properties are switched on in Users & admin → Reservation emails.' }
+  // Auto-creation is per building and can be switched off in Users & admin: a property that is on
+  // but set not to auto-create still works, it just waits for someone to file notices by hand.
+  const props = all.filter(p => p.enabled && p.autoCreate)
+  if (!props.length) return { ...empty, ok: true, error: 'No properties are switched on with auto-create in Users & admin → Reservation emails.' }
 
   const db = supabaseAdmin()
 
@@ -122,6 +124,11 @@ export async function pullNotices(days = 30): Promise<PullResult> {
   if (!ids.length) return { ...empty, ok: true, properties: props.map(p => p.name), error: 'No listings match the switched-on properties.' }
 
   // Upcoming arrivals in the window.
+  //
+  // HOW FAR AHEAD depends on what the building expects. Elser is told on the day the guest arrives,
+  // so filing its bookings weeks early would bury today's real work under a month of noise. Salato,
+  // Nomad and District 225 are told as soon as the booking exists, so they need the full window.
+  // Pull the widest window once and trim per property rather than querying twice.
   const { data: resRows, error: rErr } = await db
     .from('guesty_reservations')
     .select('id,listing_id,guest_name,guest_phone,guest_email,check_in,check_out,status,source,confirmation_code,custom_fields,raw')
@@ -131,7 +138,13 @@ export async function pullNotices(days = 30): Promise<PullResult> {
     .limit(2000)
   if (rErr) return { ...empty, error: rErr.message }
 
-  const candidates = ((resRows || []) as any[]).filter(r => isLive(r.status) && dateOnly(r.check_in))
+  const candidates = ((resRows || []) as any[]).filter(r => {
+    if (!isLive(r.status) || !dateOnly(r.check_in)) return false
+    const p = propOf.get(String(r.listing_id))
+    if (!p) return false
+    // 'arrival-day' properties only ever file today's arrivals.
+    return p.timing === 'on-booking' || dateOnly(r.check_in) === from
+  })
 
   // What is already on file, so a re-run is a no-op. Deleted rows are excluded, which is what lets
   // a notice deleted by mistake be picked up again on the next pull.

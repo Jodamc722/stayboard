@@ -14,6 +14,10 @@
 // 'reservation_emails' and are merged over the defaults below — same split as lib/ops-presets
 // and lib/par-levels.
 
+export type SendTiming =
+  | 'arrival-day'   // file it on the day the guest arrives (Elser)
+  | 'on-booking'    // file it as soon as the booking appears, and send straight away
+
 export type PropertyEmail = {
   id: string            // stable slug — never change one, the stored blob keys off it
   name: string          // what a human calls the building
@@ -24,6 +28,15 @@ export type PropertyEmail = {
   subject: string       // template
   body: string          // template
   leadHours: number     // the email must be sent this many hours before check-in
+  // WHEN the building expects to hear from us. Elser wants it on the day the guest arrives;
+  // Salato, Nomad and District 225 want it as soon as the booking exists. This decides how far
+  // ahead the auto-pull files notices for this property — nothing else.
+  timing: SendTiming
+  // AUTO-CREATION, per building. Off means this property never files itself and only ever gets
+  // notices somebody typed in by hand. autoBuildForm decides whether today's registration form is
+  // generated without being asked for (only meaningful where attachPdf is on).
+  autoCreate: boolean
+  autoBuildForm: boolean
   attachPdf: boolean    // Elser only today
   folder: string        // where the generated document files
   extraLines: string    // appended to the body — e.g. Salato's front-desk link
@@ -84,14 +97,14 @@ export const DEFAULT_PROPERTIES: PropertyEmail[] = [
     to: 'guestservices@theelserhotel.com,frontofficemanagers@theelserhotel.com',
     cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: ELSER_BODY,
-    leadHours: 2, attachPdf: true, folder: 'Elser/Reservations', extraLines: '',
+    leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: true, attachPdf: true, folder: 'Elser/Reservations', extraLines: '',
   },
   {
     id: 'salato', name: 'Salato', enabled: false,
     match: ['salato', 'salado'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, attachPdf: false, folder: 'Salato/Reservations',
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Salato/Reservations',
     extraLines: 'Front desk board: {{share_link}}',
   },
   {
@@ -99,21 +112,21 @@ export const DEFAULT_PROPERTIES: PropertyEmail[] = [
     match: ['amrit'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, attachPdf: false, folder: 'Amrit/Reservations', extraLines: '',
+    leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Amrit/Reservations', extraLines: '',
   },
   {
     id: 'nomad', name: 'Nomad', enabled: false,
     match: ['nomad'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, attachPdf: false, folder: 'Nomad/Reservations', extraLines: '',
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Nomad/Reservations', extraLines: '',
   },
   {
     id: 'district225', name: 'District 225', enabled: false,
     match: ['district 225', 'district225', 'dist 225'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, attachPdf: false, folder: 'District 225/Reservations', extraLines: '',
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'District 225/Reservations', extraLines: '',
   },
 ]
 
@@ -128,7 +141,7 @@ function slug(s: string): string {
 function mergeOne(stored: any, base?: PropertyEmail): PropertyEmail {
   const b: PropertyEmail = base || {
     id: '', name: '', enabled: false, match: [], to: '', cc: STAY_CC,
-    subject: DEFAULT_SUBJECT, body: STANDARD_BODY, leadHours: 2,
+    subject: DEFAULT_SUBJECT, body: STANDARD_BODY, leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: false,
     attachPdf: false, folder: '', extraLines: '',
   }
   const s = (stored && typeof stored === 'object') ? stored : {}
@@ -147,6 +160,9 @@ function mergeOne(stored: any, base?: PropertyEmail): PropertyEmail {
     subject: str(s.subject, b.subject, 500),
     body: str(s.body, b.body),
     leadHours: Number.isFinite(Number(s.leadHours)) ? Math.max(0, Math.min(168, Math.round(Number(s.leadHours)))) : b.leadHours,
+    timing: (s.timing === 'on-booking' || s.timing === 'arrival-day') ? s.timing : b.timing,
+    autoCreate: typeof s.autoCreate === 'boolean' ? s.autoCreate : b.autoCreate,
+    autoBuildForm: typeof s.autoBuildForm === 'boolean' ? s.autoBuildForm : b.autoBuildForm,
     attachPdf: typeof s.attachPdf === 'boolean' ? s.attachPdf : b.attachPdf,
     folder: str(s.folder, b.folder, 200),
     extraLines: str(s.extraLines, b.extraLines, 2000),
