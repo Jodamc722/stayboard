@@ -17,12 +17,23 @@ export const maxDuration = 60
 
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
+// WHY THIS IS NOT A SIMPLE AUTH CHECK.
+// This route failed CLOSED when CRON_SECRET was unset: a Vercel cron sends no cookie, so it fell
+// through to the user check and 401'd. Every scheduled run had been rejected — listings, reviews,
+// messages and custom fields were 17 HOURS stale before anyone noticed, because nothing reports a
+// cron that never ran. The other cron in this repo (breezeway-tasks) runs open when the secret is
+// absent, which is why it stayed current.
+//
+// So: with CRON_SECRET set, the bearer token is required (Jon should set it — that is the right end
+// state). Without it, a PLAIN sync may run unauthenticated so the schedule works, but the ?probe=
+// diagnostics still require a signed-in user, because those return guest names.
 async function authorize(req: NextRequest): Promise<{ ok: true } | { ok: false; reason: string }> {
   const auth = req.headers.get('authorization') || ''
   if (process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`) return { ok: true }
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (user) return { ok: true }
+  if (!process.env.CRON_SECRET && !new URL(req.url).searchParams.get('probe')) return { ok: true }
   return { ok: false, reason: 'unauthorized' }
 }
 
