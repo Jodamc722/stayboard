@@ -31,6 +31,9 @@ const MIN_TURNS = 10      // cleans needed before a cleaner appears in the coach
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
+function daysBetween(a: string, b: string): number {
+  return Math.round((new Date(b + 'T12:00:00').getTime() - new Date(a + 'T12:00:00').getTime()) / 86400000)
+}
 function round(n: number, p = 2) { const f = Math.pow(10, p); return Math.round(n * f) / f }
 
 type Agg = { n: number; sum: number; five: number; low: number }
@@ -96,12 +99,17 @@ export async function GET(req: NextRequest) {
   const canSeeCleaners = access.role === 'admin' || access.workspace === 'gm' || access.workspace === 'admin'
 
   const sp = req.nextUrl.searchParams
-  const days = Math.min(Math.max(Number(sp.get('days') || 90), 7), 1095)
   const market = str(sp.get('market')) || 'all'
   const building = str(sp.get('building')) || 'all'
+  const channel = str(sp.get('channel')) || 'all'
   const today = ymd(new Date())
-  const from = addDays(today, -days)
-  const prevFrom = addDays(today, -days * 2)
+  // Either a rolling window (days) or an explicit from/to. The comparison period is always the same
+  // length immediately before, so "vs prior" means something whichever way the dates were chosen.
+  const isRange = /^\d{4}-\d{2}-\d{2}$/.test(str(sp.get('from'))) && /^\d{4}-\d{2}-\d{2}$/.test(str(sp.get('to')))
+  const to = isRange ? str(sp.get('to')) : today
+  const from = isRange ? str(sp.get('from')) : addDays(today, -Math.min(Math.max(Number(sp.get('days') || 90), 7), 1095))
+  const days = Math.max(1, daysBetween(from, to))
+  const prevFrom = addDays(from, -days)
   const db = supabaseAdmin()
 
   // PostgREST caps ANY single request at 1000 rows regardless of .limit(), so both of these are
@@ -126,7 +134,7 @@ export async function GET(req: NextRequest) {
     // Review RATE needs a denominator: stays that ENDED early enough to have been reviewed. Guests
     // take up to a fortnight to write one, so the window is shifted back rather than matched exactly.
     page('guesty_reservations', 'id,listing_id,check_out,status',
-      q => q.gte('check_out', addDays(from, -14)).lte('check_out', addDays(today, -3)).order('check_out', { ascending: false })),
+      q => q.gte('check_out', addDays(from, -14)).lte('check_out', addDays(to, -3)).order('check_out', { ascending: false })),
   ])
   const rRes = { data: reviewRows }
   const resRes = { data: stayRows }
@@ -150,8 +158,10 @@ export async function GET(req: NextRequest) {
     return true
   }
 
-  const all = ((rRes.data || []) as any[]).filter(r => Number.isFinite(Number(r.rating)) && inScope(String(r.listing_id)))
-  const cur = all.filter(r => str(r.created_at).slice(0, 10) >= from)
+  const all = ((rRes.data || []) as any[])
+    .filter(r => Number.isFinite(Number(r.rating)) && inScope(String(r.listing_id)))
+    .filter(r => channel === 'all' || str(r.channel) === channel)
+  const cur = all.filter(r => { const d = str(r.created_at).slice(0, 10); return d >= from && d <= to })
   const prev = all.filter(r => { const d = str(r.created_at).slice(0, 10); return d >= prevFrom && d < from })
 
   // Portfolio mean drives the shrinkage for every ranked list below.
@@ -286,7 +296,8 @@ export async function GET(req: NextRequest) {
   const months = Object.keys(byMonth).sort().slice(-13).map(m => ({ month: m, ...summarise(byMonth[m], mean) }))
 
   return NextResponse.json({
-    ok: true, days, from, to: today, market, building,
+    ok: true, days, from, to, market, building, channel,
+    channelList: Array.from(new Set(((rRes.data || []) as any[]).map(r => str(r.channel)).filter(Boolean))).sort(),
     markets: Array.from(new Set(Object.values(lmap).map((l: any) => l.market).filter(Boolean))).sort(),
     buildingList: Array.from(new Set(Object.values(lmap).map((l: any) => l.building).filter(Boolean))).sort(),
     headline: {
