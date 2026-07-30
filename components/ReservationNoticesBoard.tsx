@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Mail, Loader2, Check, AlertTriangle, Plus, RefreshCw, Search, Paperclip, Copy,
-  Trash2, X, Clock, Undo2, Settings, FileText, Download,
+  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -64,6 +64,7 @@ export function ReservationNoticesBoard() {
   const [saving, setSaving] = useState(false)
   const [openDraft, setOpenDraft] = useState<string | null>(null)
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
+  const [pulling, setPulling] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
@@ -126,6 +127,29 @@ export function ReservationNoticesBoard() {
       const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Could not delete.')
       load()
     } catch (e: any) { setErr(e.message || String(e)) }
+  }
+
+  /**
+   * Fetch upcoming arrivals from Guesty and file whatever is missing.
+   *
+   * A cron does this every 20 minutes; the button is for when the desk needs to be current right
+   * now. Safe to press repeatedly — the pull skips anything already on file.
+   */
+  async function pull() {
+    setPulling(true); setErr(null); setMsg(null)
+    try {
+      const j = await fetch('/api/reservation-notices/pull', { method: 'POST' }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Could not pull from Guesty.')
+      const per = Object.entries(j.byProperty || {}).map(([k, v]) => k + ' ' + v).join(', ')
+      setMsg(
+        j.created
+          ? 'Filed ' + j.created + ' new notice' + (j.created === 1 ? '' : 's') + (per ? ' — ' + per : '') +
+            (j.alreadySent ? ' (' + j.alreadySent + ' already marked sent in Guesty)' : '')
+          : 'Nothing new — all ' + j.scanned + ' upcoming arrival' + (j.scanned === 1 ? '' : 's') + ' are already on file.' +
+            (j.error ? ' ' + j.error : ''),
+      )
+      load()
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setPulling(false) }
   }
 
   /**
@@ -213,6 +237,11 @@ export function ReservationNoticesBoard() {
         <button onClick={() => setShowSent(s => !s)}
           className={'text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (showSent ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink')}>
           {showSent ? 'Showing sent' : 'Show sent'}
+        </button>
+        <button onClick={pull} disabled={pulling}
+          title="File any upcoming Guesty arrival that isn't on the desk yet. Runs automatically every 20 minutes."
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
+          {pulling ? <Loader2 size={13} className="animate-spin" /> : <DownloadCloud size={13} />} Pull from Guesty
         </button>
         <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
           {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh
