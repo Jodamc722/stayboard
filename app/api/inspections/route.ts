@@ -4,6 +4,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getSetting, setSetting } from '@/lib/app-settings'
+
+// An inspection that turns into a Breezeway task should SHOW that it did, otherwise the same note
+// gets raised twice. The link lives in app_settings rather than a new column so this needed no
+// migration: { inspectionId: { taskId, at } }.
+const LINK_KEY = 'inspection_tasks'
+type LinkMap = Record<string, { taskId: string; at: string }>
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -30,6 +37,10 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ ok: false, needsMigration: /relation|does not exist/i.test(error.message), error: error.message }, { status: 200 })
     let rows = (data || []) as any[]
     if (q) rows = rows.filter(r => (str(r.unit) + ' ' + str(r.cleaner) + ' ' + str(r.notes) + ' ' + str(r.inspector)).toLowerCase().includes(q))
+    const unit = str(sp.get('unit')).trim().toLowerCase()
+    if (unit) rows = rows.filter(r => str(r.unit).toLowerCase() === unit)
+    const links = await getSetting<LinkMap>(LINK_KEY, {})
+    rows = rows.map(r => ({ ...r, taskId: (links[String(r.id)] || {}).taskId || null, actionedAt: (links[String(r.id)] || {}).at || null }))
     // Who gets talked about most, and how they score — the training view.
     const byCleaner: Record<string, { name: string; n: number; sum: number; rated: number; followUps: number }> = {}
     for (const r of rows) {
@@ -74,6 +85,19 @@ export async function POST(req: NextRequest) {
   const { data, error } = await db.from('unit_inspections').insert(row).select('*').maybeSingle()
   if (error) return NextResponse.json({ ok: false, needsMigration: /relation|does not exist/i.test(error.message), error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, row: data })
+}
+
+// Record that a task was raised off the back of an inspection.
+export async function PATCH(req: NextRequest) {
+  const access = await getAccess()
+  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const b = await req.json().catch(() => ({}))
+  const id = str(b.id), taskId = str(b.taskId)
+  if (!id || !taskId) return NextResponse.json({ ok: false, error: 'id and taskId required' }, { status: 400 })
+  const links = await getSetting<LinkMap>(LINK_KEY, {})
+  links[id] = { taskId, at: new Date().toISOString() }
+  const r = await setSetting(LINK_KEY, links, str(access.email) || 'app')
+  return NextResponse.json({ ok: !!r.ok, error: r.error })
 }
 
 export async function DELETE(req: NextRequest) {
