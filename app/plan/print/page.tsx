@@ -336,6 +336,35 @@ export default function DaySheetsPage() {
               {' · '}read from {d.audit.reservationsRead} current + {d.audit.futureReservationsRead} upcoming reservations
             </div>
           )}
+          {/* SPOT INSPECTIONS — a write-in block. The coordinator walks units all day with paper in
+              hand; asking him to open an app mid-walk is how the note never gets written. He fills
+              these in as he goes and logs them afterwards. Anything already logged today prints
+              above so he does not repeat himself. */}
+          <div className="ds-h3">Spot inspections — write in as you walk</div>
+          {!!(d?.inspections || []).length && (
+            <table className="ds-table">
+              <tbody>
+                {(d.inspections || []).map((i: any) => (
+                  <tr key={i.id}>
+                    <td className="ds-unit">{i.unit}</td>
+                    <td className="ds-sub">{i.cleaner || '—'}</td>
+                    <td className="ds-num">{i.rating != null ? i.rating + '/5' : ''}</td>
+                    <td>{i.notes}{i.followUp ? <b> · follow-up</b> : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <table className="ds-table">
+            <thead><tr><th className="ds-wu">Unit</th><th className="ds-wu">Who cleaned it</th><th className="ds-w1">/5</th><th className="ds-wn">What you found</th></tr></thead>
+            <tbody>
+              {Array.from({ length: 10 }).map((_, i) => (
+                <tr key={i} className="ds-writein"><td /><td /><td /><td /></tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="ds-recon">Log these in the app afterwards so they attach to the unit and the cleaner.</div>
+
           <div className="ds-notes"><div className="ds-h3">Handover — what rolls into tomorrow</div><Lines n={6} />
             <div className="ds-signrow"><div>Completed by: <span className="ds-fill" /></div><div>Time: <span className="ds-fillsm" /></div><div>Reviewed by: <span className="ds-fill" /></div></div>
           </div>
@@ -364,6 +393,7 @@ export default function DaySheetsPage() {
         .ds-muted2 { color:#a1a1aa; }
         .ds-do { font-weight:600; }
         .ds-wu { width:15%; }
+        .ds-writein td { height:26px; border-bottom:1px solid #d4d4d8; }
         .ds-headright { text-align:right; }
         .ds-date { font-size:13px; font-weight:700; }
         .ds-meta { font-size:10.5px; color:#52525b; margin-top:1px; }
