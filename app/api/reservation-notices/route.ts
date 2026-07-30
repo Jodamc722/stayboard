@@ -19,6 +19,18 @@ export const maxDuration = 30
 const TABLE = 'reservation_notices'
 const MISSING = 'This needs the reservation-notices migration — run supabase/migrations/015_reservation_notices.sql in Supabase, then reload.'
 
+/**
+ * Is this error just "the table isn't there yet"?
+ *
+ * Postgres says `relation "x" does not exist`, but PostgREST answers a MISSING table with
+ * `Could not find the table 'public.x' in the schema cache` — a different sentence entirely.
+ * It also says that when the table DOES exist but PostgREST hasn't reloaded its cache since the
+ * migration ran, which is why the operator message below mentions the reload.
+ */
+function isMissingTable(msg: any): boolean {
+  return /relation .* does not exist|does not exist|schema cache|find the table/i.test(String(msg || ''))
+}
+
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function trimmed(v: any, max = 300): string { return str(v).trim().slice(0, max) }
 function dateOnly(v: any): string { const m = str(v).slice(0, 10).match(/^\d{4}-\d{2}-\d{2}$/); return m ? m[0] : '' }
@@ -73,7 +85,7 @@ export async function GET(req: NextRequest) {
     // The table only exists after migration 015 — say so plainly instead of throwing a 500.
     if (error) {
       return NextResponse.json({
-        ok: false, needsMigration: /relation|does not exist/i.test(error.message),
+        ok: false, needsMigration: isMissingTable(error.message),
         error: error.message, properties, rows: [],
       })
     }
@@ -147,7 +159,7 @@ export async function POST(req: NextRequest) {
       if (/duplicate key|unique/i.test(error.message)) {
         return NextResponse.json({ ok: false, duplicate: true, error: 'That booking is already on the list.' }, { status: 409 })
       }
-      return NextResponse.json({ ok: false, needsMigration: /relation|does not exist/i.test(error.message), error: /relation|does not exist/i.test(error.message) ? MISSING : error.message }, { status: 400 })
+      return NextResponse.json({ ok: false, needsMigration: isMissingTable(error.message), error: isMissingTable(error.message) ? MISSING : error.message }, { status: 400 })
     }
     return NextResponse.json({ ok: true, row: data })
   } catch (e: any) {
