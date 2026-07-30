@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban } from 'lucide-react'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
 
 const SIGN = '— Stay Hospitality'
 
@@ -362,11 +362,100 @@ export function ReviewsPanel() {
                   </button>
                   <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>
+                <ReviewFollowUp r={r} />
               </div>
             </li>
           ))}
         </ul>
       )}
     </section>
+  )
+}
+
+
+// A reply is only half the answer. If a guest said the unit was dirty, somebody has to go and look
+// at it — so the review row can raise the Breezeway task itself, with a date and a name on it, and
+// hand you a message to paste to whoever needs to know.
+function ReviewFollowUp({ r }: { r: Review }) {
+  const [open, setOpen] = useState(false)
+  const [date, setDate] = useState(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()))
+  const [who, setWho] = useState('')
+  const [people, setPeople] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!open || people.length) return
+    fetch('/api/breezeway/people', { cache: 'no-store' }).then(x => x.json())
+      .then(j => setPeople(((j?.people || j || []) as any[]).filter((p: any) => p && p.name))).catch(() => {})
+  }, [open, people.length])
+
+  const message = [
+    (r.listing_name || 'A unit') + ' — ' + (r.rating != null ? r.rating + '-star review' : 'low review')
+      + (r.guest ? ' from ' + r.guest : '') + (r.channel ? ' (' + r.channel + ')' : '') + '.',
+    r.content ? '\n\n"' + String(r.content).trim().replace(/\s+/g, ' ').slice(0, 400) + '"' : '',
+    '\n\nCan we walk the unit before the next guest and confirm this is fixed? Reply here with what you find.',
+  ].join('')
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(message); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { setErr('Could not copy') }
+  }
+
+  const create = async () => {
+    setBusy(true); setErr('')
+    try {
+      const match = people.find((p: any) => String(p.name).toLowerCase() === who.trim().toLowerCase())
+      const description = 'Raised from a ' + (r.rating != null ? r.rating + '-star ' : '') + 'review'
+        + (r.guest ? ' by ' + r.guest : '') + (r.channel ? ' on ' + r.channel : '')
+        + (r.created_at ? ' (' + String(r.created_at).slice(0, 10) + ')' : '') + '.\n\nWhat the guest said:\n' + (r.content || '')
+      const res = await fetch('/api/ops-today/add-task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: r.listingId, title: 'Guest-feedback inspection — ' + (r.listing_name || 'unit'),
+          department: 'inspection', priority: 'normal', description, date,
+          assigneeIds: match ? [match.id] : [],
+        }),
+      })
+      const j = await res.json()
+      if (!j.ok && !j.task && !j.taskId) throw new Error(j.error || 'Could not create the task')
+      setDone(String(j.taskId || j.task?.id || '') || 'created')
+      setOpen(false)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+
+  if (!r.listingId && !done) return null
+  return (
+    <div className="mt-2 pt-2 border-t border-line/60">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-muted font-semibold">Follow up</span>
+        {done ? (
+          done !== 'created'
+            ? <a href={'https://app.breezeway.io/task/' + done} target="_blank" rel="noreferrer" className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">Task created {'\u2197'}</a>
+            : <span className="text-[11px] font-semibold text-emerald-700">Task created</span>
+        ) : (
+          <button onClick={() => setOpen(!open)} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">{open ? 'Cancel' : 'Create inspection task'}</button>
+        )}
+        <button onClick={copy} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">{copied ? 'Copied \u2713' : 'Copy message'}</button>
+        <a href={'sms:?&body=' + encodeURIComponent(message)} className="text-[11px] font-semibold px-2 py-1 rounded-lg text-ink border border-line hover:bg-app">Text it</a>
+        {err && <span className="text-[11px] text-red-700">{err}</span>}
+      </div>
+      {open && (
+        <div className="mt-2 flex flex-wrap items-end gap-2 bg-app border border-line rounded-lg p-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-muted font-semibold">When</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className="text-xs border border-line rounded-md px-2 py-1 bg-white" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-muted font-semibold">Who</label>
+            <input list="rev-people" value={who} onChange={e => setWho(e.target.value)} placeholder="leave blank to assign later" className="text-xs border border-line rounded-md px-2 py-1 bg-white w-56" />
+            <datalist id="rev-people">{people.map((p: any) => <option key={p.id} value={p.name} />)}</datalist>
+          </div>
+          <button onClick={create} disabled={busy} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">{busy ? 'Creating…' : 'Create in Breezeway'}</button>
+        </div>
+      )}
+    </div>
   )
 }
