@@ -575,6 +575,30 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
     const guestInHouse: Record<string, { unit: string; jobs: string[]; urgent: boolean }> = {}
     const unassigned: Record<string, { unit: string; jobs: string[] }> = {}
     const occupiedNow = new Set(Object.keys(occupied))
+    // IS THERE ACTUALLY A PERSON IN THERE RIGHT NOW?
+    // "Occupied tonight" and "occupied at this minute" are different questions, and the sheet was
+    // answering the wrong one. A stay that STARTS today counts as occupied for the night, but the
+    // guest is not in the unit until they check in — so a 4pm arrival was printing "guest is still
+    // in the unit" at nine in the morning, on an empty unit. Before check-in the crew can work
+    // freely; what they need is the deadline, not a warning.
+    const insideNow = (lid: string) => {
+      const dep = departures.find(x => x.listingId === lid)
+      const arr = arrivals.find(x => x.listingId === lid)
+      const outM = minutesOfDay(dep && dep.checkOutTime) ?? 11 * 60
+      const inM = minutesOfDay(arr && arr.checkInTime) ?? 16 * 60
+      const departed = !!dep && !dep.extension && nowMin >= outM + GRACE
+      if (arr && !arr.extension) return nowMin >= inM        // today's guest: only after check-in
+      if (!occupiedNow.has(lid)) return false
+      return !departed                                        // someone who was already here
+    }
+    const arrivingLater = (lid: string) => {
+      const arr = arrivals.find(x => x.listingId === lid)
+      if (!arr || arr.extension) return null
+      const inM = minutesOfDay(arr.checkInTime) ?? 16 * 60
+      return nowMin < inM ? (arr.checkInTime || '4:00 PM') : null
+    }
+    const dueBefore: Record<string, { unit: string; at: string; jobs: string[] }> = {}
+
     for (const w of work) {
       const lid = w.listingId
       if (!w.assignees.length && w.status !== 'done') {
@@ -584,14 +608,15 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       // so the checkout no longer cancels this warning.
       // Only warn about work that still has to happen. A job finished at 2:45pm needs no
       // "call the guest before entering" note — that is yesterday's problem, printed as today's.
-      // If the unit has a checkout today and that hour has passed, the guest is gone and the
-      // "call before entering" warning is noise.
-      const dep = departures.find(x => x.listingId === lid)
-      const guestLeft = !!dep && !dep.extension && nowMin >= (minutesOfDay(dep.checkOutTime) ?? 11 * 60) + GRACE
-      if (w.status !== 'done' && !guestLeft && !COMMON_AREA.test(str(w.name)) && lid && occupiedNow.has(lid) && (!checkoutIds.has(lid) || extensionListings.has(lid))) {
+      if (w.status === 'done' || !lid || COMMON_AREA.test(str(w.name))) continue
+      const comingAt = arrivingLater(lid)
+      if (insideNow(lid)) {
         (guestInHouse[lid] = guestInHouse[lid] || { unit: w.unit, jobs: [], urgent: false }).jobs.push(w.label || w.name)
         // A repair is a different conversation from a routine look-round.
         if (/repair|fix|leak|broken|replace|install|a\/?c|plumb|electric|glitch|guest reported/i.test(str(w.name))) guestInHouse[lid].urgent = true
+      } else if (comingAt) {
+        // Empty right now, but there is a clock on it.
+        (dueBefore[lid] = dueBefore[lid] || { unit: w.unit, at: comingAt, jobs: [] }).jobs.push(w.label || w.name)
       }
     }
     const jobList = (j: string[]) => j.slice(0, 4).join(', ') + (j.length > 4 ? ' and ' + (j.length - 4) + ' more' : '')
@@ -600,6 +625,12 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       add(g.urgent ? 'high' : 'med', 'Guest is still in the unit', g.unit,
         g.jobs.length + (g.jobs.length === 1 ? ' job is' : ' jobs are') + ' booked while the guest is in house: ' + jobList(g.jobs) + '.',
         'Call or message the guest before anyone enters.')
+    }
+    for (const k of Object.keys(dueBefore)) {
+      const g = dueBefore[k]
+      add('med', 'Guest checks in at ' + g.at, g.unit,
+        'The unit is empty now. ' + g.jobs.length + (g.jobs.length === 1 ? ' job is' : ' jobs are') + ' still open: ' + jobList(g.jobs) + '.',
+        'Get it finished before ' + g.at + ' — after that you are working around a guest.')
     }
     for (const k of Object.keys(unassigned)) {
       const u = unassigned[k]
