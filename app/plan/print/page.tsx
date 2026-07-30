@@ -101,6 +101,13 @@ export default function DaySheetsPage() {
     return <span className="ds-warn">nothing logged in 400 days</span>
   }
 
+  // Fixed vocabulary, same colours everywhere. Six words cover every state a unit can be in.
+  const Status = ({ s }: { s: string }) => {
+    const cls = s === 'TURNING' ? 'ds-stTurn' : s === 'READY' ? 'ds-stReady' : s === 'STAYING ON' ? 'ds-stStay'
+      : s === 'AVAILABLE' ? 'ds-stAvail' : s === 'ARRIVING' ? 'ds-stArr' : 'ds-stOut'
+    return <span className={'ds-status ' + cls}>{s || 'CHECKING OUT'}</span>
+  }
+
   function titleKey(t: string) { const s = SHEETS.filter(x => t.startsWith(x.name.split(' ')[0]))[0]; return s ? s.key : 'turn' }
 
   return (
@@ -133,11 +140,12 @@ export default function DaySheetsPage() {
             <div key={a.key} className="ds-area">
               <div className="ds-areahead"><span className="ds-arealabel">{a.label}</span><span className="ds-areacity">{a.city || ''}</span><span className="ds-areacount">{a.units.length}</span></div>
               <table className="ds-table">
-                <thead><tr><th className="ds-w1">DONE</th><th>Unit</th><th>Cleaner</th><th>Out by</th><th>Guest leaving</th><th className="ds-wsd">Arriving today</th><th className="ds-wn">Notes</th></tr></thead>
+                <thead><tr><th className="ds-w1">DONE</th><th className="ds-wst">Status</th><th>Unit</th><th>Cleaner</th><th className="ds-w1">Clean</th><th>Out by</th><th>Guest leaving</th><th className="ds-wsd">Next guest</th><th className="ds-wn">Notes</th></tr></thead>
                 <tbody>
                   {a.units.map((r: any, i: number) => (
                     <tr key={i} className={r.sameDayTurn ? 'ds-rowsd' : ''}>
                       <td><Box /></td>
+                      <td><Status s={r.status} /></td>
                       <td className="ds-unit">{r.unit}
                         {r.nights != null && r.nights >= 10 && <span className="ds-tag ds-warnTag">{r.nights}NT LONG</span>}
                         {r.vendor && <span className="ds-tag">{r.vendor}</span>}
@@ -148,19 +156,20 @@ export default function DaySheetsPage() {
                         : r.vendor
                           ? <span className="ds-vendorclean">{r.vendor} cleans this</span>
                           : <span className="ds-warn">NO CLEAN ON THE BOARD</span>}
-                        {r.clean && <div className="ds-sub">{r.clean.status}{r.clean.instructions ? ' · ' + r.clean.instructions : ''}</div>}
+                        {r.clean && r.clean.instructions && <div className="ds-sub">{r.clean.instructions}</div>}
                         {!r.clean && r.vendor && <div className="ds-sub">not tracked in Breezeway</div>}
                         {(r.prep || []).map((p: any) => (
                           <div key={p.id} className="ds-sub">also today: {p.label}{p.assignees?.length ? ' — ' + p.assignees.join(', ') : ''}</div>
                         ))}
                       </td>
+                      <td className="ds-sub">{r.clean ? r.clean.status : (r.vendor ? 'vendor' : '—')}</td>
                       <td className="ds-num">{r.checkOutTime || '11:00 AM'}</td>
                       <td>{r.guest}<div className="ds-sub">{r.nights != null ? r.nights + ' nights' : ''}</div></td>
                       <td>{r.extension
-                        ? <span className="ds-ext"><b>EXTENSION</b> {'\u2014'} same guest re-booked<div className="ds-sub">ask the guest if they want a clean {'\u2014'} do not strip</div></span>
-                        : r.sameDayTurn
-                        ? <span className="ds-sd"><b>SAME DAY</b> {'\u2192'} {r.sameDayGuest || 'guest'} in {r.sameDayIn}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}{r.sameDayNights >= 10 ? ' · BIG BOOKING' : ''}</span>
-                        : <span className="ds-sub">{r.nextArrival ? 'next ' + shortDate(r.nextArrival) : 'no arrival booked'}</span>}</td>
+                        ? <span className="ds-ext"><b>same guest stays</b><div className="ds-sub">ask if they want a clean {'\u2014'} do not strip</div></span>
+                        : r.nextGuest
+                        ? <span className={r.sameDayTurn ? 'ds-sd' : 'ds-sub'}><b>{r.nextGuest}</b>{r.sameDayTurn ? <div className="ds-sub">{r.sameDayGuest || 'guest'}{r.sameDayNights ? ' · ' + r.sameDayNights + ' nt' : ''}{r.sameDayNights >= 10 ? ' · BIG' : ''}</div> : null}</span>
+                        : <span className="ds-muted2">none booked</span>}</td>
                       <td />
                     </tr>
                   ))}
@@ -391,6 +400,14 @@ export default function DaySheetsPage() {
         .ds-ext { font-weight:800; color:#5b21b6; }
         .ds-soon { color:#b45309; }
         .ds-muted2 { color:#a1a1aa; }
+        .ds-wst { width:11%; }
+        .ds-status { display:inline-block; font-size:9px; font-weight:800; letter-spacing:.04em; padding:2px 5px; border-radius:4px; white-space:nowrap; }
+        .ds-stTurn { background:#18181b; color:#fff; }
+        .ds-stOut { background:#e4e4e7; color:#3f3f46; }
+        .ds-stReady { background:#dcfce7; color:#166534; }
+        .ds-stStay { background:#ede9fe; color:#5b21b6; }
+        .ds-stAvail { background:#f4f4f5; color:#71717a; }
+        .ds-stArr { background:#fef3c7; color:#92400e; }
         .ds-do { font-weight:600; }
         .ds-wu { width:15%; }
         .ds-writein td { height:26px; border-bottom:1px solid #d4d4d8; }
