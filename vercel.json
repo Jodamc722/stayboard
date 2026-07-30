@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/reservations",
-      "schedule": "*/10 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/reservations?full=1",
@@ -30,11 +30,15 @@
     },
     {
       "path": "/api/cron/breezeway-tasks",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/sync/owner-statements",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/watchdog",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
