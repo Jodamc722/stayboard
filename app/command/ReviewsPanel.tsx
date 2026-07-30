@@ -442,16 +442,6 @@ function ReviewFollowUp({ r }: { r: Review }) {
     try { await navigator.clipboard.writeText(text); flash('Copied — paste it wherever you need it') }
     catch { setErr('Could not copy — select the text and copy it manually') }
   }
-  const toSlack = async () => {
-    setBusy(true); setErr('')
-    try {
-      const res = await fetch('/api/reviews/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-      const j = await res.json()
-      if (j.ok) flash('Sent to Slack')
-      else setErr(j.error || 'Could not send')
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
-  }
   const createTask = async () => {
     setBusy(true); setErr('')
     try {
@@ -516,16 +506,14 @@ function ReviewFollowUp({ r }: { r: Review }) {
           <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
             <span className="text-[10px] uppercase tracking-wide text-muted font-semibold mr-1">Written for</span>
             {tab('team', 'Our team')}{tab('vendor', 'Vendor partner')}{tab('cleaner', 'The cleaner')}
+            <button onClick={() => setMode('')} title="Close the draft" className="ml-auto text-[11px] font-semibold text-muted hover:text-ink px-1.5">Close {'\u00d7'}</button>
           </div>
           <textarea value={text} onChange={e => setText(e.target.value)} rows={6}
             className="w-full text-xs text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
             <button onClick={copy} className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-ink text-white">Copy</button>
-            <button onClick={toSlack} disabled={busy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white disabled:opacity-50">{busy ? 'Sending…' : 'Send to Slack'}</button>
-            <a href={'sms:?&body=' + encodeURIComponent(text)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white">Text it</a>
-            <a href={'mailto:?subject=' + encodeURIComponent((r.listing_name || 'Unit') + ' — guest review') + '&body=' + encodeURIComponent(text)}
-              className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-ink border border-line hover:bg-white">Email it</a>
-            <span className="text-[10px] text-muted">Edit it first if you want — nothing sends until you press a button.</span>
+            <button onClick={() => setMode('')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-white">Close</button>
+            <span className="text-[10px] text-muted">Edit it first if you want — copy, then paste it wherever it needs to go.</span>
           </div>
         </div>
       )}
