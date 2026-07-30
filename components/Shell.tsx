@@ -42,6 +42,7 @@ const SECTIONS: {
       { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
       { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
+      { to: '/inspections', label: 'Inspections', Icon: ClipboardList },
       { to: '/orders',   label: 'Orders',   Icon: ShoppingCart },
       { to: '/requests', label: 'Requests',  Icon: ClipboardList },
     ],
