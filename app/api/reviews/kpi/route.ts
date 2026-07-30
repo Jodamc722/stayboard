@@ -229,7 +229,15 @@ export async function GET(req: NextRequest) {
       }
       const pairs = link.map(l => resById[l.resId]).filter(Boolean)
       const listingIds = Array.from(new Set(pairs.map((p: any) => String(p.listing_id))))
-      const dates = Array.from(new Set(pairs.map((p: any) => str(p.check_out).slice(0, 10)))).filter(Boolean)
+      // The clean is usually scheduled ON the checkout date, but a moved clean lands a day either
+      // side. Matching only the exact date found almost nothing, so the window is +/- 1 day and the
+      // closest one wins.
+      const dateSet = new Set<string>()
+      for (const p of pairs as any[]) {
+        const d0 = str(p.check_out).slice(0, 10); if (!d0) continue
+        dateSet.add(d0); dateSet.add(addDays(d0, -1)); dateSet.add(addDays(d0, 1))
+      }
+      const dates = Array.from(dateSet)
       const taskByKey: Record<string, any> = {}
       if (listingIds.length && dates.length) {
         for (let i = 0; i < listingIds.length; i += 40) {
@@ -237,7 +245,7 @@ export async function GET(req: NextRequest) {
             .select('reference_property_id,scheduled_date,name,assignees,status')
             .in('reference_property_id', listingIds.slice(i, i + 40))
             .in('scheduled_date', dates.slice(0, 400))
-            .limit(4000)
+            .limit(1000)
           for (const t of ((data || []) as any[])) {
             const nm = str(t.name)
             if (!/clean/i.test(nm) || /strip|walk-?through|inspect/i.test(nm)) continue
@@ -248,7 +256,10 @@ export async function GET(req: NextRequest) {
       const byPerson: Record<string, { n: number; sum: number; worst: any[] }> = {}
       for (const l of link) {
         const res = resById[l.resId]; if (!res) continue
-        const t = taskByKey[String(res.listing_id) + '|' + str(res.check_out).slice(0, 10)]
+        const d0 = str(res.check_out).slice(0, 10)
+        const t = taskByKey[String(res.listing_id) + '|' + d0]
+          || taskByKey[String(res.listing_id) + '|' + addDays(d0, 1)]
+          || taskByKey[String(res.listing_id) + '|' + addDays(d0, -1)]
         if (!t) continue
         const who = (Array.isArray(t.assignees) ? t.assignees : []).map((p: any) => str(p.name)).filter(Boolean)
         for (const person of who) {
