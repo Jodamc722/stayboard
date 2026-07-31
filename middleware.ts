@@ -110,5 +110,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|icon-180.png|api/public).*)']
+  // /api is excluded entirely: the middleware already declared /api an open path and ignored its
+  // own auth result there, so every API call was paying a wasted network auth round-trip (and the
+  // 2.5s worst-case stall) for nothing. Route handlers do their own auth.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|icon-180.png|api/).*)']
 }
