@@ -141,7 +141,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               {section.items.map(({ to, label, Icon }) => {
                 const active = isActive(to)
                 return (
-                  <Link key={to} href={to} prefetch
+                  <Link key={to} href={to} prefetch={false}
                     className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
                     <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
                     {label}
