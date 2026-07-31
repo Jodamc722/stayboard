@@ -12,6 +12,8 @@ type Issue = { severity: 'critical' | 'high' | 'medium' | 'low'; title: string; 
 type Row = {
   id: string; name: string; internalName?: string | null; building: string | null; unit: string | null
   score: number; band: string; unrated: boolean; optimizeScore: number
+  propertyHealth: number | null; propertyBand: string; listingPerformance: number; performanceBand: string
+  perfParts: { occupancy: number | null; content: number; reputation: number | null; occIndex: number | null; occPct: number | null }
   avgStars: number | null; reviewCount: number; responseRate: number | null
   recurring: string[]; topIssue: string | null
   breakdown: { rating: number; volume: number; response: number; penalty: number; ops: number; setup: number }
@@ -33,6 +35,16 @@ const SEV: Record<string, string> = { critical: 'bg-rose-50 text-rose-700 border
 function Pill({ score, band }: { score: number | null; band: string }) {
   const b = BAND[band] || BAND.neutral
   return <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ring-1 ${b.ring} ${b.bg} ${b.text}`}>{score == null ? '—' : score}</span>
+}
+// The two split scores as a labeled stack: Property Health (ops) over Listing Performance (revenue).
+function ScorePair({ prop, propBand, perf, perfBand }: { prop: number | null; propBand: string; perf: number; perfBand: string }) {
+  const pb = BAND[propBand] || BAND.neutral, fb = BAND[perfBand] || BAND.neutral
+  return (
+    <div className="flex flex-col gap-1 shrink-0 w-[4.75rem]">
+      <span className={`inline-flex items-center justify-between gap-1 px-1.5 py-0.5 rounded-md text-[13px] font-bold tabular-nums ring-1 ${pb.ring} ${pb.bg} ${pb.text}`} title="Property Health — is the unit okay? (ops + guest experience)"><span className="text-[8px] font-semibold opacity-60">PROP</span>{prop == null ? '—' : prop}</span>
+      <span className={`inline-flex items-center justify-between gap-1 px-1.5 py-0.5 rounded-md text-[13px] font-bold tabular-nums ring-1 ${fb.ring} ${fb.bg} ${fb.text}`} title="Listing Performance — is the listing earning? (occupancy vs peers + content + reputation)"><span className="text-[8px] font-semibold opacity-60">PERF</span>{perf}</span>
+    </div>
+  )
 }
 
 export default function HealthPage() {
@@ -57,8 +69,8 @@ export default function HealthPage() {
       <header className="mb-5 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Activity size={13} /> Portfolio health</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Listing Health Score</h1>
-          <p className="text-sm text-muted mt-1">Master score = optimization + review &amp; ops health, scored per listing, per OTA, and per building - with the actions to fix each one.</p>
+          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Property Health &amp; Listing Performance</h1>
+          <p className="text-sm text-muted mt-1">Two scores per unit: <b className="text-ink">Property Health</b> (is the unit okay? — ops + guest experience, for CS &amp; Ops) and <b className="text-ink">Listing Performance</b> (is the listing earning? — occupancy vs building peers + content + reputation, for the GM &amp; CFO).</p>
         </div>
       </header>
 
@@ -68,9 +80,20 @@ export default function HealthPage() {
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-10 text-center text-sm text-rose-700">{data?.error || 'Could not load health data.'}</div>
       ) : (
         <>
-          {/* Summary */}
+          {/* Two hero scores */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
+              <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Avg Property Health · ops + guest</div>
+              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgProperty}</span><span className="text-[11px] text-muted mb-1">CS &amp; Ops act on this</span></div>
+            </div>
+            <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
+              <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Avg Listing Performance · revenue</div>
+              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgPerformance}</span><span className="text-[11px] text-muted mb-1">GM &amp; CFO act on this</span></div>
+            </div>
+          </div>
+          {/* Band counts (overall health) */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
-            <Kpi label="Avg score" value={s.avgScore} accent />
+            <Kpi label="Avg overall" value={s.avgScore} accent />
             <Kpi label="Elite + Healthy" value={(s.elite || 0) + (s.healthy || 0)} tone="emerald" />
             <Kpi label="Watch" value={s.watch} tone="amber" />
             <Kpi label="At risk" value={s.atRisk} tone="orange" />
@@ -126,7 +149,7 @@ export default function HealthPage() {
                 return (
                   <div key={r.id} className="border-b border-line last:border-0">
                     <button onClick={() => setOpen(isOpen ? null : r.id)} className="w-full text-left px-4 py-3 hover:bg-app/60 flex items-center gap-3">
-                      <Pill score={r.unrated ? null : r.score} band={r.band} />
+                      <ScorePair prop={r.propertyHealth} propBand={r.propertyBand} perf={r.listingPerformance} perfBand={r.performanceBand} />
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold text-ink truncate">{r.internalName || r.name}</div>
                         {r.internalName && r.internalName !== r.name && <div className="text-[11px] text-muted/80 truncate">{r.name}</div>}
@@ -153,11 +176,17 @@ export default function HealthPage() {
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
                           {/* breakdown + channels */}
                           <div>
-                            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Score breakdown</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Property Health · ops + guest <b className="text-ink normal-case">{r.propertyHealth ?? '—'}</b></div>
                             <div className="flex flex-wrap gap-1.5 mb-3">
-                              {([['Rating', r.breakdown.rating, 28], ['Volume', r.breakdown.volume, 8], ['Response', r.breakdown.response, 9], ['Setup', r.breakdown.setup, 35], ['Ops', r.breakdown.ops, 8], ['Issues', -r.breakdown.penalty, 0]] as [string, number, number][]).map(([l, v, m]) => (
+                              {([['Rating', r.breakdown.rating, 32], ['Volume', r.breakdown.volume, 9], ['Response', r.breakdown.response, 10], ['Ops', r.breakdown.ops, 9], ['Issues', -r.breakdown.penalty, 0]] as [string, number, number][]).map(([l, v, m]) => (
                                 <span key={l} className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink">{l} <b className="tabular-nums">{v > 0 && m > 0 ? `${v}/${m}` : v}</b></span>
                               ))}
+                            </div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Listing Performance · revenue <b className="text-ink normal-case">{r.listingPerformance}</b></div>
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                              <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Occupancy last 90 days vs this building's median earning unit">Occupancy {r.perfParts.occPct != null ? <b className="tabular-nums">{r.perfParts.occPct}%</b> : <b>—</b>}{r.perfParts.occIndex != null && <span className="text-muted"> · {r.perfParts.occIndex}× peers</span>}</span>
+                              <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Listing content / optimize score — the controllable conversion lever">Content <b className="tabular-nums">{r.perfParts.content}</b></span>
+                              <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Reputation — normalized review quality">Reputation <b className="tabular-nums">{r.perfParts.reputation ?? '—'}</b></span>
                             </div>
                             <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">By channel</div>
                             <div className="space-y-1.5">
