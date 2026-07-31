@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { bzApi, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -21,6 +22,11 @@ function etToday(): string {
 }
 
 async function run(req: NextRequest) {
+  // Logged-in users only - this fans out to the live Breezeway API (maxDuration 300),
+  // so an open endpoint would let anyone burn the API quota.
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
   const raw = String(body?.date || '')
