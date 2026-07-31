@@ -81,12 +81,15 @@ export async function GET(req: NextRequest) {
     ])
     // NOTE: compare status EXACTLY — /active/i also matches 'inactive', which silently counted all
     // 48 inactive listings (e.g. every Waves unit) as vacant.
-    const lmap: Record<string, { name: string; market: string; active: boolean; city: string | null; address: string | null; bedrooms: number | null; building: string | null; lat: number | null; lng: number | null; checkInTime: string | null; checkOutTime: string | null }> = {}
+    const lmap: Record<string, { name: string; market: string; market2: string | null; active: boolean; city: string | null; address: string | null; bedrooms: number | null; building: string | null; lat: number | null; lng: number | null; checkInTime: string | null; checkOutTime: string | null }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
       const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
       const lat = Number(l.lat), lng = Number(l.lng)
-      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, address: l.address_full || null, bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null, building: str(l.building) || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, checkInTime: fmt12(l.checkIn), checkOutTime: fmt12(l.checkOut) }
+      // Jon 2026-07-31: vendor-cleaned buildings show under BOTH their vendor bucket AND their
+      // geography (Capri/Lucerne/Amrit are the whole of North — vendor-first made North a dead tab).
+      const geo = marketOf(l.building, l.address_city, name)
+      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : geo, market2: isVendor ? geo : null, active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, address: l.address_full || null, bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null, building: str(l.building) || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, checkInTime: fmt12(l.checkIn), checkOutTime: fmt12(l.checkOut) }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
@@ -129,7 +132,7 @@ export async function GET(req: NextRequest) {
       const missed = clocked && done && finishedMin != null && finishedMin > DEADLINE_MIN
       return {
         id: String(t.id), listingId: lid,
-        unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other',
+        unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', market2: li ? li.market2 : null,
         dept, type, name: t.name || 'Task', status,
         assignees: ppl.map((p: any) => p && p.name).filter(Boolean),
         startedAt: t.started_at || null, finishedAt: t.finished_at || null,
@@ -161,7 +164,7 @@ export async function GET(req: NextRequest) {
     const vacants = Object.keys(lmap)
       .filter(id => lmap[id].active && !occupied[id])
       .map(id => ({
-        listingId: id, unit: lmap[id].name, market: lmap[id].market,
+        listingId: id, unit: lmap[id].name, market: lmap[id].market, market2: lmap[id].market2,
         leftToday: outToday[id] || null,
         needsClean: !!outToday[id] && tasks.some(t => t.listingId === id && t.type === 'departure_clean' && !t.done),
         nextArrival: nextIn[id] || null,
@@ -173,7 +176,7 @@ export async function GET(req: NextRequest) {
     for (const t of tasks) {
       if (!unitMap[t.listingId]) {
         unitMap[t.listingId] = {
-          listingId: t.listingId, unit: t.unit, market: t.market,
+          listingId: t.listingId, unit: t.unit, market: t.market, market2: t.market2 || null,
           guestOut: outToday[t.listingId] || null,
           city: (lmap[t.listingId] && lmap[t.listingId].city) || null,
           address: (lmap[t.listingId] && (lmap[t.listingId] as any).address) || null,
@@ -203,13 +206,13 @@ export async function GET(req: NextRequest) {
       const nm = li ? str(li.name) : ''
       if (!nm || !NOBZ_RE.test(nm)) continue
       unitMap[id] = {
-        listingId: id, unit: nm, market: li.market, guestOut: outToday[id] || null,
+        listingId: id, unit: nm, market: li.market, market2: li.market2 || null, guestOut: outToday[id] || null,
         city: li.city || null, address: (li as any).address || null, bedrooms: (li as any).bedrooms ?? null, building: (li as any).building || null, lat: li.lat || null, lng: li.lng || null,
         sameDayTurn: !!(outToday[id] && inToday[id]), nights: outNights[id] ?? null,
         arrivingNights: inNights[id] ?? null, arrivingGuest: inGuest[id] || null,
         qc: qcByListing[id] || [], guestyOnly: true,
         tasks: [{
-          id: 'guesty:' + id, listingId: id, unit: nm, market: li.market, dept: 'housekeeping',
+          id: 'guesty:' + id, listingId: id, unit: nm, market: li.market, market2: li.market2 || null, dept: 'housekeeping',
           type: 'departure_clean', name: 'Departure clean (vendor)', status: 'vendor', assignees: [],
           startedAt: null, finishedAt: null, minutes: null, reportUrl: null,
           done: false, running: false, clocked: false, late: false, atRisk: false, missed: false,
@@ -237,7 +240,7 @@ export async function GET(req: NextRequest) {
     // NOT STARTED — the band at the top of the board. Clock-aware: a clean only counts once the
     // guest has genuinely left (checkout + 30 min grace), so a 9am look at an 11am checkout is quiet.
     const behindRows: BehindRow[] = tasks.filter(t => t.clocked && !t.done && !t.running).map(t => ({
-      taskId: t.id, unit: t.unit,
+      taskId: t.id, unit: t.unit, market: t.market,
       checkOutTime: (lmap[t.listingId] && lmap[t.listingId].checkOutTime) || null,
       arrivingAt: inToday[t.listingId] ? ((lmap[t.listingId] && lmap[t.listingId].checkInTime) || '4:00 PM') : null,
       assignee: t.assignees[0] || null,
@@ -257,7 +260,7 @@ export async function GET(req: NextRequest) {
     }
     const ALL_MARKETS = (MARKETS as string[]).concat([VENDOR_MARKET])
     const byMarket = ALL_MARKETS.map(m => {
-      const mt = tasks.filter(t => t.market === m)
+      const mt = tasks.filter(t => t.market === m || t.market2 === m)
       const mc = mt.filter(t => t.clocked)
       return {
         market: m, total: mt.length, cleans: mc.length,
