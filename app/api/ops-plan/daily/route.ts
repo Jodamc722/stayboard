@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, type HealthReview } from '@/lib/health-score'
+import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf, isLux } from '@/lib/segments'
 
@@ -106,16 +107,13 @@ export async function GET() {
     }
     return [] as any[]
   }
-  const [revRows, { data: listings }, { data: work }, resv] = await Promise.all([
+  const [revRows, { data: listings }, openByListing, resv] = await Promise.all([
     fetchAllReviews(),
     sb.from('guesty_listings').select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw').limit(2000),
-    sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
+    openWorkByListing(sb),  // per-unit open work (listing_id), not the whole building's
     fetchResv(),
   ])
   const resvError = !resv || resv.length === 0
-
-  const openByBuilding: Record<string, number> = {}
-  ;(work ?? []).forEach((w: any) => { const b = rollupBuilding(w.building); if (!b || b === 'Unassigned') return; const wt = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1; openByBuilding[b] = (openByBuilding[b] || 0) + wt })
 
   const byListing = new Map<string, HealthReview[]>()
   ;(revRows ?? []).forEach((r: any) => { if (!r.listing_id) return; const a = byListing.get(r.listing_id) || []; a.push({ rating: r.rating != null && r.rating !== '' ? Number(r.rating) : null, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }); byListing.set(r.listing_id, a) })
@@ -128,8 +126,7 @@ export async function GET() {
   const healthOf = (lid: string) => {
     if (healthCache.has(lid)) return healthCache.get(lid)
     const l = lmeta.get(lid); if (!l) return null
-    const building = rollupBuilding(l.building)
-    const h = computeListingHealth(l, byListing.get(lid) || [], { openWork: openByBuilding[building] || 0 })
+    const h = computeListingHealth(l, byListing.get(lid) || [], { openWork: openByListing[String(lid)] || 0 })
     healthCache.set(lid, h); return h
   }
 
