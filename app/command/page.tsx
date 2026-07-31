@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getOpsPresets } from '@/lib/app-settings'
+import { noBreezewayRegex } from '@/lib/ops-presets'
 import { Shell } from '@/components/Shell'
 import { BrainConsole } from '@/components/BrainConsole'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
@@ -77,12 +79,13 @@ export default async function CommandCenterPage() {
       .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
     sb.from('guesty_listings').select('id, nickname, title, building, status').limit(2000),
     // Truthful overdue work: unfinished Breezeway tasks scheduled before today (matches daysheet isDone/isGone)...
-    sb.from('breezeway_tasks_sync').select('id', { count: 'exact', head: true })
+    sb.from('breezeway_tasks_sync').select('reference_property_id')
       .gte('scheduled_date', bzStart).lt('scheduled_date', todayStr)
       .is('finished_at', null)
       .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
       .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
-      .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%'),
+      .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+      .limit(5000),
     // ...plus open glitches whose due date has passed.
     sb.from('glitches').select('id', { count: 'exact', head: true })
       .not('status', 'in', '("done","resolved","closed")').lt('due_date', todayStr),
@@ -158,10 +161,18 @@ export default async function CommandCenterPage() {
     .filter((r: any) => r.dissatisfied || r.awaiting_reply)
     .map((r: any) => ({ id: r.conversation_id, guest: r.guest_name || 'Guest', channel: r.channel || '', unit: unitOf(r.listing_id ? (meta[r.listing_id]?.name || '') : ''), band: r.band || '', dissatisfied: !!r.dissatisfied, awaiting: !!r.awaiting_reply, topIssue: r.top_issue || '', excerpt: r.guest_excerpt || '', at: r.last_message_at }))
 
+  // Guesty-only buildings (Botanica) left Breezeway with old tasks stuck in the mirror - nobody
+  // will ever close those, so they do not count as overdue. Flagged via ops-presets noBreezeway.
+  const noBz = noBreezewayRegex((await getOpsPresets()).vendorBuildings)
+  const bzOverdueCount = ((bzOverdueRes.data ?? []) as any[]).filter((t: any) => {
+    const m = meta[String(t.reference_property_id)]
+    return !m || !noBz.test(m.building + ' ' + m.name)
+  }).length
+
   const counts = {
     reviews: reviewItems.length,
     messages: messages.length,
-    overdue: overdue.length + (bzOverdueRes.count || 0) + (glitchOverdueRes.count || 0),
+    overdue: overdue.length + bzOverdueCount + (glitchOverdueRes.count || 0),
     checkIns: checkIns.length,
     approvals: approvals.length,
     welcome: welcomeDue.length,
