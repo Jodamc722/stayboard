@@ -361,11 +361,17 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const homebasePrev = laborBlock(prevFrom, prevTo)
 
     // Cleaning P&L: what the guest paid for cleaning, against what we paid to clean.
+    // HONESTY GATE. Breezeway only carries `rate_paid` if the billing module is switched on, and
+    // today it is empty on every task. Subtracting zero would have printed a 100% cleaning margin
+    // and a $0 labour cost — both worse than useless. When no pay is recorded anywhere, the money
+    // side of housekeeping is reported as UNKNOWN, not as free.
+    const cleaningCostKnown = work.cleaningCost > 0
     const cleaningMargin = stays.cleaningRevenue - work.cleaningCost
     const cleaningMarginPrev = staysPrev.cleaningRevenue - workPrev.cleaningCost
     const labourCost = homebase.hasData ? homebase.cost : work.cost
     const labourCostPrev = homebasePrev.hasData ? homebasePrev.cost : workPrev.cost
-    const labourSource = homebase.hasData ? 'homebase' : 'breezeway'
+    const labourSource = homebase.hasData ? 'homebase' : (work.cost > 0 ? 'breezeway' : 'none')
+    const labourKnown = labourCost > 0
 
     // Open work now (not window-bound) — what is sitting on someone's plate right now.
     const openRows = (openWork.data || []) as any[]
@@ -478,25 +484,33 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         revenueChange: money(pctChange(stays.cleaningRevenue, staysPrev.cleaningRevenue)),
         turns: stays.turns, turnsPrev: staysPrev.turns,
         feePerTurn: money(stays.turns ? Math.round(stays.cleaningRevenue / stays.turns) : 0),
-        cost: money(work.cleaningCost), costPrev: money(workPrev.cleaningCost),
-        costPerTurn: money(work.costPerTurn),
-        margin: money(cleaningMargin), marginPrev: money(cleaningMarginPrev),
-        marginChange: money(pctChange(cleaningMargin, cleaningMarginPrev)),
-        marginPct: money(stays.cleaningRevenue ? round((cleaningMargin / stays.cleaningRevenue) * 100, 1) : null),
+        costKnown: cleaningCostKnown,
+        cost: cleaningCostKnown ? money(work.cleaningCost) : null,
+        costPrev: cleaningCostKnown ? money(workPrev.cleaningCost) : null,
+        costPerTurn: cleaningCostKnown ? money(work.costPerTurn) : null,
+        margin: cleaningCostKnown ? money(cleaningMargin) : null,
+        marginPrev: cleaningCostKnown ? money(cleaningMarginPrev) : null,
+        marginChange: cleaningCostKnown ? money(pctChange(cleaningMargin, cleaningMarginPrev)) : null,
+        marginPct: cleaningCostKnown && stays.cleaningRevenue ? money(round((cleaningMargin / stays.cleaningRevenue) * 100, 1)) : null,
         minutesPerTurn: work.minutesPerTurn,
-        costNote: 'cost = what Breezeway records as paid on completed housekeeping tasks',
+        costNote: cleaningCostKnown
+          ? 'cost = what Breezeway records as paid on completed housekeeping tasks'
+          : 'Breezeway records no pay on these tasks, so the margin cannot be worked out yet — upload a Homebase timesheet on the Labor page',
       },
 
       labor: {
-        source: labourSource,
-        cost: money(labourCost), costPrev: money(labourCostPrev), costChange: money(pctChange(labourCost, labourCostPrev)),
+        source: labourSource, known: labourKnown,
+        cost: labourKnown ? money(labourCost) : null,
+        costPrev: labourKnown ? money(labourCostPrev) : null,
+        costChange: labourKnown ? money(pctChange(labourCost, labourCostPrev)) : null,
         hours: homebase.hasData ? homebase.hours : work.hours,
         hoursPrev: homebasePrev.hasData ? homebasePrev.hours : workPrev.hours,
         people: homebase.hasData ? homebase.people : null,
         homebaseConnected: homebase.hasData,
-        costPerTurn: money(work.costPerTurn),
-        costRatio: money(stays.totalRevenue ? round((labourCost / stays.totalRevenue) * 100, 1) : null),
-        breezewayCost: money(work.cost),
+        costPerTurn: labourKnown ? money(work.costPerTurn) : null,
+        costRatio: labourKnown && stays.totalRevenue ? money(round((labourCost / stays.totalRevenue) * 100, 1)) : null,
+        breezewayCost: work.cost > 0 ? money(work.cost) : null,
+        minutesPerTurn: work.minutesPerTurn,
       },
 
       work: {
