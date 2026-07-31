@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
   const r = await createBreezewayTask({
     home_id,
     name: (unitName ? unitName + ' — ' : '') + issueTitle.slice(0, unitName ? 120 - unitName.length - 3 : 120),
-    description: (action ? action + ' ' : '') + '[Flagged by StayBoard Action Plan]',
+    description: (action ? action + ' ' : '') + '[Flagged by Lighthouse Action Plan]',
     type_department: department,
     type_priority: priority,
     scheduled_date: scheduled,
