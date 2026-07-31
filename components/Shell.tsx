@@ -28,12 +28,12 @@ const SECTIONS: {
     title: 'Guests',
     items: [
       { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
-      { to: '/reservation-emails', label: 'Reservation Emails', Icon: Mail },
+      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
       { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
       { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
-      { to: '/faq',          label: 'FAQ & How-To', Icon: Sparkles },
+      { to: '/faq',          label: 'Unit Knowledge', Icon: Sparkles },
     ],
   },
   {
@@ -41,10 +41,10 @@ const SECTIONS: {
     items: [
       { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
       { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
-      { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },
+      { to: '/glitches', label: 'Guest Issues', Icon: AlertTriangle },
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
-      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart },
-      { to: '/requests', label: 'Requests',  Icon: ClipboardList },
+      { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
+      { to: '/requests', label: 'Work Orders', Icon: ClipboardList },
     ],
   },
   {
