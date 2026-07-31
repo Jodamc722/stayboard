@@ -12,7 +12,7 @@ import {
   Mail, Loader2, Check, AlertTriangle, Save, ChevronDown, ChevronRight, Eye, Plus, Trash2, Paperclip,
 } from 'lucide-react'
 import {
-  EMAIL_TOKENS, DEFAULT_SUBJECT, STANDARD_BODY, configProblems, type PropertyEmail,
+  EMAIL_TOKENS, DEFAULT_SUBJECT, DEFAULT_DOC_NAME, STANDARD_BODY, configProblems, type PropertyEmail,
 } from '@/lib/reservation-emails'
 
 type Counts = Record<string, { units: number; sample: string[] }>
@@ -85,7 +85,7 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
       id, name, enabled: false, match: [name.toLowerCase()], to: '', cc: '',
       subject: DEFAULT_SUBJECT, body: STANDARD_BODY, leadHours: 2, timing: 'arrival-day',
       autoCreate: true, autoBuildForm: false, attachPdf: false,
-      folder: name + '/Reservations', extraLines: '',
+      folder: name + '/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
     }]))
     setOpen(id)
   }
@@ -210,6 +210,21 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
                       <input value={p.subject} disabled={!isOwner}
                         onChange={e => patch(p.id, { subject: e.target.value })} className={field} />
                     </div>
+
+                    {/* Only shown where a form actually rides along — a filename for a building
+                        that never attaches anything is a setting with nothing behind it. */}
+                    {p.attachPdf && (
+                      <div>
+                        <span className={label}>Attachment filename</span>
+                        <input value={p.docName} disabled={!isOwner}
+                          placeholder={DEFAULT_DOC_NAME}
+                          onChange={e => patch(p.id, { docName: e.target.value })} className={field} />
+                        <p className="text-[11px] text-muted mt-1">
+                          What the front desk sees on the file. Name it after the form they asked for.
+                          <code className="ml-1">.pdf</code> is added for you.
+                        </p>
+                      </div>
+                    )}
 
                     <div>
                       <span className={label}>Body</span>

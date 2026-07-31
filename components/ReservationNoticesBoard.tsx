@@ -272,7 +272,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     try {
       const mod = await import('@/lib/elser-pdf')
       const doc = await mod.buildElserPdf(r as any)
-      const name = mod.elserPdfName(r as any)
+      // Settings owns the filename (property docName). elserPdfName is only the safety net for a
+      // row whose building fell out of the config and therefore has no draft.
+      const name = (r.draft && r.draft.attachName) || mod.elserPdfName(r as any)
       doc.save(name)
       const raw = String(doc.output('datauristring'))
       const b64 = raw.slice(raw.indexOf(',') + 1)
