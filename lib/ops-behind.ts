@@ -19,7 +19,7 @@ import { untrackedRegex } from './ops-presets'
 import { isLiveStay } from './stay-status'
 import { notify } from './notify'
 
-export const GRACE_MIN = 30 // redeploy-nudge          // minutes after checkout before "not started" means anything
+export const GRACE_MIN = 30          // minutes after checkout before "not started" means anything
 const DEFAULT_OUT_MIN = 11 * 60      // 11:00 AM
 const DEFAULT_IN_MIN = 16 * 60       // 4:00 PM
 const WORK_START_MIN = 9 * 60        // no alerts before 9am
