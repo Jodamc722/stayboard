@@ -88,6 +88,16 @@ export async function POST(req: NextRequest) {
       assigned = false
       try { const a = await updateBreezewayTask(String(r.data.id), { assignments: ids }); assigned = !!a.ok } catch { assigned = false }
     }
+    // WRITE THROUGH to the mirror: the board reads breezeway_tasks_sync, which refreshes every
+    // 15 minutes — without this a task you just created was invisible until the next sync.
+    try {
+      await db.from('breezeway_tasks_sync').upsert({
+        id: String(r.data.id), reference_property_id: listingId, name: title,
+        status: 'created', scheduled_date: date, type_department: department,
+        assignees: [], report_url: r.data.report_url || null,
+        raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
+    } catch { /* the sync catches up */ }
     return NextResponse.json({ ok: true, taskId: String(r.data.id), reportUrl: r.data.report_url || null, department, priority, date, assigned })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
