@@ -79,6 +79,8 @@ export async function POST(req: NextRequest) {
     }
     const r = await updateBreezewayTask(taskId, { scheduled_date: date })
     if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
+    // mirror immediately so the task leaves/joins the day's board without waiting for the sync
+    try { await supabaseAdmin().from('breezeway_tasks_sync').update({ scheduled_date: date }).eq('id', taskId) } catch {}
     return NextResponse.json({ ok: true, taskId, date, state: target.state })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
