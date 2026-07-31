@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
     return out
   }
   const [reviewRows, lRes, stayRows] = await Promise.all([
-    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,raw',
+    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,raw',
       q => q.gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false })),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
     // Review RATE needs a denominator: stays that ENDED early enough to have been reviewed. Guests
@@ -322,7 +322,9 @@ export async function GET(req: NextRequest) {
       change: delta(overall, overallPrev),
       replyCoverage: overall.n ? round((replied / overall.n) * 100, 1) : null,
       medianReplyHours: replyTimes.length ? round(replyTimes.sort((a, b) => a - b)[Math.floor(replyTimes.length / 2)] / 60, 1) : null,
-      awaitingReply: cur.filter(r => !r.has_reply).length,
+      // Still waiting excludes reviews the team dismissed ('no reply needed') so this number
+      // agrees with the Mission Control tile instead of quietly counting closed-out reviews.
+      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed).length,
       staysEnded: stays.length,
       reviewRate: stays.length ? round((overall.n / stays.length) * 100, 1) : null,
       reviewRateNote: 'reviews received in this window against stays that ended in time to be reviewed',
