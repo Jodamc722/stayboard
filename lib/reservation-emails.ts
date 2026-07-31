@@ -40,6 +40,11 @@ export type PropertyEmail = {
   attachPdf: boolean    // Elser only today
   folder: string        // where the generated document files
   extraLines: string    // appended to the body — e.g. Salato's front-desk link
+  // WHAT THE FILE IS CALLED when it downloads, when it files, and on the attachment line of the
+  // draft. It is the form's real title, not an internal label: the building's front desk sees this
+  // filename in their inbox and has to recognise it as the document they asked us for. Same tokens
+  // as the subject line. '.pdf' is added automatically; slashes are stripped.
+  docName: string
 }
 
 export const RESERVATION_EMAILS_KEY = 'reservation_emails'
@@ -52,6 +57,13 @@ export const EMAIL_TOKENS = [
   'agent_name', 'agent_phone', 'agent_email',
 ] as const
 export type EmailToken = typeof EMAIL_TOKENS[number]
+
+// The form's actual title, which is what the building's front desk is expecting to see land in
+// their inbox. A generic name like "Reservation Report" makes them open it to find out what it is.
+// '/' is deliberately a '-': the real form reads "Transient Guest/Occupant" but a slash cannot go
+// in a filename.
+export const DEFAULT_DOC_NAME =
+  'Transient Guest-Occupant Registration Form - {{guest_name}} - {{unit_no}}'
 
 export const DEFAULT_SUBJECT =
   'Stay Hospitality / {{guest_name}} / {{unit_no}} / {{arrival_date}} - {{departure_date}}'
@@ -97,7 +109,7 @@ export const DEFAULT_PROPERTIES: PropertyEmail[] = [
     to: 'guestservices@theelserhotel.com,frontofficemanagers@theelserhotel.com',
     cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: ELSER_BODY,
-    leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: true, attachPdf: true, folder: 'Elser/Reservations', extraLines: '',
+    leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: true, attachPdf: true, folder: 'Elser/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
   },
   {
     id: 'salato', name: 'Salato', enabled: false,
@@ -105,28 +117,28 @@ export const DEFAULT_PROPERTIES: PropertyEmail[] = [
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
     leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Salato/Reservations',
-    extraLines: 'Front desk board: {{share_link}}',
+    extraLines: 'Front desk board: {{share_link}}', docName: DEFAULT_DOC_NAME,
   },
   {
     id: 'amrit', name: 'Amrit', enabled: false,
     match: ['amrit'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Amrit/Reservations', extraLines: '',
+    leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Amrit/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
   },
   {
     id: 'nomad', name: 'Nomad', enabled: false,
     match: ['nomad'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Nomad/Reservations', extraLines: '',
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Nomad/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
   },
   {
     id: 'district225', name: 'District 225', enabled: false,
     match: ['district 225', 'district225', 'dist 225'],
     to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'District 225/Reservations', extraLines: '',
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'District 225/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
   },
 ]
 
@@ -142,7 +154,7 @@ function mergeOne(stored: any, base?: PropertyEmail): PropertyEmail {
   const b: PropertyEmail = base || {
     id: '', name: '', enabled: false, match: [], to: '', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY, leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: false,
-    attachPdf: false, folder: '', extraLines: '',
+    attachPdf: false, folder: '', extraLines: '', docName: DEFAULT_DOC_NAME,
   }
   const s = (stored && typeof stored === 'object') ? stored : {}
   const name = str(s.name, b.name, 80)
@@ -166,6 +178,7 @@ function mergeOne(stored: any, base?: PropertyEmail): PropertyEmail {
     attachPdf: typeof s.attachPdf === 'boolean' ? s.attachPdf : b.attachPdf,
     folder: str(s.folder, b.folder, 200),
     extraLines: str(s.extraLines, b.extraLines, 2000),
+    docName: str(s.docName, b.docName || DEFAULT_DOC_NAME, 200),
   }
 }
 
@@ -236,6 +249,29 @@ export function renderBody(p: PropertyEmail, vars: TokenValues): string {
   const main = renderTemplate(p.body, vars)
   const extra = renderTemplate(p.extraLines || '', vars).trim()
   return extra ? main + '\n\n' + extra : main
+}
+
+/**
+ * The attachment's filename, always ending in '.pdf'.
+ *
+ * Sanitised hard, because this string is used three ways that each have their own rules: it is a
+ * download filename, a path segment in the document store, and text on the draft's attachment line.
+ * Anything a filesystem or a URL would choke on — slashes, colons, control characters — collapses
+ * to a space. An empty or all-punctuation template falls back to the shipped default rather than
+ * producing a file called '.pdf'.
+ */
+export function renderDocName(p: PropertyEmail, vars: TokenValues): string {
+  // Hyphens SURVIVE — they are the separator the name is built from ("Form - Guest - Unit").
+  // Everything a filesystem or a URL would choke on collapses to a single space.
+  const scrub = (s: string) => s
+    .replace(/\.pdf$/i, '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.-]+|[\s.-]+$/g, '')
+    .slice(0, 150)
+  return (scrub(renderTemplate(p.docName || DEFAULT_DOC_NAME, vars))
+    || scrub(renderTemplate(DEFAULT_DOC_NAME, vars))
+    || 'Registration Form') + '.pdf'
 }
 
 /** Does this listing belong to this property? Same lowercase-substring test lib/segments.ts uses. */

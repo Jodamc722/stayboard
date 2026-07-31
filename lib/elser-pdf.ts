@@ -42,9 +42,16 @@ export const DEFAULT_AGENT: AgentDetails = {
   name: AGENT.name, phone: AGENT.phone, email: AGENT.email, signature: 'Jonathan McGill',
 }
 
-/** The filename the building sees on the attachment. */
+/**
+ * FALLBACK filename only. The real one comes from the property's docName template in Settings and
+ * arrives on the notice's draft; this is what gets used if a draft could not be built (building
+ * removed from the config, say) so a form still downloads under the form's own title rather than
+ * something generic. Kept in step with DEFAULT_DOC_NAME on purpose.
+ */
 export function elserPdfName(n: Notice): string {
-  return 'Reservation Report - ' + (n.guest_name || 'Guest') + ' - ' + (n.unit_no || 'Unit') + '.pdf'
+  const clean = (s: string) => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return 'Transient Guest-Occupant Registration Form - '
+    + (clean(n.guest_name) || 'Guest') + ' - ' + (clean(n.unit_no) || 'Unit') + '.pdf'
 }
 
 /** Build the form. Returns the jsPDF doc so the caller can save it, or take a blob to upload. */

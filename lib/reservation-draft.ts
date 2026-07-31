@@ -5,7 +5,7 @@
 // they would drift, and a building would start getting two different-looking emails from us.
 //
 // PURE MODULE: no server imports, no DB.
-import { renderTemplate, renderBody, type PropertyEmail, type TokenValues } from './reservation-emails'
+import { renderTemplate, renderBody, renderDocName, type PropertyEmail, type TokenValues } from './reservation-emails'
 
 export type Notice = {
   id?: string
@@ -115,7 +115,9 @@ export function buildDraft(p: PropertyEmail, n: Notice, extra?: { shareLink?: st
     // clients paste literally into the To field and then refuse to send. Only whitespace is stripped.
     mailto: 'mailto:' + to.replace(/\s+/g, '') + '?' + q.join('&'),
     attach: !!p.attachPdf,
-    attachName: 'Reservation Report - ' + (n.guest_name || 'Guest') + ' - ' + (n.unit_no || 'Unit') + '.pdf',
+    // The filename the building sees. Comes from the property's docName template in Settings, so
+    // the download, the filed copy and this attachment line can never drift apart.
+    attachName: renderDocName(p, vars),
   }
 }
 
