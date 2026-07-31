@@ -133,7 +133,7 @@ export default async function RequestsPage() {
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5">
             <ClipboardList size={13} /> Operations
           </p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Requests</h1>
+          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Work Orders</h1>
           <p className="text-sm text-muted mt-1">
             Maintenance &amp; vendor work across the portfolio — {requests.length} tracked, {active.length} still in play.
           </p>
