@@ -2,7 +2,9 @@
 // Capri/Lucerne, Amrit) see their checkouts for today + the week. No guest PII: unit + schedule only.
 // Under /api/public/* which the middleware matcher excludes from auth entirely.
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -27,6 +29,9 @@ export async function GET(req: NextRequest) {
   const v = String(new URL(req.url).searchParams.get('v') || '').toLowerCase()
   const vendor = VENDORS[v]
   if (!vendor) return NextResponse.json({ ok: false, error: 'Unknown vendor' }, { status: 404 })
+  // Door codes ride on this response - same share-password cookie as the /vendor boards. Fail closed.
+  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
+  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
