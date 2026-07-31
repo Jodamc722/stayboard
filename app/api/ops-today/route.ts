@@ -9,6 +9,7 @@ import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
 import { isLiveStay } from '@/lib/stay-status'
+import { summariseBehind, fmt12, type BehindRow } from '@/lib/ops-behind'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -73,19 +74,19 @@ export async function GET(req: NextRequest) {
     // so nothing gets falsely flagged late/at-risk.
     const minsLeft = isToday ? DEADLINE_MIN - nowMin : DEADLINE_MIN
     const [lRes, tRes, qRes, rRes] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,bedrooms,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city'),
+      db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,bedrooms,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
       db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
       db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name,nights').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
     ])
     // NOTE: compare status EXACTLY — /active/i also matches 'inactive', which silently counted all
     // 48 inactive listings (e.g. every Waves unit) as vacant.
-    const lmap: Record<string, { name: string; market: string; active: boolean; city: string | null; address: string | null; bedrooms: number | null; building: string | null; lat: number | null; lng: number | null }> = {}
+    const lmap: Record<string, { name: string; market: string; active: boolean; city: string | null; address: string | null; bedrooms: number | null; building: string | null; lat: number | null; lng: number | null; checkInTime: string | null; checkOutTime: string | null }> = {}
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
       const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
       const lat = Number(l.lat), lng = Number(l.lng)
-      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, address: l.address_full || null, bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null, building: str(l.building) || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null }
+      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : marketOf(l.building, l.address_city, name), active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, address: l.address_full || null, bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null, building: str(l.building) || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, checkInTime: fmt12(l.checkIn), checkOutTime: fmt12(l.checkOut) }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
@@ -181,6 +182,9 @@ export async function GET(req: NextRequest) {
           lat: (lmap[t.listingId] && lmap[t.listingId].lat) || null,
           lng: (lmap[t.listingId] && lmap[t.listingId].lng) || null,
           sameDayTurn: !!(outToday[t.listingId] && inToday[t.listingId]),
+          // the two clock facts a coordinator needs: when the guest was due out, when the next one is in
+          checkOutTime: (lmap[t.listingId] && lmap[t.listingId].checkOutTime) || null,
+          arrivingAt: inToday[t.listingId] ? ((lmap[t.listingId] && lmap[t.listingId].checkInTime) || '4:00 PM') : null,
           nights: outNights[t.listingId] ?? null,
           arrivingNights: inNights[t.listingId] ?? null,
           arrivingGuest: inGuest[t.listingId] || null,
@@ -230,6 +234,15 @@ export async function GET(req: NextRequest) {
     // lower = more urgent; finished units sink to the bottom
     const rank = (u: any) => -(u.late ? 100 : 0) - (u.atRisk ? 50 : 0) - (u.sameDayTurn ? 20 : 0) - (u.unassigned ? 10 : 0) - (u.qc.length ? 5 : 0) + (u.allDone ? 1000 : 0)
     units.sort((a, b) => rank(a) - rank(b) || a.unit.localeCompare(b.unit))
+    // NOT STARTED — the band at the top of the board. Clock-aware: a clean only counts once the
+    // guest has genuinely left (checkout + 30 min grace), so a 9am look at an 11am checkout is quiet.
+    const behindRows: BehindRow[] = tasks.filter(t => t.clocked && !t.done && !t.running).map(t => ({
+      taskId: t.id, unit: t.unit,
+      checkOutTime: (lmap[t.listingId] && lmap[t.listingId].checkOutTime) || null,
+      arrivingAt: inToday[t.listingId] ? ((lmap[t.listingId] && lmap[t.listingId].checkInTime) || '4:00 PM') : null,
+      assignee: t.assignees[0] || null,
+    }))
+    const behind = summariseBehind(isToday ? behindRows : [], nowMin)
     const cleans = tasks.filter(t => t.clocked)
     const deadline = {
       dueBy: '4:00 PM', minsLeft, passed: minsLeft < 0,
@@ -271,7 +284,7 @@ export async function GET(req: NextRequest) {
     // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, deadline, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm })
+    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
