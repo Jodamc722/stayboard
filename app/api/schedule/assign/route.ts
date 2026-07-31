@@ -7,45 +7,13 @@ import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { loadIntel, renderIntel, INTEL_STRIP_RE, type IntelCtx } from '@/lib/listingIntel'
 
-// STAY INTEL: recent negative guest feedback + derived things-to-check, appended to the Breezeway
-// task description on Push so the cleaner sees it. Recomputed each push (delimited) = idempotent.
-const INTEL_LOW = 3
-const INTEL_DAYS = 180
-const INTEL_CHECK_MAP: { keys: string[]; item: string }[] = [
-  { keys: ['clean', 'dirty', 'dust', 'hair', 'stain', 'sticky', 'grime'], item: 'Deep-clean: floors, surfaces, bathroom, kitchen, linens' },
-  { keys: ['ac ', 'a/c', 'air condition', 'too hot', 'too cold', 'temperature', 'thermostat'], item: 'Verify A/C cools; check filter and thermostat' },
-  { keys: ['smell', 'odor', 'odour', 'musty', 'mold', 'mildew'], item: 'Check odors: trash, drains, fridge, HVAC, damp areas' },
-  { keys: ['noise', 'loud', 'noisy'], item: 'Check noise: appliances, HVAC, doors' },
-  { keys: ['broke', 'broken', 'leak', 'repair', 'maintenance', 'not work', 'malfunction'], item: 'Maintenance sweep: plumbing, fixtures, electronics, locks' },
-  { keys: ['towel', 'sheet', 'linen', 'amenit', 'soap', 'shampoo', 'coffee', 'supplies', 'restock'], item: 'Restock: linens, towels, toiletries, coffee, paper goods' },
-  { keys: ['wifi', 'wi-fi', 'internet', 'tv ', 'remote', 'streaming'], item: 'Test Wi-Fi and TV / streaming logins' },
-  { keys: ['key', 'lock', 'code', 'access', 'door', 'fob', 'entry'], item: 'Verify entry: door code, lock, fob, building access' },
-  { keys: ['bug', 'pest', 'roach', 'ant ', 'insect'], item: 'Pest check: kitchen, bathroom, baseboards' },
-  { keys: ['parking', 'garage'], item: 'Confirm parking / garage access instructions' },
-]
-function _intelDaysAgo(n: number): string { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString() }
-async function buildIntelBlock(listingId: string): Promise<string | null> {
-  try {
-    const db = supabaseAdmin()
-    const { data: reviews } = await db.from('guesty_reviews').select('rating,content,created_at').eq('listing_id', listingId).order('created_at', { ascending: false }).limit(40)
-    const revs = (reviews || []) as any[]
-    const since = _intelDaysAgo(INTEL_DAYS)
-    const low = revs.filter((r) => Number(r.rating) > 0 && Number(r.rating) <= INTEL_LOW && String(r.created_at || '') >= since)
-    if (!low.length) return null
-    const worst = low[0]
-    const blob = low.map((r) => String(r.content || '')).join(' ').toLowerCase()
-    const checks: string[] = []
-    for (const m of INTEL_CHECK_MAP) if (m.keys.some((k) => new RegExp('\\b' + k.trim()).test(blob))) checks.push(m.item)
-    if (!checks.length) checks.push('Walk every room: cleanliness, damage, missing items')
-    const excerpt = String(worst.content || '').replace(/\s+/g, ' ').trim().slice(0, 220)
-    const when = String(worst.created_at || '').slice(0, 10)
-    const lines = ['--- STAY INTEL (recent guest feedback) ---', 'Flag: ' + (worst.rating || '?') + '-star' + (when ? ' on ' + when : '') + (excerpt ? ' - "' + excerpt + '"' : ''), 'Check this turn:']
-    for (const c of checks.slice(0, 4)) lines.push('- ' + c)
-    lines.push('--- end intel ---')
-    return lines.join('\n')
-  } catch (e) { console.error('assign: buildIntelBlock failed', e); return null }
-}
+// STAY INTEL now lives in lib/listingIntel.ts and is written FOR THE CLEANER: the deadline, how
+// long the stay that just ended was, what guests keep saying about this unit, and what the last
+// inspection found. It used to be a generic "recent guest feedback" paragraph built from a review
+// query fired once per unit inside the push loop — a 40-unit push meant 40 queries. The context is
+// now loaded once for the whole push and rendered per task.
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -61,6 +29,14 @@ export async function POST(req: NextRequest) {
   if (!items.length) return NextResponse.json({ error: 'No assignments to push.' }, { status: 400 })
 
   const results: { listingId: string; date: string; ok: boolean; taskId?: string; error?: string }[] = []
+  // ONE context load for the whole push. Best-effort: if it fails, the push still happens, just
+  // without the intel block — an assignment that reaches the cleaner beats a perfect note that does not.
+  let intelCtx: IntelCtx | null = null
+  try {
+    const pushIds = items.map((it: any) => String(it?.listingId || '').trim()).filter(Boolean)
+    const pushDate = String((items[0] && items[0].date) || '').slice(0, 10)
+    intelCtx = await loadIntel(pushIds, pushDate)
+  } catch (e) { console.error('assign: loadIntel failed', e) }
   // Our block is wrapped in [STAY SCHEDULE]...[/STAY SCHEDULE]; everything outside it (manual NOTEs,
   // Breezeway edits) is PRESERVED across pushes. Re-push replaces only our block = idempotent.
   async function handleItem(it: any) {
@@ -84,10 +60,12 @@ export async function POST(req: NextRequest) {
       }
       if (!clean || !clean.id) { results.push({ listingId, date, ok: false, error: 'No departure clean found in Breezeway for that date yet.' }); return }
       let intelBlock: string | null = null
-      try { intelBlock = await buildIntelBlock(listingId) } catch (e) { console.error('assign: intel failed', e) }
-      const composed = [description, intelBlock].filter(Boolean).join('\n\n').slice(0, 1800)
+      // Rendered against THIS row's date — one push can span several days, and the deadline line is
+      // the whole point of the block.
+      try { if (intelCtx) intelBlock = renderIntel({ ...intelCtx, date }, listingId, 'clean') } catch (e) { console.error('assign: intel failed', e) }
+      const composed = [description, intelBlock].filter(Boolean).join('\n\n').slice(0, 2200)
       const currentDesc = String((clean.description ?? clean.raw?.description) || '')
-      const foreign = currentDesc.replace(/\[STAY SCHEDULE\][\s\S]*?\[\/STAY SCHEDULE\]/g, '').replace(/--- STAY INTEL[\s\S]*?--- end intel ---/g, '').trim()
+      const foreign = currentDesc.replace(/\[STAY SCHEDULE\][\s\S]*?\[\/STAY SCHEDULE\]/g, '').replace(INTEL_STRIP_RE, '').trim()
       const envelope = '[STAY SCHEDULE]\n' + composed + '\n[/STAY SCHEDULE]'
       const finalDesc = ((foreign ? foreign + '\n\n' : '') + envelope).slice(0, 3500)
       const payload: Record<string, any> = { assignments: assigneeIds }
