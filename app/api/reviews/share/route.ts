@@ -41,10 +41,10 @@ export async function POST(req: NextRequest) {
     error: 'Slack is not connected yet — set SLACK_WEBHOOK_URL in Vercel. Copy the message for now.',
   })
   try {
-    const who = str((access.profile || {}).name) || str(access.email) || 'StayBoard'
+    const who = str((access.profile || {}).name) || str(access.email) || 'Lighthouse'
     const r = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text + '\n\n_Shared from StayBoard by ' + who + '_' }),
+      body: JSON.stringify({ text: text + '\n\n_Shared from Lighthouse by ' + who + '_' }),
     })
     if (!r.ok) return NextResponse.json({ ok: false, error: 'Slack rejected it (' + r.status + ')' }, { status: 502 })
     return NextResponse.json({ ok: true })
