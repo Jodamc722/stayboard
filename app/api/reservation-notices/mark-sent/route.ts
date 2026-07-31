@@ -12,18 +12,22 @@
 // locally and the response says the write-back didn't land. Losing our own record because an
 // external API had a bad minute would be the worse outcome. The local update therefore happens
 // FIRST and is never rolled back.
+//
+// The write itself goes through lib/guesty-custom-fields, which reads the booking back from Guesty
+// and re-sends the COMPLETE custom-field array. See that file: a partial PUT deletes every field
+// you leave out, and it has already cost us one confirmation number.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
 import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
+import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const TABLE = 'reservation_notices'
-const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 // FIELD IDS ARE HARDCODED ON PURPOSE (proved against live reservation data on 2026-07-31).
 // Guesty's custom-field DEFINITION endpoints return nothing usable for this account and the local
@@ -31,13 +35,11 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 // write-back failed. These ids came from reading the customFields actually present on bookings the
 // building had already been told about.
 //
-//   68dd868bcc0af00010bd8ebe  BOOLEAN  — "reservation email sent". Write true, NOT a sentence.
+//   68dd868bcc0af00010bd8ebe  BOOLEAN  — "Elser/Amrit Reservation Email Sent". Write true, not a sentence.
 //   695f16830cb54c001400b3ff  TEXT     — Reservation Notes. Same field the front-desk board writes.
 const EMAIL_SENT_FIELD = '68dd868bcc0af00010bd8ebe'
 const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
 
-const fieldIdOf = (c: any): string | null =>
-  (c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : null) || c?._id || null
 const isNotes = (c: any): boolean =>
   String(fieldIdOf(c) || '') === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(String(c?.fieldName || ''))
 
@@ -49,8 +51,8 @@ function cleanInitials(v: any): string {
 }
 
 /**
- * One PUT carrying BOTH fields, so the flag and the note can never disagree — a booking that says
- * "sent" with no note, or a note with no flag, is exactly the ambiguity this whole feature exists
+ * Tick the flag and append the note in ONE write, so the two can never disagree — a booking that
+ * says "sent" with no note, or a note with no flag, is exactly the ambiguity this feature exists
  * to remove. Notes are APPENDED, never replaced: other people write in that field too.
  */
 async function writeGuesty(
@@ -62,45 +64,32 @@ async function writeGuesty(
     const token = await getToken().catch(() => '')
     if (!token) return { ok: false, note: 'no Guesty token' }
 
-    const db = supabaseAdmin()
-    const { data: row } = await db.from('guesty_reservations')
-      .select('custom_fields, raw').eq('id', reservationId).maybeSingle()
-    const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
-    const cf: any[] = Array.isArray((row as any)?.custom_fields)
-      ? (row as any).custom_fields
-      : (Array.isArray(raw.customFields) ? raw.customFields : [])
-
-    const existing = cf.find((c) => isNotes(c))
-    const prior = existing && typeof existing.value === 'string' ? existing.value : ''
     const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
     const line = '[' + stamp + '] ' + (building || 'Building') + ' arrival email sent by ' + initials
+
+    // The prior note text has to come from Guesty, not our mirror — appending to a stale copy
+    // would drop whatever the front desk typed in between.
+    const live = await readCustomFields(reservationId, token)
+    if (live === null) return { ok: false, note: 'could not read the booking, so nothing was written' }
+    const existingNote = live.find((c) => isNotes(c))
+    const prior = existingNote && typeof existingNote.value === 'string' ? existingNote.value : ''
     // Don't stack an identical line if someone marks the same notice sent twice in a day.
     const newNotes = prior.includes(line) ? prior : (prior ? prior + '\n' + line : line)
-    const notesId = existing ? (fieldIdOf(existing) || RES_NOTES_FIELD) : RES_NOTES_FIELD
+    const notesId = existingNote ? (fieldIdOf(existingNote) || RES_NOTES_FIELD) : RES_NOTES_FIELD
 
-    const r = await fetch(BASE + '/reservations/' + encodeURIComponent(reservationId), {
-      method: 'PUT',
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        customFields: [
-          { fieldId: EMAIL_SENT_FIELD, value: true },
-          { fieldId: notesId, value: newNotes },
-        ],
-      }),
-    })
-    if (!r.ok) return { ok: false, note: 'Guesty said ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 160) }
+    const res = await writeCustomFields(reservationId, token, [
+      { fieldId: EMAIL_SENT_FIELD, value: true },
+      { fieldId: notesId, value: newNotes },
+    ])
+    if (!res.ok) return { ok: false, note: res.note }
 
     // Mirror locally so the reservation page shows it before the next sync round-trip.
     try {
-      const next = Array.isArray(cf) ? cf.slice() : []
-      const ni = next.findIndex((c: any) => isNotes(c))
-      if (ni >= 0) next[ni] = Object.assign({}, next[ni], { value: newNotes })
-      else next.push({ fieldId: notesId, fieldName: 'Reservation Notes', value: newNotes })
-      const si = next.findIndex((c: any) => String(fieldIdOf(c) || '') === EMAIL_SENT_FIELD)
-      if (si >= 0) next[si] = Object.assign({}, next[si], { value: true })
-      else next.push({ fieldId: EMAIL_SENT_FIELD, fieldName: 'Reservation Email Sent', value: true })
+      const db = supabaseAdmin()
+      const { data: row } = await db.from('guesty_reservations').select('raw').eq('id', reservationId).maybeSingle()
+      const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
       await db.from('guesty_reservations')
-        .update({ custom_fields: next, raw: Object.assign({}, raw, { customFields: next }) })
+        .update({ custom_fields: res.fields, raw: Object.assign({}, raw, { customFields: res.fields }) })
         .eq('id', reservationId)
     } catch { /* mirror is a convenience; Guesty already has the truth */ }
 
