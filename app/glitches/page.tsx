@@ -69,7 +69,7 @@ export default function GlitchesPage() {
     <Shell>
       <header className="mb-5">
         <div className="text-[11px] font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5"><AlertTriangle size={12} /> Operations</div>
-        <h1 className="text-3xl font-bold text-ink mt-1">Glitches</h1>
+        <h1 className="text-3xl font-bold text-ink mt-1">Guest Issues</h1>
         <p className="text-sm text-muted mt-1">Every guest-reported problem — what&rsquo;s open, what got resolved, and which units keep having issues. Current ones also show on Today in Ops.</p>
       </header>
 
