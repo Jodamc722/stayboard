@@ -15,7 +15,9 @@ const GONE = /delete|cancel/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
-const COLS = 'id,reference_property_id,name,status,scheduled_date,finished_at,assignees,report_url,type_department,raw'
+// JSON-path selects instead of bare `raw`: we only need three possible created-date fields, not the
+// whole 50-150KB task blob × up to 6,000 rows (that payload was the cost, not the query).
+const COLS = 'id,reference_property_id,name,status,scheduled_date,finished_at,assignees,report_url,type_department,rcreated:raw->>created_at,rdcreated:raw->>date_created,rcreatedAt:raw->>createdAt'
 const RECENT_DAYS = 14  // Today-in-Ops shows only CURRENT guest glitches; older ones are stale/closed. A full historical glitch page is separate future work.
 
 export async function GET(req: NextRequest) {
@@ -47,8 +49,7 @@ export async function GET(req: NextRequest) {
         const li = lmap[String(t.reference_property_id)]
         const ppl = Array.isArray(t.assignees) ? t.assignees : []
         const status = str(t.status).toLowerCase()
-        const raw = t.raw || {}
-        const createdIso = str(raw.created_at || raw.date_created || raw.createdAt || '')
+        const createdIso = str(t.rcreated || t.rdcreated || t.rcreatedAt || '')
         const reported = createdIso.slice(0, 10)
         const sd = str(t.scheduled_date).slice(0, 10) || reported
         // strip the "Guest Reported / Glitch -" prefix so the issue reads cleanly
