@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, retrieveBreezewayTask, updateBreezewayTask, normalizeTaskStatus, breezewayConfigured } from '@/lib/breezeway'
 import { adminPasswordOk } from '@/lib/shareAuth'
+import { buildIntel } from '@/lib/listingIntel'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -88,6 +89,17 @@ export async function POST(req: NextRequest) {
         '',
         str(g.overview),
       ].filter(x => x !== '')
+      // WHOEVER PICKS THIS UP GETS THE UNIT'S HISTORY, not just the complaint: has this fault been
+      // worked here before (a third A/C call is a replacement conversation), can they get in right
+      // now, and is the part already sitting on the order desk. Skipped for a building-level
+      // override — "this unit" means nothing on a common-area task. Best-effort.
+      const overrideHomeEarly = Number(b.homeId)
+      if (g.listing_id && !(Number.isFinite(overrideHomeEarly) && overrideHomeEarly > 0)) {
+        try {
+          const intel = await buildIntel(String(g.listing_id), { kind: 'maintenance', taskName: title })
+          if (intel) { lines.push(''); lines.push(intel) }
+        } catch (e) { console.error('glitch push: intel failed', e) }
+      }
       // Instantiate the built Breezeway "Guest Reported / Glitch -" TEMPLATE (id 356707, discovered
       // from task 159116755) so pushed tasks carry the template's checklist/settings.
       const GLITCH_TEMPLATE_ID = 356707
