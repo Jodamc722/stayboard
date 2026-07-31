@@ -45,6 +45,8 @@ export default async function CommandCenterPage() {
   const sixtyAgo = new Date(Date.now() - 60 * 86400000).toISOString()
   const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
   const in2 = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+  // Overdue-work window: Breezeway tasks scheduled in the last 45 days, before today, still unfinished.
+  const bzStart = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 45 * 86400000))
 
   const [
     reviewsRes,
@@ -55,6 +57,8 @@ export default async function CommandCenterPage() {
     welcomeRes,
     sentimentRes,
     listingsRes,
+    bzOverdueRes,
+    glitchOverdueRes,
   ] = await Promise.all([
     sb.from('guesty_reviews').select('id, listing_id, rating, content, channel, guest_name, created_at')
       .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', sixtyAgo)
@@ -72,6 +76,16 @@ export default async function CommandCenterPage() {
     sb.from('guesty_conversation_sentiment').select('conversation_id, guest_name, listing_id, channel, band, dissatisfied, awaiting_reply, top_issue, guest_excerpt, last_message_at, status')
       .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
     sb.from('guesty_listings').select('id, nickname, title, building, status').limit(2000),
+    // Truthful overdue work: unfinished Breezeway tasks scheduled before today (matches daysheet isDone/isGone)...
+    sb.from('breezeway_tasks_sync').select('id', { count: 'exact', head: true })
+      .gte('scheduled_date', bzStart).lt('scheduled_date', todayStr)
+      .is('finished_at', null)
+      .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
+      .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
+      .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%'),
+    // ...plus open glitches whose due date has passed.
+    sb.from('glitches').select('id', { count: 'exact', head: true })
+      .not('status', 'in', '("done","resolved","closed")').lt('due_date', todayStr),
   ])
 
   const meta: Record<string, { name: string; building: string; status: string }> = {}
@@ -147,7 +161,7 @@ export default async function CommandCenterPage() {
   const counts = {
     reviews: reviewItems.length,
     messages: messages.length,
-    overdue: overdue.length,
+    overdue: overdue.length + (bzOverdueRes.count || 0) + (glitchOverdueRes.count || 0),
     checkIns: checkIns.length,
     approvals: approvals.length,
     welcome: welcomeDue.length,
@@ -161,7 +175,7 @@ export default async function CommandCenterPage() {
     { label: 'Reviews to reply', value: counts.reviews, href: '/reviews', Icon: Star },
     { label: 'Unread messages', value: counts.messages, href: '/messages', Icon: MessageSquare },
     { label: 'Welcome calls due', value: counts.welcome, href: '/welcome-calls', Icon: LogIn },
-    { label: 'Overdue work', value: counts.overdue, href: '/requests', Icon: AlertTriangle },
+    { label: 'Overdue work', value: counts.overdue, href: '/plan', Icon: AlertTriangle },
   ]
 
   return (
