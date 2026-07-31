@@ -114,6 +114,7 @@ export function TodayInOps() {
   // Comment threads on Breezeway tasks: which row is open + how many comments each row has,
   // so the team can talk about a task in the app and get the replies as notifications.
   const [cmtFor, setCmtFor] = useState('')
+  const [moveFor, setMoveFor] = useState('')  // taskId whose move-day panel is open
   const [cmtCounts, setCmtCounts] = useState<Record<string, number>>({})
   // Proactive unit signals: overdue Breezeway work, bad recent review, upkeep that has aged out.
   const [sig, setSig] = useState<Record<string, any>>({})
@@ -138,7 +139,7 @@ export function TodayInOps() {
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   useEffect(() => {
     fetch('/api/ops-today/glitches', { cache: 'no-store' }).then(r => r.json()).then(setGl).catch(() => {})
-    fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(j => {
+    fetch('/api/glitches?fields=stage', { cache: 'no-store' }).then(r => r.json()).then(j => {
       const m: Record<string, string> = {}
       for (const g of (j && Array.isArray(j.glitches) ? j.glitches : [])) if (g.breezeway_task_id) m[String(g.breezeway_task_id)] = STAGE_LABEL[g.status] || ''
       setGlStage(m)
@@ -234,7 +235,10 @@ export function TodayInOps() {
   const all = !filtering ? visUnits : visUnits.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter), fullTasks: u.tasks })).filter(u => u.tasks.length > 0)
   // AREA = mini-market, worked out from real coordinates (a Broward building next to Eden belongs
   // with Eden, whatever city string Guesty carries). Each area is a run the team can drive.
-  const areas = groupBy === 'area' ? clusterAreas(all as any, data.areaRadiusKm || 4) : []
+  // areas keep driving order INSIDE each block, but the BLOCKS come worst-first — a LATE clean
+  // must never sit below three quiet neighbourhoods just because its area is small
+  const rankArea = (a: any) => (a.units.some((u: any) => u.late) ? 0 : a.units.some((u: any) => u.atRisk) ? 1 : a.units.some((u: any) => u.unassigned) ? 2 : 3)
+  const areas = groupBy === 'area' ? clusterAreas(all as any, data.areaRadiusKm || 4).slice().sort((a: any, b: any) => rankArea(a) - rankArea(b)) : []
   const units = groupBy === 'area' ? (areas.flatMap(a => a.units) as Unit[]) : all
   // Finished counts finished units in the MARKET (not the filtered view, where it was stuck at 0)
   const doneCount = byMkt.filter(u => u.allDone).length
@@ -323,6 +327,7 @@ export function TodayInOps() {
                   <RowMenu title={'Actions for ' + t.name} actions={taskActions(t)} />
                 </div>
                 {cmtFor === t.id && <div className="px-4 pb-3"><CommentThread type="task" id={String(t.id)} label={u.unit + ' — ' + t.name} link="/plan" taskId={t.guestyOnly ? '' : String(t.id)} onCount={n => setCmtCounts(prev => ({ ...prev, [t.id]: n }))} /></div>}
+                {moveFor === t.id && <MoveTask task={t} onDone={() => { setMoveFor(''); load() }} onClose={() => setMoveFor('')} />}
                 </div>
               ))}
             </div>
@@ -351,6 +356,10 @@ export function TodayInOps() {
     out.push({ key: 'admin', label: 'Open in Breezeway', hint: 'Edit, assign or change the task itself', href: adminUrl(t.id) })
     if (t.reportUrl) out.push({ key: 'report', label: 'View the field report', hint: 'Read-only - photos and checklist, safe to share', href: t.reportUrl })
     if (!t.done) {
+      out.push({ key: 'move', label: 'Move to another day', hint: 'Only onto a checkout or vacant day — the server refuses occupied days', onClick: () => setMoveFor(moveFor === t.id ? '' : t.id) })
+      out.push({ key: 'done', label: 'Mark as done', hint: 'Closes the task in Breezeway and verifies it actually closed — for work the crew finished but never closed', onClick: () => markDone(t) })
+    }
+    if (!t.done) {
       const on = /vendor needed/i.test(t.name)
       out.push({
         key: 'vendor',
@@ -363,6 +372,14 @@ export function TodayInOps() {
       out.push({ key: 'delete', label: 'Delete this task', hint: 'Removes it from Breezeway - admin password required. Cleans are deleted on the scheduler.', onClick: () => delTask(t), danger: true })
     }
     return out
+  }
+  const markDone = async (t: Task) => {
+    if (!window.confirm('Mark \u201c' + t.name + '\u201d on ' + t.unit + ' as done in Breezeway?')) return
+    try {
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, action: 'complete' }) })
+      const j = await r.json(); if (!r.ok || !j.ok) { setErr(j.error || 'Could not close the task'); return }
+      load()
+    } catch (e: any) { setErr(String(e?.message || e)) }
   }
   const vendorFlag = async (t: Task) => {
     const on = !/vendor needed/i.test(t.name)
@@ -419,7 +436,7 @@ export function TodayInOps() {
         {q && <span className="text-[12px] text-muted">{units.length} match{units.length === 1 ? '' : 'es'}</span>}
         <span className="ml-auto inline-flex items-center rounded-lg border border-line overflow-hidden divide-x divide-line">
           <button onClick={() => { setDateSel(shiftDay(data.today, -1)); setLoading(true) }} title="Previous day" className="text-[13px] font-medium px-2.5 py-1.5 bg-white hover:bg-app">&lsaquo;</button>
-          <input type="date" value={data.today} onChange={e => { if (e.target.value) { setDateSel(e.target.value); setLoading(true) } }} className="text-[13px] px-2 py-1.5 bg-white border-0 focus:outline-none" />
+          <input type="date" value={data.today} onChange={e => { const v = e.target.value; if (/^20[2-9]\d-\d{2}-\d{2}$/.test(v)) { setDateSel(v); setLoading(true) } }} className="text-[13px] px-2 py-1.5 bg-white border-0 focus:outline-none" />
           <button onClick={() => { setDateSel(shiftDay(data.today, 1)); setLoading(true) }} title="Next day" className="text-[13px] font-medium px-2.5 py-1.5 bg-white hover:bg-app">&rsaquo;</button>
           {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-[13px] font-medium px-2.5 py-1.5 bg-ink text-white">Today</button>}
           <button onClick={() => { setLoading(true); load() }} title="Refresh" className="px-2.5 py-1.5 bg-white text-muted hover:bg-app hover:text-ink"><RefreshCw size={13} /></button>
@@ -589,6 +606,10 @@ export function TodayInOps() {
         ))}
         {groupBy !== 'area' && units.map(u => renderUnit(u))}
       </div>
+
+      {/* ANNUAL AUDITS DUE — built 07-23, lost in a later redesign, remounted 07-31. Lazy: it only
+          fetches when opened, so the board pays nothing for it. */}
+      <div className="mt-3"><AuditsDue market={market} /></div>
     </div>
   )
 }
@@ -1057,6 +1078,49 @@ function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone
       />
       {err && <span className="text-[10px] text-rose-700">{err}</span>}
     </span>
+  )
+}
+
+// MOVE A TASK TO ANOTHER DAY — from the row, against real occupancy. Days come from the same
+// dayStates the reschedule API enforces, and the POST re-checks server-side anyway (a booking can
+// land between render and click), so an occupied day can never be picked NOR slipped past.
+function MoveTask({ task, onDone, onClose }: { task: Task; onDone: () => void; onClose: () => void }) {
+  const [days, setDays] = useState<any[]>([])
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const [loadingDays, setLoadingDays] = useState(true)
+  useEffect(() => {
+    fetch('/api/ops-today/reschedule?listingId=' + encodeURIComponent(task.listingId) + '&taskId=' + encodeURIComponent(task.id), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { setDays(Array.isArray(j.days) ? j.days : []); setLoadingDays(false) }).catch(() => setLoadingDays(false))
+  }, [task.id, task.listingId])
+  const move = async (date: string) => {
+    setBusy(date); setErr('')
+    try {
+      const r = await fetch('/api/ops-today/reschedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, listingId: task.listingId, date }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Could not move it'); setBusy(''); return }
+      onDone()
+    } catch (e: any) { setErr(String(e?.message || e)); setBusy('') }
+  }
+  return (
+    <div className="mx-4 mb-3 rounded-lg border border-line bg-app/40 p-2.5">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Move &ldquo;{task.name}&rdquo; to&hellip;</span>
+        <button onClick={onClose} className="ml-auto text-muted hover:text-ink" title="Close"><X size={12} /></button>
+      </div>
+      {loadingDays && <div className="text-[11px] text-muted">Checking the next 14 days&hellip;</div>}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {days.map((d: any) => (
+          <button key={d.date} disabled={!d.allowed || !!busy} onClick={() => move(d.date)}
+            title={d.allowed ? (d.state === 'checkout' ? 'Guest checks out this day — free after checkout' : 'Vacant — free all day') : (d.guest || 'A guest') + ' is in the unit this day'}
+            className={'text-[11px] font-medium px-2 py-1 rounded-lg border ' + (busy === d.date ? 'bg-ink text-white border-ink' : d.allowed ? (d.state === 'checkout' ? 'bg-amber-50 border-amber-200 text-amber-800 hover:border-amber-400' : 'bg-white border-line hover:border-ink/40') : 'bg-app border-line text-muted/50 line-through cursor-not-allowed')}>
+            {fmtDay(d.date)}
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 text-[10px] text-muted">Crossed-out days have a guest in the unit &mdash; the server refuses those even if clicked.</div>
+      {err && <div className="mt-1 text-[11px] text-rose-700">{err}</div>}
+    </div>
   )
 }
 
