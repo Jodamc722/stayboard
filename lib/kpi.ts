@@ -17,8 +17,6 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
-import { getOpsPresets } from '@/lib/app-settings'
-import { noBreezewayRegex } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
 import type { Access } from '@/lib/access'
 
@@ -66,7 +64,7 @@ async function pageAll(build: (from: number, to: number) => any, maxPages = 14):
   return out
 }
 
-type Li = { id: string; name: string; building: string; market: string; active: boolean }
+type Li = { id: string; name: string; building: string; market: string; active: boolean; listingFee: number }
 
 export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any> {
   // Revenue, margin and labour cost are a manager's numbers. Ops workspaces still get every
@@ -93,7 +91,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     // ---------------------------------------------------------------- listings
     const listingRows = await pageAll((a, b) =>
-      db.from('guesty_listings').select('id,nickname,title,building,address_city,status').order('id').range(a, b), 3)
+      db.from('guesty_listings').select('id,nickname,title,building,address_city,status,listingFee:raw->prices->>cleaningFee').order('id').range(a, b), 3)
     const lmap: Record<string, Li> = {}
     for (const l of listingRows) {
       const name = l.nickname || l.title || 'Unit'
@@ -103,6 +101,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         building: rollupBuilding(l.building) || 'Unassigned',
         market: marketOf(l.building, l.address_city, name),
         active: !DEAD_LISTING.includes(str(l.status).toLowerCase()),
+        // Jon 2026-07-31: the cleaning fee also lives on the PROPERTY in Guesty (Fees). Some
+        // channels fold cleaning into the nightly rate, so those checkouts carry no fareCleaning
+        // and would otherwise read as a free clean. The listing fee is the fallback.
+        listingFee: num(l.listingFee),
       }
     }
     const all = Object.keys(lmap).map(k => lmap[k])
@@ -144,13 +146,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       // has finished. Kept as head-counts so it costs nothing.
       db.from('glitches').select('id', { count: 'exact', head: true })
         .not('status', 'in', '("done","resolved","closed")'),
-      db.from('breezeway_tasks_sync').select('reference_property_id')
+      db.from('breezeway_tasks_sync').select('id', { count: 'exact', head: true })
         .gte('scheduled_date', addDays(today, -45)).lte('scheduled_date', today)
         .is('finished_at', null)
         .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
         .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
-        .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
-        .limit(5000),
+        .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%'),
     ])
 
     // ---------------------------------------------------------------- today
@@ -182,7 +183,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     const stayBlock = (a: string, b: string) => {
       const days = daysBetween(a, b)
-      let nights = 0, room = 0, cleaning = 0, turns = 0, arrivals = 0
+      let nights = 0, room = 0, cleaning = 0, turns = 0, arrivals = 0, turnsFromListingFee = 0, turnsUnpriced = 0
       const byChannel: Record<string, { nights: number; revenue: number }> = {}
       const byBuilding: Record<string, { nights: number; revenue: number; cleaning: number; units: Record<string, true> }> = {}
       for (const r of live) {
@@ -201,9 +202,13 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
           byBuilding[bld].nights += n; byBuilding[bld].revenue += share
           if (li) byBuilding[bld].units[li.id] = true
         }
-        // Cleaning fee belongs to the checkout it paid for.
+        // Cleaning fee belongs to the checkout it paid for. Reservation first (what the guest was
+        // actually charged), then the property's configured fee, then nothing.
         if (inWin(dOf(r.check_out), a, b)) {
-          const c = num(r.cleaning)
+          const charged = num(r.cleaning)
+          let c = charged
+          if (!c && li && li.listingFee > 0) { c = li.listingFee; turnsFromListingFee += 1 }
+          else if (!c) turnsUnpriced += 1
           cleaning += c; turns += 1
           if (!byBuilding[bld]) byBuilding[bld] = { nights: 0, revenue: 0, cleaning: 0, units: {} }
           byBuilding[bld].cleaning += c
@@ -212,7 +217,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       }
       const available = unitCount * days
       return {
-        days, nights, available, arrivals, turns,
+        days, nights, available, arrivals, turns, turnsFromListingFee, turnsUnpriced,
         occupancy: available ? round((nights / available) * 100, 1) : 0,
         roomRevenue: Math.round(room),
         cleaningRevenue: Math.round(cleaning),
@@ -380,14 +385,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const openRows = (openWork.data || []) as any[]
     const nowIso = new Date().toISOString()
     const overdueWork = openRows.filter(w => w.due_at && str(w.due_at) < nowIso).length
-    // Guesty-only buildings (Botanica) left Breezeway with old tasks still sitting in the mirror.
-    // Nobody will ever close those, so they are not open work. The ops-presets noBreezeway flag
-    // says which buildings those are - Jon: remove Botanica, it is not managed in Breezeway.
-    const noBz = noBreezewayRegex((await getOpsPresets()).vendorBuildings)
-    const openTasks = ((openTaskRes.data || []) as any[]).filter(t => {
-      const li = lmap[String(t.reference_property_id)]
-      return !li || !noBz.test(li.building + ' ' + li.name)
-    }).length
+    const openTasks = Number(openTaskRes.count) || 0
     const openWorkTotal = openRows.length + openGlitchesNow + openTasks
 
     const buildingRows = Object.keys(work.byBuilding).map(b => {
@@ -507,6 +505,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         revenue: money(stays.cleaningRevenue), revenuePrev: money(staysPrev.cleaningRevenue),
         revenueChange: money(pctChange(stays.cleaningRevenue, staysPrev.cleaningRevenue)),
         turns: stays.turns, turnsPrev: staysPrev.turns,
+        turnsFromListingFee: stays.turnsFromListingFee, turnsUnpriced: stays.turnsUnpriced,
         feePerTurn: money(stays.turns ? Math.round(stays.cleaningRevenue / stays.turns) : 0),
         costKnown: cleaningCostKnown,
         cost: cleaningCostKnown ? money(work.cleaningCost) : null,
