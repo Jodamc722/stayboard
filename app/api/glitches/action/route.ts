@@ -29,8 +29,16 @@ export async function POST(req: NextRequest) {
     const b = await req.json().catch(() => ({} as any))
     const id = str(b.id)
     const action = str(b.action)
-    if (!id || !action) return NextResponse.json({ ok: false, error: 'id and action required.' }, { status: 400 })
     const db = supabaseAdmin()
+    // ONE-SHOT cleanup (bulk, no id): remove the auto-created Breezeway->board cards after that
+    // feature was reverted. Scoped so it can ONLY delete created_by='breezeway-auto', never a
+    // human's glitch. Any logged-in user; safe to press twice. TODO: remove after the cards are gone.
+    if (action === 'purgeAuto') {
+      const { data: del, error } = await db.from('glitches').delete().eq('created_by', 'breezeway-auto').select('id')
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, deleted: (del || []).length })
+    }
+    if (!id || !action) return NextResponse.json({ ok: false, error: 'id and action required.' }, { status: 400 })
     const { data: g, error: ge } = await db.from('glitches').select('*').eq('id', id).maybeSingle()
     if (ge || !g) return NextResponse.json({ ok: false, error: 'Glitch not found.' }, { status: 404 })
     const hist = Array.isArray(g.history) ? g.history : []
