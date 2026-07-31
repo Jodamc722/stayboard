@@ -15,7 +15,32 @@ type Unit = { listingId: string; unit: string; market: string; guestOut: string 
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
 type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
-type Data = { longStayNights?: number; areaRadiusKm?: number; ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
+type BehindRow = { taskId: string; unit: string; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }
+type Behind = { notStarted: number; sameDay: number; earliestIn: string | null; unassigned: number; waiting: number; units: BehindRow[]; level: '' | 'warn' | 'urgent' }
+type Data = { longStayNights?: number; areaRadiusKm?: number; ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; behind?: Behind; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
+
+// TWO AXES, NOT ONE. "Not started" on its own returns every kind of task and is useless for finding
+// a late clean; the question is always "departure cleans, not started" or "inspections, in progress".
+// Every task falls in exactly ONE job bucket so the chip counts add up to the total.
+const JOBS: Array<[string, string]> = [['all', 'All work'], ['departure_clean', 'Departure cleans'], ['strip', 'Strips'], ['inspection', 'Inspections'], ['maintenance', 'Maintenance'], ['other', 'Other']]
+const STATUSES: Array<[string, string]> = [['all', 'Any status'], ['notstarted', 'Not started'], ['running', 'In progress'], ['done', 'Done'], ['unassigned', 'Unassigned']]
+function jobKey(t: Task): string {
+  if (t.type === 'departure_clean' || t.type === 'deep_clean') return 'departure_clean'
+  if (t.type === 'strip') return 'strip'
+  if (t.type === 'inspection' || t.type === 'audit' || t.dept === 'inspection') return 'inspection'
+  if (t.type === 'maintenance' || t.type === 'pm' || t.type === 'field' || t.dept === 'maintenance') return 'maintenance'
+  return 'other'
+}
+function matchJob(t: Task, jf: string) { return jf === 'all' || jobKey(t) === jf }
+// Unassigned is a status people ask for by name ("who has nobody on it") even though it overlaps
+// not-started and in-progress — it is a chip, not a fifth exclusive bucket.
+function matchStatus(t: Task, sf: string) {
+  if (sf === 'all') return true
+  if (sf === 'unassigned') return t.assignees.length === 0 && !t.done
+  if (sf === 'done') return t.done
+  if (sf === 'running') return t.running && !t.done
+  return !t.done && !t.running
+}
 
 const TYPE_LABEL: Record<string, string> = {
   departure_clean: 'Departure clean', strip: 'Strip', deep_clean: 'Deep clean', inspection: 'Inspection',
@@ -70,7 +95,9 @@ export function TodayInOps() {
   const [showDone, setShowDone] = useState(false)
   const [addFor, setAddFor] = useState('')
   const [itemsFor, setItemsFor] = useState('')
-  const [tf, setTf] = useState('all')  // click a stat card to filter to that kind of work
+  // two independent filter axes: WHAT kind of job, and WHERE it stands
+  const [jf, setJf] = useState('all')
+  const [sf, setSf] = useState('all')
   const [people, setPeople] = useState<Person[]>([])
   const [panel, setPanel] = useState<'' | 'glitches' | 'vacant'>('')
   // active glitches live in the status strip — fetched here so the count shows without opening
@@ -148,20 +175,20 @@ export function TodayInOps() {
   // page once already. Degrade to empty rather than throw.
   const srcUnits: Unit[] = Array.isArray(data.units) ? data.units : []
   const totals = data.totals || {}
-  const inFilter = (t: Task) => tf === 'all'
-    || (tf === 'cleans' && (t.type === 'departure_clean' || t.type === 'strip'))
-    || (tf === 'maintenance' && t.dept === 'maintenance')
-    || (tf === 'inspection' && t.dept === 'inspection')
-    || (tf === 'unassigned' && t.assignees.length === 0 && !t.done)
-    || (tf === 'running' && t.running && !t.done)
-    || (tf === 'notstarted' && !t.done && !t.running)
-    || (tf === 'other' && t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip')
+  const inFilter = (t: Task) => matchJob(t, jf) && matchStatus(t, sf)
   const glRows = ((gl && gl.glitches) || []).filter((g: any) => market === 'all' || g.market === market)
   const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
   const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
   const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
-  const all = tf === 'all' ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
-  const baseUnits = showDone ? all : all.filter(u => !u.allDone)
+  const filtering = jf !== 'all' || sf !== 'all'
+  const all = !filtering ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
+  // Chip counts recount against the OTHER axis: pick "Departure cleans" and the status counts are
+  // cleans only, so the number on a chip is what you will actually get when you press it.
+  const mktTasks: Task[] = byMkt.flatMap(u => u.tasks)
+  const jobCount = (k: string) => mktTasks.filter(t => (k === 'all' || jobKey(t) === k) && matchStatus(t, sf)).length
+  const statusCount = (k: string) => mktTasks.filter(t => matchJob(t, jf) && matchStatus(t, k)).length
+  // asking for Done explicitly must show finished units, whatever the Finished toggle says
+  const baseUnits = (showDone || sf === 'done') ? all : all.filter(u => !u.allDone)
   // SEARCH: unit, guest leaving, assignee, or task name. A unit stays if anything on it matches.
   const needle = q.trim().toLowerCase()
   const hit = (u: Unit) => {
@@ -181,6 +208,8 @@ export function TodayInOps() {
   const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
   const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
   const behind = d.late > 0 || d.atRisk > 0
+  // the "not started" band — server-computed so the board and the ops alert say the same thing
+  const bh: Behind | null = (data.behind && data.isToday !== false) ? data.behind : null
   const renderUnit = (u: Unit) => (
           <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
             {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE. */}
@@ -419,18 +448,51 @@ export function TodayInOps() {
         )}
       </div>
 
-      {/* WORK FILTERS — click to narrow the board */}
+      {/* NOT STARTED — the band Jon asked for. Only appears when it is a real problem: the guest has
+          checked out (plus grace) and nobody has started. Reads PROBLEM then ACTION, like the
+          exceptions do, and one press puts the board on exactly those cleans. */}
+      {bh && bh.notStarted > 0 && (
+        <div className={'rounded-2xl border mb-3 overflow-hidden ' + (bh.level === 'urgent' ? 'border-rose-300 bg-rose-50/70' : 'border-amber-300 bg-amber-50/60')}>
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <AlertTriangle size={15} className={bh.level === 'urgent' ? 'text-rose-700' : 'text-amber-700'} />
+              <span className={'font-bold text-sm ' + (bh.level === 'urgent' ? 'text-rose-800' : 'text-amber-900')}>
+                {bh.notStarted} departure clean{bh.notStarted === 1 ? '' : 's'} not started
+              </span>
+              <button onClick={() => { setJf('departure_clean'); setSf('notstarted') }} className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90">Show them</button>
+            </div>
+            <div className="mt-1.5 text-[13px] text-ink/80">
+              <span className="font-semibold">Problem:</span> the guests have checked out and nobody has started
+              {bh.sameDay > 0 ? '. ' + bh.sameDay + ' of them ' + (bh.sameDay === 1 ? 'has a guest' : 'have guests') + ' arriving today' + (bh.earliestIn ? ', the first at ' + bh.earliestIn : '') : ''}
+              {bh.unassigned > 0 ? '. ' + bh.unassigned + ' still ' + (bh.unassigned === 1 ? 'has' : 'have') + ' nobody assigned' : ''}.
+            </div>
+            <div className="mt-1 text-[13px] text-ink/80">
+              <span className="font-semibold">Action:</span> {bh.unassigned > 0 ? 'assign the unassigned ones first, then call the team on the rest' : 'call the team and get someone moving'}
+              {bh.sameDay > 0 ? ' — start with the units that have a check-in today.' : '.'}
+              {bh.waiting > 0 ? ' (' + bh.waiting + ' more not started, but those guests have not checked out yet — not a problem.)' : ''}
+            </div>
+            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+              {bh.units.map(b => (
+                <button key={b.taskId} onClick={() => setQ(b.unit)} title={'Filter the board to ' + b.unit} className="text-[11px] font-medium px-2 py-1 rounded-lg border bg-white border-line hover:border-ink/30 inline-flex items-center gap-1.5">
+                  <span className="font-semibold text-ink">{b.unit}</span>
+                  {b.arrivingAt && <span className="text-rose-700">in {b.arrivingAt}</span>}
+                  <span className={b.assignee ? 'text-muted' : 'text-amber-700 font-semibold'}>{b.assignee || 'Unassigned'}</span>
+                </button>
+              ))}
+              {bh.notStarted > bh.units.length && <span className="text-[11px] text-muted">+{bh.notStarted - bh.units.length} more</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WORK FILTERS — two axes together: WHAT kind of job, and WHERE it stands. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-4">
         <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Show</span>
-        <Chip label="All work" n={totals.tasks || 0} active={tf === 'all'} onClick={() => setTf('all')} />
-        <Chip label="Cleans" n={d.cleans} active={tf === 'cleans'} onClick={() => setTf('cleans')} />
-        <Chip label="Maintenance" n={totals.maintenance || 0} active={tf === 'maintenance'} onClick={() => setTf('maintenance')} />
-        <Chip label="Inspections" n={totals.inspection || 0} active={tf === 'inspection'} onClick={() => setTf('inspection')} />
-        <Chip label="Other" n={srcUnits.reduce((a, u) => a + u.tasks.filter(t => t.dept !== 'maintenance' && t.dept !== 'inspection' && t.type !== 'departure_clean' && t.type !== 'strip').length, 0)} active={tf === 'other'} onClick={() => setTf('other')} />
+        {JOBS.map(j => <Chip key={j[0]} label={j[1]} n={jobCount(j[0])} active={jf === j[0]} onClick={() => setJf(j[0])} />)}
         <span className="h-5 w-px bg-line mx-1" />
-        <Chip label="In progress" n={totals.running || 0} active={tf === 'running'} onClick={() => setTf('running')} />
-        <Chip label="Not started" n={totals.notStarted || 0} active={tf === 'notstarted'} onClick={() => setTf('notstarted')} />
-        <Chip label="Unassigned" n={totals.unassigned || 0} warn active={tf === 'unassigned'} onClick={() => setTf('unassigned')} />
+        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Status</span>
+        {STATUSES.map(s => <Chip key={s[0]} label={s[1]} n={statusCount(s[0])} warn={s[0] === 'unassigned'} active={sf === s[0]} onClick={() => setSf(s[0])} />)}
+        {filtering && <button onClick={() => { setJf('all'); setSf('all') }} className="text-[12px] font-medium text-muted hover:text-ink underline ml-1">Clear</button>}
       </div>
 
       {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
