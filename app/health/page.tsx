@@ -5,10 +5,10 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useCachedFetch } from '@/lib/swr'
 import Link from 'next/link'
 import { Shell } from '@/components/Shell'
-import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Building2, Wrench, ArrowRight, Info } from 'lucide-react'
+import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Building2, Wrench, ArrowRight, Info, Send, CheckCircle2, Clock, Loader2, FileText, Copy, Check } from 'lucide-react'
 
 type Channel = { label: string; score: number; band: string; avgStars: number | null; reviewCount: number; responseRate: number | null; badge: string | null }
-type Issue = { severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string }
+type Issue = { key: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string }
 type Pillars = {
   ops: number | null; opsBand: string
   listing: number; listingBand: string
@@ -71,13 +71,92 @@ function PillarBlock({ label, sub, score, band, children }: { label: string; sub
   )
 }
 
+// Which issues are Breezeway FIELD tasks (vs desk tasks for CCS/Listings). Mirrors the server's
+// departmentFor() in /api/health/push-task so we only show "Push to Breezeway" where it will work.
+function fieldDeptFor(key: string, owner: string): string | null {
+  const k = String(key || '').toLowerCase(), o = String(owner || '').toLowerCase()
+  if (k === 'clean' || o.includes('housekeep')) return 'housekeeping'
+  if (k === 'ac' || k === 'maint' || k === 'checkin') return 'maintenance'
+  if (k === 'noise' || k === 'ops') return 'inspection'
+  if (o.includes('maintenance')) return 'maintenance'
+  if (o.includes('field') || o.includes('ops')) return 'inspection'
+  return null
+}
+type Pushed = { status: string; scheduledDate?: string | null; reportUrl?: string | null } | null
+
+// Push one health issue into Breezeway as a field task (preview → confirm), carrying the action
+// detail so the field team gets the specifics. Shows live status and flips to "Action taken" when
+// Breezeway completes it — that's how we track the inspection to closure.
+function BreezewayPush({ listingId, unitName, issue, pushed }:
+  { listingId: string; unitName: string; issue: Issue; pushed?: Pushed }) {
+  const [plan, setPlan] = useState<any>(pushed || null)
+  const [state, setState] = useState<'idle' | 'previewing' | 'confirm' | 'pushing' | 'done' | 'error'>(pushed ? 'done' : 'idle')
+  const [msg, setMsg] = useState('')
+  const status = plan?.status
+  const taken = status === 'completed' || status === 'approved'
+  async function call(confirm: boolean) {
+    setState(confirm ? 'pushing' : 'previewing'); setMsg('')
+    try {
+      const r = await fetch('/api/health/push-task', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, unitName, issueKey: issue.key, issueTitle: issue.title, action: issue.action, severity: issue.severity, owner: issue.owner, confirm }) })
+      const d = await r.json()
+      if (!r.ok) { setState('error'); setMsg(d.error || 'Failed'); return }
+      if (d.already) { setPlan(d); setState('done'); return }
+      if (d.preview) { setPlan(d); setState('confirm'); return }
+      setPlan(d); setState('done')
+    } catch (e: any) { setState('error'); setMsg(String(e?.message || e)) }
+  }
+  if (state === 'done' && taken) return <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold"><CheckCircle2 size={12} /> Action taken{plan?.reportUrl && <a href={plan.reportUrl} target="_blank" rel="noreferrer" className="ml-1 text-brand-700 hover:underline inline-flex items-center gap-0.5"><FileText size={10} />report</a>}</span>
+  if (state === 'done') return <span className="inline-flex items-center gap-1 text-[11px] text-brand-700 font-medium"><Clock size={12} /> In Breezeway{(plan?.scheduledDate || plan?.scheduled_date) ? ` · ${plan.scheduledDate || plan.scheduled_date}` : ''}{status ? ` · ${status}` : ''}</span>
+  if (state === 'pushing' || state === 'previewing') return <span className="inline-flex items-center gap-1 text-[11px] text-muted"><Loader2 size={12} className="animate-spin" /> Working…</span>
+  if (state === 'confirm' && plan) return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] flex-wrap">
+      <span className="text-amber-800">{plan.message}</span>
+      <button onClick={() => call(true)} className="font-semibold px-2 py-0.5 rounded-md bg-brand-600 text-white hover:bg-brand-700 inline-flex items-center gap-1"><Send size={10} /> Confirm</button>
+      <button onClick={() => setState('idle')} className="font-medium px-2 py-0.5 rounded-md border border-line text-muted hover:bg-app">Cancel</button>
+    </span>
+  )
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <button onClick={() => call(false)} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-brand-200 text-brand-700 bg-brand-50 hover:bg-brand-100 inline-flex items-center gap-1"><Send size={10} /> Push to Breezeway</button>
+      {state === 'error' && <span className="text-[10px] text-rose-600">{msg}</span>}
+    </span>
+  )
+}
+
+// Slack-ready inspection report for one unit — the text a supervisor gets pasted to them.
+function buildUnitReport(r: Row): string {
+  const bandLabel = (BAND[r.band] || BAND.neutral).label
+  const L: string[] = []
+  L.push(`*Health Score Inspection — ${r.internalName || r.name}*`)
+  L.push(`${r.building ? r.building + ' · ' : ''}Overall *${r.score}* (${bandLabel})`)
+  L.push(`Ops & Guest ${r.pillars.ops ?? '—'}  ·  Listing Opt ${r.pillars.listing}  ·  Revenue ${r.pillars.revenue ?? '—'}`)
+  L.push(r.avgStars != null ? `Rating ${r.avgStars}★ (${r.reviewCount} reviews${r.responseRate != null ? `, ${r.responseRate}% replied` : ''})` : 'No reviews yet')
+  if (r.recurring.length) L.push(`⚠ Recurring: ${r.recurring.join(', ')}`)
+  if (r.issues.length) {
+    L.push('')
+    L.push('*Actions* (field items pushed to Breezeway):')
+    r.issues.forEach(i => {
+      const dept = fieldDeptFor(i.key, i.owner)
+      L.push(`• [${i.severity.toUpperCase()}] ${i.title} — ${i.action} (${i.owner}${dept ? ` → Breezeway/${dept}` : ''})`)
+    })
+  } else L.push('No actions flagged — this unit is healthy.')
+  return L.join('\n')
+}
+
 export default function HealthPage() {
   const { data, loading } = useCachedFetch<Data>('/api/listing-health')
+  const { data: tasksData } = useCachedFetch<{ tasks: Record<string, Pushed> }>('/api/health/tasks')
+  const pushedMap = tasksData?.tasks || {}
   const [q, setQ] = useState('')
   const [band, setBand] = useState<'all' | 'critical' | 'risk' | 'watch' | 'healthy'>('all')
   const [view, setView] = useState<'units' | 'buildings'>('units')
   const [open, setOpen] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
 
+  function copy(id: string, text: string) {
+    navigator.clipboard?.writeText(text).then(() => { setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 2000) }).catch(() => {})
+  }
 
   const rows = useMemo(() => {
     let r = data?.listings ? [...data.listings] : []
@@ -85,6 +164,16 @@ export default function HealthPage() {
     if (q.trim()) { const s = q.toLowerCase(); r = r.filter(x => x.name.toLowerCase().includes(s) || (x.internalName || '').toLowerCase().includes(s) || (x.building || '').toLowerCase().includes(s) || (x.topIssue || '').toLowerCase().includes(s)) }
     return r
   }, [data, q, band])
+
+  // Portfolio inspection report for the current filter — Slack-ready, capped so it stays pasteable.
+  function copyPortfolio() {
+    const cap = 40
+    const flagged = rows.filter(r => r.issues.length > 0)
+    const head = `*Health Score Inspection*  —  ${band === 'all' ? 'all units' : band === 'risk' ? 'at-risk units' : band + ' units'} (${flagged.length} with actions)`
+    const body = flagged.slice(0, cap).map(buildUnitReport).join('\n\n———\n\n')
+    const more = flagged.length > cap ? `\n\n…and ${flagged.length - cap} more units.` : ''
+    copy('__portfolio__', head + '\n\n' + body + more)
+  }
 
   const s = data?.summary
 
@@ -138,6 +227,11 @@ export default function HealthPage() {
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, issue…" className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-line bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </div>
+            {view === 'units' && (
+              <button onClick={copyPortfolio} title="Copy a Slack-ready Health Score Inspection report for the units currently shown" className="px-3 py-2 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center gap-1.5">
+                {copied === '__portfolio__' ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy inspection report</>}
+              </button>
+            )}
             <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
               {(['units', 'buildings'] as const).map(v => (
                 <button key={v} onClick={() => setView(v)} className={`px-3 py-2 font-medium capitalize ${view === v ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{v}</button>
@@ -236,21 +330,34 @@ export default function HealthPage() {
                               })}
                             </div>
                           </div>
-                          {/* actions */}
+                          {/* Health Score Inspection — actions, Breezeway push, shareable report */}
                           <div>
-                            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Actions for the team</div>
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">Health Score Inspection</div>
+                              <button onClick={() => copy(r.id, buildUnitReport(r))} title="Copy this unit's inspection report (Slack-ready) to send a supervisor" className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-brand-700 bg-white hover:bg-brand-50 inline-flex items-center gap-1">
+                                {copied === r.id ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy report</>}
+                              </button>
+                            </div>
                             {r.issues.length === 0 ? <div className="text-[12px] text-emerald-700 inline-flex items-center gap-1">Nothing flagged - this unit is healthy.</div> : (
                               <div className="space-y-2">
-                                {r.issues.map((i, k) => (
-                                  <div key={k} className="bg-white border border-line rounded-lg p-2.5">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="text-[13px] font-semibold text-ink">{i.title}</span>
-                                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[i.severity]}`}>{i.severity}</span>
+                                {r.issues.map((i, k) => {
+                                  const dept = fieldDeptFor(i.key, i.owner)
+                                  const pushed = pushedMap[`${r.id}__${i.title}`] || null
+                                  return (
+                                    <div key={k} className="bg-white border border-line rounded-lg p-2.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[13px] font-semibold text-ink">{i.title}</span>
+                                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[i.severity]}`}>{i.severity}</span>
+                                      </div>
+                                      <div className="text-[12px] text-muted mt-1">{i.action}</div>
+                                      <div className="flex items-center justify-between gap-2 mt-1.5 flex-wrap">
+                                        <span className="text-[11px] text-brand-700 font-medium inline-flex items-center gap-1"><Wrench size={11} /> {i.owner}</span>
+                                        {dept ? <BreezewayPush listingId={r.id} unitName={r.internalName || r.name} issue={i} pushed={pushed} />
+                                          : <span className="text-[10px] text-muted italic">Desk task — not a Breezeway field item</span>}
+                                      </div>
                                     </div>
-                                    <div className="text-[12px] text-muted mt-1">{i.action}</div>
-                                    <div className="text-[11px] text-brand-700 font-medium mt-1 inline-flex items-center gap-1"><Wrench size={11} /> {i.owner}</div>
-                                  </div>
-                                ))}
+                                  )
+                                })}
                               </div>
                             )}
                             <Link href={`/listings/${r.id}`} className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:text-brand-800">Open unit <ArrowRight size={13} /></Link>
