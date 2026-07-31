@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Mail, Loader2, Check, AlertTriangle, Plus, RefreshCw, Search, Paperclip, Copy,
-  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, CalendarClock, ChevronDown, ChevronRight,
+  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, CalendarClock, ChevronDown, ChevronRight, ExternalLink,
 } from 'lucide-react'
 import Link from 'next/link'
 import { ReservationEmailsAdmin } from './ReservationEmailsAdmin'
@@ -23,6 +23,9 @@ type Row = {
   arrival_date: string; departure_date?: string | null; eta?: string | null
   adults?: number | null; children?: number | null; pets?: string | null; pet_breed?: string | null
   confirmation_code?: string | null; channel?: string | null
+  // Set when the notice came from a Guesty booking rather than being typed by hand — it is what
+  // makes the guest name a link straight to that booking.
+  reservation_id?: string | null
   sent_at?: string | null; sent_by?: string | null
   doc_path?: string | null; doc_name?: string | null
   leadHours: number | null; urgency: 'sent' | 'late' | 'due' | 'upcoming'
@@ -91,6 +94,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   // Future bookings are visible by default: Salato, Nomad and District 225 are told as soon as
   // the booking exists, so their work lives in Upcoming — hiding it hides most of the job.
   const [showUpcoming, setShowUpcoming] = useState(true)
+  // Sent work CLOSES OUT. It stays reachable — a building claiming they were never told is exactly
+  // when you need the record — but it stops sitting in the middle of the list you are working.
+  const [showSent, setShowSent] = useState(false)
   const [q, setQ] = useState('')
   const [form, setForm] = useState<any | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
@@ -169,8 +175,14 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     if (!needle) return true
     return (r.guest_name + ' ' + r.unit_no + ' ' + r.propertyName + ' ' + (r.confirmation_code || '')).toLowerCase().includes(needle)
   }, [q])
-  const todayShown = useMemo(() => today.filter(match), [today, match])
-  const upcomingShown = useMemo(() => upcoming.filter(match), [upcoming, match])
+  // Today and Upcoming are WORK: unsent only. Everything already sent — whatever day it was for —
+  // pools into Sent, newest first, because that list is read as history and not as a queue.
+  const todayShown = useMemo(() => today.filter(r => !r.sent_at).filter(match), [today, match])
+  const upcomingShown = useMemo(() => upcoming.filter(r => !r.sent_at).filter(match), [upcoming, match])
+  const sentShown = useMemo(() => {
+    const at = (r: Row) => String(r.sent_at || '')
+    return [...today, ...upcoming].filter(r => r.sent_at).filter(match).sort((a, b) => at(b).localeCompare(at(a)))
+  }, [today, upcoming, match])
 
   async function save() {
     if (!form) return
@@ -456,6 +468,20 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           {(showUpcoming || q.trim().length > 0) && section('Upcoming', upcomingShown, false, true)}
         </div>
       )}
+
+      {/* SENT — the closed-out work. Collapsed by default and grouped by the day it went out, so it
+          reads as a record of what was told to whom rather than as another queue. Search forces it
+          open for the same reason Upcoming opens: a hidden match looks like no match. */}
+      {sentShown.length > 0 && (
+        <div>
+          <button onClick={() => setShowSent(v => !v)}
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink mb-2">
+            <Check size={13} />
+            {showSent ? 'Hide sent' : 'Show sent'} · {sentShown.length}
+          </button>
+          {(showSent || q.trim().length > 0) && section('Sent', sentShown, false, false, true)}
+        </div>
+      )}
     </div>
   )
 
@@ -467,7 +493,19 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
               <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[13px] font-semibold text-ink">{r.guest_name}</span>
+                    {/* CLICK THE GUEST, LAND ON THE BOOKING. Anyone checking a notice against the
+                        source needs Guesty, not another StayBoard page — so the name is the link.
+                        Hand-typed notices have no reservation behind them and stay plain text. */}
+                    {r.reservation_id ? (
+                      <a href={'https://app.guesty.com/reservations/' + encodeURIComponent(r.reservation_id) + '/summary'}
+                        target="_blank" rel="noopener noreferrer"
+                        title="Open this booking in Guesty"
+                        className="text-[13px] font-semibold text-ink hover:text-brand-700 hover:underline decoration-dotted underline-offset-2 inline-flex items-center gap-1">
+                        {r.guest_name}<ExternalLink size={11} className="opacity-50" />
+                      </a>
+                    ) : (
+                      <span className="text-[13px] font-semibold text-ink">{r.guest_name}</span>
+                    )}
                     <span className="text-[13px] text-muted">· {r.propertyName} {r.unit_no}</span>
                     {r.attach && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-50 text-brand-700"><Paperclip size={10} /> PDF</span>}
                     {u.text && <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + u.chip}>{u.text}</span>}
@@ -559,10 +597,12 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
    * A titled block of rows. Sent notices STAY here rather than disappearing — the day should read
    * as a complete record of who has been told and who has not.
    */
-  function section(title: string, list: Row[], busy: boolean, byDay = false) {
+  function section(title: string, list: Row[], busy: boolean, byDay = false, bySentDay = false) {
     const tally = (rows: Row[]) =>
-      rows.filter(r => !r.sent_at).length + ' to send' +
-      (rows.some(r => r.sent_at) ? ' · ' + rows.filter(r => r.sent_at).length + ' sent' : '')
+      bySentDay
+        ? rows.length + (rows.length === 1 ? ' sent' : ' sent')
+        : rows.filter(r => !r.sent_at).length + ' to send' +
+          (rows.some(r => r.sent_at) ? ' · ' + rows.filter(r => r.sent_at).length + ' sent' : '')
 
     // Buildings inside one day, which is what byDay renders under each date heading.
     const buildingBlocks = (rows: Row[]) => groupByProperty(rows).map(g => (
@@ -587,6 +627,17 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
             <div className="px-4 py-8 text-center text-[13px] text-muted">
               {title === 'Today' ? 'Nothing arriving today — every building has been told.' : 'Nothing upcoming.'}
             </div>
+          ) : bySentDay ? (
+            groupBySentDay(list).map(d => (
+              <div key={d.date}>
+                <div className="px-4 py-2 bg-emerald-50/70 border-b border-line flex items-center gap-2 sticky top-0 z-[1]">
+                  <Check size={13} className="text-emerald-700 flex-shrink-0" />
+                  <span className="text-[12px] font-bold text-emerald-800">Sent {dayHeading(d.date, todayDate)}</span>
+                  <span className="text-[11px] text-emerald-700/80">{d.rows.length}</span>
+                </div>
+                {buildingBlocks(d.rows)}
+              </div>
+            ))
           ) : byDay ? (
             // UPCOMING READS AS A CALENDAR, NOT A FILING CABINET. What someone needs from the days
             // ahead is "what is landing on Saturday", across every building at once — grouping by
@@ -627,6 +678,24 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     const out: { date: string; rows: Row[] }[] = []
     for (const r of sorted) {
       const d = key(r)
+      const last = out[out.length - 1]
+      if (last && last.date === d) last.rows.push(r)
+      else out.push({ date: d, rows: [r] })
+    }
+    return out
+  }
+
+  /** Sent rows split by the day they actually went out, newest day first. */
+  function groupBySentDay(list: Row[]): { date: string; rows: Row[] }[] {
+    // sent_at is a timestamp; the day is read in Eastern so a 9pm send does not file under tomorrow.
+    const dayOf = (r: Row) => {
+      const t = Date.parse(String(r.sent_at || ''))
+      if (!Number.isFinite(t)) return ''
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(t))
+    }
+    const out: { date: string; rows: Row[] }[] = []
+    for (const r of list) {
+      const d = dayOf(r)
       const last = out[out.length - 1]
       if (last && last.date === d) last.rows.push(r)
       else out.push({ date: d, rows: [r] })
