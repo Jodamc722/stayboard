@@ -11,7 +11,7 @@ import { MissionFeed } from '@/components/MissionFeed'
 import { GeneratePlanButton } from '@/components/OpsPlanUI'
 import {
   Sparkles, Star, MessageSquare, AlertTriangle, LogIn, ClipboardCheck,
-  ArrowUpRight, ListChecks, Plug,
+  ArrowUpRight, ListChecks,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -225,24 +225,6 @@ export default async function CommandCenterPage() {
 
         <div className="lg:col-span-1 order-1 lg:order-2 space-y-4 lg:sticky lg:top-4">
           <BrainConsole />
-
-          <div className="rounded-2xl border border-dashed border-brand-200 bg-brand-50/40 p-4">
-            <div className="flex items-center gap-2 mb-1.5">
-              <Plug size={15} className="text-brand-600" />
-              <span className="text-sm font-bold text-ink">Connect your tools</span>
-              <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide text-brand-700 bg-white border border-brand-200 px-1.5 py-0.5 rounded">Coming soon</span>
-            </div>
-            <p className="text-[12px] text-muted">
-              Soon you&apos;ll connect your own <b>Gmail</b>, <b>Slack</b>, and <b>Asana</b> so important emails, mentions, and tasks land right here in Mission Control &mdash; each admin connects their own accounts.
-            </p>
-            <div className="mt-2.5 flex flex-wrap gap-1.5">
-              {['Gmail', 'Slack', 'Asana'].map(t => (
-                <span key={t} className="text-[11px] font-semibold text-muted bg-white border border-line px-2 py-1 rounded-lg inline-flex items-center gap-1">
-                  <Plug size={11} /> {t}
-                </span>
-              ))}
-            </div>
-          </div>
 
           <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
             <div className="flex items-center gap-2 text-sm mb-2.5">
