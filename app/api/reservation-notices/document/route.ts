@@ -28,7 +28,9 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function safeName(s: string): string {
-  return str(s).replace(/[^\w .\-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Reservation Report.pdf'
+  // Last-resort name only — the caller sends one built from the property's docName template.
+  return str(s).replace(/[^\w .\-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120)
+    || 'Transient Guest-Occupant Registration Form.pdf'
 }
 
 /** POST — file a generated form against a notice. Body: { id, pdfBase64, name }. */
