@@ -22,8 +22,8 @@ type Data = { longStayNights?: number; areaRadiusKm?: number; ok: boolean; today
 // TWO AXES, NOT ONE. "Not started" on its own returns every kind of task and is useless for finding
 // a late clean; the question is always "departure cleans, not started" or "inspections, in progress".
 // Every task falls in exactly ONE job bucket so the chip counts add up to the total.
-const JOBS: Array<[string, string]> = [['all', 'All work'], ['departure_clean', 'Departure cleans'], ['strip', 'Strips'], ['inspection', 'Inspections'], ['maintenance', 'Maintenance'], ['other', 'Other']]
-const STATUSES: Array<[string, string]> = [['all', 'Any status'], ['notstarted', 'Not started'], ['running', 'In progress'], ['done', 'Done'], ['unassigned', 'Unassigned']]
+const JOBS: Array<[string, string]> = [['all', 'All work'], ['departure_clean', 'Cleans'], ['strip', 'Strips'], ['inspection', 'Inspections'], ['maintenance', 'Maintenance'], ['other', 'Other']]
+const STATUSES: Array<[string, string]> = [['all', 'Any'], ['notstarted', 'Not started'], ['running', 'In progress'], ['done', 'Done'], ['unassigned', 'Unassigned']]
 function jobKey(t: Task): string {
   if (t.type === 'departure_clean' || t.type === 'deep_clean') return 'departure_clean'
   if (t.type === 'strip') return 'strip'
