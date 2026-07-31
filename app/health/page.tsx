@@ -155,7 +155,18 @@ export default function HealthPage() {
   const [copied, setCopied] = useState<string | null>(null)
 
   function copy(id: string, text: string) {
-    navigator.clipboard?.writeText(text).then(() => { setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 2000) }).catch(() => {})
+    const done = () => { setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 2000) }
+    // Fallback (execCommand via a temp textarea) for when the async Clipboard API is blocked
+    // by focus/permission — keeps "Copy report" reliable everywhere.
+    const legacy = () => {
+      try {
+        const ta = document.createElement('textarea'); ta.value = text
+        ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta)
+        ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done()
+      } catch { /* give up silently */ }
+    }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy)
+    else legacy()
   }
 
   const rows = useMemo(() => {
