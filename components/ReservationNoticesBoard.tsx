@@ -11,9 +11,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Mail, Loader2, Check, AlertTriangle, Plus, RefreshCw, Search, Paperclip, Copy,
-  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, CalendarClock,
+  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, CalendarClock, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import Link from 'next/link'
+import { ReservationEmailsAdmin } from './ReservationEmailsAdmin'
 
 type Draft = { to: string; cc: string; subject: string; body: string; mailto: string; attach: boolean; attachName: string }
 type Row = {
@@ -54,7 +55,11 @@ const EMPTY = {
   confirmation_code: '', channel: '',
 }
 
-export function ReservationNoticesBoard() {
+/**
+ * `isOwner` only gates EDITING the settings panel below — everyone who can reach this page can see
+ * the desk and send. It is resolved on the server (see the page) so the browser cannot claim it.
+ */
+export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean }) {
   const [today, setToday] = useState<Row[]>([])
   const [upcoming, setUpcoming] = useState<Row[]>([])
   const [props, setProps] = useState<Property[]>([])
@@ -71,6 +76,7 @@ export function ReservationNoticesBoard() {
   const [openDraft, setOpenDraft] = useState<string | null>(null)
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
   const [pulling, setPulling] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
@@ -311,6 +317,11 @@ export function ReservationNoticesBoard() {
         <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
           {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh
         </button>
+        <button onClick={() => setShowSettings(v => !v)}
+          title="Recipients, wording, lead time and what gets created automatically"
+          className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (showSettings ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink')}>
+          {showSettings ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<Settings size={13} /> Settings
+        </button>
         <div className="ml-auto flex items-center gap-2 text-[12px]">
           {counts.late > 0 && <span className="px-2 py-1 rounded-lg bg-rose-100 text-rose-700 font-semibold">{counts.late} arriving, unsent</span>}
           {counts.due > 0 && <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 font-semibold">{counts.due} past cutoff</span>}
@@ -322,11 +333,24 @@ export function ReservationNoticesBoard() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-900 flex items-center gap-2 flex-wrap">
           <AlertTriangle size={14} />
           {counts.blocked} notice{counts.blocked === 1 ? '' : 's'} can&apos;t be sent — that building has no recipient yet.
-          <Link href="/users" className="inline-flex items-center gap-1 font-semibold underline"><Settings size={12} /> Set it in Users &amp; admin</Link>
+          <button onClick={() => setShowSettings(true)} className="inline-flex items-center gap-1 font-semibold underline"><Settings size={12} /> Add one in Settings</button>
         </div>
       )}
       {err && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div>}
       {msg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {msg}</div>}
+
+      {/* The same card as Users & admin, rendered here so the rules can be changed where the work
+          happens. Closing it reloads the desk, because a recipient or timing change alters what the
+          rows say about themselves. */}
+      {showSettings && (
+        <div className="space-y-2">
+          <ReservationEmailsAdmin isOwner={isOwner} />
+          <button onClick={() => { setShowSettings(false); load() }}
+            className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
+            Done — back to the list
+          </button>
+        </div>
+      )}
 
       {form && (
         <div className="rounded-2xl border border-line bg-white overflow-hidden">
@@ -440,7 +464,7 @@ export function ReservationNoticesBoard() {
                 <div className="px-4 pb-4">
                   <div className="rounded-xl border border-line overflow-hidden">
                     <div className="px-3 py-2 bg-app border-b border-line text-[12px] space-y-0.5">
-                      <div><strong>To:</strong> {r.draft.to || <span className="text-rose-600">nobody — set a recipient in Users &amp; admin</span>}</div>
+                      <div><strong>To:</strong> {r.draft.to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
                       <div><strong>CC:</strong> {r.draft.cc}</div>
                       <div><strong>Subject:</strong> {r.draft.subject}</div>
                       {r.draft.attach && (
