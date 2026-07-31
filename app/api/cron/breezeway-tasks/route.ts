@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncBreezewayTasks } from '@/lib/breezeway-sync'
 import { syncBreezewayComments } from '@/lib/breezeway-comment-sync'
+import { autoCreateGlitches } from '@/lib/glitch-auto'
 import { runBehindAlert } from '@/lib/ops-behind'
 import { revalidateTag } from 'next/cache'
 
@@ -31,7 +32,11 @@ async function run(req: NextRequest) {
   // Best effort - an alert failure must never fail the task mirror.
   let alert: any = null
   try { alert = await runBehindAlert() } catch (e) { alert = { error: String((e as any)?.message || e).slice(0, 120) } }
-  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert })
+  // Guest-reported tasks logged in Breezeway become glitch cards automatically (see lib/glitch-auto)
+  // so the board reflects reality without double entry. Best effort - never fails the mirror.
+  let autoGlitches: any = null
+  try { autoGlitches = await autoCreateGlitches() } catch (e) { autoGlitches = { error: String((e as any)?.message || e).slice(0, 120) } }
+  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert, autoGlitches })
 }
 
 export async function GET(req: NextRequest) {
