@@ -56,7 +56,9 @@ export default async function WelcomeCallsPage() {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const toDate = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
   const { data } = await sb.from('guesty_reservations')
-    .select('id,guest_name,guest_phone,listing_name,check_in,check_out,nights,status,money_total,money_paid,money_balance,money_currency,custom_fields,source,raw')
+    // JSON-path selects instead of bare raw: the full raw object is 50-150KB per reservation and
+    // this page pulls up to 500 of them - that select alone was the documented 7.9s load.
+    .select('id,guest_name,guest_phone,listing_name,check_in,check_out,nights,status,money_total,money_paid,money_balance,money_currency,custom_fields,source,money:raw->money,guestId:raw->guest->>_id,nightsCount:raw->>nightsCount')
     .gte('check_in', today).lte('check_in', toDate).order('check_in').limit(500)
 
   const fieldVal = (cf: any, kw: string) => {
@@ -95,7 +97,7 @@ export default async function WelcomeCallsPage() {
         source: r.source || '',
         notes: (Array.isArray(r.custom_fields) ? ((r.custom_fields.find((c: any) => /reservation[_ ]?notes/i.test(String(c?.fieldName || c?.name || ''))) || {}).value) : '') || '',
         status: (() => {
-          const m = (r.raw && typeof r.raw === 'object') ? (r.raw.money || {}) : {}
+          const m = (r.money && typeof r.money === 'object') ? r.money : {}
           const balance = typeof m.balanceDue === 'number' ? m.balanceDue : (Number(r.money_balance) || 0)
           const total = Number(r.money_total) || 0
           const paidFull = m.isFullyPaid === true || (total > 0 && balance <= 0.01)
@@ -112,7 +114,7 @@ export default async function WelcomeCallsPage() {
             currency: r.money_currency || 'USD',
             parking: parking ? parking.amt : null,
             addOns: addOns.filter((x: any) => !/park/i.test(x.t)).slice(0, 4),
-            nights: Number(r.nights) || Number((r.raw || {}).nightsCount) || 0,
+            nights: Number(r.nights) || Number(r.nightsCount) || 0,
             checkOut: String(r.check_out || '').slice(0, 10),
           }
         })(),
@@ -128,12 +130,12 @@ export default async function WelcomeCallsPage() {
     })
 
   // Backfill phones for displayed (confirmed) reservations whose embedded guest is just a stub.
-  const missing = rows.map((row: any, i: number) => ({ row, i })).filter((x: any) => !x.row.phone && recs[x.i]?.raw?.guest?._id)
+  const missing = rows.map((row: any, i: number) => ({ row, i })).filter((x: any) => !x.row.phone && recs[x.i]?.guestId)
   if (missing.length) {
-    const ids = Array.from(new Set(missing.map((x: any) => recs[x.i].raw.guest._id as string)))
+    const ids = Array.from(new Set(missing.map((x: any) => String(recs[x.i].guestId))))
     const pmap = await guestPhones(ids)
     for (const x of missing) {
-      const gid = recs[x.i].raw.guest._id
+      const gid = recs[x.i].guestId
       if (gid && pmap[gid]) x.row.phone = pmap[gid]
     }
   }
