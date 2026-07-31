@@ -1,13 +1,25 @@
-// Master Listing Health Score - the portfolio's top quality metric. Encompasses the
-// Optimize/setup score AND operational/review health, evidence-weighted to how the OTAs
-// actually rank in 2025/26 (recent guest satisfaction dominates; setup is a gate).
-//   Master (0-100) = Review/Ops health (60) + Optimize score (40)
-//     A1 recency-weighted rating 32 · A2 volume 9 · A3 response 10 · A4 recurring penalty -12 · A5 ops 9 · B setup 40
-//   Weights sum to 100 (were 88, which made "Elite" >=90 mathematically impossible); the rating
-//   quality scale anchors the OTA badge line at 90 so a Superhost-level listing can reach Elite and
-//   a flawless one reaches 100. Recurring-issue penalty only counts the last 12 months.
-// Also scores each OTA separately and emits ranked, team-assignable actions.
+// Master Property Health Score - the portfolio's top quality metric. ONE 0-100 weighted composite of
+// THREE pillars, each mapping to a real STR/hospitality ranking or revenue driver (2025/26 evidence).
+//   Overall = Ops & Guest 45% + Listing Optimization 30% + Revenue 25% (renormalized over pillars that
+//   have data). Chosen because every OTA ultimately ranks on booking-probability × review-probability
+//   (Airbnb's own stated model): Ops & Guest drives both and carries the most weight; Listing
+//   Optimization is the controllable conversion lever; Revenue is the realized outcome.
+//
+//   Pillar 1 · OPS & GUEST (0-100): recency-weighted, BAYESIAN-SHRUNK rating quality (32) + review
+//     volume (9) + review-response rate (10, Superhost floor 90%) + ops load / open work (9) − recurring
+//     complaint penalty (cleanliness/HVAC weighted, last-12-mo only). Bayesian shrinkage (IMDb/Algolia
+//     weighted average) stops a 5.0-from-2-reviews outranking a 4.9-from-200. Sub-4.0 avg = OTA
+//     removal-risk zone → hard gate caps the overall score.
+//   Pillar 2 · LISTING OPTIMIZATION (0-100): the optimize/setup score (title, description, amenities,
+//     booking settings, photos) straight through.
+//   Pillar 3 · REVENUE (0-100): RevPAR/occupancy Index (RGI) vs the building's median earning unit,
+//     mapped on the hotel-industry RGI bands (100 = fair share; ≥110 dominant; <90 red flag).
+//   Rating quality anchors each OTA's badge line (Airbnb 4.8 Superhost / Booking 9.0 Superb / Vrbo 4.6
+//   Premier) at 90 so a badge-level listing reaches Elite and a flawless one hits 100.
+// Also scores each OTA separately (per-channel, badge-aware) and emits ranked, team-assignable actions.
 // Building rollup = 0.70*mean + 0.30*worst-quartile.
+// Evidence base: Airbnb/Booking/Vrbo host help centers (badge thresholds), AirDNA Performance Score &
+// hotel RGI/MPI/ARI (revenue indexing), Algolia/IMDb (Bayesian shrinkage), Breezeway/Rapid Eye (ops KPIs).
 import { computeScore } from '@/lib/optimize-score'
 
 export type HealthBand = 'elite' | 'healthy' | 'watch' | 'risk' | 'critical' | 'neutral'
@@ -30,7 +42,7 @@ export type ListingHealth = {
   unrated: boolean
   optimizeScore: number
   breakdown: { rating: number; volume: number; response: number; penalty: number; ops: number; setup: number }
-  review: { avgStars: number | null; recencyQuality: number | null; count: number; ratedCount: number; responseRate: number | null; recurring: string[]; topIssue: string | null }
+  review: { avgStars: number | null; recencyQuality: number | null; count: number; ratedCount: number; lowConfidence: boolean; responseRate: number | null; recurring: string[]; topIssue: string | null }
   channels: ChannelHealth[]
   issues: Issue[]
 }
@@ -123,9 +135,21 @@ const THEMES: Record<string, string[]> = {
 function volumeFrac(n: number): number { return n === 0 ? 0 : n < 5 ? 0.4 : n < 10 ? 0.7 : n < 25 ? 0.9 : 1 }
 function responseFrac(rate: number | null): number { if (rate == null) return 0; return rate >= 0.9 ? 1 : rate >= 0.75 ? 0.7 : rate >= 0.5 ? 0.4 : 0 }
 function opsPts(open: number, max: number): number { return open <= 0 ? max : open <= 2 ? max * 0.75 : open <= 4 ? max * 0.4 : 0 }
+// RevPAR/occupancy Index (RGI, 100 = at building fair share) → 0-100, on the hotel-industry RGI bands
+// (RevPAR Genius: ≥110 dominant, 90-110 normal/healthy, <90 red flag). Piecewise-linear & continuous.
+function rgiToScore(rgi: number): number {
+  let s: number
+  if (rgi >= 120) s = 90 + Math.min(10, (rgi - 120) * 0.25)  // dominant, capped at 100
+  else if (rgi >= 110) s = 80 + (rgi - 110)                  // strong
+  else if (rgi >= 100) s = 65 + (rgi - 100) * 1.5            // healthy, at/above market
+  else if (rgi >= 90) s = 50 + (rgi - 90) * 1.5              // slightly under fair share
+  else if (rgi >= 80) s = 30 + (rgi - 80) * 2                // weak
+  else s = Math.max(0, rgi * 0.375)                          // red flag
+  return Math.round(Math.max(0, Math.min(100, s)))
+}
 
 /* ------------------------------ main entry -------------------------------- */
-export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null }): ListingHealth {
+export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null; priorMean?: number; priorC?: number }): ListingHealth {
   const openWork = opts?.openWork ?? 0
   const optimizeScore = computeScore(listing, { isBeach: /beach/i.test(String(listing?.address_city || '')) }).overall
 
@@ -134,7 +158,8 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   const ratedCount = rated.length
   const unrated = ratedCount === 0
 
-  // A1 recency-weighted normalized quality (cross-channel).
+  // A1 recency-weighted normalized quality (cross-channel), then BAYESIAN-SHRUNK toward a prior.
+  // Recency weighting mirrors how the OTAs rank (recent reviews dominate; Superhost uses a 12-mo window).
   let wSum = 0, wqSum = 0, starSum = 0
   rated.forEach(r => {
     const stars = toStars(r.rating)!
@@ -142,8 +167,16 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
     const w = recencyWeight(r.created_at)
     wSum += w; wqSum += w * q; starSum += stars
   })
-  const recencyQuality = wSum > 0 ? wqSum / wSum : null
+  const rawQuality = wSum > 0 ? wqSum / wSum : null
   const avgStars = ratedCount ? Math.round((starSum / ratedCount) * 100) / 100 : null
+  // Bayesian shrinkage (IMDb/Algolia weighted-average): pull a listing's quality toward the portfolio
+  // prior in proportion to how FEW reviews back it, so a 5.0 from 2 reviews doesn't outrank a 4.9 from
+  // 200. shrunk = (q*n + priorMean*C) / (n + C). Prior defaults to ~4.7-star-equivalent quality (the
+  // STR-typical average); C is the review count at which we start trusting a listing's own number.
+  const priorMean = opts?.priorMean ?? 84   // normalized quality at ~4.7 stars (portfolio-typical)
+  const priorC = opts?.priorC ?? 6
+  const recencyQuality = rawQuality != null ? (rawQuality * ratedCount + priorMean * priorC) / (ratedCount + priorC) : null
+  const lowConfidence = ratedCount > 0 && ratedCount < 5   // thin sample — flag, don't green-light
   const A1 = recencyQuality != null ? (recencyQuality / 100) * 32 : 0
 
   // A2 volume.
@@ -197,22 +230,28 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   // Pillar 2 · LISTING OPTIMIZATION (title, description, amenities, booking settings, photos): the
   //   optimize score straight through — the controllable conversion lever.
   const pillarListing = Math.round(optimizeScore)
-  // Pillar 3 · REVENUE (is it actually earning?): occupancy vs this building's median earning unit.
-  //   occIndex = unit occupancy ÷ building median; at-peer ≈ 75, 1.33× peer ≈ 100. Null w/o peers.
+  // Pillar 3 · REVENUE (is it actually earning?): the hotel/STR RevPAR-Index approach. occIndex = unit
+  //   occupancy ÷ building median earning unit, so occIndex×100 is a RevPAR/occupancy Index (RGI) where
+  //   100 = at fair share. Mapped to 0-100 on the industry RGI bands (≥110 dominant, 90-110 normal,
+  //   <90 red flag). Null w/o ≥2 building peers. (ADR/rate index still pending — see dataPending.)
   const occIndex = opts?.occIndex ?? null
   const occPct = opts?.occPct ?? null
-  const pillarRevenue: number | null = occIndex != null ? Math.round(Math.max(0, Math.min(100, occIndex * 75))) : null
+  const pillarRevenue: number | null = occIndex != null ? rgiToScore(occIndex * 100) : null
 
-  // Weighted composite. Guest/ops carries the most weight (it drives ranking + retention), listing
-  // optimization next (controllable), revenue as the outcome. Weights renormalize over whichever
-  // pillars exist, so a brand-new listing (no reviews / no peers) still gets a fair full score.
+  // Weighted composite. Guest/ops carries the most weight (it drives BOTH booking-probability and
+  // review-probability, the two things every OTA ranks on), listing optimization next (the controllable
+  // conversion lever), revenue as the realized outcome. Weights renormalize over whichever pillars
+  // exist, so a brand-new listing (no reviews / no peers) still gets a fair full score.
   const OPS_W = 0.45, LISTING_W = 0.30, REV_W = 0.25
   const parts: { w: number; v: number }[] = []
   if (pillarOps != null) parts.push({ w: OPS_W, v: pillarOps })
   parts.push({ w: LISTING_W, v: pillarListing })
   if (pillarRevenue != null) parts.push({ w: REV_W, v: pillarRevenue })
   const pWSum = parts.reduce((s, p) => s + p.w, 0)
-  const score = Math.round(parts.reduce((s, p) => s + p.v * p.w, 0) / (pWSum || 1))
+  const rawScore = Math.round(parts.reduce((s, p) => s + p.v * p.w, 0) / (pWSum || 1))
+  // Removal-risk gate: a sub-4.0 average is the documented OTA suppression/removal zone — no amount of
+  // listing optimization or occupancy should let such a unit read "healthy". Cap it into the risk band.
+  const score = (!unrated && avgStars != null && avgStars < 4.0) ? Math.min(rawScore, 55) : rawScore
   const band = healthBand(score, false)
   const opsBand = healthBand(pillarOps ?? 0, unrated)
   const listingBand = healthBand(pillarListing, false)
@@ -274,7 +313,7 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
     },
     unrated, optimizeScore,
     breakdown: { rating: Math.round(A1), volume: Math.round(A2), response: Math.round(A3), penalty: Math.round(A4), ops: Math.round(A5), setup: Math.round(B) },
-    review: { avgStars, recencyQuality: recencyQuality != null ? Math.round(recencyQuality) : null, count, ratedCount, responseRate: responseRate != null ? Math.round(responseRate * 100) : null, recurring, topIssue },
+    review: { avgStars, recencyQuality: recencyQuality != null ? Math.round(recencyQuality) : null, count, ratedCount, lowConfidence, responseRate: responseRate != null ? Math.round(responseRate * 100) : null, recurring, topIssue },
     channels, issues,
   }
 }
