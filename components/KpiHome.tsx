@@ -298,7 +298,11 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <Tile label="Cleaning revenue" value={canSeeMoney ? money(c.revenue) : '—'} Icon={Brush} href="/schedule"
-              sub={c.turns != null ? count(c.turns) + ' turns · ' + (canSeeMoney ? exact(c.feePerTurn) : '—') + ' a turn' : undefined}
+              sub={c.turns != null
+                ? count(c.turns) + ' turns · ' + (canSeeMoney ? exact(c.feePerTurn) : '—') + ' a turn'
+                  + (c.turnsFromListingFee ? ' · ' + count(c.turnsFromListingFee) + ' at the property fee' : '')
+                  + (c.turnsUnpriced ? ' · ' + count(c.turnsUnpriced) + ' with no fee on file' : '')
+                : undefined}
               delta={<Delta v={c.revenueChange} suffix="%" />} />
             {/* Margin and labour cost only mean something once somebody records what the cleaners were
                 paid. Breezeway leaves rate_paid empty, so rather than print a flattering 100% margin
