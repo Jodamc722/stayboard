@@ -8,7 +8,7 @@ import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
-import { computeScore, rollupBuilding, buildingSlug, band, bandUi } from '@/lib/optimize-score'
+import { computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars } from '@/lib/optimize-score'
 import { Building2, BedDouble, Users, Wrench, MapPin, ArrowRight, AlertTriangle } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -39,7 +39,8 @@ const getPortfolioData = unstable_cache(async () => {
 
   const _cnt: Record<string, number> = {}
   const _sum: Record<string, number> = {}
-  ;(revs ?? []).forEach((r: any) => { if (r.excluded_from_score) return; if (r.rating == null) return; const id = String(r.listing_id); _sum[id] = (_sum[id] || 0) + Number(r.rating); _cnt[id] = (_cnt[id] || 0) + 1 })
+  // Normalize every rating to 0-5 stars before averaging - a Booking 9/10 must not average in as 9.
+  ;(revs ?? []).forEach((r: any) => { if (r.excluded_from_score) return; const st = ratingToStars(r.rating); if (st == null) return; const id = String(r.listing_id); _sum[id] = (_sum[id] || 0) + st; _cnt[id] = (_cnt[id] || 0) + 1 })
   const _sib: Record<string, string[]> = {}
   ;(listings ?? []).forEach((l: any) => { const bb = rollupBuilding(l.building); if (!bb) return; const arr = _sib[bb] || (_sib[bb] = []); const am = Array.isArray(l.amenities) ? l.amenities : []; for (const a of am) if (!arr.includes(a)) arr.push(a) })
   const workByBuilding: Record<string, number> = {}
