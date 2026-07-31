@@ -9,13 +9,13 @@ import CommentThread from '@/components/CommentThread'
 import RowMenu, { type RowAction } from '@/components/RowMenu'
 import { clusterAreas } from '@/lib/geo-areas'
 
-type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
+type Task = { id: string; listingId: string; unit: string; market: string; market2?: string | null; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
-type Unit = { listingId: string; unit: string; market: string; guestOut: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null; arrivingGuest?: string | null; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; address?: string | null; bedrooms?: number | null; building?: string | null; lat?: number | null; lng?: number | null }
+type Unit = { listingId: string; unit: string; market: string; market2?: string | null; fullTasks?: Task[]; guestOut: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null; arrivingGuest?: string | null; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; address?: string | null; bedrooms?: number | null; building?: string | null; lat?: number | null; lng?: number | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
 type Person = { id: number; name: string; departments: string[] }
-type Vacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
-type BehindRow = { taskId: string; unit: string; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }
+type Vacant = { listingId: string; unit: string; market: string; market2?: string | null; leftToday: string | null; nextArrival: string | null; openTasks: number }
+type BehindRow = { taskId: string; unit: string; market?: string | null; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }
 type Behind = { notStarted: number; sameDay: number; earliestIn: string | null; unassigned: number; waiting: number; units: BehindRow[]; level: '' | 'warn' | 'urgent' }
 type Data = { longStayNights?: number; areaRadiusKm?: number; ok: boolean; today: string; isToday?: boolean; lastSync?: string | null; deadline: Deadline; behind?: Behind; totals: any; byMarket: any[]; units: Unit[]; vacants?: Vacant[]; error?: string }
 
@@ -36,6 +36,9 @@ function matchJob(t: Task, jf: string) { return jf === 'all' || jobKey(t) === jf
 // not-started and in-progress — it is a chip, not a fifth exclusive bucket.
 function matchStatus(t: Task, sf: string) {
   if (sf === 'all') return true
+  // Vendor/Guesty-only rows have no Breezeway task — nobody can assign, start or finish them, so
+  // they must not sit in the actionable chips (they made "Unassigned" permanently amber).
+  if (t.guestyOnly) return false
   if (sf === 'unassigned') return t.assignees.length === 0 && !t.done
   if (sf === 'done') return t.done
   if (sf === 'running') return t.running && !t.done
@@ -100,6 +103,8 @@ export function TodayInOps() {
   const [sf, setSf] = useState('all')
   const [people, setPeople] = useState<Person[]>([])
   const [panel, setPanel] = useState<'' | 'glitches' | 'vacant'>('')
+  // 23 open guest issues older than the 14-day window were completely invisible — this is the door
+  const [showOlder, setShowOlder] = useState(false)
   // active glitches live in the status strip — fetched here so the count shows without opening
   const [gl, setGl] = useState<any>(null)
   const [glStage, setGlStage] = useState<Record<string, string>>({})
@@ -168,28 +173,47 @@ export function TodayInOps() {
   }, [listingKey])
 
   if (loading && !data) return <div className="text-sm text-muted py-10 text-center">Loading today&rsquo;s operations&hellip;</div>
-  if (err) return <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>
-  if (!data) return null
+  // A failure must never replace a working board (it used to eat the page, date picker and all).
+  // No data yet -> error box WITH a retry. Data on screen -> the error renders as a banner below.
+  if (!data) return (
+    <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+      <span className="flex-1">{err || 'Could not load the board.'}</span>
+      <button onClick={() => { setErr(''); setLoading(true); load() }} className="text-xs font-semibold px-2.5 py-1 rounded-md bg-white border border-rose-200 hover:bg-rose-100">Retry</button>
+    </div>
+  )
 
   // Never trust the payload shape: a deploy race (new page bundle + old API response) crashed this
   // page once already. Degrade to empty rather than throw.
   const srcUnits: Unit[] = Array.isArray(data.units) ? data.units : []
-  const totals = data.totals || {}
-  const inFilter = (t: Task) => matchJob(t, jf) && matchStatus(t, sf)
-  const glRows = ((gl && gl.glitches) || []).filter((g: any) => market === 'all' || g.market === market)
+  // ONE market rule: a vendor-cleaned unit belongs to its vendor bucket AND its geography
+  // (Capri/Lucerne/Amrit under both North and Vendor — Jon's call, 2026-07-31).
+  const inMkt = (m: any, m2: any) => market === 'all' || m === market || m2 === market
+  const byMkt = srcUnits.filter(u => inMkt(u.market, u.market2))
+  const glRows = ((gl && gl.glitches) || []).filter((g: any) => inMkt(g.market, g.market2))
   const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
-  const vacants = market === 'all' ? vacAll : vacAll.filter(x => x.market === market)
-  const byMkt = market === 'all' ? srcUnits : srcUnits.filter(u => u.market === market)
-  const filtering = jf !== 'all' || sf !== 'all'
-  const all = !filtering ? byMkt : byMkt.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter) })).filter(u => u.tasks.length > 0)
-  // Chip counts recount against the OTHER axis: pick "Departure cleans" and the status counts are
-  // cleans only, so the number on a chip is what you will actually get when you press it.
-  const mktTasks: Task[] = byMkt.flatMap(u => u.tasks)
-  const jobCount = (k: string) => mktTasks.filter(t => (k === 'all' || jobKey(t) === k) && matchStatus(t, sf)).length
-  const statusCount = (k: string) => mktTasks.filter(t => matchJob(t, jf) && matchStatus(t, k)).length
-  // asking for Done explicitly must show finished units, whatever the Finished toggle says
-  const baseUnits = (showDone || sf === 'done') ? all : all.filter(u => !u.allDone)
-  // SEARCH: unit, guest leaving, assignee, or task name. A unit stays if anything on it matches.
+  const vacants = vacAll.filter(x => inMkt(x.market, x.market2))
+  // THE "NOT STARTED" BAND — server-computed so the board and the ops alert agree, then narrowed
+  // to the selected market so the band never names units from a tab you are not looking at.
+  const bhAll: Behind | null = (data.behind && data.isToday !== false) ? data.behind : null
+  let bh: Behind | null = bhAll
+  if (bhAll && market !== 'all') {
+    const rows = (bhAll.units || []).filter(r => r.market === market)
+    bh = rows.length === 0 ? null : {
+      notStarted: rows.length,
+      sameDay: rows.filter(r => !!r.arrivingAt).length,
+      earliestIn: (rows.find(r => !!r.arrivingAt) || ({} as any)).arrivingAt || null,
+      unassigned: rows.filter(r => !r.assignee).length,
+      waiting: 0, units: rows,
+      level: rows.some(r => !!r.arrivingAt) ? 'urgent' : 'warn',
+    }
+  }
+  // "Show them" filters to EXACTLY the cleans the band counted (checkout + grace has passed) —
+  // a plain not-started filter showed more rows than the band's number and looked like a lie.
+  const bhIds = new Set<string>((bh ? bh.units : []).map(r => r.taskId))
+  const inFilter = (t: Task) => matchJob(t, jf) && (sf === 'behind' ? bhIds.has(t.id) : matchStatus(t, sf))
+  // CHIPS COUNT THE BOARD YOU SEE. Finished-hiding and search apply FIRST, so a chip that says 12
+  // gives you 12 rows when you press it. (They used to count every task in the market — the chips
+  // said 111 while 56 tasks were on screen.)
   const needle = q.trim().toLowerCase()
   const hit = (u: Unit) => {
     if (!needle) return true
@@ -199,17 +223,42 @@ export function TodayInOps() {
       .join(' ').toLowerCase()
     return hay.includes(needle)
   }
-  const searched = baseUnits.filter(hit)
+  // asking for Done explicitly must show finished units, whatever the Finished toggle says
+  const visUnits = byMkt.filter(u => (showDone || sf === 'done') ? true : !u.allDone).filter(hit)
+  const visTasks: Task[] = visUnits.flatMap(u => u.tasks)
+  const jobCount = (k: string) => visTasks.filter(t => (k === 'all' || jobKey(t) === k) && (sf === 'behind' ? bhIds.has(t.id) : matchStatus(t, sf))).length
+  const statusCount = (k: string) => visTasks.filter(t => matchJob(t, jf) && matchStatus(t, k)).length
+  const filtering = jf !== 'all' || sf !== 'all'
+  // fullTasks keeps the unit's REAL day so progress ("3/5", the bar) never collapses to 0/1 when a
+  // status chip narrows the visible rows.
+  const all = !filtering ? visUnits : visUnits.map(u => Object.assign({}, u, { tasks: u.tasks.filter(inFilter), fullTasks: u.tasks })).filter(u => u.tasks.length > 0)
   // AREA = mini-market, worked out from real coordinates (a Broward building next to Eden belongs
   // with Eden, whatever city string Guesty carries). Each area is a run the team can drive.
-  const areas = groupBy === 'area' ? clusterAreas(searched as any, data.areaRadiusKm || 4) : []
-  const units = groupBy === 'area' ? (areas.flatMap(a => a.units) as Unit[]) : searched
-  const doneCount = all.filter(u => u.allDone).length
-  const markets = ['all'].concat((data.byMarket || []).map(m => m.market))
-  const d: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
+  const areas = groupBy === 'area' ? clusterAreas(all as any, data.areaRadiusKm || 4) : []
+  const units = groupBy === 'area' ? (areas.flatMap(a => a.units) as Unit[]) : all
+  // Finished counts finished units in the MARKET (not the filtered view, where it was stuck at 0)
+  const doneCount = byMkt.filter(u => u.allDone).length
+  // hide market tabs that have nothing today (North sat dead for weeks) — but never hide the one
+  // that is currently selected, or there would be no way to see why the board is empty
+  const mktList = (data.byMarket || []).filter(m => (m.total || 0) > 0 || m.market === market).map(m => m.market)
+  const markets = ['all'].concat(mktList)
+  // THE TOP STRIP OBEYS THE MARKET TAB: pick Broward and the clean count is Broward's, not the
+  // whole portfolio's. Recomputed from this market's tasks; the clock fields stay global.
+  const dAll: Deadline = data.deadline || ({ dueBy: '4:00 PM', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0 } as Deadline)
+  let d: Deadline = dAll
+  if (market !== 'all') {
+    const mt = byMkt.flatMap(u => u.tasks)
+    const clk = mt.filter(t => t.clocked)
+    d = {
+      dueBy: dAll.dueBy, minsLeft: dAll.minsLeft, passed: dAll.passed,
+      cleans: clk.length, done: clk.filter(t => t.done).length,
+      running: clk.filter(t => t.running && !t.done).length, remaining: clk.filter(t => !t.done).length,
+      late: clk.filter(t => t.late).length, atRisk: clk.filter(t => t.atRisk).length,
+      missed: clk.filter(t => t.missed).length,
+      untracked: mt.filter(t => t.type === 'departure_clean' && t.untracked).length,
+    }
+  }
   const behind = d.late > 0 || d.atRisk > 0
-  // the "not started" band — server-computed so the board and the ops alert say the same thing
-  const bh: Behind | null = (data.behind && data.isToday !== false) ? data.behind : null
   const renderUnit = (u: Unit) => (
           <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
             {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE. */}
@@ -235,7 +284,7 @@ export function TodayInOps() {
                 ))}
                 <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
                 <span className="ml-auto flex items-center gap-2">
-                  <span className={'text-xs font-semibold tabular-nums ' + (u.allDone ? 'text-emerald-700' : u.late ? 'text-rose-700' : 'text-muted')}>{u.allDone ? 'All done' : u.tasks.filter(t => t.done).length + '/' + u.tasks.length}</span>
+                  <span className={'text-xs font-semibold tabular-nums ' + (u.allDone ? 'text-emerald-700' : u.late ? 'text-rose-700' : 'text-muted')}>{u.allDone ? 'All done' : (u.fullTasks || u.tasks).filter(t => t.done).length + '/' + (u.fullTasks || u.tasks).length}</span>
                   <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
                   <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
                 </span>
@@ -250,7 +299,7 @@ export function TodayInOps() {
                 {u.address && <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(u.address)} target="_blank" rel="noreferrer" title={u.address} className="hover:text-ink hover:underline inline-flex items-center gap-0.5">{'\u00b7'} <MapPin size={10} />map</a>}
               </div>
             </div>
-            <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: (u.tasks.length ? Math.round((u.tasks.filter(t => t.done).length / u.tasks.length) * 100) : 0) + '%' }} /></div>
+            <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: ((u.fullTasks || u.tasks).length ? Math.round(((u.fullTasks || u.tasks).filter(t => t.done).length / (u.fullTasks || u.tasks).length) * 100) : 0) + '%' }} /></div>
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
                 <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
@@ -358,7 +407,7 @@ export function TodayInOps() {
           ))}
         </span>
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
-          <button onClick={() => setShowDone(!showDone)} className={'text-[13px] font-medium px-3 py-1.5 ' + (showDone ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Show or hide units where everything is already done">Finished {doneCount}</button>
+          <button onClick={() => setShowDone(!showDone)} disabled={sf !== 'all' && sf !== 'done'} className={'text-[13px] font-medium px-3 py-1.5 disabled:opacity-40 ' + (showDone ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title={sf !== 'all' && sf !== 'done' ? 'The status filter already decides what shows — clear it to use this' : 'Show or hide units where everything is already done'}>Finished {doneCount}</button>
           <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-[13px] font-medium px-3 py-1.5 ' + (groupBy === 'area' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Group units by neighbourhood so runners drive less">By area</button>
         </span>
         <span className="relative">
@@ -422,7 +471,17 @@ export function TodayInOps() {
                 </div>
               ))}
             </div>
-            <div className="px-4 py-2 border-t border-line bg-app/40"><Link href="/glitches" className="text-xs font-semibold text-brand-700 hover:underline">Manage the full glitch board &rarr;</Link></div>
+            <div className="px-4 py-2 border-t border-line bg-app/40 flex items-center gap-3">
+              <Link href="/glitches" className="text-xs font-semibold text-brand-700 hover:underline">Manage the full glitch board &rarr;</Link>
+              {gl && (gl.olderOpen || 0) > 0 && !showOlder && (
+                <button onClick={() => { setShowOlder(true); fetch('/api/ops-today/glitches?all=1', { cache: 'no-store' }).then(r => r.json()).then(setGl).catch(() => {}) }}
+                  className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                  title="Open guest issues reported more than 14 days ago — still open, just old">
+                  Show {gl.olderOpen} older open {gl.olderOpen === 1 ? 'issue' : 'issues'}
+                </button>
+              )}
+              {showOlder && <span className="ml-auto text-[11px] text-muted">showing all open, including 15+ days old</span>}
+            </div>
           </div>
         )}
         {panel === 'vacant' && (
@@ -448,6 +507,14 @@ export function TodayInOps() {
         )}
       </div>
 
+      {err && (
+        <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">
+          <span className="flex-1">{err}</span>
+          <button onClick={() => { setErr(''); setLoading(true); load() }} className="text-xs font-semibold px-2.5 py-1 rounded-md bg-white border border-rose-200 hover:bg-rose-100">Retry</button>
+          <button onClick={() => setErr('')} className="text-xs text-rose-700/70 hover:text-rose-900" title="Dismiss">&times;</button>
+        </div>
+      )}
+
       {/* NOT STARTED — the band Jon asked for. Only appears when it is a real problem: the guest has
           checked out (plus grace) and nobody has started. Reads PROBLEM then ACTION, like the
           exceptions do, and one press puts the board on exactly those cleans. */}
@@ -459,7 +526,7 @@ export function TodayInOps() {
               <span className={'font-bold text-sm ' + (bh.level === 'urgent' ? 'text-rose-800' : 'text-amber-900')}>
                 {bh.notStarted} departure clean{bh.notStarted === 1 ? '' : 's'} not started
               </span>
-              <button onClick={() => { setJf('departure_clean'); setSf('notstarted') }} className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90">Show them</button>
+              <button onClick={() => { setJf('all'); setSf(sf === 'behind' ? 'all' : 'behind') }} className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90">{sf === 'behind' ? 'Show everything' : 'Show them'}</button>
             </div>
             <div className="mt-1.5 text-[13px] text-ink/80">
               <span className="font-semibold">Problem:</span> the guests have checked out and nobody has started
@@ -472,14 +539,14 @@ export function TodayInOps() {
               {bh.waiting > 0 ? ' (' + bh.waiting + ' more not started, but those guests have not checked out yet — not a problem.)' : ''}
             </div>
             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-              {bh.units.map(b => (
+              {bh.units.slice(0, 12).map(b => (
                 <button key={b.taskId} onClick={() => setQ(b.unit)} title={'Filter the board to ' + b.unit} className="text-[11px] font-medium px-2 py-1 rounded-lg border bg-white border-line hover:border-ink/30 inline-flex items-center gap-1.5">
                   <span className="font-semibold text-ink">{b.unit}</span>
                   {b.arrivingAt && <span className="text-rose-700">in {b.arrivingAt}</span>}
                   <span className={b.assignee ? 'text-muted' : 'text-amber-700 font-semibold'}>{b.assignee || 'Unassigned'}</span>
                 </button>
               ))}
-              {bh.notStarted > bh.units.length && <span className="text-[11px] text-muted">+{bh.notStarted - bh.units.length} more</span>}
+              {bh.notStarted > 12 && <span className="text-[11px] text-muted">+{bh.notStarted - 12} more</span>}
             </div>
           </div>
         </div>
@@ -492,10 +559,17 @@ export function TodayInOps() {
         <span className="h-5 w-px bg-line mx-1" />
         <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Status</span>
         {STATUSES.map(s => <Chip key={s[0]} label={s[1]} n={statusCount(s[0])} warn={s[0] === 'unassigned'} active={sf === s[0]} onClick={() => setSf(s[0])} />)}
+        {sf === 'behind' && <Chip label="Checked out, not started" n={bhIds.size} warn active onClick={() => setSf('all')} />}
         {filtering && <button onClick={() => { setJf('all'); setSf('all') }} className="text-[12px] font-medium text-muted hover:text-ink underline ml-1">Clear</button>}
       </div>
 
-      {units.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing outstanding{market === 'all' ? '' : ' in ' + market} right now.</div>}
+      {units.length === 0 && (
+        <div className="text-sm text-muted py-10 text-center">
+          {filtering || needle ? (
+            <>Nothing matches{market === 'all' ? '' : ' in ' + market} with these filters. <button onClick={() => { setJf('all'); setSf('all'); setQ('') }} className="font-semibold text-brand-700 underline">Clear filters</button></>
+          ) : ('Nothing outstanding' + (market === 'all' ? '' : ' in ' + market) + ' right now.')}
+        </div>
+      )}
 
       <div className="space-y-3">
         {/* BY AREA: units grouped into mini-markets worked out from coordinates, each block a run. */}
