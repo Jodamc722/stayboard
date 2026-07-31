@@ -100,7 +100,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   const dl = viewingToday ? 'today' : new Date(todayStr + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
   // Upcoming first (>= today, ascending), then past (descending). Pull two sets to support tabbed UI.
-  const [{ data: upcoming }, { data: past }, { data: sync }] = await Promise.all([
+  const [{ data: upcoming }, { data: past }, { count: pastCount }, { data: sync }] = await Promise.all([
     supabase
       .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
@@ -114,13 +114,19 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
       .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .lt('check_out', todayStr)
       .order('check_in', { ascending: false })
-      .limit(3000),
+      .limit(50),
+    supabase
+      .from('guesty_reservations')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
+      .lt('check_out', todayStr),
     supabase.from('guesty_sync_status').select('last_sync_at, last_error, items_synced').eq('entity', 'reservations').maybeSingle()
   ])
 
   const cfMap = await customFieldNameMap()
   const up = upcoming ?? []
   const pastRows = past ?? []
+  const pastTotal = pastCount ?? pastRows.length
 
   // ── KPIs derived only from queried columns ────────────────────────────────
   const in7d = new Date(todayStr + 'T12:00:00Z'); in7d.setUTCDate(in7d.getUTCDate() + 7)
@@ -162,7 +168,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><CalendarDays size={13} /> Bookings</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Reservations</h1>
           <div className="mt-3"><DateFilter selected={todayStr} isToday={viewingToday} /></div>
-          <p className="text-sm text-muted mt-1">{up.length} active · {pastRows.length} past · upcoming arrivals first.</p>
+          <p className="text-sm text-muted mt-1">{up.length} active · {pastTotal} past · upcoming arrivals first.</p>
         </div>
         <div className="text-[11px] text-muted flex items-center gap-1.5">
           <RefreshCw size={12} /> Synced {fmtSync(lastSync)}{totalSynced ? ` · ${totalSynced.toLocaleString()} total` : ''}
