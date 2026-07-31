@@ -17,6 +17,8 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { noBreezewayRegex } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
 import type { Access } from '@/lib/access'
 
@@ -146,12 +148,13 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       // has finished. Kept as head-counts so it costs nothing.
       db.from('glitches').select('id', { count: 'exact', head: true })
         .not('status', 'in', '("done","resolved","closed")'),
-      db.from('breezeway_tasks_sync').select('id', { count: 'exact', head: true })
+      db.from('breezeway_tasks_sync').select('reference_property_id')
         .gte('scheduled_date', addDays(today, -45)).lte('scheduled_date', today)
         .is('finished_at', null)
         .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
         .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
-        .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%'),
+        .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+        .limit(5000),
     ])
 
     // ---------------------------------------------------------------- today
@@ -385,7 +388,14 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const openRows = (openWork.data || []) as any[]
     const nowIso = new Date().toISOString()
     const overdueWork = openRows.filter(w => w.due_at && str(w.due_at) < nowIso).length
-    const openTasks = Number(openTaskRes.count) || 0
+    // Guesty-only buildings (Botanica) left Breezeway with old tasks still sitting in the mirror.
+    // Nobody will ever close those, so they are not open work. (Re-applied 2026-07-31 after a
+    // parallel-session commit reverted it - keep this block if you touch this file.)
+    const noBz = noBreezewayRegex((await getOpsPresets()).vendorBuildings)
+    const openTasks = ((openTaskRes.data || []) as any[]).filter(t => {
+      const li = lmap[String(t.reference_property_id)]
+      return !li || !noBz.test(li.building + ' ' + li.name)
+    }).length
     const openWorkTotal = openRows.length + openGlitchesNow + openTasks
 
     const buildingRows = Object.keys(work.byBuilding).map(b => {
