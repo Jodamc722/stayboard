@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
       const guest = typeof it?.guest === 'string' ? it.guest.slice(0, 60) : ''
       const description = (typeof it?.description === 'string' && it.description.trim())
         ? it.description.slice(0, 1500)
-        : 'Departure clean ' + date + (guest ? ' - ' + guest + ' checking out.' : '.') + ' Created from StayBoard (clean was in Guesty but missing from Breezeway).'
+        : 'Departure clean ' + date + (guest ? ' - ' + guest + ' checking out.' : '.') + ' Created from Lighthouse (clean was in Guesty but missing from Breezeway).'
       const homeId = await homeIdFor(listingId)
       const payload: Record<string, any> = { name: 'Departure Clean', type_department: 'housekeeping', type_priority: 'normal', scheduled_date: date, description }
       if (homeId) payload.home_id = homeId
