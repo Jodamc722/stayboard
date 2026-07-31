@@ -56,7 +56,7 @@ export function ShareLinksCard() {
   return (
     <div className="rounded-2xl border border-line bg-white p-5 mt-6">
       <div className="flex items-center gap-2 mb-1"><Link2 size={16} className="text-muted" /><h2 className="font-semibold text-ink">Vendor share links</h2></div>
-      <p className="text-sm text-muted mb-4">Send these to vendors and the front desk. They open without a StayBoard login — one shared password protects all of them.</p>
+      <p className="text-sm text-muted mb-4">Send these to vendors and the front desk. They open without a Lighthouse login — one shared password protects all of them.</p>
       <div className="space-y-2 mb-5">
         {links.map(l => { const href = l.path || '/vendor/' + l.v; const url = origin + href; return (
           <div key={l.v} className="flex items-center gap-2 text-sm">
