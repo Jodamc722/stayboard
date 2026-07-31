@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
+import { buildIntel, intelKindFor } from '@/lib/listingIntel'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -63,8 +64,15 @@ export async function POST(req: NextRequest) {
     const wantsLink = body?.auditLink === true || (body?.auditLink !== false && /\bannual\b/i.test(title) && /\baudit\b/i.test(title))
     let link = ''
     if (wantsLink) { try { link = await auditLinkFor(db, listingId, req.nextUrl.origin, user.email || null) } catch { link = '' } }
+    // WHOEVER OPENS THIS TASK GETS THE BRIEF FOR THEIR JOB. An inspector needs the review that
+    // triggered the visit and the unit's weak category; a maintenance tech needs whether this fault
+    // has happened here before, whether anyone is inside right now, and whether the part is already
+    // on order. Best-effort: a failure here must never stop the task being created.
+    let intel: string | null = null
+    try { intel = await buildIntel(listingId, { kind: intelKindFor(title, department), date, taskName: title }) } catch (e) { console.error('add-task: intel failed', e) }
     const description = String(body?.description || '').slice(0, 1000)
       + (link ? '\n\nAUDIT LINK (open on your phone): ' + link + '\nLog every finding in that link as you walk — fixes and cleans become team tasks, and anything below par becomes an order automatically. Photograph anything below standard.' : '')
+      + (intel ? '\n\n' + intel : '')
       + (user.email ? '\n\nAdded from Today in Ops by ' + user.email : '')
     const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
     const homeId = Number(((props || [])[0] || {}).home_id)
