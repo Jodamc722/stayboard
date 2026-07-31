@@ -9,6 +9,18 @@
 //   Title 20 · Description 25 · Booking settings 30 · Amenity coverage 25
 // When review data is available, overall = round(structural * 0.86 + reviewSignal * 0.14).
 
+// Normalize a stored OTA rating to a 0-5 star scale. Ratings arrive mixed: Airbnb/Vrbo 0-5,
+// Booking/Expedia 0-10, occasionally 0-100. scoreReviews() below expects STARS - averaging raw
+// values let a Booking 9.0 count as "9 stars" and score a listing falsely perfect. Callers that
+// average review rows must run each row through this first.
+export function ratingToStars(r: number | null | undefined): number | null {
+  if (r == null || isNaN(Number(r))) return null
+  const n = Number(r)
+  if (n > 10) return Math.max(0, Math.min(5, n / 20))   // 0-100
+  if (n > 5) return Math.max(0, Math.min(5, n / 2))     // 0-10 (Booking/Expedia)
+  return Math.max(0, Math.min(5, n))                    // 0-5 (Airbnb/Vrbo)
+}
+
 export type Band = 'good' | 'watch' | 'risk'
 export type Factor = { label: string; got: number; max: number; note: string; ok: 'good' | 'warn' | 'bad' }
 export type AmenitySuggestion = { name: string; tier: 1 | 2 | 3; reason: string }

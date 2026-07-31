@@ -1,10 +1,13 @@
 // Master Listing Health Score - the portfolio's top quality metric. Encompasses the
 // Optimize/setup score AND operational/review health, evidence-weighted to how the OTAs
 // actually rank in 2025/26 (recent guest satisfaction dominates; setup is a gate).
-//   Master (0-100) = Review/Ops health (65) + Optimize score (35)
-//     A1 recency-weighted rating 28 · A2 volume 8 · A3 response 9 · A4 recurring penalty -12 · A5 ops 8 · B setup 35
-// Also scores each OTA separately (normalized to each platform's badge line = 80) and
-// emits ranked, team-assignable actions. Building rollup = 0.70*mean + 0.30*worst-quartile.
+//   Master (0-100) = Review/Ops health (60) + Optimize score (40)
+//     A1 recency-weighted rating 32 · A2 volume 9 · A3 response 10 · A4 recurring penalty -12 · A5 ops 9 · B setup 40
+//   Weights sum to 100 (were 88, which made "Elite" >=90 mathematically impossible); the rating
+//   quality scale anchors the OTA badge line at 90 so a Superhost-level listing can reach Elite and
+//   a flawless one reaches 100. Recurring-issue penalty only counts the last 12 months.
+// Also scores each OTA separately and emits ranked, team-assignable actions.
+// Building rollup = 0.70*mean + 0.30*worst-quartile.
 import { computeScore } from '@/lib/optimize-score'
 
 export type HealthBand = 'elite' | 'healthy' | 'watch' | 'risk' | 'critical' | 'neutral'
@@ -69,10 +72,20 @@ const ANCHOR: Record<ChannelKey, { badge: number; floor: number; badgeName: stri
   expedia: { badge: 4.5, floor: 3.5, badgeName: 'Premium 9.0' },
   other: { badge: 4.7, floor: 3.8, badgeName: 'Top tier' },
 }
-// stars -> 0-100 quality, anchored so the badge line = 80, floor = 40.
+// stars -> 0-100 quality, anchored so the OTA badge line = 90, floor = 45. A listing AT its badge
+// (Superhost / Premier / Superb) is elite-quality by definition, so it should score near the top;
+// a flawless listing above the badge reaches 100. (Was badge=80/floor=40, which capped a perfect
+// Airbnb listing's rating component at ~90% and helped make Elite unreachable.)
 function normQuality(stars: number, ch: ChannelKey): number {
   const a = ANCHOR[ch]
-  return Math.max(0, Math.min(100, 40 + ((stars - a.floor) / (a.badge - a.floor)) * 40))
+  return Math.max(0, Math.min(100, 45 + ((stars - a.floor) / (a.badge - a.floor)) * 45))
+}
+// Months since a review; null when undated.
+function monthsSince(created_at?: string | null): number | null {
+  if (!created_at) return null
+  const t = new Date(created_at).getTime()
+  if (isNaN(t)) return null
+  return (Date.now() - t) / (1000 * 60 * 60 * 24 * 30)
 }
 
 // recency weight: <=3mo x1, 3-12mo x0.6, 12-24mo x0.3, >24mo x0.1
@@ -122,23 +135,27 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   })
   const recencyQuality = wSum > 0 ? wqSum / wSum : null
   const avgStars = ratedCount ? Math.round((starSum / ratedCount) * 100) / 100 : null
-  const A1 = recencyQuality != null ? (recencyQuality / 100) * 28 : 0
+  const A1 = recencyQuality != null ? (recencyQuality / 100) * 32 : 0
 
   // A2 volume.
-  const A2 = volumeFrac(count) * 8
+  const A2 = volumeFrac(count) * 9
 
   // A3 response rate.
   const replied = reviews.filter(r => r.hasReply).length
   const responseRate = count ? replied / count : null
-  const A3 = responseFrac(responseRate) * 9
+  const A3 = responseFrac(responseRate) * 10
 
-  // A4 recurring-issue penalty (negative reviews only; cleanliness double).
+  // A4 recurring-issue penalty (negative reviews only, LAST 12 MONTHS only; cleanliness double).
+  // Old complaints shouldn't keep a unit flagged "critical" forever - a fault fixed a year ago is
+  // not a recurring issue today. Undated reviews are included (most are recent); >12mo are dropped.
   const themeHits: Record<string, number> = {}
   reviews.forEach(r => {
     const stars = toStars(r.rating)
     const neg = stars != null && stars <= 3.5
     const text = String(r.content || '').toLowerCase()
     if (!text || !neg) return
+    const mo = monthsSince(r.created_at)
+    if (mo != null && mo > 12) return
     for (const [theme, kws] of Object.entries(THEMES)) if (kws.some(k => text.includes(k))) themeHits[theme] = (themeHits[theme] || 0) + 1
   })
   let penalty = 0
@@ -155,10 +172,10 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   const topIssue = Object.entries(themeHits).sort((a, b) => b[1] - a[1])[0]?.[0] || null
 
   // A5 ops load.
-  const A5 = opsPts(openWork, 8)
+  const A5 = opsPts(openWork, 9)
 
   // B setup.
-  const B = (optimizeScore / 100) * 35
+  const B = (optimizeScore / 100) * 40
 
   let score: number
   if (unrated) {
