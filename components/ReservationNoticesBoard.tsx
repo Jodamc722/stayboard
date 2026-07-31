@@ -49,6 +49,25 @@ function fmt(d?: string | null): string {
   return MON[Number(m[2]) - 1] + ' ' + Number(m[3])
 }
 
+/**
+ * A day heading for the Upcoming list: "Tomorrow · Sat Aug 1". Built from the date STRING, never
+ * from `new Date(d)` — that parses a bare yyyy-mm-dd as UTC midnight and renders the day before in
+ * Eastern, which on this screen would tell someone a guest arrives Friday when they arrive Saturday.
+ */
+function dayHeading(d: string, today: string): string {
+  const m = String(d).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return String(d)
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  // Noon UTC keeps the weekday correct in every timezone west of the date line.
+  const dow = DOW[new Date(d + 'T12:00:00Z').getUTCDay()]
+  const label = dow + ' ' + fmt(d)
+  if (!today) return label
+  const days = Math.round((Date.parse(d + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / 86400000)
+  if (days === 0) return 'Today · ' + label
+  if (days === 1) return 'Tomorrow · ' + label
+  return label
+}
+
 const EMPTY = {
   property_id: '', unit_no: '', guest_name: '', guest_phone: '', guest_email: '',
   arrival_date: '', departure_date: '', eta: '4:00 PM', adults: '', children: '', pets: '', pet_breed: '',
@@ -65,6 +84,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   const [props, setProps] = useState<Property[]>([])
   const [counts, setCounts] = useState<Counts>({ toSend: 0, sentToday: 0, upcoming: 0, upcomingToSend: 0, late: 0, due: 0, blocked: 0 })
   const [loading, setLoading] = useState(true)
+  const [todayDate, setTodayDate] = useState('')
   const [needsMigration, setNeedsMigration] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
@@ -98,6 +118,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       setToday(Array.isArray(j.today) ? j.today : [])
       setUpcoming(Array.isArray(j.upcoming) ? j.upcoming : [])
       setCounts(j.counts || { toSend: 0, sentToday: 0, upcoming: 0, upcomingToSend: 0, late: 0, due: 0, blocked: 0 })
+      // The server's idea of "today" in Eastern, not the browser's — a laptop on another clock
+      // must not shift which day the Upcoming headings call Tomorrow.
+      setTodayDate(typeof j.todayDate === 'string' ? j.todayDate : '')
       setNeedsMigration(!!j.needsMigration)
       if (!j.ok && !j.needsMigration && j.error) setErr(j.error)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
@@ -428,7 +451,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           </button>
           {/* A search must never be swallowed by a collapsed section — while something is typed the
               upcoming block is forced open, otherwise a matching future booking looks like no result. */}
-          {(showUpcoming || q.trim().length > 0) && section('Upcoming', upcomingShown, false)}
+          {(showUpcoming || q.trim().length > 0) && section('Upcoming', upcomingShown, false, true)}
         </div>
       )}
     </div>
@@ -534,11 +557,26 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
    * A titled block of rows. Sent notices STAY here rather than disappearing — the day should read
    * as a complete record of who has been told and who has not.
    */
-  function section(title: string, list: Row[], busy: boolean) {
+  function section(title: string, list: Row[], busy: boolean, byDay = false) {
+    const tally = (rows: Row[]) =>
+      rows.filter(r => !r.sent_at).length + ' to send' +
+      (rows.some(r => r.sent_at) ? ' · ' + rows.filter(r => r.sent_at).length + ' sent' : '')
+
+    // Buildings inside one day, which is what byDay renders under each date heading.
+    const buildingBlocks = (rows: Row[]) => groupByProperty(rows).map(g => (
+      <div key={g.name}>
+        <div className="px-4 py-1.5 bg-app border-b border-line flex items-center gap-2">
+          <span className="text-[12px] font-bold text-ink">{g.name}</span>
+          <span className="text-[11px] text-muted">{tally(g.rows)}</span>
+        </div>
+        {g.rows.map(renderRow)}
+      </div>
+    ))
+
     return (
       <div>
         <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">
-          {title} <span className="text-muted/70">· {list.filter(r => !r.sent_at).length} to send{list.some(r => r.sent_at) ? ' · ' + list.filter(r => r.sent_at).length + ' sent' : ''}</span>
+          {title} <span className="text-muted/70">· {tally(list)}</span>
         </div>
         <div className="rounded-2xl border border-line bg-white overflow-hidden">
           {busy && list.length === 0 ? (
@@ -547,22 +585,51 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
             <div className="px-4 py-8 text-center text-[13px] text-muted">
               {title === 'Today' ? 'Nothing arriving today — every building has been told.' : 'Nothing upcoming.'}
             </div>
-          ) : groupByProperty(list).map(g => (
-            <div key={g.name}>
-              {/* One block per building. Jon reads this list building by building, not as one
-                  undifferentiated queue — each has its own recipients, wording and lead time. */}
-              <div className="px-4 py-1.5 bg-app border-b border-line flex items-center gap-2">
-                <span className="text-[12px] font-bold text-ink">{g.name}</span>
-                <span className="text-[11px] text-muted">
-                  {g.rows.filter(r => !r.sent_at).length} to send{g.rows.some(r => r.sent_at) ? ' · ' + g.rows.filter(r => r.sent_at).length + ' sent' : ''}
-                </span>
+          ) : byDay ? (
+            // UPCOMING READS AS A CALENDAR, NOT A FILING CABINET. What someone needs from the days
+            // ahead is "what is landing on Saturday", across every building at once — grouping by
+            // building first buries Saturday's single Nomad arrival forty Elser rows down. So the
+            // day leads and the buildings nest inside it, which keeps each building's own block
+            // (own recipients, own wording) without hiding the shape of the week.
+            groupByDay(list).map(d => (
+              <div key={d.date}>
+                <div className="px-4 py-2 bg-brand-50/70 border-b border-line flex items-center gap-2 sticky top-0 z-[1]">
+                  <CalendarClock size={13} className="text-brand-700 flex-shrink-0" />
+                  <span className="text-[12px] font-bold text-brand-800">{dayHeading(d.date, todayDate)}</span>
+                  <span className="text-[11px] text-brand-700/80">{tally(d.rows)}</span>
+                </div>
+                {buildingBlocks(d.rows)}
               </div>
-              {g.rows.map(renderRow)}
-            </div>
-          ))}
+            ))
+          ) : buildingBlocks(list)}
         </div>
       </div>
     )
+  }
+
+  /**
+   * Rows split into arrival days, soonest first, with each day's rows ordered the way the building
+   * blocks want them: building order from Settings, then unsent above sent, then guest name.
+   *
+   * The API sorts Upcoming building-first, so this re-sorts rather than just regrouping — walking
+   * the list and starting a new group on each change of date would otherwise scatter one day across
+   * as many blocks as there are buildings.
+   */
+  function groupByDay(list: Row[]): { date: string; rows: Row[] }[] {
+    const key = (r: Row) => String(r.arrival_date || '').slice(0, 10)
+    const sorted = list.slice().sort((a, b) =>
+      key(a).localeCompare(key(b)) ||
+      ((a.propertyOrder ?? 999) - (b.propertyOrder ?? 999)) ||
+      ((a.sent_at ? 1 : 0) - (b.sent_at ? 1 : 0)) ||
+      String(a.guest_name || '').localeCompare(String(b.guest_name || '')))
+    const out: { date: string; rows: Row[] }[] = []
+    for (const r of sorted) {
+      const d = key(r)
+      const last = out[out.length - 1]
+      if (last && last.date === d) last.rows.push(r)
+      else out.push({ date: d, rows: [r] })
+    }
+    return out
   }
 
   /** Rows split into building blocks, keeping the order the API already sorted them into. */
