@@ -11,9 +11,10 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'STAYBOARD',
-  description: 'Stay Hospitality operations dashboard',
-  manifest: '/manifest.json'
+  title: 'LIGHTHOUSE — Stay Hospitality',
+  description: 'Every property, watched. The Stay Hospitality operating system.',
+  manifest: '/manifest.json',
+  icons: { icon: '/icon-192.png', apple: '/icon-180.png' }
 }
 export const viewport: Viewport = {
   width: 'device-width', initialScale: 1, viewportFit: 'cover',
