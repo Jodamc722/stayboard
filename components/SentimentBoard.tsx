@@ -81,7 +81,7 @@ setQc(m)
   // EXPLICIT approval only - the click IS the approval; nothing is created automatically.
 async function createQc(r: Row) {
 const c = classifyQc(r)
-const desc = 'GUEST ISSUE: ' + (r.topIssue || 'Guest dissatisfaction') + (r.excerpt ? ' - "' + r.excerpt.slice(0, 180) + '"' : '') + '\nCHECK FOR: ' + c.check + '\nGUEST CONTEXT: ' + r.guest + ' via ' + (CH[r.channel] || r.channel) + (r.listingName ? ' - ' + r.listingName : '') + '\nREQUIRED: photos + notes before closing. Created from StayBoard guest sentiment.'
+const desc = 'GUEST ISSUE: ' + (r.topIssue || 'Guest dissatisfaction') + (r.excerpt ? ' - "' + r.excerpt.slice(0, 180) + '"' : '') + '\nCHECK FOR: ' + c.check + '\nGUEST CONTEXT: ' + r.guest + ' via ' + (CH[r.channel] || r.channel) + (r.listingName ? ' - ' + r.listingName : '') + '\nREQUIRED: photos + notes before closing. Created from Lighthouse guest sentiment.'
 if (!window.confirm('Create a ' + c.department.toUpperCase() + ' task in Breezeway' + (r.listingName ? ' for ' + r.listingName : '') + '?\n\n' + c.title)) return
 setQcBusy(p => ({ ...p, [r.id]: true }))
 try {
