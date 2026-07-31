@@ -18,6 +18,14 @@ export type ChannelHealth = { channel: ChannelKey; label: string; score: number;
 export type ListingHealth = {
   score: number
   band: HealthBand
+  // The blended master is being split into two honest scores (audit P2 #11):
+  //   propertyHealth   — "is the UNIT okay?" (ops + guest experience). CS/Ops act on this.
+  //   listingPerformance — "is the LISTING earning?" (occupancy vs peers + content + reputation). GM/CFO act on this.
+  propertyHealth: number | null
+  propertyBand: HealthBand
+  listingPerformance: number
+  performanceBand: HealthBand
+  perfParts: { occupancy: number | null; content: number; reputation: number | null; occIndex: number | null; occPct: number | null }
   unrated: boolean
   optimizeScore: number
   breakdown: { rating: number; volume: number; response: number; penalty: number; ops: number; setup: number }
@@ -116,7 +124,7 @@ function responseFrac(rate: number | null): number { if (rate == null) return 0;
 function opsPts(open: number, max: number): number { return open <= 0 ? max : open <= 2 ? max * 0.75 : open <= 4 ? max * 0.4 : 0 }
 
 /* ------------------------------ main entry -------------------------------- */
-export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number }): ListingHealth {
+export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null }): ListingHealth {
   const openWork = opts?.openWork ?? 0
   const optimizeScore = computeScore(listing, { isBeach: /beach/i.test(String(listing?.address_city || '')) }).overall
 
@@ -186,6 +194,31 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   }
   const band = healthBand(score, unrated)
 
+  // ---- THE TWO SCORES (audit P2 #11) ----
+  // Property Health = the ops + guest-experience block (rating quality + volume + response + ops
+  // − recurring penalty), rescaled from its 60-point max to 0-100. "Is the unit okay right now?"
+  // No reviews → null (can't judge guest experience yet); the master falls back to setup separately.
+  const propMax = 32 + 9 + 10 + 9 // A1+A2+A3+A5
+  const propertyHealth = unrated ? null : Math.round(Math.max(0, Math.min(100, ((A1 + A2 + A3 + A5 - A4) / propMax) * 100)))
+  const propertyBand = healthBand(propertyHealth ?? 0, unrated)
+
+  // Listing Performance = "is the listing earning?" — occupancy vs building peers (the demand the
+  // listing captures) + content/optimize (the controllable conversion lever) + reputation (ranking).
+  // occIndex = this unit's occupancy ÷ its building's median; at-peer ≈ 75, 1.33× peer ≈ 100.
+  const occIndex = opts?.occIndex ?? null
+  const occPct = opts?.occPct ?? null
+  const occComponent = occIndex != null ? Math.max(0, Math.min(100, occIndex * 75)) : null
+  const contentComponent = optimizeScore                                   // 0-100
+  const reputationComponent = recencyQuality != null ? recencyQuality : null // 0-100 (null when unrated)
+  // Weights adapt to which signals exist so a new/undated listing isn't unfairly zeroed.
+  let perfParts: { w: number; v: number }[] = []
+  if (occComponent != null) perfParts.push({ w: 0.45, v: occComponent })
+  perfParts.push({ w: 0.35, v: contentComponent })
+  if (reputationComponent != null) perfParts.push({ w: 0.20, v: reputationComponent })
+  const wSumP = perfParts.reduce((s, p) => s + p.w, 0)
+  const listingPerformance = Math.round(perfParts.reduce((s, p) => s + p.v * p.w, 0) / (wSumP || 1))
+  const performanceBand = healthBand(listingPerformance, false)
+
   // ---- Per-OTA ----
   const byCh = new Map<ChannelKey, HealthReview[]>()
   reviews.forEach(r => { const k = channelKey(r.channel); const a = byCh.get(k) || []; a.push(r); byCh.set(k, a) })
@@ -232,7 +265,10 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   issues.sort((a, b) => sev[a.severity] - sev[b.severity] || b.gain - a.gain)
 
   return {
-    score, band, unrated, optimizeScore,
+    score, band,
+    propertyHealth, propertyBand, listingPerformance, performanceBand,
+    perfParts: { occupancy: occComponent != null ? Math.round(occComponent) : null, content: Math.round(contentComponent), reputation: reputationComponent != null ? Math.round(reputationComponent) : null, occIndex: occIndex != null ? Math.round(occIndex * 100) / 100 : null, occPct: occPct != null ? Math.round(occPct * 100) : null },
+    unrated, optimizeScore,
     breakdown: { rating: Math.round(A1), volume: Math.round(A2), response: Math.round(A3), penalty: Math.round(A4), ops: Math.round(A5), setup: Math.round(B) },
     review: { avgStars, recencyQuality: recencyQuality != null ? Math.round(recencyQuality) : null, count, ratedCount, responseRate: responseRate != null ? Math.round(responseRate * 100) : null, recurring, topIssue },
     channels, issues,
