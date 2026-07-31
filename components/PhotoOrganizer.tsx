@@ -374,7 +374,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
               <div className="flex items-center gap-2 mb-2">
                 <Trash2 size={15} className="text-rose-600" />
                 <span className="text-[13px] font-semibold text-ink">Recommended to remove ({removeList.length})</span>
-                <span className="text-[11px] text-muted ml-auto">delete these in Guesty &mdash; StayBoard never deletes photos for you</span>
+                <span className="text-[11px] text-muted ml-auto">delete these in Guesty &mdash; Lighthouse never deletes photos for you</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                 {removeList.map(r => { const p = photos[r._id]; if (!p) return null; const marked = toRemove.has(r._id); return (
