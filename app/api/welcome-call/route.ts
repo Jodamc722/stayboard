@@ -78,7 +78,9 @@ export async function GET(req: NextRequest) {
   const params = new URL(req.url).searchParams
   if (params.get('find')) {
     const sbF = supabaseAdmin()
-    const { data } = await sbF.from('guesty_reservations').select('id, custom_fields, raw').limit(1500)
+    // custom_fields only (no bare raw): the old select pulled up to 1500 full raw blobs (>100MB
+    // potential) into a click handler. The field-id fallback only needs the customFields arrays.
+    const { data } = await sbF.from('guesty_reservations').select('id, custom_fields').not('custom_fields', 'is', null).order('check_in', { ascending: false }).limit(300)
     for (const r of (data || [])) {
       const cf = Array.isArray((r as any).custom_fields) ? (r as any).custom_fields : ((r as any)?.raw?.customFields || [])
       const w = (cf || []).find(isWelcome)
@@ -220,7 +222,7 @@ export async function POST(req: NextRequest) {
     if (defs && defs[0]) fieldId = (defs[0] as any).id
   }
   if (!fieldId) {
-    const { data: others } = await sb.from('guesty_reservations').select('custom_fields, raw').limit(1500)
+    const { data: others } = await sb.from('guesty_reservations').select('custom_fields').not('custom_fields', 'is', null).order('check_in', { ascending: false }).limit(300)
     for (const o of (others || [])) {
       const cf = Array.isArray((o as any).custom_fields) ? (o as any).custom_fields : ((o as any)?.raw?.customFields || [])
       const w = (cf || []).find(isWelcome)
