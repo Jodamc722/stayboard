@@ -31,6 +31,36 @@ const KIND_META: Record<string, { label: string; cls: string }> = {
 
 const COMMON_AREAS = ['Lobby', 'Front desk', 'Elevators', 'Hallways', 'Stairwells', 'Gym', 'Pool', 'Pool deck', 'Parking garage', 'Mailroom', 'Trash / recycling', 'Amenity lounge', 'Rooftop', 'Exterior / grounds']
 
+// Spanish for the field crew - keys are the exact English strings; anything missing falls back to
+// English, so an untranslated corner never breaks the form.
+const ES: Record<string, string> = {
+  'Good': 'Bien', 'Flag': 'Reportar', 'Missing / issue': 'Falta / problema', 'flagged': 'reportado',
+  'Good, or flag what needs work': 'Bien, o reporta lo que necesita trabajo',
+  'Guided walk': 'Recorrido guiado', 'checked': 'revisado',
+  'Inventory vs par': 'Inventario vs requerido', 'at par': 'completo', 'short': 'faltan',
+  'count what is here': 'cuenta lo que hay', 'par is for': 'requerido para', 'guests': 'huéspedes',
+  'Order': 'Pedir', 'Fix': 'Reparar', 'Clean': 'Limpiar', 'Replace': 'Reemplazar', 'Add': 'Agregar', 'Inventory': 'Inventario',
+  'Save': 'Guardar', 'Cancel': 'Cancelar', 'Mark urgent': 'Marcar urgente',
+  'Urgent - guest affected': 'Urgente - huésped afectado',
+  'What is wrong or needed?': '¿Qué está mal o qué falta?', 'optional': 'opcional',
+  'Add photo': 'Agregar foto', 'Photo': 'Foto', 'retake': 'repetir',
+  'Who is doing this walk?': '¿Quién hace este recorrido? Su nombre queda en cada reporte.',
+  'Your name': 'Tu nombre', 'Start': 'Empezar', 'Walking as': 'Recorrido por', 'change': 'cambiar',
+  'Walk the unit room by room. In each room, tap Good on what checks out or flag anything to fix, replace, add or clean, and add a photo on any item. Prefer talking? Dictate the whole list up top.':
+    'Recorre la unidad cuarto por cuarto. En cada cuarto, toca Bien en lo que está en orden o reporta lo que hay que reparar, reemplazar, agregar o limpiar, y agrega una foto a cualquier punto. ¿Prefieres hablar? Dicta toda la lista arriba.',
+  'Smoke / CO detector': 'Detector de humo / CO', 'Lights + bulbs': 'Luces y focos',
+  'Doors, locks + hinges': 'Puertas, cerraduras y bisagras', 'Walls + paint': 'Paredes y pintura',
+  'Caulking + grout': 'Silicona y lechada', 'Drains + leaks': 'Desagües y fugas',
+  'Toilet flush + seal': 'Descarga y sello del inodoro', 'Exhaust fan': 'Extractor de aire',
+  'Fridge seals + temp': 'Sellos y temperatura del refri', 'Oven + burners': 'Horno y hornillas',
+  'Dishwasher + filter': 'Lavavajillas y filtro', 'Under-sink leaks': 'Fugas bajo el fregadero',
+  'Mattress condition': 'Estado del colchón', 'Bed frame stability': 'Estabilidad de la cama',
+  'Blinds / blackout': 'Persianas / blackout', 'Sofa condition': 'Estado del sofá',
+  'TV + remote': 'TV y control remoto', 'Balcony door + lock': 'Puerta y cerradura del balcón',
+  'AC filter replace': 'Cambiar filtro del AC', 'Water heater check': 'Revisar calentador de agua',
+  'Washer hoses + lint': 'Mangueras y filtro de pelusa',
+}
+
 function defaultRooms(bedrooms: number | null, bathrooms: number | null): string[] {
   const rooms: string[] = []
   const br = typeof bedrooms === 'number' ? bedrooms : 1
@@ -125,6 +155,14 @@ export default function AuditCapture({ code }: { code: string }) {
   const [flagPhoto, setFlagPhoto] = useState('')
   const [flagBusy, setFlagBusy] = useState(false)
   const [photoItemId, setPhotoItemId] = useState('')
+  // v1.5: who is walking + which language they read. Both stick per device.
+  const [walker, setWalker] = useState('')
+  const [walkerDraft, setWalkerDraft] = useState('')
+  const [lang, setLang] = useState<'en' | 'es'>('en')
+  const [essEdit, setEssEdit] = useState<Record<string, string>>({})
+  useEffect(() => { try { const w = localStorage.getItem('lh_walker') || ''; setWalker(w); setWalkerDraft(w); if (localStorage.getItem('lh_lang') === 'es') setLang('es') } catch {} }, [])
+  function T(s: string): string { return lang === 'es' ? (ES[s] || s) : s }
+  function setLangPersist(l: 'en' | 'es') { setLang(l); try { localStorage.setItem('lh_lang', l) } catch {} }
 
   async function load() {
     try {
@@ -141,8 +179,20 @@ export default function AuditCapture({ code }: { code: string }) {
       .then(j => { if (j && j.ok) { if (j.table) setParTable(j.table); if (j.shape) setParShape(j.shape) } })
       .catch(() => { /* shipped defaults stand in */ })
   }, [code])
+  // Rehydrate the Good checkmarks from persisted pm-ok rows - a reload used to wipe the whole walk.
+  useEffect(() => {
+    if (!data) return
+    setWalkOK(m => {
+      const n = { ...m }
+      for (const it of (data.items || [])) if (String((it as any).item_type || '') === 'pm-ok' && it.title) n[(it.room || '') + '|||' + String(it.title).replace(/ — OK$/, '')] = true
+      return n
+    })
+  }, [data])
 
-  const items = data ? data.items : []
+  const allItems = data ? data.items : []
+  // pm-ok rows are the persisted "checked & fine" record. They only drive the Good checkmarks
+  // (and let the office see what was actually looked at) - hidden from every list and count.
+  const items = allItems.filter((it: any) => String(it.item_type || '') !== 'pm-ok')
   const done = !!(data && data.audit && data.audit.status === 'completed')
   const rooms: string[] = []
   // Quality + onboarding unit audits seed the standard room list so the walk is guided room by
@@ -212,6 +262,31 @@ export default function AuditCapture({ code }: { code: string }) {
   function wkKey(room: string, label: string) { return room + '|||' + label }
   function walkItemFor(room: string, label: string) { const l = label.toLowerCase(); return items.find(it => it.room === room && it.kind !== 'tag' && it.kind !== 'inventory' && String(it.title || '').toLowerCase().indexOf(l) >= 0) }
   function markGood(room: string, label: string) { setWalkOK(m => { const n = { ...m }; n[wkKey(room, label)] = true; return n }) }
+  // Good is a RECORD, not just local state: it writes a pm-ok row so a reload keeps the walk and
+  // "checked, fine" stops being indistinguishable from "never looked". Optimistic - no spinner.
+  function goodTap(room: string, label: string) {
+    markGood(room, label)
+    fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'inventory', itemType: 'pm-ok', title: label + ' — OK', note: walker ? 'By ' + walker : '' }) })
+      .then(r => r.json()).then(j => { if (j && j.item) setData(d => d ? { ...d, items: d.items.concat([j.item]) } : d) })
+      .catch(() => {})
+  }
+  function undoGood(room: string, label: string) {
+    setWalkOK(m => { const n = { ...m }; delete n[wkKey(room, label)]; return n })
+    const ex = allItems.find(it => String((it as any).item_type || '') === 'pm-ok' && it.room === room && String(it.title || '') === label + ' — OK')
+    if (ex) {
+      setData(d => d ? { ...d, items: d.items.filter(x => x.id !== ex.id) } : d)
+      fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: ex.id }) }).catch(() => {})
+    }
+  }
+  function saveWalker() {
+    const w = walkerDraft.trim().slice(0, 40)
+    if (!w) return
+    setWalker(w)
+    try { localStorage.setItem('lh_walker', w) } catch {}
+    // Document the walker on the audit itself (once per name) so the desk sees who walked it.
+    const has = allItems.some(it => it.kind === 'tag' && String(it.title || '') === 'Walker: ' + w)
+    if (!has) fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room: 'Unit basics', kind: 'tag', title: 'Walker: ' + w }) }).catch(() => {})
+  }
   function openFlag(room: string, label: string, dflt: string) { setWalkFlag(wkKey(room, label)); setFlagKind(dflt); setFlagNote(label); setFlagPhoto(''); setFlagUrgent(false) }
   function flagShoot() { if (flagCamRef.current) { flagCamRef.current.value = ''; flagCamRef.current.click() } }
   async function onFlagPhoto(e: any) {
@@ -225,7 +300,7 @@ export default function AuditCapture({ code }: { code: string }) {
     setFlagBusy(true)
     try {
       const title = (flagNote.trim() || label).slice(0, 160)
-      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: flagKind, title, note: '', photoUrl: flagPhoto || '', severity: flagUrgent ? 'high' : '', dedupe: 1 }) })
+      await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: flagKind, title, note: walker ? 'By ' + walker : '', photoUrl: flagPhoto || '', severity: flagUrgent ? 'high' : '', dedupe: 1 }) })
       markGood(room, label)
       setWalkFlag(''); setFlagPhoto(''); setFlagNote(''); setFlagUrgent(false)
       await load()
@@ -477,6 +552,33 @@ export default function AuditCapture({ code }: { code: string }) {
     for (const r of ordered) for (const p of parRows(r)) if (p.short > 0) out.push({ room: r, item: p.item, qty: p.short })
     return out
   }
+  // Type the count instead of tapping + twelve times: one write on blur, optimistic, no refetch.
+  async function commitEss(room: string, label: string, prev: number) {
+    const key = room + '|||' + label
+    const rawv = essEdit[key]
+    setEssEdit(m => { const n = { ...m }; delete n[key]; return n })
+    if (rawv == null) return
+    const n = Math.max(0, Math.min(99, parseInt(rawv || '0', 10) || 0))
+    if (n === prev) return
+    const ex = items.find(it => it.room === room && it.kind === 'inventory' && parKey(it.title) === parKey(label))
+    setData(d => {
+      if (!d) return d
+      let list = d.items.slice()
+      if (ex) { list = n === 0 ? list.filter(x => x.id !== ex.id) : list.map(x => x.id === ex.id ? { ...x, qty: n } : x) }
+      else if (n > 0) list = list.concat([{ id: 'tmp-' + key, room, kind: 'inventory', title: label, qty: n, status: 'open' } as any])
+      return { ...d, items: list }
+    })
+    try {
+      if (ex) {
+        if (n === 0) await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteItem', code, itemId: ex.id }) })
+        else await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', code, itemId: ex.id, fields: { qty: n } }) })
+      } else if (n > 0) {
+        const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'inventory', title: label, qty: n }) })
+        const j = await r.json()
+        if (j && j.item) setData(d => d ? { ...d, items: d.items.map(x => x.id === ('tmp-' + key) ? j.item : x) } : d)
+      }
+    } catch { await load() }
+  }
   async function decEss(room: string, label: string) {
     if (essBusy) return
     const ex = items.find(it => it.room === room && it.kind === 'inventory' && parKey(it.title) === parKey(label))
@@ -653,8 +755,28 @@ function quickTags(r: string): string[] {
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
         {data.listing.building ? <div className="text-xs text-neutral-500 mt-0.5">{data.listing.building}</div> : null}
-        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : 'Walk the unit room by room. In each room, tap Good on what checks out or flag anything to fix, replace, add or clean, and add a photo on any item. Prefer talking? Dictate the whole list up top.'}</div>
+        <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : T('Walk the unit room by room. In each room, tap Good on what checks out or flag anything to fix, replace, add or clean, and add a photo on any item. Prefer talking? Dictate the whole list up top.')}</div>
       </div>
+      {!done ? (
+        <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="flex items-center gap-2">
+            {walker ? (
+              <div className="flex-1 text-[13px] text-neutral-700">{T('Walking as')} <b>{walker}</b> <button onClick={() => { setWalker(''); setWalkerDraft('') }} className="text-[11px] text-neutral-400 underline ml-1">{T('change')}</button></div>
+            ) : (
+              <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                <input value={walkerDraft} onChange={e => setWalkerDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveWalker() }} placeholder={T('Your name')} className="flex-1 min-w-0 text-[13px] border border-neutral-200 rounded-lg px-2 py-1.5" />
+                <button onClick={saveWalker} disabled={!walkerDraft.trim()} className="text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{T('Start')}</button>
+              </div>
+            )}
+            <div className="flex rounded-lg border border-neutral-200 overflow-hidden shrink-0">
+              {(['en', 'es'] as const).map(l => (
+                <button key={l} onClick={() => setLangPersist(l)} className={'text-[11px] font-bold px-2 py-1.5 ' + (lang === l ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-500')}>{l.toUpperCase()}</button>
+              ))}
+            </div>
+          </div>
+          {!walker ? <div className="text-[11px] text-neutral-400 mt-1">{T('Who is doing this walk?')}</div> : null}
+        </div>
+      ) : null}
       {done ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">Audit completed ✓ — the office has it. Items are read-only.</div> : null}
       {!done ? (
         <div className="mb-3 rounded-xl border border-neutral-200 bg-white p-3">
@@ -779,13 +901,13 @@ function quickTags(r: string): string[] {
                     return (
                       <div key={key} className="rounded-lg border border-neutral-100 bg-white">
                         <div className="flex items-center gap-2 px-2 py-1.5">
-                          <span className={'flex-1 text-[13px] ' + (resolved ? 'text-neutral-400' : 'text-neutral-800')}>{flagged ? '⚠️ ' : ''}{label}</span>
+                          <span className={'flex-1 text-[13px] ' + (resolved ? 'text-neutral-400' : 'text-neutral-800')}>{flagged ? '⚠️ ' : ''}{T(label)}</span>
                           {resolved && !flagging ? (
-                            <button onClick={() => { setWalkOK(m => { const n = { ...m }; delete n[key]; return n }) }} className="text-[11px] font-semibold text-emerald-600 px-1">{flagged ? 'flagged' : 'Good ✓'}</button>
+                            <button onClick={() => undoGood(room, label)} className="text-[11px] font-semibold text-emerald-600 px-1">{flagged ? T('flagged') : T('Good') + ' ✓'}</button>
                           ) : (
                             <>
-                              <button onClick={() => markGood(room, label)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-emerald-300 text-emerald-700">Good</button>
-                              <button onClick={() => openFlag(room, label, dflt)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (tone === 'inv' ? 'border-sky-300 text-sky-700' : 'border-amber-300 text-amber-700')}>{tone === 'inv' ? 'Missing / issue' : 'Flag'}</button>
+                              <button onClick={() => goodTap(room, label)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-emerald-300 text-emerald-700">{T('Good')}</button>
+                              <button onClick={() => openFlag(room, label, dflt)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (tone === 'inv' ? 'border-sky-300 text-sky-700' : 'border-amber-300 text-amber-700')}>{tone === 'inv' ? T('Missing / issue') : T('Flag')}</button>
                             </>
                           )}
                         </div>
@@ -800,14 +922,14 @@ function quickTags(r: string): string[] {
                                 {['replace', 'add'].map(k => <button key={k} onClick={() => setFlagKind(k)} className={'text-[10px] font-semibold px-1.5 py-1 rounded border ' + (flagKind === k ? KIND_META[k].cls : 'bg-white text-neutral-500 border-neutral-200')}>{KIND_META[k].label}{k === 'add' ? ' (rec)' : ''}</button>)}
                               </div>
                             ) : null}
-                            <input value={flagNote} onChange={e => setFlagNote(e.target.value)} placeholder="What is wrong or needed?" className="w-full text-[13px] border border-neutral-200 rounded-lg px-2 py-1.5" />
-                            <button onClick={() => setFlagUrgent(u => !u)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagUrgent ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-neutral-500 border-neutral-200')}>{flagUrgent ? '⚠ Urgent - guest affected' : 'Mark urgent'}</button>
+                            <input value={flagNote} onChange={e => setFlagNote(e.target.value)} placeholder={T('What is wrong or needed?')} className="w-full text-[13px] border border-neutral-200 rounded-lg px-2 py-1.5" />
+                            <button onClick={() => setFlagUrgent(u => !u)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagUrgent ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-neutral-500 border-neutral-200')}>{flagUrgent ? '⚠ ' + T('Urgent - guest affected') : T('Mark urgent')}</button>
                             <div className="flex items-center gap-2">
-                              <button onClick={flagShoot} disabled={flagBusy} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagPhoto ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-neutral-300 text-neutral-600')}>{flagBusy ? '…' : (flagPhoto ? '📷 Photo ✓ retake' : '📷 Add photo')}</button>
-                              {flagPhoto ? <img src={flagPhoto} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="text-[10px] text-neutral-400">optional</span>}
+                              <button onClick={flagShoot} disabled={flagBusy} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (flagPhoto ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-neutral-300 text-neutral-600')}>{flagBusy ? '…' : (flagPhoto ? '📷 ' + T('Photo') + ' ✓ ' + T('retake') : '📷 ' + T('Add photo'))}</button>
+                              {flagPhoto ? <img src={flagPhoto} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="text-[10px] text-neutral-400">{T('optional')}</span>}
                               <div className="flex-1" />
-                              <button onClick={() => setWalkFlag('')} className="text-[11px] px-2 py-1 rounded-md border border-neutral-200 text-neutral-500">Cancel</button>
-                              <button onClick={() => saveFlag(room, label)} disabled={flagBusy} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-neutral-900 text-white disabled:opacity-50">Save</button>
+                              <button onClick={() => setWalkFlag('')} className="text-[11px] px-2 py-1 rounded-md border border-neutral-200 text-neutral-500">{T('Cancel')}</button>
+                              <button onClick={() => saveFlag(room, label)} disabled={flagBusy} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-neutral-900 text-white disabled:opacity-50">{T('Save')}</button>
                             </div>
                           </div>
                         ) : null}
@@ -817,8 +939,8 @@ function quickTags(r: string): string[] {
                   return (
                     <div className="mb-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-2">
                       <div className="flex items-center justify-between mb-1.5">
-                        <div className="text-[11px] font-semibold text-indigo-800">Guided walk &middot; {doneN}/{total} checked</div>
-                        <span className="text-[10px] text-indigo-400">Good, or flag what needs work</span>
+                        <div className="text-[11px] font-semibold text-indigo-800">{T('Guided walk')} &middot; {doneN}/{total} {T('checked')}</div>
+                        <span className="text-[10px] text-indigo-400">{T('Good, or flag what needs work')}</span>
                       </div>
                       <div className="mb-1 text-[10px] uppercase tracking-wide text-indigo-400 font-semibold">Condition &amp; maintenance</div>
                       <div className="space-y-1">{maint.map(l => chk(l, 'maintenance', 'maint'))}</div>
@@ -872,16 +994,25 @@ function quickTags(r: string): string[] {
                     return (
                       <div className="mb-1.5 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
                         <div className="flex items-center gap-1.5 mb-1">
-                          <div className="text-[11px] font-semibold text-emerald-800">Inventory vs par</div>
-                          <span className="text-[10px] text-emerald-500">count what is here &middot; par is for {parShape.guests} guests</span>
+                          <div className="text-[11px] font-semibold text-emerald-800">{T('Inventory vs par')}</div>
+                          <span className="text-[10px] text-emerald-500">{T('count what is here')} &middot; {T('par is for')} {parShape.guests} {T('guests')}</span>
                           <div className="flex-1" />
-                          {shortN ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{shortN} short</span> : <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">at par</span>}
+                          {shortN ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{shortN} {T('short')}</span> : <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">{T('at par')}</span>}
                         </div>
                         <div className="space-y-1">
                           {pr.map((p, i) => (
                             <div key={i} className="flex items-center gap-1.5 rounded-md bg-white border border-emerald-100 px-2 py-1">
                               <span className={'flex-1 text-[13px] ' + (p.short > 0 ? 'text-amber-800 font-medium' : 'text-neutral-700')}>{p.item}</span>
-                              <span className={'text-[11px] tabular-nums font-semibold ' + (p.short > 0 ? 'text-amber-700' : 'text-emerald-600')}>{p.have} / {p.par}</span>
+                              <input
+                                inputMode="numeric" pattern="[0-9]*" type="text"
+                                value={essEdit[room + '|||' + p.item] ?? String(p.have)}
+                                onFocus={e => { setEssEdit(m => ({ ...m, [room + '|||' + p.item]: String(p.have) })); e.target.select() }}
+                                onChange={e => { const v = e.target.value.replace(/[^0-9]/g, '').slice(0, 2); setEssEdit(m => ({ ...m, [room + '|||' + p.item]: v })) }}
+                                onBlur={() => commitEss(room, p.item, p.have)}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                className={'w-9 text-center text-[12px] tabular-nums font-semibold rounded border py-0.5 ' + (p.short > 0 ? 'text-amber-700 border-amber-300 bg-amber-50' : 'text-emerald-700 border-emerald-200 bg-white')}
+                              />
+                              <span className={'text-[11px] tabular-nums font-semibold ' + (p.short > 0 ? 'text-amber-700' : 'text-emerald-600')}>/ {p.par}</span>
                               <button onClick={() => decEss(room, p.item)} disabled={essBusy || p.have === 0} className="w-6 h-6 rounded border border-neutral-200 text-neutral-500 text-sm leading-none disabled:opacity-30">&minus;</button>
                               <button onClick={() => bumpEss(room, p.item)} disabled={essBusy} className="w-6 h-6 rounded border border-emerald-300 text-emerald-700 font-bold text-sm leading-none disabled:opacity-40">+</button>
                             </div>
