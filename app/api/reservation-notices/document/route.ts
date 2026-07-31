@@ -27,9 +27,20 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
 }
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
+/**
+ * The DISPLAY name only. It is never part of the storage key — that is always
+ * 'reservations/<notice id>.pdf' — so this can hold any character a person's name contains.
+ *
+ * It strips exactly what a filesystem or a Content-Disposition header cannot take, and NOTHING
+ * else. The previous \w-only rule quietly turned "Janina Fankhänel" into "Janina Fankh nel", which
+ * is the guest's name spelled wrong on a document handed to their building.
+ */
 function safeName(s: string): string {
-  // Last-resort name only — the caller sends one built from the property's docName template.
-  return str(s).replace(/[^\w .\-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120)
+  return str(s)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.]+|[\s.]+$/g, '')
+    .slice(0, 150)
     || 'Transient Guest-Occupant Registration Form.pdf'
 }
 
