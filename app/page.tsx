@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
 import {
@@ -42,6 +43,9 @@ export default async function HomePage() {
   const nowIso = today.toISOString()
   const in7 = new Date(today.getTime() + 7 * 86_400_000)
   const in7Str = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(in7)
+  // Open-work window: Breezeway tasks scheduled in the last 45 days that are still not finished.
+  const bzStart = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(today.getTime() - 45 * 86_400_000))
+  const sbAdmin = supabaseAdmin()
 
   const [
     { count: checkInsToday },
@@ -54,6 +58,8 @@ export default async function HomePage() {
     { data: openWork },
     { data: convos },
     { data: syncStatus },
+    { count: openGlitchCount },
+    { count: bzOpenCount },
   ] = await Promise.all([
     supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_in', todayStr),
     supabase.from('guesty_reservations').select('*', { count: 'exact', head: true }).in('status', ['confirmed', 'checked_in', 'checked_out']).eq('check_out', todayStr),
@@ -87,6 +93,16 @@ export default async function HomePage() {
       .order('last_message_at', { ascending: false })
       .limit(50),
     supabase.from('guesty_sync_status').select('entity, last_sync_at, last_error, items_synced').order('entity'),
+    // Truthful open work: open glitches (same terminal set as the day sheet)...
+    sbAdmin.from('glitches').select('id', { count: 'exact', head: true })
+      .not('status', 'in', '("done","resolved","closed")'),
+    // ...plus unfinished Breezeway tasks from the last 45 days (matches lib/daysheet isDone/isGone).
+    sbAdmin.from('breezeway_tasks_sync').select('id', { count: 'exact', head: true })
+      .gte('scheduled_date', bzStart).lte('scheduled_date', todayStr)
+      .is('finished_at', null)
+      .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
+      .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
+      .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%'),
   ])
 
   // --- Derived KPIs ---
@@ -97,7 +113,7 @@ export default async function HomePage() {
   const arrivalsList = (arrivals ?? []).filter((r: any) => !isCancelled(r.status))
   const departuresList = (departures ?? []).filter((r: any) => !isCancelled(r.status))
   const openWorkRows = (openWork ?? [])
-  const openWorkCount = openWorkRows.length
+  const openWorkCount = openWorkRows.length + (openGlitchCount || 0) + (bzOpenCount || 0)
   const unreadTotal = (convos ?? []).reduce((s: number, c: any) => s + (Number(c.unread_count) || 0), 0)
 
   // Revenue next 7 days (non-cancelled).
