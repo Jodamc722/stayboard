@@ -17,7 +17,7 @@ import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
-import { computeScore, rollupBuilding, buildingSlug, band, bandUi, type Factor } from '@/lib/optimize-score'
+import { computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars, type Factor } from '@/lib/optimize-score'
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X, Sparkles,
   AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare, PlusCircle, ShieldAlert, ExternalLink,
@@ -97,8 +97,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
     const hostReply = hostReplyFromRaw(r.raw)
     return { ...r, hostReply, has_reply: !!hostReply }
   })
-  const rated = reviews.filter((r: any) => r.rating != null && !r.excluded_from_score)
-  const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + Number(r.rating), 0) / rated.length) * 100) / 100 : null
+  // Normalize mixed-scale ratings to 0-5 stars before averaging (Booking/Expedia are 0-10).
+  const rated = reviews.filter((r: any) => ratingToStars(r.rating) != null && !r.excluded_from_score)
+  const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + (ratingToStars(r.rating) || 0), 0) / rated.length) * 100) / 100 : null
 
   // Sibling amenities across the building → "other units have it, add it" suggestions.
   const { data: siblings } = await sb
