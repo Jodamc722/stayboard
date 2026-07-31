@@ -27,6 +27,22 @@ export default async function ReservationDetail({ params }: { params: { id: stri
         .limit(200)).data ?? []
     : []
 
+  // Has the building been told this guest is coming? Reservation notices are the record of that,
+  // and this is where anyone actually looking at a booking would expect to see it — rather than
+  // having to remember there is a separate desk. Missing table or RLS hiccup must not 500 the page,
+  // so a failure just reads as "no notice on file".
+  let notice: any = null
+  try {
+    const { data } = await supabase
+      .from('reservation_notices')
+      .select('id, property_id, unit_no, arrival_date, sent_at, sent_by, doc_name, created_at')
+      .eq('reservation_id', params.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    notice = Array.isArray(data) && data.length ? data[0] : null
+  } catch { notice = null }
+
   const cfMap = await customFieldNameMap()
   const idOf = (cf: any) => String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
   const labelOf = (cf: any) => String(cf?.fieldName || cf?.name || cfMap[idOf(cf)] || '').trim().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
@@ -56,7 +72,34 @@ export default async function ReservationDetail({ params }: { params: { id: stri
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <section className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-          <h2 className="text-sm font-semibold text-slate-900 mb-3">Tracking</h2>
+          <h2 className="text-sm font-semibold text-slate-900 mb-3">Building notified</h2>
+          {notice ? (
+            notice.sent_at ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+                <div className="font-semibold">✓ Sent {fmt(notice.sent_at)}{notice.sent_by ? ' by ' + notice.sent_by : ''}</div>
+                <div className="text-xs mt-0.5 text-emerald-700">
+                  {String(notice.property_id || '').toUpperCase()} {notice.unit_no}
+                  {notice.doc_name ? ' · registration form filed' : ''}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                <div className="font-semibold">Not sent yet</div>
+                <div className="text-xs mt-0.5">
+                  Arriving {fmt(notice.arrival_date)} · {String(notice.property_id || '').toUpperCase()} {notice.unit_no}
+                </div>
+                <Link href="/reservation-emails" className="text-xs font-semibold underline mt-1 inline-block">Open reservation emails →</Link>
+              </div>
+            )
+          ) : (
+            // No row at all: either the building doesn't require notice, or it isn't switched on yet.
+            <p className="text-xs text-slate-400">
+              No arrival notice on file — this building either doesn&apos;t need one or isn&apos;t switched on in{' '}
+              <Link href="/reservation-emails" className="underline">reservation emails</Link>.
+            </p>
+          )}
+
+          <h2 className="text-sm font-semibold text-slate-900 mt-6 mb-3">Tracking</h2>
           {(() => {
             const cleaned = (Array.isArray(r.custom_fields) ? r.custom_fields : [])
               .filter((cf: any) => {
