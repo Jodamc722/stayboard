@@ -2,6 +2,7 @@
 // Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
@@ -29,5 +30,17 @@ export async function POST(req: NextRequest) {
   }
   const r = await updateBreezewayTask(taskId, { assignments: assigneeIds })
   if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
-  return NextResponse.json({ ok: true, taskId, assigneeIds })
+  // VERIFY + WRITE THROUGH. The board reads our mirror, which refreshes every 15 minutes — without
+  // this the row still said "Unassigned" after a successful assign, which looks identical to a
+  // failure. Read the task back from Breezeway (the truth), then stamp the mirror with what it says.
+  let verified: string[] = []
+  try {
+    const back = await retrieveBreezewayTask(taskId)
+    const t: any = back.ok && back.data ? (back.data.task || back.data) : null
+    const asg = Array.isArray(t?.assignments) ? t.assignments : []
+    const people = asg.map((a: any) => ({ id: a?.assignee_id ?? a?.id ?? null, name: a?.name ?? null })).filter((a: any) => a.id || a.name)
+    verified = people.map((p: any) => String(p.name || '')).filter(Boolean)
+    await supabaseAdmin().from('breezeway_tasks_sync').update({ assignees: people }).eq('id', taskId)
+  } catch { /* the 15-min sync still catches up; the write itself succeeded */ }
+  return NextResponse.json({ ok: true, taskId, assigneeIds, assignees: verified })
 }
