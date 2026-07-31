@@ -20,6 +20,7 @@ import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { buildingOf } from '@/lib/geo-areas'
+import { setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -289,6 +290,20 @@ export async function GET(req: NextRequest) {
         }
       }).sort((a, b) => a.score - b.score)
     } catch { cleaners = [] }
+  }
+
+  // PORTFOLIO CATEGORY BENCHMARK, saved for the field.
+  // The intel block a cleaner or inspector gets names the ONE category a unit is behind the
+  // portfolio on — which needs a portfolio number, and computing that inside a push would mean
+  // sweeping every review in the account while somebody waits. This page already has it, so it
+  // writes it down. Only from the unfiltered view: a benchmark taken from one building is not a
+  // benchmark. Fire-and-forget — a failed write must never affect the dashboard.
+  if (market === 'all' && building === 'all' && channel === 'all' && overall.n >= 100) {
+    const bench: Record<string, number> = {}
+    for (const k of Object.keys(cat)) if (cat[k].n >= 20) bench[k] = round(cat[k].sum / cat[k].n)
+    if (Object.keys(bench).length) {
+      try { await setSetting('review_category_benchmark', bench, 'reviews-kpi') } catch (e) { console.error('kpi: benchmark save failed', e) }
+    }
   }
 
   // Review RATE — a quiet unit is not a happy unit, it is an unmeasured one.
