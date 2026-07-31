@@ -223,8 +223,11 @@ export async function POST(req: NextRequest) {
       // is reported as what it is, NOT as a successful comment.
       const who = await resolveCommentPerson(db, me)
       bzWho = who
-      // TAG ANYONE IN BREEZEWAY: their own mention encoding is {{personId,Name}}, so the tagged
-      // person is notified inside Breezeway exactly as if a teammate had typed it there.
+      // TAG ANYONE IN BREEZEWAY. Their add-comment API takes only { comment, company_people_id } —
+      // there is no mentions field — so a tag is carried in the text using Breezeway's own
+      // {{personId,Name}} encoding (the same shape their read endpoint hands back). It goes on its
+      // own "cc" line at the END so the message reads normally whether Breezeway renders the token
+      // as a live mention or just prints the person's name.
       const roster = await breezewayPeopleLite().catch(() => [] as { id: number; name: string }[])
       const wanted = (Array.isArray(b.bzMentions) ? b.bzMentions : []).slice(0, 10)
       const tokens: string[] = []
@@ -235,7 +238,7 @@ export async function POST(req: NextRequest) {
         tokens.push(breezewayMention(hit.id, hit.name))
         bzTagged.push(hit.name)
       }
-      const text = (tokens.length ? tokens.join(' ') + ' ' : '') + actorName + ': ' + body
+      const text = actorName + ': ' + body + (tokens.length ? '\ncc ' + tokens.join(' ') : '')
       const cr = await createBreezewayComment(bzTaskId, text, who.id)
       // Breezeway has answered 200 with an empty body before while silently not creating the
       // comment, so success means "it is actually in the thread now", not "the call returned 200".
