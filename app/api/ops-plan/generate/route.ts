@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, type HealthReview } from '@/lib/health-score'
+import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf } from '@/lib/segments'
 
@@ -45,15 +46,12 @@ async function generateWeekly(user: any) {
     }
     return all
   }
-  const [revRows, { data: listings }, { data: work }, { data: resv }] = await Promise.all([
+  const [revRows, { data: listings }, openByListing, { data: resv }] = await Promise.all([
     fetchAllReviews(),
     sb.from('guesty_listings').select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw').limit(2000),
-    sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
+    openWorkByListing(sb),  // per-unit open work (listing_id), not the whole building's
     sb.from('guesty_reservations').select('listing_id, check_in, check_out, status').gte('check_out', today).limit(8000),
   ])
-
-  const openByBuilding: Record<string, number> = {}
-  ;(work ?? []).forEach((w: any) => { const b = rollupBuilding(w.building); if (!b || b === 'Unassigned') return; const wt = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1; openByBuilding[b] = (openByBuilding[b] || 0) + wt })
 
   const byListing = new Map<string, HealthReview[]>()
   ;(revRows ?? []).forEach((r: any) => { if (!r.listing_id) return; const a = byListing.get(r.listing_id) || []; a.push({ rating: r.rating != null && r.rating !== '' ? Number(r.rating) : null, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }); byListing.set(r.listing_id, a) })
@@ -74,7 +72,7 @@ async function generateWeekly(user: any) {
   for (const l of active) {
     const building = rollupBuilding(l.building)
     const nm = l.title || l.nickname || l.id
-    const h = computeListingHealth(l, byListing.get(l.id) || [], { openWork: openByBuilding[building] || 0 })
+    const h = computeListingHealth(l, byListing.get(l.id) || [], { openWork: openByListing[String(l.id)] || 0 })
     const market = marketOf(l.building || building, l.address_city, nm)
     for (const i of h.issues) {
       if (!departmentFor(i.key, i.owner)) continue // field tasks only
