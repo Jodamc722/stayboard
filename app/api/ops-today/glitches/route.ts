@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -27,6 +29,11 @@ export async function GET(req: NextRequest) {
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
+    // SAME market rule as the board (/api/ops-today). This route used to skip the vendor override,
+    // so a Park Towers glitch filed under 'Miami' while the unit sat under 'Vendor' — pick the
+    // Vendor tab and its glitches vanished. Vendor units belong to BOTH markets (Jon 2026-07-31).
+    const presets = await getOpsPresets()
+    const VENDOR_RE = vendorRegex(presets.vendorBuildings)
     // Glitch/guest-reported tasks are maintenance tasks with NO scheduled_date, and the mirror has
     // no created_at column — so filtering on either drops them. Match by NAME in the DB; if that
     // returns nothing (ilike quirk / odd names), fall back to a recent scan filtered in code.
@@ -38,8 +45,13 @@ export async function GET(req: NextRequest) {
       const scan = await db.from('breezeway_tasks_sync').select(COLS).order('synced_at', { ascending: false }).limit(6000)
       rows = ((scan.data || []) as any[]).filter(t => GLITCH.test(str(t.name)))
     }
-    const lmap: Record<string, { name: string; market: string; building: string | null }> = {}
-    for (const l of (lRes.data || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name), building: l.building || null } }
+    const lmap: Record<string, { name: string; market: string; market2: string | null; building: string | null }> = {}
+    for (const l of (lRes.data || []) as any[]) {
+      const name = l.nickname || l.title || 'Unit'
+      const geo = marketOf(l.building, l.address_city, name)
+      const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
+      lmap[String(l.id)] = { name, market: isVendor ? 'Vendor' : geo, market2: isVendor ? geo : null, building: l.building || null }
+    }
     // ?history=1 → the FULL record including resolved glitches (for the /glitches page);
     // default → open ones only (Today-in-Ops tab). Deleted/cancelled never show anywhere.
     const history = req.nextUrl.searchParams.get('history') === '1'
@@ -56,7 +68,7 @@ export async function GET(req: NextRequest) {
         const issue = str(t.name).replace(/^\s*guest\s*reported\s*\/?\s*(glitch)?\s*[-:]?\s*/i, '').trim() || str(t.name)
         const doneFlag = RESOLVED.test(status) || !!t.finished_at
         return {
-          id: String(t.id), unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', building: li ? li.building : null, done: doneFlag,
+          id: String(t.id), unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', market2: li ? li.market2 : null, building: li ? li.building : null, done: doneFlag,
           resolvedDate: doneFlag ? (str(t.finished_at).slice(0, 10) || null) : null,
           issue, rawName: str(t.name), status, scheduledDate: str(t.scheduled_date).slice(0, 10) || null,
           reportedDate: reported || null,
