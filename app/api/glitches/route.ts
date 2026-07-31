@@ -20,6 +20,13 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const db = supabaseAdmin()
+    // ?fields=stage -> just {breezeway_task_id, status} for badge maps. Today-in-Ops was pulling
+    // EVERY glitch with photos[], history[] and AI text (a multi-MB payload) to render seven
+    // one-word stage pills on task rows.
+    if (str(req.nextUrl.searchParams.get('fields')) === 'stage') {
+      const { data } = await db.from('glitches').select('id,status,breezeway_task_id').not('breezeway_task_id', 'is', null).limit(1000)
+      return NextResponse.json({ ok: true, glitches: data || [] })
+    }
     const guest = str(req.nextUrl.searchParams.get('guest')).trim()
 
     if (guest) {
