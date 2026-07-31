@@ -168,12 +168,33 @@ const computeHealth = unstable_cache(async () => {
     return { summary, listings: scored, buildings, actions, segments, cities: cityCount, dataPending }
 }, ['listing-health-v1'], { tags: ['listing-health'], revalidate: 300 })
 
-export async function GET() {
+export async function GET(req: Request) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
-    return NextResponse.json(await computeHealth())
+    const full: any = await computeHealth()
+    // SLIM — what the KPI home page needs. The full payload carries every listing with its per-channel
+    // breakdown and issue list (hundreds of KB); the home page only shows the weakest units and the
+    // highest-value fixes, so shipping the rest over the wire on every home load is pure waste.
+    if (/[?&]slim=1/.test(String(req.url || ''))) {
+      const worst = (full.listings || [])
+        .filter((l: any) => !l.unrated)
+        .slice(0, 12)
+        .map((l: any) => ({
+          id: l.id, name: l.name, building: l.building, market: l.market, tier: l.tier,
+          score: l.score, band: l.band, optimizeScore: l.optimizeScore,
+          avgStars: l.avgStars, reviewCount: l.reviewCount, responseRate: l.responseRate,
+          topIssue: l.topIssue, issues: (l.issues || []).slice(0, 2),
+        }))
+      return NextResponse.json({
+        summary: full.summary,
+        worst,
+        actions: (full.actions || []).slice(0, 12),
+        buildings: (full.buildings || []).slice(0, 8),
+      })
+    }
+    return NextResponse.json(full)
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 200 })
   }
