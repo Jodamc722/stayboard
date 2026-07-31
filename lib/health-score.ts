@@ -16,16 +16,17 @@ export type HealthReview = { rating: number | null; channel?: string | null; con
 export type Issue = { key: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string; gain: number; channel?: string | null }
 export type ChannelHealth = { channel: ChannelKey; label: string; score: number; band: HealthBand; avgStars: number | null; reviewCount: number; responseRate: number | null; badge: string | null }
 export type ListingHealth = {
+  // ONE overall Health Score (0-100) — a weighted composite of three pillars. The breakdown shows
+  // where to act: Ops & Guest (45%) + Listing Optimization (30%) + Revenue (25%), renormalized over
+  // whichever pillars have data.
   score: number
   band: HealthBand
-  // The blended master is being split into two honest scores (audit P2 #11):
-  //   propertyHealth   — "is the UNIT okay?" (ops + guest experience). CS/Ops act on this.
-  //   listingPerformance — "is the LISTING earning?" (occupancy vs peers + content + reputation). GM/CFO act on this.
-  propertyHealth: number | null
-  propertyBand: HealthBand
-  listingPerformance: number
-  performanceBand: HealthBand
-  perfParts: { occupancy: number | null; content: number; reputation: number | null; occIndex: number | null; occPct: number | null }
+  pillars: {
+    ops: number | null; opsBand: HealthBand
+    listing: number; listingBand: HealthBand
+    revenue: number | null; revenueBand: HealthBand
+    occIndex: number | null; occPct: number | null
+  }
   unrated: boolean
   optimizeScore: number
   breakdown: { rating: number; volume: number; response: number; penalty: number; ops: number; setup: number }
@@ -185,39 +186,37 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   // B setup.
   const B = (optimizeScore / 100) * 40
 
-  let score: number
-  if (unrated) {
-    // No reviews yet: provisional health = setup quality, flagged neutral (don't unfairly zero).
-    score = Math.round(optimizeScore)
-  } else {
-    score = Math.round(Math.max(0, Math.min(100, A1 + A2 + A3 + A5 - A4 + B)))
-  }
-  const band = healthBand(score, unrated)
-
-  // ---- THE TWO SCORES (audit P2 #11) ----
-  // Property Health = the ops + guest-experience block (rating quality + volume + response + ops
-  // − recurring penalty), rescaled from its 60-point max to 0-100. "Is the unit okay right now?"
-  // No reviews → null (can't judge guest experience yet); the master falls back to setup separately.
-  const propMax = 32 + 9 + 10 + 9 // A1+A2+A3+A5
-  const propertyHealth = unrated ? null : Math.round(Math.max(0, Math.min(100, ((A1 + A2 + A3 + A5 - A4) / propMax) * 100)))
-  const propertyBand = healthBand(propertyHealth ?? 0, unrated)
-
-  // Listing Performance = "is the listing earning?" — occupancy vs building peers (the demand the
-  // listing captures) + content/optimize (the controllable conversion lever) + reputation (ranking).
-  // occIndex = this unit's occupancy ÷ its building's median; at-peer ≈ 75, 1.33× peer ≈ 100.
+  // ---- ONE OVERALL HEALTH SCORE from THREE pillars (Jon 2026-07-31: "full weighted score,
+  //      show breakdown — Rev, Ops, Listing Optimization"). The overall is what leads; the three
+  //      pillars are the hover/expand breakdown that guides where to act.
+  //
+  // Pillar 1 · OPS & GUEST (are guests happy + the unit maintained?): rating quality + volume +
+  //   response + ops load − recurring complaints, rescaled to 0-100. Null when there are no reviews.
+  const opsMax = 32 + 9 + 10 + 9 // A1+A2+A3+A5
+  const pillarOps: number | null = unrated ? null : Math.round(Math.max(0, Math.min(100, ((A1 + A2 + A3 + A5 - A4) / opsMax) * 100)))
+  // Pillar 2 · LISTING OPTIMIZATION (title, description, amenities, booking settings, photos): the
+  //   optimize score straight through — the controllable conversion lever.
+  const pillarListing = Math.round(optimizeScore)
+  // Pillar 3 · REVENUE (is it actually earning?): occupancy vs this building's median earning unit.
+  //   occIndex = unit occupancy ÷ building median; at-peer ≈ 75, 1.33× peer ≈ 100. Null w/o peers.
   const occIndex = opts?.occIndex ?? null
   const occPct = opts?.occPct ?? null
-  const occComponent = occIndex != null ? Math.max(0, Math.min(100, occIndex * 75)) : null
-  const contentComponent = optimizeScore                                   // 0-100
-  const reputationComponent = recencyQuality != null ? recencyQuality : null // 0-100 (null when unrated)
-  // Weights adapt to which signals exist so a new/undated listing isn't unfairly zeroed.
-  let perfParts: { w: number; v: number }[] = []
-  if (occComponent != null) perfParts.push({ w: 0.45, v: occComponent })
-  perfParts.push({ w: 0.35, v: contentComponent })
-  if (reputationComponent != null) perfParts.push({ w: 0.20, v: reputationComponent })
-  const wSumP = perfParts.reduce((s, p) => s + p.w, 0)
-  const listingPerformance = Math.round(perfParts.reduce((s, p) => s + p.v * p.w, 0) / (wSumP || 1))
-  const performanceBand = healthBand(listingPerformance, false)
+  const pillarRevenue: number | null = occIndex != null ? Math.round(Math.max(0, Math.min(100, occIndex * 75))) : null
+
+  // Weighted composite. Guest/ops carries the most weight (it drives ranking + retention), listing
+  // optimization next (controllable), revenue as the outcome. Weights renormalize over whichever
+  // pillars exist, so a brand-new listing (no reviews / no peers) still gets a fair full score.
+  const OPS_W = 0.45, LISTING_W = 0.30, REV_W = 0.25
+  const parts: { w: number; v: number }[] = []
+  if (pillarOps != null) parts.push({ w: OPS_W, v: pillarOps })
+  parts.push({ w: LISTING_W, v: pillarListing })
+  if (pillarRevenue != null) parts.push({ w: REV_W, v: pillarRevenue })
+  const pWSum = parts.reduce((s, p) => s + p.w, 0)
+  const score = Math.round(parts.reduce((s, p) => s + p.v * p.w, 0) / (pWSum || 1))
+  const band = healthBand(score, false)
+  const opsBand = healthBand(pillarOps ?? 0, unrated)
+  const listingBand = healthBand(pillarListing, false)
+  const revenueBand = healthBand(pillarRevenue ?? 0, pillarRevenue == null)
 
   // ---- Per-OTA ----
   const byCh = new Map<ChannelKey, HealthReview[]>()
@@ -266,8 +265,13 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
 
   return {
     score, band,
-    propertyHealth, propertyBand, listingPerformance, performanceBand,
-    perfParts: { occupancy: occComponent != null ? Math.round(occComponent) : null, content: Math.round(contentComponent), reputation: reputationComponent != null ? Math.round(reputationComponent) : null, occIndex: occIndex != null ? Math.round(occIndex * 100) / 100 : null, occPct: occPct != null ? Math.round(occPct * 100) : null },
+    pillars: {
+      ops: pillarOps, opsBand,
+      listing: pillarListing, listingBand,
+      revenue: pillarRevenue, revenueBand,
+      occIndex: occIndex != null ? Math.round(occIndex * 100) / 100 : null,
+      occPct: occPct != null ? Math.round(occPct * 100) : null,
+    },
     unrated, optimizeScore,
     breakdown: { rating: Math.round(A1), volume: Math.round(A2), response: Math.round(A3), penalty: Math.round(A4), ops: Math.round(A5), setup: Math.round(B) },
     review: { avgStars, recencyQuality: recencyQuality != null ? Math.round(recencyQuality) : null, count, ratedCount, responseRate: responseRate != null ? Math.round(responseRate * 100) : null, recurring, topIssue },
