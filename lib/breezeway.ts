@@ -186,7 +186,15 @@ export async function breezewayPeopleLite(): Promise<{ id: number; name: string 
 
 function normPerson(s: any): string { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim() }
 
-/** Best-effort match of a person NAME (or an email prefix like "jon.doe") to a Breezeway person id. */
+/**
+ * Best-effort match of a person NAME (or an email prefix like "jon.doe") to a Breezeway person id.
+ *
+ * THE BUG THIS FIXES (2026-07-31): Jon's app profile says "Jonathan McGill", Breezeway says
+ * "Jon McGill". The old rule required the Breezeway name to START WITH the app first name, so
+ * "jon mcgill" failed against "jonathan…" — no person id, the comment POST was rejected, and every
+ * comment silently fell back to stamping the task description. People shorten their own first name
+ * all the time, so the surname decides and the first name only has to be a shortening either way.
+ */
 export async function matchBreezewayPerson(nameOrEmail: string): Promise<number | null> {
   const raw = String(nameOrEmail || '')
   const guess = normPerson(raw.includes('@') ? raw.split('@')[0].replace(/[._-]+/g, ' ') : raw)
@@ -196,25 +204,57 @@ export async function matchBreezewayPerson(nameOrEmail: string): Promise<number 
   const exact = people.find(p => normPerson(p.name) === guess)
   if (exact) return exact.id
   const parts = guess.split(' ').filter(Boolean)
-  if (parts.length >= 2) {
-    const both = people.find(p => { const n = normPerson(p.name); return n.startsWith(parts[0]) && n.endsWith(parts[parts.length - 1]) })
-    if (both) return both.id
+  const first = parts[0] || ''
+  const last = parts.length > 1 ? parts[parts.length - 1] : ''
+  // "jon" vs "jonathan" — either one being a prefix of the other counts as the same first name
+  const sameFirst = (a: string, b: string) => !!a && !!b && (a === b || a.startsWith(b) || b.startsWith(a))
+  if (last) {
+    const nameParts = (p: { name: string }) => normPerson(p.name).split(' ').filter(Boolean)
+    const both = people.filter(p => { const n = nameParts(p); return n.length > 1 && n[n.length - 1] === last && sameFirst(n[0], first) })
+    if (both.length === 1) return both[0].id
+    const byLast = people.filter(p => { const n = nameParts(p); return n.length > 1 && n[n.length - 1] === last })
+    if (byLast.length === 1) return byLast[0].id   // one person with that surname — unambiguous
   }
-  if (parts.length === 1 && parts[0].length > 2) {
-    const hits = people.filter(p => normPerson(p.name).split(' ')[0] === parts[0])
+  if (!last && first.length > 2) {
+    const hits = people.filter(p => sameFirst(normPerson(p.name).split(' ')[0], first))
     if (hits.length === 1) return hits[0].id   // only when the first name is unambiguous
   }
   return null
 }
 
-export async function createBreezewayComment(taskId: string | number, body: string, companyPeopleId?: number | null): Promise<{ ok: boolean; status: number; text: string }> {
+/** The name of a Breezeway person, for showing the operator who they are posting as. */
+export async function breezewayPersonName(id: number | null | undefined): Promise<string | null> {
+  if (!Number.isFinite(Number(id))) return null
+  const people = await breezewayPeopleLite()
+  const hit = people.find(p => p.id === Number(id))
+  return hit ? hit.name : null
+}
+
+/**
+ * Breezeway encodes an @mention inside the comment text as `{{personId,Person Name}}` — that is
+ * exactly what their API hands back on read, so we write the same token to tag someone.
+ */
+export function breezewayMention(id: number | string, name: string): string {
+  return '{{' + Number(id) + ',' + String(name || '').trim().replace(/[{}]/g, '') + '}}'
+}
+
+export async function createBreezewayComment(taskId: string | number, body: string, companyPeopleId?: number | null): Promise<{ ok: boolean; status: number; text: string; path: string }> {
   const payload: Record<string, any> = { comment: String(body).slice(0, 2000) }
   if (Number.isFinite(Number(companyPeopleId))) payload.company_people_id = Number(companyPeopleId)
-  const r = await bzApi('/task/' + encodeURIComponent(String(taskId)) + '/comments', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return { ok: r.ok, status: r.status, text: r.text }
+  const enc = encodeURIComponent(String(taskId))
+  // The documented path is /task/{id}/comments. It has answered 404 on some tasks, so a
+  // route-shaped rejection (404/405) falls through to the known variants. A REAL rejection
+  // (422 missing field, 400 bad payload) stops immediately — repeating it would only risk
+  // posting the same comment twice.
+  const paths = ['/task/' + enc + '/comments', '/task/' + enc + '/comments/', '/task/' + enc + '/comment']
+  let last = { ok: false, status: 0, text: '', path: '' }
+  for (const p of paths) {
+    const r = await bzApi(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    last = { ok: r.ok, status: r.status, text: r.text, path: p }
+    if (r.ok) return last
+    if (r.status !== 404 && r.status !== 405) return last
+  }
+  return last
 }
 
 export async function listPropertyHousekeeping(refId: string, from: string, to: string) {
