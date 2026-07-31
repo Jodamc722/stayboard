@@ -1,6 +1,7 @@
 // DAY SHEET BUILDER — one source of truth for the ops day, used by BOTH the in-app sheets and the
 // password-protected share link. If these ever diverged, the paper and the phone would disagree,
 // which is exactly the failure this whole feature exists to prevent.
+import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -131,7 +132,7 @@ function isDepartureClean(name: string, dept: string): boolean {
 // Prep work that happens around a checkout but is not the clean itself.
 const IS_PREP = /strip|walk-?through/i
 
-export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> {
+async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(str(dateIn)) ? str(dateIn) : ymd(new Date())
   const marketQ = str(marketIn) || 'all'
     const db = supabaseAdmin()
@@ -724,4 +725,14 @@ export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise
       },
     })
 
+}
+
+// Cached entry point. The sheet is polled by /day (every 3 min), /plan/print (every 5 min) and two
+// API consumers — all recomputing the same 9-query sheet per request per phone. A short server cache
+// collapses that to one computation per (date, market) per window: warm sheets in ~200ms, DB load ÷10.
+// 90s is well inside ops tolerance (the sheet already self-reports its own sync freshness).
+export async function buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(str(dateIn)) ? str(dateIn) : ymd(new Date())
+  const market = str(marketIn) || 'all'
+  return unstable_cache(() => _buildDaySheet(date, market), ['daysheet', date, market], { revalidate: 90, tags: ['daysheet'] })()
 }
