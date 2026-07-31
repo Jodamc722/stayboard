@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck, MessageSquare, Search, MapPin } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
+import RowMenu, { type RowAction } from '@/components/RowMenu'
 import { clusterAreas } from '@/lib/geo-areas'
 
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
@@ -239,11 +240,9 @@ export function TodayInOps() {
                   </div>
                   <span className={'text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ' + statusCls(t)}>{t.guestyOnly ? 'Vendor' : statusText(t)}</span>
                   {t.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. Nothing to assign or track here." className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-300 shrink-0">Guesty only</span>}
-                  {!t.guestyOnly && <a href={adminUrl(t.id)} target="_blank" rel="noreferrer" title="Open the ADMIN task in Breezeway \u2014 edit, assign, modify, check" className="text-xs font-medium text-brand-600 hover:underline shrink-0 opacity-70 group-hover:opacity-100">admin</a>}
-                  {!t.guestyOnly && t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" title="View the field report" className="text-xs text-muted hover:underline shrink-0 opacity-70 group-hover:opacity-100">report</a>}
-                  {!t.done && !t.guestyOnly && <button onClick={() => vendorFlag(t)} title={/vendor needed/i.test(t.name) ? 'Vendor flag is ON \u2014 click to remove (task becomes billable-checkable again)' : 'Flag that a VENDOR is needed \u2014 adds it to the task title so it is tracked and not billed to the owner'} className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 ' + (/vendor needed/i.test(t.name) ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50') + ' opacity-70 group-hover:opacity-100'}>{/vendor needed/i.test(t.name) ? 'Vendor \u2713' : 'Vendor'}</button>}
+                  {/vendor needed/i.test(t.name) && <span title="A vendor is needed on this task - it is tracked and not billed to the owner" className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-violet-600 text-white shrink-0">Vendor needed</span>}
                   <button onClick={() => setCmtFor(cmtFor === t.id ? '' : t.id)} title="Comment on this task — teammates you tag get a notification, and everyone on the thread hears about replies" className={'text-[10px] font-semibold px-1.5 py-1 rounded border shrink-0 inline-flex items-center gap-1 ' + (cmtFor === t.id ? 'bg-ink text-white border-ink' : cmtCounts[t.id] ? 'bg-sky-50 text-sky-700 border-sky-300' : 'bg-white text-muted border-line hover:bg-app opacity-70 group-hover:opacity-100')}><MessageSquare size={11} />{cmtCounts[t.id] ? cmtCounts[t.id] : ''}</button>
-                  {!t.done && !t.guestyOnly && t.type !== 'departure_clean' && t.type !== 'strip' && <button onClick={() => delTask(t)} title="Delete this task from Breezeway (cleans can only be deleted on the scheduler with the admin password)" className="text-xs font-semibold text-muted hover:text-rose-700 shrink-0 px-1 py-1 opacity-60 group-hover:opacity-100">✕</button>}
+                  <RowMenu title={'Actions for ' + t.name} actions={taskActions(t)} />
                 </div>
                 {cmtFor === t.id && <div className="px-4 pb-3"><CommentThread type="task" id={String(t.id)} label={u.unit + ' — ' + t.name} link="/plan" taskId={t.guestyOnly ? '' : String(t.id)} onCount={n => setCmtCounts(prev => ({ ...prev, [t.id]: n }))} /></div>}
                 </div>
@@ -264,6 +263,28 @@ export function TodayInOps() {
     const pos: Record<string, number> = {}
     ids.forEach((id, i) => { pos[id] = i })
     return u.tasks.slice().sort((a, b) => (pos[a.id] == null ? 999 : pos[a.id]) - (pos[b.id] == null ? 999 : pos[b.id]))
+  }
+  // ONE MENU PER ROW, IN PLAIN ENGLISH. The row carried four more controls repeated down the page
+  // (admin, report, Vendor, ✕) and every one of them named a system rather than an action. They all
+  // still exist, one click deeper, with the destructive one alone at the bottom in red.
+  const taskActions = (t: Task): RowAction[] => {
+    const out: RowAction[] = []
+    if (t.guestyOnly) return out      // vendor-cleaned: there is no Breezeway task to act on
+    out.push({ key: 'admin', label: 'Open in Breezeway', hint: 'Edit, assign or change the task itself', href: adminUrl(t.id) })
+    if (t.reportUrl) out.push({ key: 'report', label: 'View the field report', hint: 'Read-only - photos and checklist, safe to share', href: t.reportUrl })
+    if (!t.done) {
+      const on = /vendor needed/i.test(t.name)
+      out.push({
+        key: 'vendor',
+        label: on ? 'Remove the vendor flag' : 'Flag that a vendor is needed',
+        hint: on ? 'Goes back to being our own billable work' : 'Tracked as vendor work and not billed to the owner',
+        onClick: () => vendorFlag(t),
+      })
+    }
+    if (!t.done && t.type !== 'departure_clean' && t.type !== 'strip') {
+      out.push({ key: 'delete', label: 'Delete this task', hint: 'Removes it from Breezeway - admin password required. Cleans are deleted on the scheduler.', onClick: () => delTask(t), danger: true })
+    }
+    return out
   }
   const vendorFlag = async (t: Task) => {
     const on = !/vendor needed/i.test(t.name)
