@@ -87,10 +87,10 @@ async function run(req: NextRequest) {
 
   let slack: string = 'not-needed'
   if (alerts.length) {
-    slack = await postSlack('⚠️ *StayBoard sync problem*\n' + alerts.join('\n') +
+    slack = await postSlack('⚠️ *Lighthouse sync problem*\n' + alerts.join('\n') +
       '\nThe day sheet and the boards may be showing old information until this is fixed.')
   } else if (recovered.length) {
-    slack = await postSlack('✅ *StayBoard sync recovered*\n' + recovered.join('\n'))
+    slack = await postSlack('✅ *Lighthouse sync recovered*\n' + recovered.join('\n'))
   }
   try { await setSetting(ALERT_KEY, next, 'watchdog') } catch {}
 
