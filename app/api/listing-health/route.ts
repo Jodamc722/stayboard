@@ -7,6 +7,7 @@ import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, rollupBuildingHealth, type HealthReview } from '@/lib/health-score'
+import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf, isLux, isVendorManaged, MARKETS } from '@/lib/segments'
 
@@ -35,24 +36,18 @@ const computeHealth = unstable_cache(async () => {
       return all
     }
 
-    const [revRows, { data: listings }, { data: work }] = await Promise.all([
+    const [revRows, { data: listings }, work] = await Promise.all([
       fetchAllReviews(),
       // PERF: select ONLY the raw sub-fields computeOptimizeScore reads (publicDescription, terms,
       // integrations, instant-book, times, _photoScore, cancellation) — not the full raw blob.
       sb.from('guesty_listings')
         .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
         .limit(2000),
-      sb.from('field_requests').select('building, priority, status').in('status', ['open', 'in_progress']).limit(2000),
+      openWorkByListing(sb),
     ])
 
-    // Open ops weight per rolled-up building.
-    const openByBuilding: Record<string, number> = {}
-    ;(work ?? []).forEach((w: any) => {
-      const b = rollupBuilding(w.building)
-      if (!b || b === 'Unassigned') return
-      const weight = String(w.priority).toLowerCase() === 'high' || w.priority === 1 ? 2 : 1
-      openByBuilding[b] = (openByBuilding[b] || 0) + weight
-    })
+    // Open ops weight PER UNIT (listing_id) — a unit's own backlog, not the whole building's.
+    const openByListing = work || {}
 
     // Bucket reviews by listing.
     const byListing = new Map<string, HealthReview[]>()
@@ -72,7 +67,7 @@ const computeHealth = unstable_cache(async () => {
       const reviews = byListing.get(l.id) || []
       // Rebuild the slim raw object from the sub-field selects (same shape computeOptimizeScore expects).
       const slim = { ...l, raw: { publicDescription: l.rawPub, publicDescriptions: l.rawPubs, terms: l.rawTerms, prices: l.rawPrices, integrations: l.rawInts, instantBookable: l.rawIb, instantBook: l.rawIb2, defaultCheckInTime: l.rawCi, checkInTime: l.rawCi2, defaultCheckOutTime: l.rawCo, checkOutTime: l.rawCo2, _photoScore: l.rawPs, cancellationPolicy: l.rawCp, airbnb: l.rawAirbnb, bookingcom: l.rawBcom, title: l.rawTitle, defaultListingMinNights: l.rawMinN, amenities: l.rawAmen } }
-      const h = computeListingHealth(slim, reviews, { openWork: openByBuilding[building] || 0 })
+      const h = computeListingHealth(slim, reviews, { openWork: openByListing[String(l.id)] || 0 })
       const nm = l.title || l.nickname || l.id
       const lux = isLux(l.building || building, nm)
       const market = marketOf(l.building || building, l.address_city, nm)
