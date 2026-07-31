@@ -80,6 +80,15 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   const [pulling, setPulling] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
+  // Escape closes the open draft. It is the reflex everyone already has for "get this panel off my
+  // screen", and it works no matter how far down the draft you have scrolled.
+  useEffect(() => {
+    if (!openDraft) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenDraft(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openDraft])
+
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
     try {
@@ -463,9 +472,13 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                   </button>
                 )}
                 {r.draft && (
+                  // Toggles. When it IS open the button says so and says how to close it, because a
+                  // draft is tall enough to push this row off screen — someone who scrolled down to
+                  // read it should not have to hunt back up to work out how to get rid of it.
                   <button onClick={() => setOpenDraft(openDraft === r.id ? null : r.id)}
-                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50">
-                    <Mail size={13} /> Email draft
+                    aria-expanded={openDraft === r.id}
+                    className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (openDraft === r.id ? 'border-brand-600 bg-brand-600 text-white hover:bg-brand-700' : 'border-brand-300 text-brand-700 hover:bg-brand-50')}>
+                    {openDraft === r.id ? <><X size={13} /> Close draft</> : <><Mail size={13} /> Email draft</>}
                   </button>
                 )}
                 {r.sent_at
@@ -477,8 +490,12 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
               {openDraft === r.id && r.draft && (
                 <div className="px-4 pb-4">
                   <div className="rounded-xl border border-line overflow-hidden">
-                    <div className="px-3 py-2 bg-app border-b border-line text-[12px] space-y-0.5">
-                      <div><strong>To:</strong> {r.draft.to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
+                    <div className="px-3 py-2 bg-app border-b border-line text-[12px] space-y-0.5 relative">
+                      <button onClick={() => setOpenDraft(null)} title="Close this draft (Esc)" aria-label="Close draft"
+                        className="absolute top-1.5 right-1.5 p-1 rounded-md text-muted hover:text-ink hover:bg-line/60">
+                        <X size={14} />
+                      </button>
+                      <div className="pr-7"><strong>To:</strong> {r.draft.to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
                       <div><strong>CC:</strong> {r.draft.cc}</div>
                       <div><strong>Subject:</strong> {r.draft.subject}</div>
                       {r.draft.attach && (
@@ -498,6 +515,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                       </a>
                       <button onClick={() => copyDraft(r.draft!)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
                         <Copy size={13} /> Copy email
+                      </button>
+                      {/* A second way out, at the bottom — where you end up after reading the draft. */}
+                      <button onClick={() => setOpenDraft(null)}
+                        className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
+                        <X size={13} /> Close
                       </button>
                       <span className="text-[11px] text-muted inline-flex items-center gap-1"><Clock size={11} /> Hit Mark sent once it&apos;s gone.</span>
                     </div>
