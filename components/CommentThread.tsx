@@ -89,7 +89,7 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
       <div className="flex items-center gap-2 mb-1.5">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Notes &amp; comments</div>
         <div className="flex items-center gap-1 text-[9px] font-semibold">
-          <span className="px-1.5 py-0.5 rounded-full bg-white border border-line text-muted" title="Comments inside StayBoard - these drive the notification bell">App {items.length}</span>
+          <span className="px-1.5 py-0.5 rounded-full bg-white border border-line text-muted" title="Comments inside Lighthouse - these drive the notification bell">App {items.length}</span>
           {bz && <span className="px-1.5 py-0.5 rounded-full bg-brand-50 border border-brand-200 text-brand-700" title="Lines on the Breezeway task description - what the field crew reads in their app">Breezeway {bzLines.length}</span>}
           {gz && <span className="px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Reservation notes on the Guesty reservation">Guesty {gzLines.length}</span>}
         </div>
