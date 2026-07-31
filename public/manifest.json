@@ -1,11 +1,11 @@
 {
-  "name": "STAYBOARD",
-  "short_name": "STAYBOARD",
-  "description": "Stay Hospitality operations dashboard",
+  "name": "Lighthouse — Stay Hospitality",
+  "short_name": "Lighthouse",
+  "description": "Every property, watched. The Stay Hospitality operating system.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#1f2937",
+  "theme_color": "#3739B5",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
