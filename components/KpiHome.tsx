@@ -300,17 +300,30 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
             <Tile label="Cleaning revenue" value={canSeeMoney ? money(c.revenue) : '—'} Icon={Brush} href="/schedule"
               sub={c.turns != null ? count(c.turns) + ' turns · ' + (canSeeMoney ? exact(c.feePerTurn) : '—') + ' a turn' : undefined}
               delta={<Delta v={c.revenueChange} suffix="%" />} />
-            <Tile label="Cleaning margin" value={canSeeMoney ? money(c.margin) : '—'} Icon={DollarSign} href="/labor"
-              sub={canSeeMoney ? 'fees ' + money(c.revenue) + ' − pay ' + money(c.cost) + (c.marginPct != null ? ' · ' + pct(c.marginPct, 0) : '') : undefined}
-              delta={<Delta v={c.marginChange} suffix="%" />}
-              alert={canSeeMoney && c.margin != null && c.margin < 0} />
-            <Tile label="Labor cost" value={canSeeMoney ? money(lab.cost) : '—'} Icon={Timer} href="/labor"
+            {/* Margin and labour cost only mean something once somebody records what the cleaners were
+                paid. Breezeway leaves rate_paid empty, so rather than print a flattering 100% margin
+                these tiles say so and point at the fix. */}
+            <Tile label="Cleaning margin" value={canSeeMoney && c.costKnown ? money(c.margin) : 'Not costed'} Icon={DollarSign} href="/labor"
               sub={canSeeMoney
-                ? (lab.costRatio != null ? pct(lab.costRatio, 1) + ' of revenue' : '') + (lab.homebaseConnected ? ' · Homebase' : ' · Breezeway pay')
+                ? (c.costKnown
+                  ? 'fees ' + money(c.revenue) + ' − pay ' + money(c.cost) + (c.marginPct != null ? ' · ' + pct(c.marginPct, 0) : '')
+                  : 'no cleaner pay on record — upload a Homebase timesheet')
                 : undefined}
-              delta={<Delta v={lab.costChange} suffix="%" invert />} />
-            <Tile label="Cost per turn" value={canSeeMoney ? exact(lab.costPerTurn) : '—'} Icon={Brush} href="/cleaners"
-              sub={c.minutesPerTurn != null ? c.minutesPerTurn + ' min a turn on average' : 'no completion times yet'} />
+              delta={c.costKnown ? <Delta v={c.marginChange} suffix="%" /> : undefined}
+              alert={canSeeMoney && c.costKnown && c.margin != null && c.margin < 0} />
+            <Tile label={lab.known ? 'Labor cost' : 'Hours worked'}
+              value={lab.known ? (canSeeMoney ? money(lab.cost) : '—') : (lab.hours != null ? Math.round(lab.hours).toLocaleString() + 'h' : '—')}
+              Icon={Timer} href="/labor"
+              sub={lab.known
+                ? (canSeeMoney && lab.costRatio != null ? pct(lab.costRatio, 1) + ' of revenue' : '') + (lab.homebaseConnected ? ' · Homebase' : ' · Breezeway pay')
+                : 'logged on Breezeway tasks · no pay rate on record'}
+              delta={lab.known ? <Delta v={lab.costChange} suffix="%" invert /> : undefined} />
+            <Tile label={lab.known ? 'Cost per turn' : 'Minutes per turn'}
+              value={lab.known ? (canSeeMoney ? exact(lab.costPerTurn) : '—') : (c.minutesPerTurn != null ? c.minutesPerTurn + ' min' : '—')}
+              Icon={Brush} href="/cleaners"
+              sub={lab.known
+                ? (c.minutesPerTurn != null ? c.minutesPerTurn + ' min a turn on average' : 'no completion times yet')
+                : 'benchmark: studio 90 · 2BR 120 · 3BR+ 180'} />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -604,8 +617,10 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
 
       <p className="text-[11px] text-muted mt-4 leading-relaxed">
         Occupancy counts booked unit-nights against active units × days in the window. ADR includes the cleaning fee.
-        Cleaning revenue is what guests were charged on stays that departed in the window; cleaning pay is what Breezeway
-        records as paid on completed housekeeping tasks{lab.homebaseConnected ? '' : ' — upload a Homebase timesheet on the Labor page and the labour numbers switch to real hours and payroll'}.
+        Cleaning revenue is what guests were charged on stays that departed in the window.
+        {c.costKnown
+          ? ' Cleaning pay is what Breezeway records as paid on completed housekeeping tasks.'
+          : ' Breezeway is not recording what cleaners are paid, so margin and cost per turn stay blank rather than flattering — upload a Homebase timesheet on the Labor page and they fill in with real hours and payroll.'}
       </p>
     </div>
   )
