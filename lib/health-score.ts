@@ -38,6 +38,7 @@ export type ListingHealth = {
     listing: number; listingBand: HealthBand
     revenue: number | null; revenueBand: HealthBand
     occIndex: number | null; occPct: number | null
+    revparIndex: number | null; revpar: number | null
   }
   unrated: boolean
   optimizeScore: number
@@ -149,7 +150,7 @@ function rgiToScore(rgi: number): number {
 }
 
 /* ------------------------------ main entry -------------------------------- */
-export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null; priorMean?: number; priorC?: number }): ListingHealth {
+export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null; revparIndex?: number | null; revpar?: number | null; priorMean?: number; priorC?: number }): ListingHealth {
   const openWork = opts?.openWork ?? 0
   const optimizeScore = computeScore(listing, { isBeach: /beach/i.test(String(listing?.address_city || '')) }).overall
 
@@ -230,13 +231,17 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   // Pillar 2 · LISTING OPTIMIZATION (title, description, amenities, booking settings, photos): the
   //   optimize score straight through — the controllable conversion lever.
   const pillarListing = Math.round(optimizeScore)
-  // Pillar 3 · REVENUE (is it actually earning?): the hotel/STR RevPAR-Index approach. occIndex = unit
-  //   occupancy ÷ building median earning unit, so occIndex×100 is a RevPAR/occupancy Index (RGI) where
-  //   100 = at fair share. Mapped to 0-100 on the industry RGI bands (≥110 dominant, 90-110 normal,
-  //   <90 red flag). Null w/o ≥2 building peers. (ADR/rate index still pending — see dataPending.)
+  // Pillar 3 · REVENUE (is it actually earning?): the hotel/STR RevPAR-Index approach. Primary signal is
+  //   the RevPAR index (revenue per available night ÷ building median earning unit) — it blends rate AND
+  //   occupancy, which is what "revenue performance" actually means. Falls back to the occupancy index
+  //   when a building has no revenue peers. index×100 = RGI where 100 = fair share; mapped on the
+  //   industry RGI bands (≥110 dominant, 90-110 normal, <90 red flag). Null w/o ≥2 building peers.
   const occIndex = opts?.occIndex ?? null
   const occPct = opts?.occPct ?? null
-  const pillarRevenue: number | null = occIndex != null ? rgiToScore(occIndex * 100) : null
+  const revparIndex = opts?.revparIndex ?? null
+  const revpar = opts?.revpar ?? null
+  const revIndex = revparIndex ?? occIndex   // prefer RevPAR; occupancy is the fallback
+  const pillarRevenue: number | null = revIndex != null ? rgiToScore(revIndex * 100) : null
 
   // Weighted composite. Guest/ops carries the most weight (it drives BOTH booking-probability and
   // review-probability, the two things every OTA ranks on), listing optimization next (the controllable
@@ -310,6 +315,8 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
       revenue: pillarRevenue, revenueBand,
       occIndex: occIndex != null ? Math.round(occIndex * 100) / 100 : null,
       occPct: occPct != null ? Math.round(occPct * 100) : null,
+      revparIndex: revparIndex != null ? Math.round(revparIndex * 100) / 100 : null,
+      revpar: revpar != null ? Math.round(revpar) : null,
     },
     unrated, optimizeScore,
     breakdown: { rating: Math.round(A1), volume: Math.round(A2), response: Math.round(A3), penalty: Math.round(A4), ops: Math.round(A5), setup: Math.round(B) },
