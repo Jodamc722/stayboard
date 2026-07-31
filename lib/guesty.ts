@@ -483,13 +483,19 @@ function mapReview(v: any) {
 }
 
 // Reviews — paginate /reviews and upsert into the dedicated guesty_reviews table.
-export async function syncReviews(maxPages = 50): Promise<number> {
+// NEWEST FIRST (sort=-createdAt): without a sort the API's default order let the 50-page (5000-row)
+// cap sit on the OLDEST reviews forever, so once the corpus passed 5000 new reviews never synced.
+// Sorting newest-first means the first pages always carry the latest reviews; upsert is idempotent
+// (onConflict id) and never deletes, so older reviews already in the table are retained. When
+// `since` is given we stop as soon as a page predates it — a cheap incremental refresh.
+export async function syncReviews(maxPages = 60, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
+  const sinceMs = since ? new Date(since).getTime() : null
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
     const data = await api<{ results?: any[]; data?: any[]; reviews?: any[] } | any[]>(
-      `/reviews?limit=100&skip=${skip}`
+      `/reviews?limit=100&skip=${skip}&sort=-createdAt`
     )
     const dd: any = (data as any)?.data ?? data
     const arr: any[] = Array.isArray(dd) ? dd
@@ -505,6 +511,8 @@ export async function syncReviews(maxPages = 50): Promise<number> {
       if (error) throw new Error(`upsert reviews: ${error.message}`)
       total += rows.length
     }
+    // Incremental: once a whole page is older than `since`, everything after is older too.
+    if (sinceMs != null && rows.every((r: any) => r.created_at && new Date(r.created_at).getTime() < sinceMs)) break
     if (arr.length < 100) break
   }
   await recordSync('reviews', total)

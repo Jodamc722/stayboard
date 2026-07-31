@@ -226,7 +226,7 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   if (recurring.includes('Check-in / access')) add({ key: 'checkin', severity: 'medium', title: 'Check-in / access friction', action: 'Audit lock/keypad codes and check-in instructions; update the access section.', owner: 'Field + Listings', gain: 4 })
   if (count > 0 && count < 5) add({ key: 'volume', severity: 'medium', title: `Only ${count} review(s)`, action: 'Turn on post-stay review requests to reach badge eligibility (5+).', owner: 'Guest Comms', gain: 4 })
   if (optimizeScore < 70) add({ key: 'setup', severity: 'medium', title: `Setup score ${optimizeScore} - listing not fully optimized`, action: 'Run the Listing Optimizer (title, 6 sections, amenities, photos) and push to Guesty.', owner: 'Listings', gain: 6 })
-  if (openWork >= 5) add({ key: 'ops', severity: 'medium', title: `${openWork} open ops items on this building`, action: 'Triage the Breezeway/field backlog; close stale and guest-impacting tasks.', owner: 'Ops supervisor', gain: 3 })
+  if (openWork >= 3) add({ key: 'ops', severity: 'medium', title: `${openWork} open ops item${openWork === 1 ? '' : 's'} on this unit`, action: 'Triage the Breezeway/field backlog; close stale and guest-impacting tasks.', owner: 'Ops supervisor', gain: 3 })
   if (unrated) add({ key: 'noreviews', severity: 'low', title: 'No reviews yet', action: 'Drive first stays and request reviews to start building OTA ranking.', owner: 'Mini-GM', gain: 0 })
   const sev = { critical: 0, high: 1, medium: 2, low: 3 }
   issues.sort((a, b) => sev[a.severity] - sev[b.severity] || b.gain - a.gain)
