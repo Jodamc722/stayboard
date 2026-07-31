@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       const issue = str(b.issue).trim() || str(g.overview).split('\n')[0].slice(0, 70) || category
       const title = 'Guest Reported / Glitch - ' + issue
       const lines = [
-        'GUEST-REPORTED GLITCH (from the StayBoard glitch board)',
+        'GUEST-REPORTED GLITCH (from the Lighthouse glitch board)',
         g.guest_name ? 'Guest: ' + g.guest_name + (g.guest_phone ? ' · ' + g.guest_phone : '') : '',
         g.check_in ? 'Stay: ' + g.check_in + ' → ' + (g.check_out || '?') + (g.channel ? ' · ' + g.channel : '') : '',
         g.incident_date ? 'Incident date: ' + g.incident_date : '',
