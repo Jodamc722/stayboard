@@ -36,7 +36,26 @@ const computeHealth = unstable_cache(async () => {
       return all
     }
 
-    const [revRows, { data: listings }, work] = await Promise.all([
+    // Occupancy over the last 90 days, for the Listing Performance score. Paged (PostgREST caps at 1000).
+    const occStart = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 90 * 86400000))
+    const occToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+    const fetchOccResv = async () => {
+      let all: any[] = []
+      for (let from = 0; from < 30000; from += 1000) {
+        const { data } = await sb.from('guesty_reservations')
+          .select('listing_id, check_in, check_out, status')
+          .in('status', ['confirmed', 'checked_in', 'checked_out'])
+          .gte('check_out', occStart).lte('check_in', occToday)
+          .order('check_out', { ascending: false })
+          .range(from, from + 999)
+        if (!data || data.length === 0) break
+        all = all.concat(data)
+        if (data.length < 1000) break
+      }
+      return all
+    }
+
+    const [revRows, { data: listings }, work, occResv] = await Promise.all([
       fetchAllReviews(),
       // PERF: select ONLY the raw sub-fields computeOptimizeScore reads (publicDescription, terms,
       // integrations, instant-book, times, _photoScore, cancellation) — not the full raw blob.
@@ -44,7 +63,25 @@ const computeHealth = unstable_cache(async () => {
         .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
         .limit(2000),
       openWorkByListing(sb),
+      fetchOccResv(),
     ])
+
+    // ---- Occupancy per unit (last 90d) + peer index vs its building ----
+    const OCC_WINDOW = 90
+    const winStart = new Date(occStart + 'T00:00:00Z').getTime()
+    const winEnd = new Date(occToday + 'T00:00:00Z').getTime()
+    const occNights: Record<string, number> = {}
+    for (const r of (occResv || []) as any[]) {
+      const id = String(r.listing_id || ''); if (!id) continue
+      const ci = new Date(String(r.check_in).slice(0, 10) + 'T00:00:00Z').getTime()
+      const co = new Date(String(r.check_out).slice(0, 10) + 'T00:00:00Z').getTime()
+      if (isNaN(ci) || isNaN(co)) continue
+      const from = Math.max(ci, winStart), to = Math.min(co, winEnd)
+      const nights = Math.round((to - from) / 86400000)
+      if (nights > 0) occNights[id] = (occNights[id] || 0) + nights
+    }
+    const occPctByListing: Record<string, number> = {}
+    for (const id of Object.keys(occNights)) occPctByListing[id] = Math.min(1, occNights[id] / OCC_WINDOW)
 
     // Open ops weight PER UNIT (listing_id) — a unit's own backlog, not the whole building's.
     const openByListing = work || {}
@@ -62,12 +99,32 @@ const computeHealth = unstable_cache(async () => {
       !DEAD.includes(String(l.status || '').toLowerCase()) &&
       !SKIP_BUILDINGS.includes(rollupBuilding(l.building).toLowerCase()))
 
+    // Building median occupancy over the EARNING units (occ>0) — the "typical" performer to index
+    // against. A building needs 2+ earning units to peer-compare; otherwise occIndex is null and
+    // Listing Performance falls back to content + reputation.
+    const occByBuilding: Record<string, number[]> = {}
+    for (const l of active as any[]) {
+      const b = rollupBuilding(l.building)
+      const p = occPctByListing[String(l.id)]
+      if (p != null && p > 0) (occByBuilding[b] ||= []).push(p)
+    }
+    const bMedianOcc: Record<string, number> = {}
+    for (const b of Object.keys(occByBuilding)) {
+      const arr = occByBuilding[b].slice().sort((x, y) => x - y)
+      if (arr.length < 2) continue
+      const mid = Math.floor(arr.length / 2)
+      bMedianOcc[b] = arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2
+    }
+
     const scored = active.map((l: any) => {
       const building = rollupBuilding(l.building)
       const reviews = byListing.get(l.id) || []
+      const occPct = occPctByListing[String(l.id)] ?? null
+      const med = bMedianOcc[building]
+      const occIndex = med && med > 0 && occPct != null ? occPct / med : null
       // Rebuild the slim raw object from the sub-field selects (same shape computeOptimizeScore expects).
       const slim = { ...l, raw: { publicDescription: l.rawPub, publicDescriptions: l.rawPubs, terms: l.rawTerms, prices: l.rawPrices, integrations: l.rawInts, instantBookable: l.rawIb, instantBook: l.rawIb2, defaultCheckInTime: l.rawCi, checkInTime: l.rawCi2, defaultCheckOutTime: l.rawCo, checkOutTime: l.rawCo2, _photoScore: l.rawPs, cancellationPolicy: l.rawCp, airbnb: l.rawAirbnb, bookingcom: l.rawBcom, title: l.rawTitle, defaultListingMinNights: l.rawMinN, amenities: l.rawAmen } }
-      const h = computeListingHealth(slim, reviews, { openWork: openByListing[String(l.id)] || 0 })
+      const h = computeListingHealth(slim, reviews, { openWork: openByListing[String(l.id)] || 0, occIndex, occPct })
       const nm = l.title || l.nickname || l.id
       const lux = isLux(l.building || building, nm)
       const market = marketOf(l.building || building, l.address_city, nm)
@@ -85,6 +142,11 @@ const computeHealth = unstable_cache(async () => {
         vendorManaged,
         score: h.score,
         band: h.band,
+        propertyHealth: h.propertyHealth,
+        propertyBand: h.propertyBand,
+        listingPerformance: h.listingPerformance,
+        performanceBand: h.performanceBand,
+        perfParts: h.perfParts,
         unrated: h.unrated,
         optimizeScore: h.optimizeScore,
         avgStars: h.review.avgStars,
@@ -150,9 +212,13 @@ const computeHealth = unstable_cache(async () => {
     const rated = scored.filter((s: any) => !s.unrated)
     const withReviews = scored.filter((s: any) => s.reviewCount > 0)
     const count = (b: string) => scored.filter((s: any) => s.band === b).length
+    const withProp = scored.filter((s: any) => s.propertyHealth != null)
     const summary = {
       listings: scored.length,
       avgScore: rated.length ? Math.round(rated.reduce((s: number, x: any) => s + x.score, 0) / rated.length) : 0,
+      // The two split scores (audit P2 #11): portfolio-wide averages for the header tiles.
+      avgProperty: withProp.length ? Math.round(withProp.reduce((s: number, x: any) => s + x.propertyHealth, 0) / withProp.length) : 0,
+      avgPerformance: scored.length ? Math.round(scored.reduce((s: number, x: any) => s + x.listingPerformance, 0) / scored.length) : 0,
       elite: count('elite'), healthy: count('healthy'), watch: count('watch'), atRisk: count('risk'), critical: count('critical'), neutral: count('neutral'),
       avgResponse: withReviews.length ? Math.round(withReviews.reduce((s: number, x: any) => s + (x.responseRate || 0), 0) / withReviews.length) : null,
       reviewsAnalyzed: (revRows ?? []).length,
