@@ -9,6 +9,7 @@ import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBr
 import { importTaskComments } from '@/lib/breezeway-comment-sync'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { getToken } from '@/lib/guesty'
+import { writeCustomFields } from '@/lib/guesty-custom-fields'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -17,7 +18,6 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 
 // Guesty "Reservation Notes" custom field - the same field the vendor board writes to, so notes
 // entered anywhere in the app land in ONE place in Guesty.
-const GUESTY_BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
 const fieldIdOf = (c: any): string | null => (c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : null) || c?._id || null
 function isNotesField(c: any): boolean { return String(fieldIdOf(c) || '') === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(String(c?.fieldName || '')) }
@@ -36,12 +36,11 @@ async function appendGuestyNote(db: any, reservationId: string, line: string): P
   let token = ''
   try { token = await getToken() } catch { token = '' }
   if (!token) return false
-  const r = await fetch(GUESTY_BASE + '/reservations/' + encodeURIComponent(reservationId), {
-    method: 'PUT',
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customFields: [{ fieldId: notesId, value: next }] }),
-  })
-  if (!r.ok) return false
+  // SAFE WRITE: Guesty's PUT customFields REPLACES the whole array (proven 2026-07-31 — a single-
+  // field write wiped Elser 4604's confirmation number). writeCustomFields reads the booking back
+  // from Guesty first, merges, and refuses to write when it cannot read.
+  const w = await writeCustomFields(reservationId, token, [{ fieldId: notesId, value: next }])
+  if (!w.ok) return false
   try {
     const arr = Array.isArray((row as any).custom_fields) ? (row as any).custom_fields.slice() : []
     const idx = arr.findIndex((x: any) => isNotesField(x))
