@@ -115,6 +115,8 @@ export function ReviewsPanel() {
   const unmapped = (s.unmapped || []).filter(matchQ)
   const dismissedList = (s.reviews || []).filter(r => isDismissed(r) && matchQ(r))
   const selectedIds = needs.filter(r => selected[r.id])
+  // How many unreplied reviews are past their SLA — the number that should make someone act.
+  const overdueCount = needs.filter(r => { const st = slaState(r); return !!st && st.overdueH >= 0 }).length
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
 
@@ -207,6 +209,7 @@ export function ReviewsPanel() {
           <button onClick={() => setTab('needs')}
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'needs' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
             <MessageSquareWarning size={12} /> Needs a reply <span className={`ml-0.5 px-1 rounded ${tab === 'needs' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : needs.length}</span>
+            {!s.loading && overdueCount > 0 && <span className="ml-0.5 px-1 rounded bg-red-100 text-red-700 font-bold" title="Unreplied past SLA (24h for ≤3★, 72h otherwise)">{overdueCount} overdue</span>}
           </button>
           <button onClick={() => setTab('replied')}
             className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'replied' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
@@ -272,7 +275,6 @@ export function ReviewsPanel() {
                   </span>
                   <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                   {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
-                  {(() => { const sla = slaState(r); return sla ? <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${sla.cls}`}>{sla.label}</span> : null })()}
                 {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Replied</span>
                 </div>
@@ -359,6 +361,8 @@ export function ReviewsPanel() {
                 <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                 {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
                 {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
+                {/* Reply-due clock — the queue is ordered by it, so it belongs on the row you act on. */}
+                {(() => { const sla = slaState(r); return sla ? <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${sla.cls}`}>{sla.label}</span> : null })()}
               </div>
               {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
 
