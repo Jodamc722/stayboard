@@ -110,6 +110,11 @@ export async function buildElserPdf(n: Notice, agent: AgentDetails = DEFAULT_AGE
 
   // ----- Form fields -----
   const fmt = (d?: string | null) => (d ? prettyDate(d) : '')
+  // BOOKING DATE on this form means the date the letter itself was created — the day we registered
+  // the guest with the building — NOT when the reservation was made in Guesty. Per Jon. It is taken
+  // at build time in Eastern (the portfolio's clock), so rebuilding a form re-dates it, which is
+  // correct: the rebuilt letter IS the one being sent.
+  const letterDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const fld = (label: string, val: any, x: number, lineW: number, boldLabel = false, italicVal = false) => {
     doc.setFont('helvetica', boldLabel ? 'bold' : 'normal'); doc.setFontSize(9.5); doc.setTextColor(0, 0, 0)
     doc.text(label, x, y)
@@ -121,7 +126,7 @@ export async function buildElserPdf(n: Notice, agent: AgentDetails = DEFAULT_AGE
   doc.setDrawColor(150, 150, 150); doc.setLineWidth(2); doc.line(M - 6, y - 8, W - M + 6, y - 8); y += 8
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5)
   fld('UNIT NO.:', n.unit_no, M, 120, true); y += 22
-  fld('Booking Date:', fmt(n.booking_date), M, 160); fld('ETA:', n.eta || '', M + 270, 150); y += 22
+  fld('Booking Date:', prettyDate(letterDate), M, 160); fld('ETA:', n.eta || '', M + 270, 150); y += 22
   fld('Arrival Date:', fmt(n.arrival_date), M, 160); fld('Departure Date:', fmt(n.departure_date), M + 270, 130); y += 16
   doc.setDrawColor(40, 40, 40); doc.setLineWidth(2.4); doc.line(M - 6, y - 6, W - M + 6, y - 6); y += 12
   fld('GUEST NAME:', n.guest_name, M, CW - 90, true); y += 22

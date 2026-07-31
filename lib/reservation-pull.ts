@@ -195,7 +195,10 @@ export async function pullNotices(days = 30): Promise<PullResult> {
       guest_name: guest,
       guest_phone: trimmed(r.guest_phone, 60),
       guest_email: trimmed(r.guest_email, 200),
-      booking_date: dateOnly(raw.createdAt),
+      // NOT Guesty's createdAt. On the Elser form "Booking Date" means the day the letter was
+      // created, which the PDF stamps at build time — storing the reservation's creation date here
+      // only invited someone to print the wrong thing.
+      booking_date: null,
       eta: trimmed(raw.plannedArrival, 40),
       adults, children,
       confirmation_code: trimmed(r.confirmation_code, 60),
