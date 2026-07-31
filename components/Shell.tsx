@@ -129,8 +129,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {/* Sidebar */}
       <aside className="w-60 bg-white border-r border-line flex flex-col">
         <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm">S</div>
-          <span className="font-bold text-[15px] tracking-tight text-ink">STAYBOARD</span>
+          <img src="/icon-192.png" alt="Lighthouse" className="w-8 h-8 rounded-lg shadow-sm" />
+          <span className="font-bold text-[15px] tracking-tight text-ink">LIGHTHOUSE</span>
         </div>
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
           {sections.map((section, si) => (
