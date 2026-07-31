@@ -5,7 +5,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
-import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment, matchBreezewayPerson } from '@/lib/breezeway'
+import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment, matchBreezewayPerson, breezewayPeopleLite, breezewayPersonName, breezewayMention } from '@/lib/breezeway'
+import { importTaskComments } from '@/lib/breezeway-comment-sync'
+import { getSetting, setSetting } from '@/lib/app-settings'
 import { getToken } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
@@ -50,6 +52,37 @@ async function appendGuestyNote(db: any, reservationId: string, line: string): P
   return true
 }
 
+// WHO AM I IN BREEZEWAY? A Breezeway comment belongs to a PERSON — without a person id the API
+// rejects the post, and the old code then quietly stamped the task description instead, which is
+// why Jon's comments "never really worked". So the answer is resolved once and then REMEMBERED:
+//   1. the saved map (set here the first time it resolves, or by an admin)
+//   2. the user's profile name, then their email prefix, matched against the Breezeway roster
+//   3. the pinned shared person for staff with no Breezeway account
+// and whatever the answer is, the UI is told, so nobody posts into a void again.
+const BZ_MAP_KEY = 'breezeway_person_by_email'
+
+async function resolveCommentPerson(db: any, me: string): Promise<{ id: number | null; name: string | null }> {
+  const saved = await getSetting<Record<string, any>>(BZ_MAP_KEY, {})
+  const fromMap = Number((saved || {})[me])
+  if (Number.isFinite(fromMap) && fromMap > 0) return { id: fromMap, name: await breezewayPersonName(fromMap) }
+  let id: number | null = null
+  try {
+    const { data: me2 } = await db.from('app_users').select('profile').eq('email', me).maybeSingle()
+    const prof: any = (me2 && (me2 as any).profile) || {}
+    id = await matchBreezewayPerson(str(prof.name) || str(prof.full_name) || me)
+    if (!id) id = await matchBreezewayPerson(me)   // profile name may be a formal name Breezeway does not use
+  } catch { /* fall through to the pinned person */ }
+  if (!id) {
+    try {
+      const { data: st } = await db.from('app_settings').select('value').eq('key', 'breezeway_comment_person_id').maybeSingle()
+      const pinned = Number(str(st && (st as any).value).replace(/"/g, ''))
+      if (Number.isFinite(pinned) && pinned > 0) id = pinned
+    } catch { /* none pinned */ }
+  }
+  if (id) { try { await setSetting(BZ_MAP_KEY, Object.assign({}, saved || {}, { [me]: id }), me) } catch { /* remembering is a bonus */ } }
+  return { id, name: id ? await breezewayPersonName(id) : null }
+}
+
 async function teamEmails(db: any): Promise<string[]> {
   const { data } = await db.from('app_users').select('email,status')
   return ((data || []) as any[])
@@ -65,16 +98,13 @@ export async function GET(req: NextRequest) {
   const id = str(req.nextUrl.searchParams.get('id'))
   if (!type || !id) return NextResponse.json({ ok: false, error: 'type and id required.' }, { status: 400 })
   const db = supabaseAdmin()
-  const { data, error } = await db.from('app_comments')
-    .select('id,author_email,body,mentions,created_at')
-    .eq('entity_type', type).eq('entity_id', id)
-    .order('created_at', { ascending: true }).limit(100)
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   // FULL CLARITY on a Breezeway task: show what is actually written in Breezeway (task
   // description, what the field crew reads) AND in Guesty (the reservation_notes custom field),
   // next to the app thread - so all three surfaces are visible in one place.
   let breezeway: any = null
   let guesty: any = null
+  let bzPeople: { id: number; name: string }[] = []
+  let bzMe: { id: number | null; name: string | null } = { id: null, name: null }
   if (type === 'task') {
     try {
       if (breezewayConfigured()) {
@@ -82,7 +112,17 @@ export async function GET(req: NextRequest) {
         const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
         if (t) breezeway = { taskId: id, name: str(t.name), description: str(t.description), url: 'https://app.breezeway.io/task/' + id, comments: [] as any[] }
         // The field crew's own thread on the task — what they write in the Breezeway app.
-        try { const bc = await listBreezewayComments(id); if (breezeway && bc.ok) breezeway.comments = bc.comments } catch { /* best effort */ }
+        try {
+          const bc = await listBreezewayComments(id)
+          if (breezeway && bc.ok) breezeway.comments = bc.comments
+          // INSTANT INBOUND: store anything new as an app comment and notify the thread right now,
+          // instead of leaving it to the 15-minute cron.
+          if (bc.ok) { try { await importTaskComments(id, bc.comments) } catch { /* best effort */ } }
+        } catch { /* best effort */ }
+        // The full Breezeway roster, so a comment can tag anyone who works there — not just the
+        // handful of people who happen to have a Lighthouse login.
+        try { bzPeople = await breezewayPeopleLite() } catch { /* best effort */ }
+        try { bzMe = await resolveCommentPerson(db, String(user.email || '').toLowerCase()) } catch { /* best effort */ }
       }
     } catch { /* best effort */ }
     try {
@@ -98,7 +138,31 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* best effort */ }
   }
-  return NextResponse.json({ ok: true, comments: data || [], team: await teamEmails(db), breezeway, guesty })
+  // Read the app thread AFTER the import above, so a reply that just arrived is already in it.
+  const { data, error } = await db.from('app_comments')
+    .select('id,author_email,body,mentions,created_at')
+    .eq('entity_type', type).eq('entity_id', id)
+    .order('created_at', { ascending: true }).limit(100)
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, comments: data || [], team: await teamEmails(db), breezeway, guesty, bzPeople, bzMe })
+}
+
+// "That is me in Breezeway." Saved once per user and reused for every comment afterwards, so a
+// name mismatch between the two systems can never silently swallow comments again.
+export async function PATCH(req: NextRequest) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const me = user.email.toLowerCase()
+  const b = await req.json().catch(() => ({} as any))
+  const personId = Number(b.personId)
+  const saved = await getSetting<Record<string, any>>(BZ_MAP_KEY, {})
+  const next = Object.assign({}, saved || {})
+  if (Number.isFinite(personId) && personId > 0) next[me] = personId
+  else delete next[me]
+  const w = await setSetting(BZ_MAP_KEY, next, me)
+  if (!w.ok) return NextResponse.json({ ok: false, error: w.error || 'Could not save' }, { status: 500 })
+  return NextResponse.json({ ok: true, bzMe: { id: next[me] || null, name: next[me] ? await breezewayPersonName(next[me]) : null } })
 }
 
 export async function POST(req: NextRequest) {
@@ -145,48 +209,63 @@ export async function POST(req: NextRequest) {
   // Optional: mirror the comment onto the BREEZEWAY task so the field crew sees it in their app.
   // Best effort - never fails the comment itself.
   let breezeway: boolean | undefined = undefined
+  let breezewayNote: boolean | undefined = undefined   // the description fallback, reported separately
+  let bzError: string | null = null
+  let bzWho: { id: number | null; name: string | null } | null = null
+  let bzTagged: string[] = []
   let bzDebug: any = null
   const bzTaskId = str(b.taskId)
   if (b.toBreezeway === true && bzTaskId && breezewayConfigured()) {
     breezeway = false
     try {
       // A real Breezeway COMMENT is what the crew sees and can reply to. Only if that endpoint
-      // fails do we fall back to stamping the description (the old behaviour).
-      // Who is this comment FROM in Breezeway? The user's saved profile name, else their email
-      // prefix, else the pinned fallback person in app_settings ('breezeway_comment_person_id').
-      let personId: number | null = null
-      try {
-        const { data: me2 } = await db.from('app_users').select('profile').eq('email', me).maybeSingle()
-        const prof: any = (me2 && (me2 as any).profile) || {}
-        personId = await matchBreezewayPerson(str(prof.name) || str(prof.full_name) || me)
-        if (!personId) {
-          const { data: st } = await db.from('app_settings').select('value').eq('key', 'breezeway_comment_person_id').maybeSingle()
-          const pinned = Number(str(st && (st as any).value).replace(/"/g, ''))
-          if (Number.isFinite(pinned) && pinned > 0) personId = pinned
-        }
-      } catch { /* fall through - the description note still carries the message */ }
-      const cr = await createBreezewayComment(bzTaskId, actorName + ': ' + body, personId)
+      // fails do we fall back to stamping the description (the old behaviour) — and that fallback
+      // is reported as what it is, NOT as a successful comment.
+      const who = await resolveCommentPerson(db, me)
+      bzWho = who
+      // TAG ANYONE IN BREEZEWAY: their own mention encoding is {{personId,Name}}, so the tagged
+      // person is notified inside Breezeway exactly as if a teammate had typed it there.
+      const roster = await breezewayPeopleLite().catch(() => [] as { id: number; name: string }[])
+      const wanted = (Array.isArray(b.bzMentions) ? b.bzMentions : []).slice(0, 10)
+      const tokens: string[] = []
+      for (const m of wanted) {
+        const wid = Number((m && (m.id ?? m)) as any)
+        const hit = roster.find(p => p.id === wid)
+        if (!hit) continue
+        tokens.push(breezewayMention(hit.id, hit.name))
+        bzTagged.push(hit.name)
+      }
+      const text = (tokens.length ? tokens.join(' ') + ' ' : '') + actorName + ': ' + body
+      const cr = await createBreezewayComment(bzTaskId, text, who.id)
       // Breezeway has answered 200 with an empty body before while silently not creating the
       // comment, so success means "it is actually in the thread now", not "the call returned 200".
-      bzDebug = { status: cr.status, personId, text: str(cr.text).slice(0, 200) }
+      bzDebug = { status: cr.status, path: cr.path, personId: who.id, text: str(cr.text).slice(0, 200) }
       if (cr.ok) {
         try {
           const back = await listBreezewayComments(bzTaskId)
           const needle = body.slice(0, 40)
           breezeway = back.ok && back.comments.some(x => x.body.includes(needle))
           bzDebug.readBack = back.comments.length
+          if (!breezeway) bzError = 'Breezeway accepted the comment but it is not in the thread.'
         } catch { breezeway = cr.ok }
+      } else {
+        bzError = who.id
+          ? 'Breezeway rejected the comment (' + cr.status + ').'
+          : 'We could not tell who you are in Breezeway, so the comment was refused. Pick your Breezeway name once and it will be remembered.'
       }
-      const cur = cr.ok ? { ok: false, data: null } as any : await retrieveBreezewayTask(bzTaskId)
-      const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
-      if (t) {
-        const stamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date())
-        const existing = str(t.description)
-        const description = ('NOTE (' + actorName + ', ' + stamp + '): ' + body + (existing ? '\n' + existing : '')).slice(0, 4000)
-        const r = await updateBreezewayTask(bzTaskId, { name: str(t.name) || 'Task', description })
-        breezeway = !!r.ok
+      if (!breezeway) {
+        // Last resort so the message still reaches the crew: stamp the task description.
+        const cur = await retrieveBreezewayTask(bzTaskId)
+        const t: any = cur.ok && cur.data ? (cur.data.task || cur.data) : null
+        if (t) {
+          const stamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date())
+          const existing = str(t.description)
+          const description = ('NOTE (' + actorName + ', ' + stamp + '): ' + body + (existing ? '\n' + existing : '')).slice(0, 4000)
+          const r = await updateBreezewayTask(bzTaskId, { name: str(t.name) || 'Task', description })
+          breezewayNote = !!r.ok
+        }
       }
-    } catch { breezeway = false }
+    } catch (e: any) { breezeway = false; bzError = str(e?.message || e).slice(0, 160) }
   }
   // Optional: append to the GUESTY reservation notes (same custom field the vendor board uses),
   // so guest-facing context lives with the reservation. Reservation is resolved from the task
@@ -210,5 +289,5 @@ export async function POST(req: NextRequest) {
       }
     } catch { guesty = false }
   }
-  return NextResponse.json({ ok: true, comment: row, notified: mentions, breezeway, guesty, bzDebug })
+  return NextResponse.json({ ok: true, comment: row, notified: mentions, breezeway, breezewayNote, bzError, bzWho, bzTagged, guesty, bzDebug })
 }
