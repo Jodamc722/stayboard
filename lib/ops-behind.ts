@@ -60,6 +60,7 @@ function ymdET(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'A
 export type BehindRow = {
   taskId: string
   unit: string
+  market?: string | null        // so the board can show the band for one market at a time
   checkOutTime: string | null   // when the guest was due to leave
   arrivingAt: string | null     // when the next guest arrives TODAY, else null
   assignee: string | null
@@ -101,7 +102,8 @@ export function summariseBehind(rows: BehindRow[], nowMin: number): Behind {
     earliestIn,
     unassigned: late.filter(r => !r.assignee).length,
     waiting,
-    units: late.slice(0, 12),
+    // the FULL list (the UI decides how many to show) — a sliced list broke per-market filtering
+    units: late,
     // a check-in today means the clean cannot slip at all — that is the urgent case
     level: sameDayRows.length ? 'urgent' : 'warn',
   }
