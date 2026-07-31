@@ -91,7 +91,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
               {reservation.status && <Row Icon={User} label="Status" value={reservation.status} />}
             </div>
             <div className="px-5 py-3 border-t border-line flex items-center justify-between gap-2">
-              <Link href={`/reservations/${reservation.id}`} className="text-[12px] font-semibold text-brand-700 hover:underline">Open in StayBoard</Link>
+              <Link href={`/reservations/${reservation.id}`} className="text-[12px] font-semibold text-brand-700 hover:underline">Open in Lighthouse</Link>
               <a href={`https://app.guesty.com/reservations/${reservation.id}/summary`} target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 px-2.5 py-1.5 rounded-lg">
                 <ExternalLink size={12} /> Open in Guesty
