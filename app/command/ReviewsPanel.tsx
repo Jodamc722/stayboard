@@ -83,13 +83,32 @@ export function ReviewsPanel() {
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
   const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
 
+  // Reply SLA - bad reviews deserve an answer within a day, everything else within three.
+  // The clock turns this queue from "a list" into "who has been waiting longest" (median first
+  // reply was 367 hours when this shipped; the badge is the fix).
+  const slaState = (r: Review): { overdueH: number; label: string; cls: string } | null => {
+    if (!r.created_at) return null
+    const ageH = (Date.now() - new Date(r.created_at).getTime()) / 3600000
+    if (!Number.isFinite(ageH)) return null
+    const dueH = isLow(r.rating) ? 24 : 72
+    const over = ageH - dueH
+    if (over >= 0) return { overdueH: over, label: 'reply overdue ' + (over >= 48 ? Math.round(over / 24) + 'd' : Math.max(1, Math.round(over)) + 'h'), cls: 'bg-red-100 text-red-700' }
+    return { overdueH: over, label: 'due in ' + (-over >= 48 ? Math.round(-over / 24) + 'd' : Math.max(1, Math.round(-over)) + 'h'), cls: -over <= 8 ? 'bg-amber-100 text-amber-700' : 'bg-app text-muted' }
+  }
+
   // Filter by building / unit / channel via the search box (matches the listing name + channel).
   const q = query.trim().toLowerCase()
   const matchQ = (r: Review) => !q || `${r.listing_name || ''} ${r.channel || ''}`.toLowerCase().includes(q)
   const isDismissed = (r: Review) => !!r.dismissed || !!dismissedLocal[r.id]
   const needs = (s.reviews || [])
     .filter(r => !r.hasReply && !posted[r.id] && !isDismissed(r) && matchQ(r))
-    .sort((a, b) => sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating))
+    // Most-overdue first (the SLA is the queue order); the rating toggle breaks ties.
+    .sort((a, b) => {
+      const sa = slaState(a), sb = slaState(b)
+      const d = (sb ? sb.overdueH : -9999) - (sa ? sa.overdueH : -9999)
+      if (Math.abs(d) > 0.5) return d
+      return sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating)
+    })
   const replied = (s.reviews || [])
     .filter(r => (r.hasReply || posted[r.id]) && matchQ(r))
     .sort((a, b) => (postedAt[b.id] || 0) - (postedAt[a.id] || 0) || (b.created_at || '').localeCompare(a.created_at || ''))
@@ -253,6 +272,7 @@ export function ReviewsPanel() {
                   </span>
                   <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                   {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
+                  {(() => { const sla = slaState(r); return sla ? <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${sla.cls}`}>{sla.label}</span> : null })()}
                 {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Replied</span>
                 </div>
