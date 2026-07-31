@@ -413,6 +413,20 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       }
     }).filter(r => r.units > 0 || r.done > 0)
 
+    // NOTHING VANISHES. Some completed tasks sit on Breezeway properties with no Guesty listing
+    // behind them (common areas, buildings we do not manage on the PMS side). Without this row the
+    // market table quietly sums to less than the headline, which is exactly how a board loses trust.
+    {
+      const placed = marketRows.reduce((a, r) => a + r.done, 0)
+      const missing = work.completed - placed
+      if (missing > 0) marketRows.push({
+        market: 'Not matched to a unit', units: 0, done: missing,
+        cost: Math.round((work.byMarket['Other'] || { cost: 0 }).cost || 0),
+        hours: round(((work.byMarket['Other'] || { minutes: 0 }).minutes || 0) / 60, 1),
+        nights: 0, revenue: 0, occupancy: null,
+      })
+    }
+
     const dayRows: { date: string; done: number }[] = []
     for (let d = from; d <= to; d = addDays(d, 1)) dayRows.push({ date: d, done: work.byDay[d] || 0 })
 
