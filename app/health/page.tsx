@@ -14,6 +14,7 @@ type Pillars = {
   listing: number; listingBand: string
   revenue: number | null; revenueBand: string
   occIndex: number | null; occPct: number | null
+  revparIndex: number | null; revpar: number | null
 }
 type Row = {
   id: string; name: string; internalName?: string | null; building: string | null; unit: string | null
@@ -194,7 +195,7 @@ export default function HealthPage() {
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Activity size={13} /> Portfolio health</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Property Health Score</h1>
-          <p className="text-sm text-muted mt-1">One weighted health score per unit, built from three pillars: <b className="text-ink">Ops &amp; Guest</b> (rating, reviews, response, open work — 45%), <b className="text-ink">Listing Optimization</b> (title, amenities, booking settings, content — 30%), and <b className="text-ink">Revenue</b> (occupancy vs building peers — 25%). Hover any score for the breakdown.</p>
+          <p className="text-sm text-muted mt-1">One weighted health score per unit, built from three pillars: <b className="text-ink">Ops &amp; Guest</b> (rating, reviews, response, open work — 45%), <b className="text-ink">Listing Optimization</b> (title, amenities, booking settings, content — 30%), and <b className="text-ink">Revenue</b> (RevPAR vs building peers — 25%). Hover any score for the breakdown.</p>
         </div>
       </header>
 
@@ -220,7 +221,7 @@ export default function HealthPage() {
             </div>
             <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
               <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Revenue · 25%</div>
-              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgRevenue}</span><span className="text-[11px] text-muted mb-1">occ vs peers</span></div>
+              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgRevenue}</span><span className="text-[11px] text-muted mb-1">RevPAR vs peers</span></div>
             </div>
           </div>
           {/* Band counts */}
@@ -323,7 +324,8 @@ export default function HealthPage() {
                                 <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Overall optimize score — the controllable conversion lever">Optimize <b className="tabular-nums">{r.optimizeScore}</b></span>
                                 <Link href={`/listings/${r.id}`} className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-brand-700 font-medium inline-flex items-center gap-1 hover:bg-brand-50">Fix content <ArrowRight size={11} /></Link>
                               </PillarBlock>
-                              <PillarBlock label="Revenue" sub="occupancy vs building peers · 25%" score={r.pillars.revenue} band={r.pillars.revenueBand}>
+                              <PillarBlock label="Revenue" sub="RevPAR vs building peers · 25%" score={r.pillars.revenue} band={r.pillars.revenueBand}>
+                                {r.pillars.revparIndex != null && <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="RevPAR (revenue per available night, last 90 days) vs this building's median earning unit — blends rate and occupancy">RevPAR <b className="tabular-nums">{r.pillars.revparIndex}×</b> peers{r.pillars.revpar != null && <span className="text-muted"> · ${r.pillars.revpar}/night</span>}</span>}
                                 <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Occupancy last 90 days vs this building's median earning unit">Occupancy {r.pillars.occPct != null ? <b className="tabular-nums">{r.pillars.occPct}%</b> : <b>—</b>}{r.pillars.occIndex != null && <span className="text-muted"> · {r.pillars.occIndex}× peers</span>}</span>
                                 {r.pillars.revenue == null && <span className="text-[11px] px-2 py-1 rounded-lg bg-app border border-line text-muted italic">no building peers yet</span>}
                               </PillarBlock>
