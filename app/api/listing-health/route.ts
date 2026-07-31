@@ -98,6 +98,11 @@ const computeHealth = unstable_cache(async () => {
     const active = (listings ?? []).filter((l: any) =>
       !DEAD.includes(String(l.status || '').toLowerCase()) &&
       !SKIP_BUILDINGS.includes(rollupBuilding(l.building).toLowerCase()))
+    // Only reviews still attached to an ACTIVE listing count — reviews on delisted/replaced/archived
+    // units are ignored for scoring AND for the "reviews analyzed" stat (they'd inflate the number
+    // with reputation that no longer belongs to a live listing).
+    const activeIds = new Set((active as any[]).map(l => String(l.id)))
+    const activeReviewCount = (revRows ?? []).filter((r: any) => r.listing_id && activeIds.has(String(r.listing_id))).length
 
     // Building median occupancy over the EARNING units (occ>0) — the "typical" performer to index
     // against. A building needs 2+ earning units to peer-compare; otherwise occIndex is null and
@@ -142,15 +147,12 @@ const computeHealth = unstable_cache(async () => {
         vendorManaged,
         score: h.score,
         band: h.band,
-        propertyHealth: h.propertyHealth,
-        propertyBand: h.propertyBand,
-        listingPerformance: h.listingPerformance,
-        performanceBand: h.performanceBand,
-        perfParts: h.perfParts,
+        pillars: h.pillars,
         unrated: h.unrated,
         optimizeScore: h.optimizeScore,
         avgStars: h.review.avgStars,
         reviewCount: h.review.count,
+        lowConfidence: h.review.lowConfidence,
         responseRate: h.review.responseRate,
         recurring: h.review.recurring,
         topIssue: h.review.topIssue,
@@ -212,16 +214,17 @@ const computeHealth = unstable_cache(async () => {
     const rated = scored.filter((s: any) => !s.unrated)
     const withReviews = scored.filter((s: any) => s.reviewCount > 0)
     const count = (b: string) => scored.filter((s: any) => s.band === b).length
-    const withProp = scored.filter((s: any) => s.propertyHealth != null)
+    const avgOf = (pick: (x: any) => number | null) => { const v = scored.map(pick).filter((n: any) => n != null) as number[]; return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : 0 }
     const summary = {
       listings: scored.length,
-      avgScore: rated.length ? Math.round(rated.reduce((s: number, x: any) => s + x.score, 0) / rated.length) : 0,
-      // The two split scores (audit P2 #11): portfolio-wide averages for the header tiles.
-      avgProperty: withProp.length ? Math.round(withProp.reduce((s: number, x: any) => s + x.propertyHealth, 0) / withProp.length) : 0,
-      avgPerformance: scored.length ? Math.round(scored.reduce((s: number, x: any) => s + x.listingPerformance, 0) / scored.length) : 0,
+      avgScore: scored.length ? Math.round(scored.reduce((s: number, x: any) => s + x.score, 0) / scored.length) : 0,
+      // Pillar averages for the header (the overall score leads; these show where the portfolio stands).
+      avgOps: avgOf((x: any) => x.pillars.ops),
+      avgListing: avgOf((x: any) => x.pillars.listing),
+      avgRevenue: avgOf((x: any) => x.pillars.revenue),
       elite: count('elite'), healthy: count('healthy'), watch: count('watch'), atRisk: count('risk'), critical: count('critical'), neutral: count('neutral'),
       avgResponse: withReviews.length ? Math.round(withReviews.reduce((s: number, x: any) => s + (x.responseRate || 0), 0) / withReviews.length) : null,
-      reviewsAnalyzed: (revRows ?? []).length,
+      reviewsAnalyzed: activeReviewCount,
       openActions: scored.reduce((s: number, x: any) => s + x.issues.length, 0),
     }
 
