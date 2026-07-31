@@ -106,7 +106,7 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
         <div>
           <h1 className="text-3xl font-bold text-ink tracking-tight">Custom Fields</h1>
           <p className="text-sm text-muted mt-1">
-            Pick which Guesty custom fields STAYBOARD tracks. Flag the important ones as KPIs to surface them on the dashboard.
+            Pick which Guesty custom fields Lighthouse tracks. Flag the important ones as KPIs to surface them on the dashboard.
           </p>
         </div>
         <button
@@ -265,7 +265,7 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
         <div className="font-semibold text-ink mb-1">How this works</div>
         <ul className="space-y-1 list-disc pl-5">
           <li><b>Tracked</b> — field appears in the reservation detail view.</li>
-          <li><b>KPI</b> — also rolls up to dashboard cards. Pick a slug so STAYBOARD knows which KPI it powers (e.g. <code>sensitive_guest</code>, <code>welcome_call</code>).</li>
+          <li><b>KPI</b> — also rolls up to dashboard cards. Pick a slug so Lighthouse knows which KPI it powers (e.g. <code>sensitive_guest</code>, <code>welcome_call</code>).</li>
           <li>Custom field values come straight from Guesty on every sync — no double entry.</li>
         </ul>
       </div>
