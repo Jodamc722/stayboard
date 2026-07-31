@@ -68,7 +68,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   const [needsMigration, setNeedsMigration] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
-  const [showUpcoming, setShowUpcoming] = useState(false)
+  // Future bookings are visible by default: Salato, Nomad and District 225 are told as soon as
+  // the booking exists, so their work lives in Upcoming — hiding it hides most of the job.
+  const [showUpcoming, setShowUpcoming] = useState(true)
   const [q, setQ] = useState('')
   const [form, setForm] = useState<any | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
@@ -306,8 +308,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
         </button>
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building…"
-            className="rounded-lg border border-line pl-8 pr-2.5 py-1.5 text-[13px] w-56" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building, code…"
+            className="rounded-lg border border-line pl-8 pr-2.5 py-1.5 text-[13px] w-64" />
+          {q.trim() && (
+            <button onClick={() => setQ('')} title="Clear" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button>
+          )}
         </div>
         <button onClick={pull} disabled={pulling}
           title="File any upcoming Guesty arrival that isn't on the desk yet. Runs automatically every 20 minutes."
@@ -328,6 +333,13 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           <span className="text-muted">{counts.toSend} to send today{counts.sentToday ? ' · ' + counts.sentToday + ' sent' : ''}</span>
         </div>
       </div>
+
+      {q.trim() && (
+        <div className="text-[12px] text-muted">
+          {todayShown.length + upcomingShown.length} match{todayShown.length + upcomingShown.length === 1 ? '' : 'es'} for &ldquo;{q.trim()}&rdquo;
+          <span className="text-muted/70"> · searching today and upcoming</span>
+        </div>
+      )}
 
       {counts.blocked > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-900 flex items-center gap-2 flex-wrap">
@@ -403,9 +415,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           <button onClick={() => setShowUpcoming(v => !v)}
             className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink mb-2">
             <CalendarClock size={13} />
-            {showUpcoming ? 'Hide upcoming' : 'Upcoming'} · {counts.upcomingToSend} to send
+            {showUpcoming ? 'Hide upcoming' : 'Show upcoming'} · {counts.upcomingToSend} to send
           </button>
-          {showUpcoming && section('Upcoming', upcomingShown, false)}
+          {/* A search must never be swallowed by a collapsed section — while something is typed the
+              upcoming block is forced open, otherwise a matching future booking looks like no result. */}
+          {(showUpcoming || q.trim().length > 0) && section('Upcoming', upcomingShown, false)}
         </div>
       )}
     </div>
