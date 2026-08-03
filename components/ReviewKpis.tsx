@@ -5,7 +5,7 @@
 // channels sit beside it because they score on different scales, and everything granular hides
 // behind one "Details" fold. The whole strip collapses to a single line and remembers that choice.
 import { useCallback, useEffect, useState } from 'react'
-import { Star, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react'
+import { Star, TrendingUp, TrendingDown, Minus, ChevronRight, RefreshCw } from 'lucide-react'
 
 const PERIODS = [{ d: 30, l: '30d' }, { d: 90, l: '90d' }, { d: 180, l: '6m' }, { d: 365, l: '12m' }]
 const AT_RISK = 4.5
@@ -62,6 +62,14 @@ export function ReviewKpis() {
   }, [days, channel, from, to])
   useEffect(() => { load() }, [load])
 
+  // The strip reloads whenever the tab comes back into view, so a board left open overnight
+  // is never showing yesterday's reputation.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [load])
+
   const h = (d && d.headline) || {}
   const units = d?.units || []
   const atRisk = units.filter((u: any) => u.avg != null && u.avg < AT_RISK)
@@ -94,6 +102,10 @@ export function ReviewKpis() {
             <option value="all">All channels</option>
             {(d?.channelList || []).map((c: string) => <option key={c} value={c}>{c}</option>)}
           </select>
+          <button onClick={() => load()} disabled={loading} title="Recalculate the review numbers"
+            className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border border-line text-muted hover:text-ink hover:bg-app disabled:opacity-50">
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
           {loading && <span className="text-[11px] text-muted">…</span>}
           {err && <span className="text-[11px] text-rose-600">{err}</span>}
         </div>
