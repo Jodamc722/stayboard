@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, type HealthReview } from '@/lib/health-score'
 import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { LISTING_SLIM_SELECT, rehydrateRaw } from '@/lib/listing-slim'
 import { marketOf } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
@@ -48,7 +49,7 @@ async function generateWeekly(user: any) {
   }
   const [revRows, { data: listings }, openByListing, { data: resv }] = await Promise.all([
     fetchAllReviews(),
-    sb.from('guesty_listings').select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw').limit(2000),
+    sb.from('guesty_listings').select(LISTING_SLIM_SELECT).limit(2000),
     openWorkByListing(sb),  // per-unit open work (listing_id), not the whole building's
     sb.from('guesty_reservations').select('listing_id, check_in, check_out, status').gte('check_out', today).limit(8000),
   ])
@@ -72,7 +73,7 @@ async function generateWeekly(user: any) {
   for (const l of active) {
     const building = rollupBuilding(l.building)
     const nm = l.title || l.nickname || l.id
-    const h = computeListingHealth(l, byListing.get(l.id) || [], { openWork: openByListing[String(l.id)] || 0 })
+    const h = computeListingHealth(rehydrateRaw(l), byListing.get(l.id) || [], { openWork: openByListing[String(l.id)] || 0 })
     const market = marketOf(l.building || building, l.address_city, nm)
     for (const i of h.issues) {
       if (!departmentFor(i.key, i.owner)) continue // field tasks only
