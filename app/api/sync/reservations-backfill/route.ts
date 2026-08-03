@@ -54,7 +54,8 @@ export async function GET(req: NextRequest) {
       const { data: cur } = await db.from('app_settings').select('value').eq('key', BACKFILL_KEY).maybeSingle()
       const prev = cur && cur.value ? String(cur.value).slice(0, 10) : ''
       if (!prev || from < prev) {
-        await db.from('app_settings').upsert({ key: BACKFILL_KEY, value: from }, { onConflict: 'key' })
+        // Same shape every other app_settings writer uses — the table wants updated_at set.
+        await db.from('app_settings').upsert({ key: BACKFILL_KEY, value: from, updated_at: new Date().toISOString() })
       }
     } catch { /* the import still counts even if the marker fails to save */ }
 
