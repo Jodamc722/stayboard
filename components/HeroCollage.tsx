@@ -1,275 +1,329 @@
 'use client'
-import { useMemo, useRef, useState } from 'react'
-import { LayoutGrid, Download, Sparkles, RefreshCw, AlertTriangle, X, Upload, UploadCloud } from 'lucide-react'
+// HERO STUDIO — build a listing's hero image with real control. Pick single or collage, choose the
+// layout, select which photos fill each cell, reorder them, and crop/zoom each one (drag to pan,
+// slider to zoom, or let AI "focus" frame it from a prompt). Enhance uses the sharp pipeline; AI focus
+// uses Claude vision to pick the framing (it guides the crop — it does not repaint pixels). Everything
+// renders on one canvas so the download/push is exactly what you see.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LayoutGrid, Download, Sparkles, X, Upload, UploadCloud, Wand2, ZoomIn, RotateCcw, Image as ImageIcon, Check } from 'lucide-react'
 
 type Pic = { _id?: string; original?: string; thumbnail?: string }
+type XF = { scale: number; fx: number; fy: number }               // zoom + focal point (0..1)
+type PoolItem = { id: string; url: string; synced: boolean }      // synced = a real Guesty photo (enhanceable)
 
-// Map a unit's amenities + location into a few short, honest hero tags the host can edit.
-function suggestTags(amenities: string[], city: string, building: string): string[] {
-  const a = amenities.map(x => String(x).toLowerCase())
-  const has = (...k: string[]) => k.some(s => a.some(x => x.includes(s)))
-  const out: string[] = []
-  if (has('pool')) out.push('Pool Access')
-  if (has('balcony', 'patio', 'terrace')) out.push('Private Balcony')
-  if (has('gym', 'fitness')) out.push('Fitness Center')
-  if (has('parking', 'garage')) out.push('Parking Available')
-  if (has('hot tub', 'jacuzzi')) out.push('Hot Tub')
-  if (has('beach', 'waterfront', 'ocean')) out.push('Near the Beach')
-  if (has('workspace', 'laptop', 'office')) out.push('Workspace')
-  if (city) out.push(city)
-  if (building) out.push(building)
-  return Array.from(new Set(out)).slice(0, 6)
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n))
+const GAP = 26
+
+type Layout = { key: string; label: string; cells: (W: number, H: number, g: number) => { x: number; y: number; w: number; h: number }[] }
+const LAYOUTS: Layout[] = [
+  { key: 'single', label: 'Single', cells: (W, H) => [{ x: 0, y: 0, w: W, h: H }] },
+  { key: 'twoup', label: 'Two-up', cells: (W, H, g) => { const hw = (W - g) / 2; return [{ x: 0, y: 0, w: hw, h: H }, { x: hw + g, y: 0, w: hw, h: H }] } },
+  { key: 'grid2x2', label: 'Grid', cells: (W, H, g) => { const cw = (W - g) / 2, ch = (H - g) / 2; return [[0, 0], [cw + g, 0], [0, ch + g], [cw + g, ch + g]].map(p => ({ x: p[0], y: p[1], w: cw, h: ch })) } },
+  { key: 'big3', label: 'Feature + 3', cells: (W, H, g) => { const bw = W * 0.62, rw = W - bw - g / 2, rh = (H - 2 * g) / 3; const out = [{ x: 0, y: 0, w: bw - g / 2, h: H }]; for (let i = 0; i < 3; i++) out.push({ x: bw + g / 2, y: i * (rh + g), w: rw, h: rh }); return out } },
+  { key: 'bigleft2', label: 'Feature + 2', cells: (W, H, g) => { const bw = W * 0.64, rw = W - bw - g / 2, rh = (H - g) / 2; return [{ x: 0, y: 0, w: bw - g / 2, h: H }, { x: bw + g / 2, y: 0, w: rw, h: rh }, { x: bw + g / 2, y: rh + g, w: rw, h: rh }] } },
+  { key: 'strip3', label: 'Strip', cells: (W, H, g) => { const cw = (W - 2 * g) / 3; return [0, 1, 2].map(i => ({ x: i * (cw + g), y: 0, w: cw, h: H })) } },
+  { key: 'film', label: 'Film', cells: (W, H, g) => { const th = H * 0.68, fh = H - th - g, fw = (W - 3 * g) / 4; const out = [{ x: 0, y: 0, w: W, h: th }]; for (let i = 0; i < 4; i++) out.push({ x: i * (fw + g), y: th + g, w: fw, h: fh }); return out } },
+]
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath()
 }
 
-// Request a crisp, properly-sized Cloudinary rendition so the canvas isn't downscaling a giant original
-// in one rough step (that's what made collages look soft). w_2400 best-quality is sharp for hero cells.
+// Draw an image into a cell honoring the crop transform (scale = zoom, fx/fy = focal point).
+function drawCell(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number, xf?: XF) {
+  const scale = Math.max(1, xf?.scale || 1), fx = clamp01(xf?.fx ?? 0.5), fy = clamp01(xf?.fy ?? 0.5)
+  const ir = img.naturalWidth / img.naturalHeight, tr = w / h
+  let sw = img.naturalWidth, sh = img.naturalHeight
+  if (ir > tr) sw = img.naturalHeight * tr; else sh = img.naturalWidth / tr   // cover base rect
+  sw /= scale; sh /= scale
+  let sx = fx * img.naturalWidth - sw / 2, sy = fy * img.naturalHeight - sh / 2
+  sx = Math.max(0, Math.min(img.naturalWidth - sw, sx)); sy = Math.max(0, Math.min(img.naturalHeight - sh, sy))
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h)
+}
+
+// Best-quality Cloudinary rendition so we don't downscale a giant original in one rough step.
 function hiRes(u: string): string {
   if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_2400,q_auto:best,f_jpg/')
   return u
 }
-const PALETTE = ['#0f766e', '#1d4ed8', '#be123c', '#b45309', '#7c3aed', '#0e7490', '#15803d', '#9d174d']
-const LAYOUTS = ['grid2x2', 'big3', 'strip3', 'big2', 'twoup', 'film', 'fivegrid', 'bigleft2', 'hero1'] as const
-
-function pick<T>(arr: readonly T[], rnd: () => number): T { return arr[Math.floor(rnd() * arr.length)] }
-function shuffle<T>(arr: T[], rnd: () => number): T[] { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
-// tiny seeded RNG so each "idea" is reproducible per seed
-function rngFrom(seed: number) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 } }
-
-function drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number) {
-  const ir = img.naturalWidth / img.naturalHeight, tr = w / h
-  let sw = img.naturalWidth, sh = img.naturalHeight, sx = 0, sy = 0
-  if (ir > tr) { sw = img.naturalHeight * tr; sx = (img.naturalWidth - sw) / 2 } else { sh = img.naturalWidth / tr; sy = (img.naturalHeight - sh) / 2 }
-  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h)
-}
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r)
-  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath()
-}
-
-function drawTags(ctx: CanvasRenderingContext2D, tags: string[], accent: string, W: number, H: number, rnd: () => number) {
-  // Clean white "Guest favorite"-style pills, centered along the bottom with a soft drop shadow.
-  const items = tags.map(t => String(t || '').trim()).filter(Boolean).slice(0, 3)
-  if (!items.length) return
-  const s = W / 1200
-  ctx.font = `600 ${Math.round(31 * s)}px Inter, "Helvetica Neue", system-ui, sans-serif`
-  const padX = 28 * s, gap = 16 * s, h = 62 * s
-  const widths = items.map(t => ctx.measureText(t).width + padX * 2)
-  const total = widths.reduce((a, b) => a + b, 0) + gap * (items.length - 1)
-  let x = (W - total) / 2
-  const y = H - 44 * s - h
-  items.forEach((t, i) => {
-    const w = widths[i]
-    ctx.save()
-    ctx.shadowColor = 'rgba(0,0,0,0.30)'; ctx.shadowBlur = 22 * s; ctx.shadowOffsetY = 7 * s
-    ctx.fillStyle = '#ffffff'
-    roundRect(ctx, x, y, w, h, h / 2)
-    ctx.fill()
-    ctx.restore()
-    ctx.fillStyle = '#222222'
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
-    ctx.fillText(t, x + padX, y + h / 2 + s)
-    x += w + gap
-  })
-}
-
-function renderIdea(canvas: HTMLCanvasElement, imgs: HTMLImageElement[], tags: string[], seed: number) {
-  const W = 3000, H = 2000, g = 22
-  canvas.width = W; canvas.height = H
-  const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; const rnd = rngFrom(seed)
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H)
-  const layout = pick(LAYOUTS, rnd); const accent = pick(PALETTE, rnd); const ph = shuffle(imgs, rnd)
-  const at = (i: number) => ph[i % ph.length]
-  if (layout === 'hero1' || ph.length < 2) { drawCover(ctx, at(0), 0, 0, W, H) }
-  else if (layout === 'grid2x2') { const cw = (W - g) / 2, ch = (H - g) / 2;[[0, 0], [cw + g, 0], [0, ch + g], [cw + g, ch + g]].forEach((p, i) => drawCover(ctx, at(i), p[0], p[1], cw, ch)) }
-  else if (layout === 'big3') { const bw = W * 0.6; drawCover(ctx, at(0), 0, 0, bw - g / 2, H); const rw = W - bw - g / 2, rh = (H - 2 * g) / 3; for (let i = 0; i < 3; i++) drawCover(ctx, at(i + 1), bw + g / 2, i * (rh + g), rw, rh) }
-  else if (layout === 'strip3') { const cw = (W - 2 * g) / 3; for (let i = 0; i < 3; i++) drawCover(ctx, at(i), i * (cw + g), 0, cw, H) }
-  else if (layout === 'twoup') { const hw = (W - g) / 2; drawCover(ctx, at(0), 0, 0, hw, H); drawCover(ctx, at(1), hw + g, 0, hw, H) }
-  else if (layout === 'film') { const th = H * 0.7; drawCover(ctx, at(0), 0, 0, W, th - g / 2); const fy = th + g / 2, fh = H - fy, fw = (W - 3 * g) / 4; for (let i = 0; i < 4; i++) drawCover(ctx, at(i + 1), i * (fw + g), fy, fw, fh) }
-  else if (layout === 'fivegrid') { const bw = W * 0.6; drawCover(ctx, at(0), 0, 0, bw - g / 2, H); const rx = bw + g / 2, rw = W - rx, rcw = (rw - g) / 2, rch = (H - g) / 2;[[rx, 0], [rx + rcw + g, 0], [rx, rch + g], [rx + rcw + g, rch + g]].forEach((p, i) => drawCover(ctx, at(i + 1), p[0], p[1], rcw, rch)) }
-  else if (layout === 'bigleft2') { const bw = W * 0.62; drawCover(ctx, at(0), 0, 0, bw - g / 2, H); const rx = bw + g / 2, rw = W - rx, rh = (H - g) / 2; drawCover(ctx, at(1), rx, 0, rw, rh); drawCover(ctx, at(2), rx, rh + g, rw, rh) }
-  else { const th = H * 0.6; drawCover(ctx, at(0), 0, 0, W, th - g / 2); const bw = (W - g) / 2, by = th + g / 2, bh = H - by; drawCover(ctx, at(1), 0, by, bw, bh); drawCover(ctx, at(2), bw + g, by, bw, bh) }
-  drawTags(ctx, tags, accent, W, H, rnd)
-}
 
 export function HeroCollage({ listingId, name, city, building, pictures, amenities }: { listingId: string; name: string; city: string; building: string; pictures: Pic[]; amenities: string[] }) {
   const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [layoutKey, setLayoutKey] = useState('single')
+  const [slots, setSlots] = useState<string[]>([])            // photo id per cell ('' = empty)
+  const [sel, setSel] = useState(0)                           // selected cell index
+  const [xf, setXf] = useState<Record<string, XF>>({})        // crop transform per photo id
+  const [overrideUrl, setOverrideUrl] = useState<Record<string, string>>({}) // enhanced/edited url per id
+  const [uploads, setUploads] = useState<PoolItem[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [tags, setTags] = useState<string[]>([])
-  const [seeds, setSeeds] = useState<number[]>([])
-  const [uploads, setUploads] = useState<{ url: string; name: string }[]>([])
-  const [pushing, setPushing] = useState<number | null>(null)
   const [pushMsg, setPushMsg] = useState<string | null>(null)
+  const [pushing, setPushing] = useState(false)
+  const [enhancing, setEnhancing] = useState(false)
+  const [focusing, setFocusing] = useState(false)
+  const [focusPrompt, setFocusPrompt] = useState('')
   const [dragOver, setDragOver] = useState(false)
-  const refs = useRef<Record<number, HTMLCanvasElement | null>>({})
+  const [, force] = useState(0)                               // re-render tick when an image finishes loading
+
+  const previewRef = useRef<HTMLCanvasElement | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
+  const imgCache = useRef<Record<string, HTMLImageElement>>({})
+  const loading = useRef<Set<string>>(new Set())
+  const dragSlot = useRef<number | null>(null)                // slot being reordered
+  const panning = useRef<{ active: boolean; lastX: number; lastY: number }>({ active: false, lastX: 0, lastY: 0 })
 
-  const fallbackUrls = useMemo(() => pictures.map(p => p.original || p.thumbnail || '').filter(Boolean).slice(0, 8), [pictures])
+  // Pool = the unit's synced photos + anything the host uploaded.
+  const pool = useMemo<PoolItem[]>(() => {
+    const synced = pictures.map((p, i) => ({ id: p._id || `pic_${i}`, url: p.original || p.thumbnail || '', synced: !!p._id })).filter(p => p.url)
+    return [...synced, ...uploads]
+  }, [pictures, uploads])
+  const urlOf = useCallback((id: string) => overrideUrl[id] || pool.find(p => p.id === id)?.url || '', [overrideUrl, pool])
+  const layout = LAYOUTS.find(l => l.key === layoutKey) || LAYOUTS[0]
+  const cellCount = layout.cells(3000, 2000, GAP).length
 
-  // Ask the AI photo analyzer which photos are the strongest REAL property shots, and use those for
-  // the collage (skipping stock/location photos and any it flags for removal). Falls back to the first
-  // few photos if the analyzer is unavailable.
-  async function selectUrls(): Promise<string[]> {
-    try {
-      const r = await fetch('/api/optimize-photos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId }) })
-      const j = await r.json()
-      if (!r.ok || !Array.isArray(j.proposedOrder)) return fallbackUrls
-      const byId: Record<string, any> = {}
-      ;(j.photos || []).forEach((p: any) => { byId[p._id] = p })
-      const remove = new Set((j.recommendRemove || []).map((x: any) => x._id))
-      const origById: Record<string, string> = {}
-      pictures.forEach(p => { if (p._id) origById[p._id] = p.original || p.thumbnail || '' })
-      // Build a VARIED set for the collage: guarantee some exterior + pool/view/outdoor shots, then fill
-      // with the strongest interiors. (Plain ordering is unit-first, so exteriors would otherwise drop off.)
-      const props: any[] = j.proposedOrder.map((id: string) => byId[id]).filter((p: any) => p && p.kind !== 'stock' && !remove.has(p._id))
-      const used = new Set<string>(); const chosen: any[] = []
-      const take = (test: (c: string) => boolean, max: number) => { let n = 0; for (const p of props) { if (used.has(p._id)) continue; if (test(String(p.category || ''))) { chosen.push(p); used.add(p._id); if (++n >= max) break } } }
-      take(c => c === 'exterior', 2)
-      take(c => c === 'view' || c === 'outdoor' || c === 'amenity', 2)
-      for (const p of props) { if (chosen.length >= 8) break; if (!used.has(p._id)) { chosen.push(p); used.add(p._id) } }
-      const picks = chosen.slice(0, 8).map((p: any) => origById[p._id] || p.url || '').filter(Boolean)
-      return picks.length >= 2 ? picks : fallbackUrls
-    } catch { return fallbackUrls }
-  }
-
-  // Generic image loader. `proxy` routes Guesty/Cloudinary URLs through our same-origin proxy and tries a
-  // hi-res rendition first; uploaded files are local object URLs that load directly at full resolution.
-  function loadImages(urls: string[], proxy: boolean): Promise<HTMLImageElement[]> {
-    const tryLoad = (src: string) => new Promise<HTMLImageElement | null>((res) => {
+  // Load an image (proxy hi-res for synced/remote, direct for uploads) into the cache; re-render on load.
+  const ensureImg = useCallback((id: string) => {
+    const url = urlOf(id); if (!url) return
+    const cacheKey = id + '|' + url
+    if (imgCache.current[cacheKey] || loading.current.has(cacheKey)) return
+    loading.current.add(cacheKey)
+    const remote = /^https?:/.test(url)
+    const tryLoad = (src: string) => new Promise<HTMLImageElement | null>(res => {
       const im = new Image(); let done = false
       const t = setTimeout(() => { if (!done) { done = true; res(null) } }, 15000)
       im.onload = () => { if (!done) { done = true; clearTimeout(t); res(im) } }
       im.onerror = () => { if (!done) { done = true; clearTimeout(t); res(null) } }
       im.src = src
     })
-    const list = urls.map(async (u) => proxy
-      ? ((await tryLoad(`/api/img-proxy?url=${encodeURIComponent(hiRes(u))}`)) || (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(u)}`)) || (await tryLoad(u)))
-      : (await tryLoad(u)))
-    return Promise.all(list).then(r => r.filter((x): x is HTMLImageElement => !!x))
-  }
+    ;(async () => {
+      let im: HTMLImageElement | null = null
+      if (remote) im = (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(hiRes(url))}`)) || (await tryLoad(`/api/img-proxy?url=${encodeURIComponent(url)}`))
+      else im = await tryLoad(url)
+      loading.current.delete(cacheKey)
+      if (im) { imgCache.current[cacheKey] = im; force(x => x + 1) }
+    })()
+  }, [urlOf])
 
-  async function generate() {
-    setBusy(true); setError(null)
+  const imgFor = useCallback((id: string): HTMLImageElement | null => {
+    const url = urlOf(id); if (!url) return null
+    return imgCache.current[id + '|' + url] || null
+  }, [urlOf])
+
+  // Keep slots sized to the layout; auto-fill new empty cells with the next unused pool photos.
+  useEffect(() => {
+    setSlots(prev => {
+      const next = prev.slice(0, cellCount)
+      const used = new Set(next.filter(Boolean))
+      for (let i = next.length; i < cellCount; i++) { const p = pool.find(x => !used.has(x.id)); if (p) { next.push(p.id); used.add(p.id) } else next.push('') }
+      while (next.length < cellCount) next.push('')
+      return next
+    })
+    if (sel >= cellCount) setSel(0)
+  }, [cellCount, pool, sel])
+
+  useEffect(() => { slots.forEach(id => { if (id) ensureImg(id) }) }, [slots, ensureImg, overrideUrl])
+
+  // Paint the whole composition to any canvas/resolution.
+  const paint = useCallback((canvas: HTMLCanvasElement, W: number, H: number) => {
+    canvas.width = W; canvas.height = H
+    const ctx = canvas.getContext('2d'); if (!ctx) return
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
+    ctx.fillStyle = '#f1f5f9'; ctx.fillRect(0, 0, W, H)
+    const cells = layout.cells(W, H, W * (GAP / 3000))
+    cells.forEach((c, i) => {
+      const id = slots[i]; const im = id ? imgFor(id) : null
+      if (im) { ctx.save(); roundRectPath(ctx, c.x, c.y, c.w, c.h, Math.min(c.w, c.h) * 0.02); ctx.clip(); drawCell(ctx, im, c.x, c.y, c.w, c.h, xf[id]); ctx.restore() }
+      else { ctx.fillStyle = '#e2e8f0'; roundRectPath(ctx, c.x, c.y, c.w, c.h, 10); ctx.fill(); ctx.fillStyle = '#94a3b8'; ctx.font = `${Math.round(c.h * 0.09)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('empty', c.x + c.w / 2, c.y + c.h / 2) }
+    })
+  }, [layout, slots, xf, imgFor])
+
+  // Live preview (1500x1000 is sharp on screen; export renders at 3000x2000).
+  useEffect(() => { const c = previewRef.current; if (c) paint(c, 1500, 1000) })
+
+  // --- interactions -------------------------------------------------------
+  const cellAt = (clientX: number, clientY: number): number => {
+    const c = previewRef.current; if (!c) return -1
+    const r = c.getBoundingClientRect()
+    const px = ((clientX - r.left) / r.width) * 1500, py = ((clientY - r.top) / r.height) * 1000
+    const cells = layout.cells(1500, 1000, 1500 * (GAP / 3000))
+    for (let i = 0; i < cells.length; i++) { const cc = cells[i]; if (px >= cc.x && px <= cc.x + cc.w && py >= cc.y && py <= cc.y + cc.h) return i }
+    return -1
+  }
+  function onPointerDown(e: React.PointerEvent) {
+    const i = cellAt(e.clientX, e.clientY); if (i < 0) return
+    setSel(i)
+    if (slots[i]) { panning.current = { active: true, lastX: e.clientX, lastY: e.clientY }; (e.target as HTMLElement).setPointerCapture?.(e.pointerId) }
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    if (!panning.current.active) return
+    const id = slots[sel]; if (!id) return
+    const c = previewRef.current; if (!c) return
+    const r = c.getBoundingClientRect()
+    const dx = (e.clientX - panning.current.lastX) / r.width, dy = (e.clientY - panning.current.lastY) / r.height
+    panning.current.lastX = e.clientX; panning.current.lastY = e.clientY
+    setXf(prev => { const t = prev[id] || { scale: 1, fx: 0.5, fy: 0.5 }; return { ...prev, [id]: { ...t, fx: clamp01(t.fx - dx / t.scale), fy: clamp01(t.fy - dy / t.scale) } } })
+  }
+  function onPointerUp() { panning.current.active = false }
+
+  const setSelXf = (patch: Partial<XF>) => { const id = slots[sel]; if (!id) return; setXf(prev => { const t = prev[id] || { scale: 1, fx: 0.5, fy: 0.5 }; return { ...prev, [id]: { ...t, ...patch } } }) }
+  const selId = slots[sel]
+  const selXf = selId ? (xf[selId] || { scale: 1, fx: 0.5, fy: 0.5 }) : null
+  const selSynced = !!pool.find(p => p.id === selId)?.synced
+
+  function assignToSel(id: string) { setSlots(prev => { const n = prev.slice(); n[sel] = id; return n }); ensureImg(id) }
+  function onSlotDrop(target: number) { const from = dragSlot.current; dragSlot.current = null; if (from == null || from === target) return; setSlots(prev => { const n = prev.slice();[n[from], n[target]] = [n[target], n[from]]; return n }) }
+
+  // --- photo ops ----------------------------------------------------------
+  async function enhanceSel() {
+    const id = selId; if (!id || !selSynced) return
+    setEnhancing(true); setError(null)
     try {
-      let imgs: HTMLImageElement[]
-      if (uploads.length) {
-        // Best quality: build straight from the host's own full-resolution uploads (no compression/proxy).
-        imgs = await loadImages(uploads.map(u => u.url), false)
-        if (imgs.length < 1) throw new Error('Could not read the uploaded photos. Try different files.')
-      } else {
-        throw new Error('Please upload photos first - hero images are built from your uploads only.')
-      }
-      const newSeeds = Array.from({ length: 3 }, () => Math.floor(Math.random() * 1e9))
-      setSeeds(newSeeds)
-      // render after canvases mount
-      setTimeout(() => newSeeds.forEach(s => { const c = refs.current[s]; if (c) renderIdea(c, imgs, tags, s) }), 50)
-    } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
+      const r = await fetch('/api/photo-enhance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, photoIds: [id] }) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Enhance failed')
+      const eu = (j.photos || [])[0]?.enhancedUrl
+      if (eu) setOverrideUrl(prev => ({ ...prev, [id]: eu }))
+      else throw new Error('No enhanced version returned.')
+    } catch (e: any) { setError(e.message || String(e)) } finally { setEnhancing(false) }
+  }
+  async function aiFocus() {
+    const id = selId; if (!id) return
+    setFocusing(true); setError(null)
+    try {
+      const r = await fetch('/api/photo-focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: urlOf(id), prompt: focusPrompt }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not focus this photo.')
+      setXf(prev => ({ ...prev, [id]: { scale: Number(j.zoom) || 1.4, fx: clamp01(Number(j.cx)), fy: clamp01(Number(j.cy)) } }))
+    } catch (e: any) { setError(e.message || String(e)) } finally { setFocusing(false) }
   }
 
   function onFiles(list: FileList | null) {
     if (!list) return
-    const next = Array.from(list).filter(f => f.type.startsWith('image/')).map(f => ({ url: URL.createObjectURL(f), name: f.name }))
-    if (next.length) setUploads(u => [...u, ...next].slice(0, 12))
+    const next = Array.from(list).filter(f => f.type.startsWith('image/')).map((f, i) => ({ id: `up_${Date.now()}_${i}`, url: URL.createObjectURL(f), synced: false }))
+    if (next.length) setUploads(u => [...u, ...next].slice(0, 16))
     if (fileInput.current) fileInput.current.value = ''
   }
-  function removeUpload(i: number) { setUploads(u => { const n = u.slice(); const [rm] = n.splice(i, 1); if (rm) URL.revokeObjectURL(rm.url); return n }) }
-  function clearUploads() { setUploads(u => { u.forEach(x => URL.revokeObjectURL(x.url)); return [] }) }
 
-  async function pushToGuesty(seed: number) {
-    const c = refs.current[seed]; if (!c) return
-    if (!confirm('Push this image to Guesty as a NEW photo on this listing?\n\nIt syncs to ALL connected channels (Airbnb, Booking.com, Vrbo, etc.) and is added at the END of the photo set - not the cover.\n\nNote: Airbnb discourages photos with text/graphics, so collages are best for Booking.com, Vrbo and your direct site.')) return
-    setPushing(seed); setPushMsg(null)
+  function download() {
+    const c = document.createElement('canvas'); paint(c, 3000, 2000)
+    c.toBlob(b => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.96)
+  }
+  async function pushToGuesty() {
+    if (!slots.some(Boolean)) { setError('Add at least one photo first.'); return }
+    if (!confirm('Push this hero image to Guesty as a NEW photo on this listing?\n\nIt syncs to ALL connected channels and is added at the END of the set (not the cover).\n\nAirbnb discourages photos with graphics/collages — single-photo heroes are safest there; collages are great for Booking.com, Vrbo and your direct site.')) return
+    setPushing(true); setPushMsg(null); setError(null)
     try {
-      const dataUrl: string = await new Promise((res) => c.toBlob((b) => {
-        if (!b) return res(''); const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.readAsDataURL(b)
-      }, 'image/jpeg', 0.95))
+      const c = document.createElement('canvas'); paint(c, 3000, 2000)
+      const dataUrl: string = await new Promise(res => c.toBlob(b => { if (!b) return res(''); const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.readAsDataURL(b) }, 'image/jpeg', 0.95))
       if (!dataUrl) throw new Error('Could not read the image.')
-      const r = await fetch('/api/hero/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dataUrl, caption: (tags.find(t => (t || '').trim()) || name || 'Featured') }) })
-      const j = await r.json()
-      if (!r.ok) throw new Error(j.error || 'Push failed')
-      setPushMsg(`Pushed to Guesty - listing now has ${j.count} photos. Syncing to channels.`)
-    } catch (e: any) { setPushMsg(e.message || String(e)) } finally { setPushing(null) }
+      const r = await fetch('/api/hero/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dataUrl, caption: name || 'Featured' }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Push failed')
+      setPushMsg(`Pushed to Guesty — listing now has ${j.count} photos. Syncing to channels.`)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
-  function download(seed: number) {
-    const c = refs.current[seed]; if (!c) return
-    c.toBlob((blob) => { if (!blob) return; const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}-${seed}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 1.0)
-  }
-
-  function setTag(i: number, v: string) { setTags(t => { const n = t.slice(); n[i] = v; return n }) }
+  const btn = 'inline-flex items-center gap-1.5 rounded-lg text-[12px] font-semibold px-2.5 py-1.5 border transition-colors disabled:opacity-50'
 
   return (
     <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden">
       <div className="px-4 py-3 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0">
-          <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><LayoutGrid size={15} className="text-brand-600" /> Hero collage ideas</h2>
-          <p className="text-[12px] text-muted mt-0.5">Builds clean hero images from your uploaded photos — no text or tag overlays. Upload photos, generate a few ideas, then download or push the one you like.</p>
+          <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><LayoutGrid size={15} className="text-brand-600" /> Hero image studio</h2>
+          <p className="text-[12px] text-muted mt-0.5">Single hero or a collage — pick the photos, crop &amp; zoom each one, enhance, or let AI focus the shot. Then download or push to Guesty.</p>
         </div>
-        <button onClick={() => setOpen(o => !o)}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 flex-shrink-0">
-          <LayoutGrid size={15} /> {open ? 'Hide' : 'Open'}
-        </button>
+        <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 flex-shrink-0"><LayoutGrid size={15} /> {open ? 'Hide' : 'Open studio'}</button>
       </div>
 
       {open && (
-        <div className="px-4 py-4 border-t border-line space-y-4">
-          {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
+        <div className="px-4 py-4 border-t border-line space-y-4"
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }} onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
+          onDrop={e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files) } }}>
+          {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700">{error}</div>}
           {pushMsg && <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-700 flex items-center justify-between gap-2"><span>{pushMsg}</span><button onClick={() => setPushMsg(null)} className="text-muted hover:text-ink"><X size={13} /></button></div>}
 
-          {/* Photo source: upload your own (best quality) or fall back to the unit's synced photos */}
-          <div
-            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-            onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
-            onDrop={e => { e.preventDefault(); setDragOver(false); if (e.dataTransfer?.files?.length) onFiles(e.dataTransfer.files) }}
-            className={`rounded-xl border p-3 transition-colors ${dragOver ? 'border-brand-400 border-dashed bg-brand-50' : 'border-line bg-app/30'}`}
-          >
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div>
-                <p className="text-[12px] font-semibold text-ink">Photos</p>
-                <p className="text-[11px] text-muted">{uploads.length ? `Using your ${uploads.length} uploaded photo${uploads.length > 1 ? 's' : ''} (best quality).` : (dragOver ? 'Drop your photos to upload…' : 'No uploads — drag & drop photos here, or upload originals for the sharpest hero.')}</p>
-              </div>
-              <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
-              <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-50 flex-shrink-0">
-                <Upload size={14} /> Upload photos
-              </button>
-            </div>
-            {!!uploads.length && (
-              <div className="flex flex-wrap gap-2 mt-3 items-center">
-                {uploads.map((u, i) => (
-                  <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-line">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={u.url} alt={u.name} className="w-full h-full object-cover" />
-                    <button onClick={() => removeUpload(i)} title="Remove" className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 hover:bg-rose-600"><X size={11} /></button>
-                  </div>
-                ))}
-                <button onClick={clearUploads} className="text-[11px] text-muted hover:text-rose-600 self-center ml-1">Clear all</button>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-end gap-2">
-            <button onClick={generate} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">
-              {busy ? <Sparkles size={14} className="animate-pulse" /> : <RefreshCw size={14} />} {busy ? 'Building…' : seeds.length ? 'New ideas' : 'Generate ideas'}
-            </button>
-          </div>
-          <p className="text-[11px] text-muted">Upload photos above, then hit Generate.</p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {seeds.map(s => (
-              <div key={s} className="rounded-xl border border-line overflow-hidden bg-app/30">
-                <canvas ref={el => { refs.current[s] = el }} className="w-full block" style={{ aspectRatio: '3 / 2' }} />
-                <div className="flex items-center justify-between px-3 py-2 gap-2">
-                  <span className="text-[11px] text-muted">3000 &times; 2000</span>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => pushToGuesty(s)} disabled={pushing === s} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-50">{pushing === s ? <Sparkles size={13} className="animate-pulse" /> : <UploadCloud size={13} />} {pushing === s ? 'Pushing…' : 'Push to Guesty'}</button>
-                    <button onClick={() => download(s)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink hover:text-brand-700"><Download size={13} /> Download</button>
-                  </div>
-                </div>
-              </div>
+          {/* Layout picker */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-1">Layout</span>
+            {LAYOUTS.map(l => (
+              <button key={l.key} onClick={() => setLayoutKey(l.key)} className={`text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ${layoutKey === l.key ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:bg-app'}`}>{l.label}</button>
             ))}
           </div>
-          <p className="text-[11px] text-muted">Tip: use bright, high-resolution originals for the sharpest result.</p>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Live preview — click a cell to select it, drag to pan */}
+            <div className="lg:col-span-2">
+              <canvas ref={previewRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
+                className="w-full block rounded-xl border border-line touch-none cursor-move" style={{ aspectRatio: '3 / 2' }} />
+              <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+                <span className="text-[11px] text-muted">Click a cell to select · drag on it to pan{cellCount > 1 ? ' · drag the thumbnails below to rearrange' : ''}</span>
+                <div className="flex items-center gap-3">
+                  <button onClick={pushToGuesty} disabled={pushing} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-50">{pushing ? <Sparkles size={13} className="animate-pulse" /> : <UploadCloud size={13} />} {pushing ? 'Pushing…' : 'Push to Guesty'}</button>
+                  <button onClick={download} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink hover:text-brand-700"><Download size={13} /> Download</button>
+                </div>
+              </div>
+
+              {/* Cell thumbnails (reorder) */}
+              {cellCount > 1 && (
+                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                  {slots.map((id, i) => (
+                    <div key={i} draggable onDragStart={() => { dragSlot.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => onSlotDrop(i)} onClick={() => setSel(i)}
+                      className={`relative w-14 h-11 rounded-md overflow-hidden border-2 cursor-pointer ${sel === i ? 'border-brand-500' : 'border-line'}`} title={`Cell ${i + 1}`}>
+                      {id && urlOf(id) ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={urlOf(id)} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-app grid place-items-center text-[9px] text-muted">empty</div>}
+                      <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 text-white px-1 rounded-tr">{i + 1}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Right rail: crop/zoom + enhance + AI focus for the selected cell */}
+            <div className="space-y-3">
+              <div className="rounded-xl border border-line bg-app/30 p-3">
+                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Selected cell {cellCount > 1 ? `(${sel + 1}/${cellCount})` : ''}</div>
+                {!selId ? <div className="text-[12px] text-muted">Pick a photo below to fill this cell.</div> : (
+                  <div className="space-y-2.5">
+                    <label className="block">
+                      <span className="text-[11px] text-muted inline-flex items-center gap-1"><ZoomIn size={11} /> Zoom {Math.round((selXf!.scale) * 100)}%</span>
+                      <input type="range" min={1} max={3} step={0.05} value={selXf!.scale} onChange={e => setSelXf({ scale: Number(e.target.value) })} className="w-full accent-brand-600" />
+                    </label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button onClick={() => setSelXf({ scale: 1, fx: 0.5, fy: 0.5 })} className={`${btn} border-line text-muted bg-white hover:bg-app`}><RotateCcw size={12} /> Reset crop</button>
+                      <button onClick={enhanceSel} disabled={enhancing || !selSynced} title={selSynced ? 'Brighten, sharpen, color-correct (saved copy)' : 'Enhance is available for the unit’s synced photos'} className={`${btn} border-brand-200 text-brand-700 bg-brand-50 hover:bg-brand-100`}>{enhancing ? <Sparkles size={12} className="animate-pulse" /> : <Wand2 size={12} />} {enhancing ? 'Enhancing…' : 'Enhance'}</button>
+                    </div>
+                    <div className="pt-1">
+                      <span className="text-[11px] text-muted">AI focus — describe what to feature</span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <input value={focusPrompt} onChange={e => setFocusPrompt(e.target.value)} placeholder="e.g. the pool and skyline" className="flex-1 text-[12px] border border-line rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                        <button onClick={aiFocus} disabled={focusing} className={`${btn} border-brand-600 bg-brand-600 text-white hover:bg-brand-700`}>{focusing ? <Sparkles size={12} className="animate-pulse" /> : <Sparkles size={12} />} {focusing ? '…' : 'Focus'}</button>
+                      </div>
+                      <p className="text-[10px] text-muted mt-1">AI frames the crop from the photo — it doesn’t repaint it.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Photo pool */}
+              <div className="rounded-xl border border-line bg-app/30 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Photos {pool.length ? `(${pool.length})` : ''}</span>
+                  <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-800"><Upload size={12} /> Upload</button>
+                  <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
+                </div>
+                {pool.length === 0 ? <div className={`text-[12px] ${dragOver ? 'text-brand-700' : 'text-muted'}`}>{dragOver ? 'Drop to upload…' : 'No photos yet — upload originals, or this unit has none synced.'}</div> : (
+                  <div className="grid grid-cols-4 gap-1.5 max-h-64 overflow-y-auto">
+                    {pool.map(p => { const used = slots[sel] === p.id; return (
+                      <button key={p.id} onClick={() => assignToSel(p.id)} title={used ? 'In the selected cell' : 'Put in the selected cell'} className={`relative aspect-square rounded-md overflow-hidden border-2 ${used ? 'border-brand-500' : 'border-transparent hover:border-brand-300'}`}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.url} alt="" className="w-full h-full object-cover" />
+                        {overrideUrl[p.id] && <span className="absolute top-0.5 left-0.5 bg-brand-600 text-white rounded px-1 text-[8px] font-bold">E</span>}
+                        {used && <span className="absolute bottom-0.5 right-0.5 bg-brand-600 text-white rounded-full p-0.5"><Check size={9} /></span>}
+                      </button>
+                    ) })}
+                  </div>
+                )}
+                <p className="text-[10px] text-muted mt-1.5">Click a photo to drop it into the selected cell. Uploaded originals give the sharpest hero.</p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </section>
