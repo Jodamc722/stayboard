@@ -135,6 +135,7 @@ export async function GET(req: NextRequest) {
         unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', market2: li ? li.market2 : null,
         dept, type, name: t.name || 'Task', status,
         assignees: ppl.map((p: any) => p && p.name).filter(Boolean),
+        assigneeIds: ppl.map((p: any) => Number(p && p.id)).filter((n: number) => Number.isFinite(n)),
         startedAt: t.started_at || null, finishedAt: t.finished_at || null,
         minutes: t.total_minutes ?? null, reportUrl: t.report_url || null,
         done, running, clocked, late, atRisk, missed, untracked,
