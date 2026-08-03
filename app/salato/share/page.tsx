@@ -3,6 +3,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; verified?: boolean; verifiedAt?: string | null }
 type Data = { ok: boolean; today: string; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
+type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
 const SEEN_KEY = 'salato_share_seen_v1'
 const TABS: { key: 'arrivals' | 'departures' | 'active'; label: string }[] = [
@@ -54,6 +55,39 @@ export default function SalatoShare() {
   const allIds = data ? [...data.arrivals.map(r => 'a' + keyOf(r, 'arrivals')), ...data.departures.map(r => 'd' + keyOf(r, 'departures')), ...data.active.map(r => 'v' + keyOf(r, 'active'))] : []
   const newCount = seenInit.current ? allIds.filter(id => !seen.has(id)).length : 0
   const markSeen = () => { const s = new Set(allIds); setSeen(s); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s))) } catch {} }
+
+  // ---- ID/selfie viewer (share-password gated) ----
+  const [viewRid, setViewRid] = useState<string | null>(null)
+  const [viewData, setViewData] = useState<ViewData | null>(null)
+  const [viewBusy, setViewBusy] = useState(false)
+  const [viewErr, setViewErr] = useState('')
+  const [pwNeeded, setPwNeeded] = useState(false)
+  const [pw, setPw] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
+
+  const fetchView = useCallback(async (rid: string) => {
+    setViewBusy(true); setViewErr('')
+    try {
+      const r = await fetch('/api/public/salato-verify-view?rid=' + encodeURIComponent(rid), { cache: 'no-store' })
+      const j = await r.json()
+      if (r.status === 401 || j.needsPassword) { setPwNeeded(true); setViewBusy(false); return }
+      if (!r.ok || j.ok === false) { setViewErr(j.error || 'Could not load.'); setViewBusy(false); return }
+      setPwNeeded(false); setViewData(j)
+    } catch (e: any) { setViewErr(String(e?.message || e)) } finally { setViewBusy(false) }
+  }, [])
+
+  const openViewer = (rid: string) => { setViewRid(rid); setViewData(null); setViewErr(''); setPwNeeded(false); fetchView(rid) }
+  const closeViewer = () => { setViewRid(null); setViewData(null); setPwNeeded(false); setPw(''); setViewErr('') }
+  const submitPw = async () => {
+    if (!pw.trim() || !viewRid) return
+    setPwBusy(true); setViewErr('')
+    try {
+      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) { setViewErr(j.error || 'Wrong password'); setPwBusy(false); return }
+      setPw(''); setPwBusy(false); await fetchView(viewRid)
+    } catch (e: any) { setViewErr(String(e?.message || e)); setPwBusy(false) }
+  }
 
   return (
     <div className='min-h-screen bg-neutral-100 text-neutral-900'>
@@ -122,7 +156,9 @@ export default function SalatoShare() {
                     {r.verified
                       ? <span className='inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700'><span className='inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-[10px]'>✓</span>Verified{r.verifiedAt ? ' · ' + fmtDate(String(r.verifiedAt).slice(0, 10)) : ''}</span>
                       : <span className='inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700'><span className='inline-flex h-1.5 w-1.5 rounded-full bg-amber-500'></span>Needs verification</span>}
-                    <a href={'/salato/verify/' + r.id} target='_blank' rel='noopener noreferrer' className={'text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ' + (r.verified ? 'border border-neutral-300 text-neutral-700 hover:bg-neutral-50' : 'bg-neutral-900 text-white hover:bg-neutral-800')}>{r.verified ? 'Open' : 'Start verification'}</a>
+                    {r.verified
+                      ? <button onClick={() => r.id && openViewer(r.id)} className='text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 transition-colors'>View ID &amp; selfie</button>
+                      : <a href={'/salato/verify/' + r.id} target='_blank' rel='noopener noreferrer' className='text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 transition-colors'>Start verification</a>}
                   </div>
                 )}
               </div>
@@ -130,6 +166,39 @@ export default function SalatoShare() {
           })}
         </div>
       </div>
+
+      {viewRid && (
+        <div className='fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4' onClick={closeViewer}>
+          <div className='bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto' onClick={e => e.stopPropagation()}>
+            <div className='flex items-center justify-between px-5 py-4 border-b border-neutral-100 sticky top-0 bg-white rounded-t-2xl'>
+              <div className='font-bold'>Verification</div>
+              <button onClick={closeViewer} className='text-neutral-400 hover:text-neutral-700 text-xl leading-none'>×</button>
+            </div>
+            <div className='p-5'>
+              {viewErr && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3'>{viewErr}</div>}
+              {pwNeeded ? (
+                <div>
+                  <p className='text-sm text-neutral-600 mb-3'>Enter the share password to view this guest's ID and selfie.</p>
+                  <input type='password' value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submitPw() }} autoFocus placeholder='Password' className='w-full text-sm border border-neutral-300 rounded-lg px-3 py-2.5 mb-3 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400' />
+                  <button onClick={submitPw} disabled={pwBusy || !pw.trim()} className='w-full rounded-xl bg-neutral-900 text-white font-semibold py-2.5 hover:bg-neutral-800 disabled:opacity-40'>{pwBusy ? 'Unlocking…' : 'Unlock'}</button>
+                </div>
+              ) : viewBusy ? (
+                <div className='text-neutral-400 text-sm py-8 text-center'>Loading…</div>
+              ) : viewData ? (
+                <div className='space-y-4'>
+                  <div className='text-sm'>
+                    <div className='font-semibold text-base'>{viewData.fullName || '—'}</div>
+                    <div className='text-neutral-500'>{viewData.unit || ''}{viewData.signedAt ? ' · signed ' + new Date(viewData.signedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}</div>
+                  </div>
+                  {viewData.idUrl && <div><div className='text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-1'>Government ID</div><a href={viewData.idUrl} target='_blank' rel='noopener noreferrer'><img src={viewData.idUrl} alt='ID' className='w-full rounded-xl border border-neutral-200' /></a></div>}
+                  {viewData.selfieUrl && <div><div className='text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-1'>Selfie</div><a href={viewData.selfieUrl} target='_blank' rel='noopener noreferrer'><img src={viewData.selfieUrl} alt='Selfie' className='w-full max-h-80 object-contain rounded-xl border border-neutral-200 bg-neutral-50' /></a></div>}
+                  {viewData.signatureUrl && <div><div className='text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-1'>Signature</div><img src={viewData.signatureUrl} alt='Signature' className='w-full rounded-xl border border-neutral-200 bg-white' /></div>}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
