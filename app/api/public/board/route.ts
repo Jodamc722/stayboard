@@ -24,6 +24,15 @@ const RES_CODE_FIELD = '693adec2ab73940025856e56'
 const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
 // Any custom field whose NAME contains "code" is an access secret — never dumped in the generic list.
 const isCodeField = (name: string) => /code/i.test(name)
+// A real EXTENSION is signalled only by a DEPARTURE/turnover clean scheduled while the guest is still
+// in-house (their planned checkout clean got overrun). Mid-stay / refresh / linen / strip / inspection /
+// walkthrough / touch-up tasks during a stay are NORMAL and must NEVER be flagged as an extension —
+// flagging those was showing "Extended · do not clean" on guests (e.g. Wahiba) who never extended.
+const isDepartureCleanName = (name: string) => {
+  const n = String(name || '')
+  if (/mid[\s-]?stay|refresh|linen|strip|walk|inspect|touch|trash|check[\s-]?in|arrival/i.test(n)) return false
+  return /depart|turnover|\bturn\b|check[\s-]?out|clean/i.test(n)
+}
 // Internal/tracking fields (QC flags, OTA ids, sync markers) — not useful to a vendor, kept off the board.
 const isInternalField = (name: string) => /sensitive|verified|booking_call|welcome|_id$|confirmation_number|_email_sent|added_to_app|date_of_last|asana|breezeway|glitch/i.test(name)
 function prettyLabel(s: string): string { return String(s || '').replace(/[_/]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()).trim() }
@@ -153,13 +162,15 @@ export async function GET(req: NextRequest) {
     // so a guest can never pile up as 3+ rows. (Real departure + a single extension row IS intended.)
     const resKeyOf = (r: any) => String(r.confirmation_code || '') || (String(r.listing_id) + '|' + str(r.check_in).slice(0, 10) + '|' + str(r.check_out).slice(0, 10))
     const extAdded = new Set()
-    const { data: bz } = await db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,status').eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', today).lte('scheduled_date', end).limit(1000)
+    const { data: bz } = await db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,status,name').eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', today).lte('scheduled_date', end).limit(1000)
     for (const t of (bz || []) as any[]) {
       const lid = String(t.reference_property_id)
       const dd = str(t.scheduled_date).slice(0, 10)
       if (!match[lid] || !dd) continue
       if (depSet[lid + '|' + dd]) continue
       if (/complete|cancel/i.test(str(t.status))) continue
+      // Only a DEPARTURE/turnover clean mid-stay means an extension — skip mid-stay/strip/inspection/etc.
+      if (!isDepartureCleanName(str(t.name))) continue
       // guest still in-house on the day the clean is scheduled => the stay was extended past it
       const stay = live.find((r: any) => String(r.listing_id) === lid && str(r.check_in).slice(0, 10) < dd && str(r.check_out).slice(0, 10) > dd)
       if (!stay) continue
