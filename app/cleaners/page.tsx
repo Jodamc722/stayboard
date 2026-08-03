@@ -77,7 +77,7 @@ export default async function CleanersPage() {
       <div>
         <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 inline-flex items-center gap-1.5"><Sparkles size={13} /> Team</div>
         <h1 className="text-3xl font-extrabold text-ink mt-1">Cleaner KPIs</h1>
-        <p className="text-sm text-muted mt-1">Rolling 90 days from live Breezeway tasks (since {since}). Multi-assigned cleans count for every person on the task.</p>
+        <p className="text-sm text-muted mt-1">Rolling 90 days from live Breezeway tasks (since {since}). Multi-assigned cleans count for every person on the task. <b className="text-ink">QC status</b> is the on-time (same-day) completion tier: ≥95% spot-check · 85–94% inspect · &lt;85% retrain.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Cleans (90d)</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleans}</div></div>
@@ -94,6 +94,7 @@ export default async function CleanersPage() {
               <th className="px-3 py-2.5 font-semibold text-right">Per day</th>
               <th className="px-3 py-2.5 font-semibold text-right">Avg time</th>
               <th className="px-3 py-2.5 font-semibold text-right">Same-day</th>
+              <th className="px-3 py-2.5 font-semibold" title="QC ladder by same-day completion — ≥95% spot-check · 85–94% inspect · <85% retrain">QC status</th>
               <th className="px-3 py-2.5 font-semibold">Hubs</th>
             </tr>
           </thead>
@@ -105,6 +106,7 @@ export default async function CleanersPage() {
                 <td className="px-3 py-2 text-right text-muted">{c.perDay}</td>
                 <td className="px-3 py-2 text-right text-muted">{c.avgMin != null ? c.avgMin + 'm' : String.fromCharCode(8212)}</td>
                 <td className="px-3 py-2 text-right">{c.sameDayPct != null ? <span className={c.sameDayPct >= 95 ? 'text-emerald-700 font-semibold' : c.sameDayPct >= 85 ? 'text-amber-700 font-semibold' : 'text-rose-700 font-semibold'}>{c.sameDayPct}%</span> : <span className="text-muted">{String.fromCharCode(8212)}</span>}</td>
+                <td className="px-3 py-2">{c.sameDayPct == null ? <span className="text-muted">{String.fromCharCode(8212)}</span> : (() => { const t = c.sameDayPct >= 95 ? { l: 'Spot-check', k: 'bg-emerald-50 text-emerald-700 border-emerald-200' } : c.sameDayPct >= 85 ? { l: 'Inspect', k: 'bg-amber-50 text-amber-700 border-amber-200' } : { l: 'Retrain', k: 'bg-rose-50 text-rose-700 border-rose-200' }; return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${t.k}`}>{t.l}</span> })()}</td>
                 <td className="px-3 py-2 text-muted">{c.topHubs}</td>
               </tr>
             ))}
