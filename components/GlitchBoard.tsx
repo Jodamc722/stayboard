@@ -73,6 +73,7 @@ export function GlitchBoard() {
   const [showNew, setShowNew] = useState(false)
   const [open, setOpen] = useState<string>('')
   const [people, setPeople] = useState<{ id: number; name: string; departments: string[] }[]>([])
+  const [refundFor, setRefundFor] = useState('')  // glitch id whose refund logger is open
   const [panel, setPanel] = useState<string>('')  // '<id>:edit' | '<id>:push'
 
   const load = useCallback(async () => {
@@ -128,7 +129,7 @@ export function GlitchBoard() {
                 <span className="text-xs font-semibold uppercase tracking-wide text-ink">{col.label}</span>
                 <span className="text-[11px] font-semibold text-muted">{cards.length}</span>
               </div>
-              <div className="p-2 space-y-2 min-h-[60px]" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) act(id, { action: 'move', status: col.key }) }}>
+              <div className="p-2 space-y-2 min-h-[60px]" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) { act(id, { action: 'move', status: col.key }); if (col.key === 'refund') { setRefundFor(id); setOpen(id) } } }}>
                 {cards.map(g => {
                   const ci = COLS.findIndex(c => c.key === g.status)
                   const isOpen = open === g.id
@@ -147,6 +148,7 @@ export function GlitchBoard() {
                           {(g.photos || []).length > 0 && <span className="text-[9px] text-muted inline-flex items-center gap-0.5"><Camera size={9} />{(g.photos || []).length}</span>}
                           {g.breezeway_task_id && <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200')}>{g.task_status === 'completed' ? 'Task completed' : g.task_status === 'in_progress' ? 'Task in progress' : 'Task not started'}</span>}
                           {(g.refund_approved || 0) > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refund {money(g.refund_approved)}</span>}
+                          {g.status === 'refund' && !(Number(g.refund_approved) > 0) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white" title="This card is in Refund request but no amount has been logged yet">Refund not logged</span>}
                           {(() => { const d = dueState(g.due_date, g.status === 'closed'); return d ? <span className={'text-[9px] font-bold px-1.5 py-0.5 rounded border ' + d.cls}>{d.label}</span> : null })()}
                           {g.assignee && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-0.5"><User2 size={8} />{g.assignee.split(' ')[0]}</span>}
                         </div>
@@ -157,6 +159,9 @@ export function GlitchBoard() {
                       </button>
                       {isOpen && (
                         <div className="px-3 pb-2.5 border-t border-line pt-2 space-y-1.5">
+                          {(refundFor === g.id || (g.status === 'refund' && !(Number(g.refund_approved) > 0))) && (
+                            <RefundLogger id={g.id} total={g.reservation_total ?? null} onDone={amt => { setRefundFor(''); setGlitches(prev => prev.map(x => x.id === g.id ? { ...x, refund_approved: amt } : x)) }} />
+                          )}
                           {g.check_in && <div className="text-[11px] text-muted">Stay {fmtShort(g.check_in)} &rarr; {fmtShort(g.check_out)}{g.reservation_total ? ' · ' + money(g.reservation_total) : ''}{g.guest_phone ? ' · ' + g.guest_phone : ''}{g.guest_email ? ' · ' + g.guest_email : ''}</div>}
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {g.reservation_id && <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-brand-600 hover:underline">Open reservation in Guesty ↗</a>}
@@ -545,6 +550,39 @@ function GlitchComments({ g }: { g: Glitch }) {
         </div>
         {err && <div className="text-[11px] text-rose-700">{err}</div>}
       </div>
+    </div>
+  )
+}
+
+// LOG THE REFUND at the moment of the decision. Dropping a card into "Refund request" opens this,
+// and a card sitting in that column with no amount shows it until someone answers. Amount 0 is a
+// real answer ("declined") — the point is that the question never goes unanswered.
+function RefundLogger({ id, total, onDone }: { id: string; total: number | null; onDone: (amt: number) => void }) {
+  const [amt, setAmt] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const save = async () => {
+    const n = Number(amt)
+    if (!Number.isFinite(n) || n < 0) { setErr('Enter the refund amount (0 = declined).'); return }
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action: 'refund', amount: n, note }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Could not log it'); setBusy(false); return }
+      onDone(n)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="rounded-lg border border-amber-300 bg-amber-50/60 p-2 space-y-1.5">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-amber-800">Log the refund decision{total ? ' \u00b7 stay total ' + '$' + Math.round(Number(total)).toLocaleString() : ''}</div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <input value={amt} onChange={e => setAmt(e.target.value)} inputMode="decimal" placeholder="Amount $ (0 = declined)" className="text-xs border border-amber-300 rounded px-2 py-1.5 bg-white w-40" />
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Why / how (OTA credit, card refund\u2026)" className="text-xs border border-line rounded px-2 py-1.5 bg-white flex-1 min-w-[140px]" />
+        <button onClick={save} disabled={busy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Saving\u2026' : 'Log it'}</button>
+      </div>
+      {err && <div className="text-[11px] text-rose-700">{err}</div>}
     </div>
   )
 }
