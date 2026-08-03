@@ -91,9 +91,17 @@ export async function GET(req: NextRequest) {
     let raw: any[] = []
     let truncated = false
     const failed: string[] = []
-    for (let m = firstMonth; m <= thisMonth; m = addMonths(m, 1)) {
+
+    const monthKeys: string[] = []
+    for (let m = firstMonth; m <= thisMonth; m = addMonths(m, 1)) monthKeys.push(m)
+
+    // Months run CONCURRENTLY. Sequentially, thirteen months of `raw->money` extraction ran past
+    // the function's own 60s ceiling even though each month alone is fine; in parallel the whole
+    // year costs about what one month costs.
+    const perMonth = await Promise.all(monthKeys.map(async (m) => {
       const lo = m + '-01T00:00:00.000Z'
       const hi = addMonths(m, 1) + '-01T00:00:00.000Z'
+      const acc: any[] = []
       try {
         for (let i = 0; i < PAGES_PER_MONTH; i++) {
           const { data, error } = await db
@@ -105,11 +113,17 @@ export async function GET(req: NextRequest) {
             .range(i * 1000, i * 1000 + 999)
           if (error) throw new Error(error.message)
           if (!data || data.length === 0) break
-          raw = raw.concat(data)
+          for (const d of data) acc.push(d)
           if (data.length < 1000) break
           if (i === PAGES_PER_MONTH - 1) truncated = true
         }
-      } catch { failed.push(m) }
+      } catch { return { m, rows: [] as any[], ok: false } }
+      return { m, rows: acc, ok: true }
+    }))
+
+    for (const r of perMonth) {
+      if (!r.ok) { failed.push(r.m); continue }
+      raw = raw.concat(r.rows)
     }
 
     const byMonth: Record<string, Month> = {}
