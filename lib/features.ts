@@ -27,6 +27,7 @@ export const FEATURES: Feature[] = [
   { key: 'audits',        label: 'Audits',            path: '/audits' },
   { key: 'orders',        label: 'Orders',            path: '/orders' },
   { key: 'requests',      label: 'Requests',          path: '/requests' },
+  { key: 'vault',         label: 'Vault',             path: '/vault' },
   { key: 'buildings',     label: 'Properties',        path: '/buildings' },
   { key: 'health',        label: 'Health Score',      path: '/health' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue' },
