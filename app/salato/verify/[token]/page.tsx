@@ -35,7 +35,7 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   const rid = params.token
   const [data, setData] = useState<Load | null>(null)
   const [fullName, setFullName] = useState('')
-  const [initials, setInitials] = useState('')
+  const [ruleInitials, setRuleInitials] = useState<Record<string, string>>({})
   const [sig, setSig] = useState('')
   const [idPhoto, setIdPhoto] = useState('')
   const [selfie, setSelfie] = useState('')
@@ -54,7 +54,7 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
     try {
       const res = await fetch('/api/public/salato-verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rid, fullName: fullName.trim(), initials: initials.trim(), signature: sig, idPhoto, selfie }),
+        body: JSON.stringify({ rid, fullName: fullName.trim(), ruleInitials, signature: sig, idPhoto, selfie }),
       })
       const j = await res.json()
       if (!res.ok || j.ok === false) { setErr(j.error || 'Something went wrong. Please try again.'); setBusy(false); return }
@@ -91,7 +91,9 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   )
 
   const rules = data.rules || []
-  const canSubmit = !!fullName.trim() && !!initials.trim() && !!sig && !!idPhoto && !!selfie && !busy
+  const initialedCount = rules.filter(r => !!(ruleInitials[r.id] || '').trim()).length
+  const allInitialed = rules.length > 0 && initialedCount === rules.length
+  const canSubmit = !!fullName.trim() && allInitialed && !!sig && !!idPhoto && !!selfie && !busy
   const card = 'rounded-2xl border border-neutral-200 bg-white shadow-sm p-5 mb-4'
   const primaryBtn = 'w-full rounded-xl bg-neutral-900 text-white font-semibold py-3.5 hover:bg-neutral-800 transition-colors disabled:opacity-40'
   const Detail = ({ label, value }: { label: string; value: string }) => (
@@ -119,24 +121,30 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
       {/* House rules (read-only) */}
       <div className={card}>
         <div className="text-base font-bold mb-1">House &amp; building rules</div>
-        <p className="text-xs text-neutral-500 mb-3">Please review our house &amp; building rules. By initialing and signing below, you agree to them for the duration of your stay.</p>
-        <div className="max-h-64 overflow-y-auto pr-1 space-y-3 border border-neutral-100 rounded-xl p-3 bg-neutral-50">
-          {rules.map((r, i) => (
-            <div key={r.id}>
-              <div className="text-sm font-semibold">{i + 1}. {r.title}</div>
-              <div className="text-xs text-neutral-600 mt-0.5">{r.body}</div>
-            </div>
-          ))}
+        <p className="text-xs text-neutral-500 mb-3">Please read each rule and add your initials next to it. Initialing confirms you've read and agree to that rule for the duration of your stay.</p>
+        <div className="space-y-2.5">
+          {rules.map((r, i) => {
+            const val = ruleInitials[r.id] || ''
+            const ok = !!val.trim()
+            return (
+              <div key={r.id} className={'rounded-xl border p-3 flex items-start gap-3 ' + (ok ? 'border-emerald-200 bg-emerald-50/50' : 'border-neutral-200 bg-neutral-50')}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold">{i + 1}. {r.title}</div>
+                  <div className="text-xs text-neutral-600 mt-0.5">{r.body}</div>
+                </div>
+                <div className="shrink-0 text-center">
+                  <input value={val} aria-label={'Initials for rule ' + (i + 1)} placeholder="INIT"
+                    autoCapitalize="characters" autoComplete="off"
+                    onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z\s.]/g, '').slice(0, 6); setRuleInitials(prev => Object.assign({}, prev, { [r.id]: v })) }}
+                    className={'w-16 rounded-lg border px-2 py-2 text-xs tracking-widest text-center uppercase ' + (ok ? 'border-emerald-300 text-emerald-800' : 'border-neutral-300')} />
+                  <div className={'text-[9px] mt-0.5 ' + (ok ? 'text-emerald-600 font-semibold' : 'text-neutral-400')}>{ok ? '✓ Initialed' : 'Initial'}</div>
+                </div>
+              </div>
+            )
+          })}
         </div>
-        <div className="mt-4 pt-4 border-t border-neutral-100">
-          <label className="text-[11px] font-medium text-neutral-500">Your initials</label>
-          <p className="text-xs text-neutral-500 mb-2">Add your initials to confirm you've read and agree to the house &amp; building rules above.</p>
-          <div className="flex items-center gap-2">
-            <input value={initials} onChange={e => setInitials(e.target.value.toUpperCase().replace(/[^A-Z\s.]/g, '').slice(0, 6))}
-              placeholder="e.g. JD" autoCapitalize="characters" autoComplete="off"
-              className={'w-28 rounded-lg border px-3 py-2 text-sm tracking-[0.25em] text-center uppercase ' + (initials.trim() ? 'border-emerald-300' : 'border-neutral-300')} />
-            {initials.trim() ? <span className="text-[11px] font-medium text-emerald-700">✓ Initialed</span> : null}
-          </div>
+        <div className={'text-xs font-medium mt-3 ' + (allInitialed ? 'text-emerald-700' : 'text-neutral-500')}>
+          {allInitialed ? '✓ All rules initialed' : (initialedCount + ' of ' + rules.length + ' rules initialed')}
         </div>
       </div>
 
