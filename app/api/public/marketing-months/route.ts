@@ -74,9 +74,14 @@ export async function GET(req: NextRequest) {
     const thisMonth = today.slice(0, 7)
     const firstMonth = addMonths(thisMonth, -(back - 1))
 
-    // The mirror's coverage floor is WHEN THE MIRROR STARTED WRITING — min(synced_at) — not the
-    // earliest stay it happens to hold. A single long stay that was still running when the sync
-    // began would otherwise vouch for months of history the mirror never actually saw.
+    // COVERAGE FLOOR — the first month whose bookings we can actually vouch for.
+    //
+    // Default: when the mirror started writing, min(synced_at). NOT the earliest stay it holds —
+    // one long stay still running at sync time would otherwise vouch for months it never saw.
+    //
+    // But a backfill (/api/sync/reservations-backfill) imports real history by creation date, and
+    // those rows carry TODAY's synced_at. So a recorded backfill date wins: it says "everything
+    // from here forward was pulled straight from Guesty and is complete."
     let floorMonth = ''
     try {
       const { data: fl } = await db
@@ -88,6 +93,11 @@ export async function GET(req: NextRequest) {
       const row: any = Array.isArray(fl) ? fl[0] : null
       if (row && row.synced_at) floorMonth = etDay(str(row.synced_at)).slice(0, 7)
     } catch { /* no floor detected — every month is then reported as complete */ }
+    try {
+      const { data: bf } = await db.from('app_settings').select('value').eq('key', 'reservations_backfilled_from').maybeSingle()
+      const back = bf && bf.value ? String(bf.value).slice(0, 7) : ''
+      if (back && (!floorMonth || back < floorMonth)) floorMonth = back
+    } catch { /* no marker — fall back to the sync floor */ }
 
     // ONE QUERY PER MONTH, not one for the whole year. Pulling `raw->money` across a year of
     // bookings in a single statement blew Postgres's statement timeout (the JSONB extraction is
