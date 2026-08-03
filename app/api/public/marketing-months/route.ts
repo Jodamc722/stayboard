@@ -4,6 +4,13 @@
 // "is marketing trending up across the year" view; the main report answers "what happened in this
 // window". Loaded separately from the board so the board never waits on a year of rows.
 //
+// COUNTS ONLY, ON PURPOSE. Revenue lives in `raw->money` (a JSONB extraction), and pulling it
+// across a year of bookings blew Postgres's statement timeout no matter how the work was sliced —
+// sequential ran past the function ceiling, parallel made the months cancel each other. Counts
+// come from plain indexed columns and the whole year answers in about a second. Revenue for any
+// single month is one click away: pick that month in the range picker and the main report
+// computes it on the same net-accommodation basis as everything else.
+//
 // HONESTY GUARD: the reservations mirror only ever pulled stays checking out from ~3 days before
 // its first sync, so a booking made long ago for a stay that already ended is simply not in the
 // table. Rather than draw a flattering hockey stick out of missing history, every month earlier
@@ -13,7 +20,7 @@ import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
-import { bucketFor, familyFor, stateFor, accomOf, num, etDay } from '@/lib/marketing'
+import { bucketFor, familyFor, stateFor, etDay } from '@/lib/marketing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -25,13 +32,10 @@ type Month = {
   won: number          // confirmed / in house / stayed
   canceled: number
   pending: number      // open inquiries
-  revenue: number      // net accommodation on won bookings
   direct: number
-  directRev: number
   manual: number
   owner: number
   ota: number
-  otaRev: number
   partial: boolean
 }
 
@@ -87,8 +91,9 @@ export async function GET(req: NextRequest) {
     // bookings in a single statement blew Postgres's statement timeout (the JSONB extraction is
     // the expensive part); a month at a time is the same volume the main report already handles
     // comfortably. A month that still fails is reported as failed rather than taking the page down.
-    const cols = 'created_at, source, status, nights, money:raw->money'
-    const PAGES_PER_MONTH = 6
+    // Plain indexed columns only — no JSONB. One pass over the whole span, paged.
+    const cols = 'created_at, source, status'
+    const MAX_PAGES = 40
     let raw: any[] = []
     let truncated = false
     const failed: string[] = []
@@ -96,62 +101,31 @@ export async function GET(req: NextRequest) {
     const monthKeys: string[] = []
     for (let m = firstMonth; m <= thisMonth; m = addMonths(m, 1)) monthKeys.push(m)
 
-    // Months run a FEW AT A TIME. All thirteen at once made Postgres cancel over half of them on
-    // statement timeout (the `raw->money` extraction is heavy and they compete); one at a time ran
-    // past this function's own 60s ceiling. Three in flight is the band where every month lands.
-    // Each month gets one retry, because a timeout here is contention, not a broken query.
-    const CONCURRENCY = 3
-    const pullMonth = async (m: string): Promise<any[]> => {
-      const lo = m + '-01T00:00:00.000Z'
-      const hi = addMonths(m, 1) + '-01T00:00:00.000Z'
-      const acc: any[] = []
-      for (let i = 0; i < PAGES_PER_MONTH; i++) {
+    const loIso = firstMonth + '-01T00:00:00.000Z'
+    try {
+      for (let i = 0; i < MAX_PAGES; i++) {
         const { data, error } = await db
           .from('guesty_reservations')
           .select(cols)
-          .gte('created_at', lo)
-          .lt('created_at', hi)
+          .gte('created_at', loIso)
           .order('created_at', { ascending: false })
           .range(i * 1000, i * 1000 + 999)
         if (error) throw new Error(error.message)
         if (!data || data.length === 0) break
-        for (const d of data) acc.push(d)
+        for (const d of data) raw.push(d)
         if (data.length < 1000) break
-        if (i === PAGES_PER_MONTH - 1) truncated = true
+        if (i === MAX_PAGES - 1) truncated = true
       }
-      return acc
-    }
-
-    let cursor = 0
-    const collected: { m: string; rows: any[]; ok: boolean }[] = []
-    const worker = async () => {
-      while (true) {
-        const idx = cursor++
-        if (idx >= monthKeys.length) return
-        const m = monthKeys[idx]
-        try {
-          collected.push({ m, rows: await pullMonth(m), ok: true })
-        } catch {
-          try { collected.push({ m, rows: await pullMonth(m), ok: true }) }
-          catch { collected.push({ m, rows: [], ok: false }) }
-        }
-      }
-    }
-    const workers: Promise<void>[] = []
-    for (let i = 0; i < Math.min(CONCURRENCY, monthKeys.length); i++) workers.push(worker())
-    await Promise.all(workers)
-
-    for (const r of collected) {
-      if (!r.ok) { failed.push(r.m); continue }
-      raw = raw.concat(r.rows)
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e && e.message ? e.message : e).slice(0, 300) }, { status: 500 })
     }
 
     const byMonth: Record<string, Month> = {}
     const months: Month[] = []
     for (let m = firstMonth; m <= thisMonth; m = addMonths(m, 1)) {
       const row: Month = {
-        m, created: 0, won: 0, canceled: 0, pending: 0, revenue: 0,
-        direct: 0, directRev: 0, manual: 0, owner: 0, ota: 0, otaRev: 0,
+        m, created: 0, won: 0, canceled: 0, pending: 0,
+        direct: 0, manual: 0, owner: 0, ota: 0,
         partial: floorMonth ? m < floorMonth : false,
       }
       byMonth[m] = row
@@ -169,13 +143,11 @@ export async function GET(req: NextRequest) {
       row.created += 1
       if (state === 'canceled') { row.canceled += 1; continue }
       if (state === 'pending') { row.pending += 1; continue }
-      const accom = accomOf(x.money || null)
       row.won += 1
-      row.revenue += accom
-      if (fam === 'direct') { row.direct += 1; row.directRev += accom }
+      if (fam === 'direct') { row.direct += 1 }
       else if (fam === 'manual') { row.manual += 1 }
       else if (fam === 'owner') { row.owner += 1 }
-      else { row.ota += 1; row.otaRev += accom }
+      else { row.ota += 1 }
     }
 
     for (const m of failed) { const row = byMonth[m]; if (row) row.failed = true }
