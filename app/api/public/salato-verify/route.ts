@@ -80,6 +80,9 @@ export async function POST(req: NextRequest) {
 
     // Name is auto-filled from the reservation; fall back to it if the client didn't send one.
     const fullName = (str(body?.fullName).trim() || str(info.guestName).trim()).slice(0, 120)
+    // Initials on the house & building rules — a required acknowledgement of the rules section.
+    const initials = str(body?.initials).trim().slice(0, 12)
+    if (!initials) return NextResponse.json({ ok: false, error: 'Please initial the house & building rules.' }, { status: 400 })
 
     const sig = decodeImage(str(body?.signature))
     const idp = decodeImage(str(body?.idPhoto))
@@ -103,7 +106,7 @@ export async function POST(req: NextRequest) {
 
     const record: any = {
       status: 'verified', rid, unit: info.unit, guestFirst: info.guestFirst,
-      fullName, rulesVersion: SALATO_RULES_VERSION, rulesAcknowledged: true,
+      fullName, initials, rulesVersion: SALATO_RULES_VERSION, rulesAcknowledged: true,
       idPath, selfiePath, signaturePath,
       signedAt: new Date().toISOString(),
       pushedToGuesty: false,
@@ -124,7 +127,7 @@ export async function POST(req: NextRequest) {
           const existing = live.find(isNotes)
           const prior = existing && typeof existing.value === 'string' ? existing.value : ''
           const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-          const line = '[' + stamp + '] ✅ In-person verification completed — ' + fullName + '. View ID, selfie & signature: ' + link
+          const line = '[' + stamp + '] ✅ In-person verification completed — ' + fullName + ' (rules initialed: ' + initials + '). View ID, selfie & signature: ' + link
           const newNotes = prior ? prior + '\n' + line : line
           const notesId = existing ? (fieldIdOf(existing) || RES_NOTES_FIELD) : RES_NOTES_FIELD
           const w = await writeCustomFields(rid, token, [{ fieldId: notesId, value: newNotes }])
