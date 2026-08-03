@@ -1,10 +1,18 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban, RefreshCw } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
 
 const SIGN = '— Stay Hospitality'
+
+function agoLabel(ts: number): string {
+  const m = Math.floor((Date.now() - ts) / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return m + 'm ago'
+  const h = Math.floor(m / 60)
+  return h < 24 ? h + 'h ago' : Math.floor(h / 24) + 'd ago'
+}
 
 // Build a reply tailored to what the guest actually mentioned (no fault admission, warm, specific).
 function draftReply(r: Review): string {
@@ -67,16 +75,32 @@ export function ReviewsPanel() {
   const [err, setErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [dismissedLocal, setDismissedLocal] = useState<Record<string, boolean>>({})
+  const [loadedAt, setLoadedAt] = useState<number | null>(null)
+
+  // LOADS EVERY TIME THE PAGE IS OPENED, and again whenever the tab comes back into view.
+  // `cache: 'no-store'` matters: without it the browser can serve its own cached copy of
+  // /api/reviews, so a review replied to on another screen keeps showing as unanswered.
+  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts || !opts.quiet) setS(prev => ({ ...prev, loading: true }))
+    setErr(null)
+    try {
+      const d = await (await fetch('/api/reviews', { cache: 'no-store' })).json()
+      const reviews: Review[] = d.reviews || []
+      setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error })
+      setLoadedAt(Date.now())
+      // No template placeholders — drafts stay empty until the AI writes the real one.
+    } catch (e: any) {
+      setS({ loading: false, error: String((e && e.message) || e) })
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    fetch('/api/reviews').then(r => r.json())
-      .then(d => {
-        const reviews: Review[] = d.reviews || []
-        setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error })
-        // No template placeholders — drafts stay empty until the AI writes the real one.
-      })
-      .catch(e => setS({ loading: false, error: String(e) }))
-  }, [])
+    const onVis = () => { if (document.visibilityState === 'visible') load({ quiet: true }) }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [load])
 
   // Auto-drafting disabled: drafts are written on demand via the AI buttons below.
 
@@ -203,7 +227,16 @@ export function ReviewsPanel() {
       <div className="px-4 py-3 border-b border-line">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-ink text-sm flex items-center gap-1.5"><MessageSquareWarning size={14} className="text-brand-600" /> Reviews</h2>
-          <span className="text-[11px] text-muted">Live from Guesty</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted">
+              {s.loading ? 'Loading…' : loadedAt ? 'Updated ' + agoLabel(loadedAt) : 'Live from Guesty'}
+            </span>
+            <button onClick={() => load()} disabled={s.loading}
+              title="Pull the review list again"
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app hover:text-ink disabled:opacity-50">
+              <RefreshCw size={12} className={s.loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-1 mt-2 flex-wrap">
           <button onClick={() => setTab('needs')}
@@ -261,7 +294,10 @@ export function ReviewsPanel() {
       {s.loading ? (
         <div className="px-4 py-8 text-center text-sm text-muted">Loading reviews from Guesty…</div>
       ) : s.error ? (
-        <div className="px-4 py-6 text-center text-sm text-muted">Couldn’t load reviews ({String(s.error).slice(0, 80)}). Reload to retry.</div>
+        <div className="px-4 py-6 text-center text-sm text-muted">
+          Couldn&rsquo;t load reviews ({String(s.error).slice(0, 80)}).
+          <button onClick={() => load()} className="ml-1.5 font-semibold text-brand-700 underline">Try again</button>
+        </div>
       ) : tab === 'replied' ? (
         replied.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted">No replied reviews yet.</div>
