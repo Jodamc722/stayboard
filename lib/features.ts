@@ -31,6 +31,7 @@ export const FEATURES: Feature[] = [
   { key: 'health',        label: 'Health Score',      path: '/health' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue' },
   { key: 'channels',      label: 'Channels',          path: '/channels' },
+  { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners' },
   { key: 'labor',         label: 'Labor',             path: '/labor' },
@@ -50,7 +51,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'channels', 'reports', 'health', 'buildings', 'listings'] },
+    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'buildings', 'listings'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
