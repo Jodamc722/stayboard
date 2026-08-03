@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { currentSharePassword, currentAdminPassword } from '@/lib/shareAuth'
+import { currentSharePassword, currentAdminPassword, currentMarketingPassword } from '@/lib/shareAuth'
 import { isSuperadmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -17,6 +17,11 @@ const LINKS = [
   { v: 'garden-guide', label: 'The Garden - guest guide (public)', path: '/guide/garden' },
 ]
 
+// Links on their OWN password (not the vendor share password).
+const MARKETING_LINKS = [
+  { v: 'marketing-report', label: 'Direct bookings (marketing partners)', path: '/report/marketing' },
+]
+
 export async function GET() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -25,7 +30,8 @@ export async function GET() {
   const adminCur = await currentAdminPassword()
   const adminSet = !!adminCur
   // The admin password itself is visible ONLY to the Super Admin account (Jon).
-  const payload: Record<string, any> = { ok: true, password, adminSet, links: LINKS }
+  const marketing = await currentMarketingPassword()
+  const payload: Record<string, any> = { ok: true, password, adminSet, links: LINKS, marketingLinks: MARKETING_LINKS, marketingSet: !!marketing, marketingPassword: marketing }
   if (isSuperadmin(user.email)) payload.adminPassword = adminCur
   return NextResponse.json(payload)
 }
@@ -44,6 +50,14 @@ export async function POST(req: NextRequest) {
       const { error } = await db.from('share_settings').upsert({ id: 2, password: ap, updated_at: new Date().toISOString() })
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true, adminSet: true })
+    }
+    // MARKETING password (row id=3) — the partner-facing direct-booking report only
+    if (body.marketingPassword !== undefined) {
+      const mp = String(body.marketingPassword || '').trim()
+      if (mp.length < 4) return NextResponse.json({ ok: false, error: 'Marketing password must be at least 4 characters.' }, { status: 400 })
+      const { error } = await db.from('share_settings').upsert({ id: 3, password: mp, updated_at: new Date().toISOString() })
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, marketingSet: true, marketingPassword: mp })
     }
     const password = String(body.password || '').trim()
     if (password.length < 4) return NextResponse.json({ ok: false, error: 'Password must be at least 4 characters.' }, { status: 400 })
