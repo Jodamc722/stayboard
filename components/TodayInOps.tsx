@@ -9,7 +9,7 @@ import CommentThread from '@/components/CommentThread'
 import RowMenu, { type RowAction } from '@/components/RowMenu'
 import { clusterAreas } from '@/lib/geo-areas'
 
-type Task = { id: string; listingId: string; unit: string; market: string; market2?: string | null; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
+type Task = { id: string; listingId: string; unit: string; market: string; market2?: string | null; dept: string; type: string; name: string; status: string; assignees: string[]; assigneeIds?: number[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
 type Qc = { issue: string; status: string; reportUrl: string | null }
 type Unit = { listingId: string; unit: string; market: string; market2?: string | null; fullTasks?: Task[]; guestOut: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null; arrivingGuest?: string | null; qc: Qc[]; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; openTasks: number; untracked?: boolean; guestyOnly?: boolean; city?: string | null; address?: string | null; bedrooms?: number | null; building?: string | null; lat?: number | null; lng?: number | null }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked?: number }
@@ -115,6 +115,7 @@ export function TodayInOps() {
   // so the team can talk about a task in the app and get the replies as notifications.
   const [cmtFor, setCmtFor] = useState('')
   const [moveFor, setMoveFor] = useState('')  // taskId whose move-day panel is open
+  const [glActFor, setGlActFor] = useState('')  // glitch (task) id whose act-on-it panel is open
   const [cmtCounts, setCmtCounts] = useState<Record<string, number>>({})
   // Proactive unit signals: overdue Breezeway work, bad recent review, upkeep that has aged out.
   const [sig, setSig] = useState<Record<string, any>>({})
@@ -483,8 +484,10 @@ export function TodayInOps() {
                   {glStage[g.id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200 shrink-0">{glStage[g.id]}</span>}
                   <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + (g.running ? 'bg-sky-50 text-sky-700 border-sky-200' : (g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>{g.running ? 'In progress' : 'Open' + (g.ageDays ? ' \u00b7 ' + g.ageDays + 'd' : '')}</span>
                   <span className={'text-xs shrink-0 ' + (g.unassigned ? 'font-medium text-rose-700' : 'text-muted')}>{g.unassigned ? 'Unassigned' : (g.assignees || []).join(', ')}</span>
+                  <button onClick={() => setGlActFor(glActFor === g.id ? '' : g.id)} className={'text-xs font-semibold px-2 py-1 rounded-lg border shrink-0 ' + (glActFor === g.id ? 'bg-ink text-white border-ink' : 'bg-white border-line hover:bg-app')} title="Assign it, make it urgent, or message the crew \u2014 without leaving the board">{glActFor === g.id ? 'Close' : 'Act'}</button>
                   <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0" title="Open the admin task in Breezeway \u2014 edit, assign, check">admin</a>
                   {g.reportUrl && <a href={g.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0" title="View the field report">report</a>}
+                  {glActFor === g.id && <GlitchAct g={g} people={people} onChanged={() => { fetch('/api/ops-today/glitches' + (showOlder ? '?all=1' : ''), { cache: 'no-store' }).then(r => r.json()).then(setGl).catch(() => {}) }} />}
                 </div>
               ))}
             </div>
@@ -1049,33 +1052,61 @@ function AddTask({ listingId, unit, date, onDone }: { listingId: string; unit: s
 
 // Assign straight from the board — pick a person and it writes to Breezeway immediately.
 // Roster is filtered to people in that task's department (or with no department set).
+// CREW EDITOR. Breezeway's assignments field REPLACES the whole list, so the old single-select
+// silently kicked person A off the task when you added person B — and offered no way to unassign
+// at all. This one always sends the FULL crew: current people as chips (× removes), typing adds.
 function Assign({ task, people, onDone }: { task: Task; people: Person[]; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const opts = people.filter(p => !p.departments || p.departments.length === 0 || p.departments.indexOf(task.dept) >= 0)
-  const assign = async (id: number) => {
-    if (!Number.isFinite(id)) return
-    setBusy(true); setErr('')
+  const [note, setNote] = useState('')
+  // ids from the API; a person the roster knows only by name still gets an id via name-match
+  const currentIds = (): number[] => {
+    const ids = (task.assigneeIds || []).filter(n => Number.isFinite(n))
+    if (ids.length >= task.assignees.length) return ids
+    const byName = task.assignees.map(nm => { const p = people.find(x => x.name === nm); return p ? p.id : null }).filter((x): x is number => x != null)
+    return Array.from(new Set(ids.concat(byName)))
+  }
+  const save = async (ids: number[], saying: string) => {
+    setBusy(true); setErr(''); setNote('')
     try {
-      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, assigneeIds: [id] }) })
+      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, assigneeIds: ids }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Assign failed'); setBusy(false); return }
+      // the server READ THE TASK BACK from Breezeway — this is who is really on it now
+      setNote(Array.isArray(j.assignees) && j.assignees.length ? saying + ' \u2713 \u2014 now: ' + j.assignees.join(', ') : saying + ' \u2713 \u2014 nobody assigned')
       onDone()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
-  const cur = task.assignees.length ? task.assignees.join(', ') : 'Unassigned'
+  const add = (id: number, name: string) => {
+    const ids = currentIds()
+    if (ids.indexOf(id) >= 0) return
+    save(ids.concat([id]), 'Added ' + name)
+  }
+  const remove = (name: string) => {
+    const p = people.find(x => x.name === name)
+    const ids = currentIds().filter(id => !p || id !== p.id)
+    if (!p && task.assignees.length > 1) { setErr('Cannot match ' + name + ' in the roster \u2014 use Breezeway'); return }
+    save(p ? ids : [], 'Removed ' + name)
+  }
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-1 flex-wrap">
+      {task.assignees.map(nm => (
+        <span key={nm} className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full border border-line bg-white text-ink">
+          {nm}
+          <button disabled={busy} onClick={() => remove(nm)} title={'Take ' + nm + ' off this task'} className="text-muted hover:text-rose-600 disabled:opacity-30 leading-none">{'\u00d7'}</button>
+        </span>
+      ))}
       <input
         list="ppl-all"
         defaultValue=""
         disabled={busy}
-        placeholder={busy ? 'Saving…' : cur}
-        onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(p.id) } }}
-        title={'Search a name to assign this ' + task.dept + ' task'}
-        className={'text-xs rounded border px-2 py-1.5 bg-white w-[150px] ' + (task.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-amber-300 text-amber-800 placeholder:text-amber-800 font-medium')}
+        placeholder={busy ? 'Saving\u2026' : task.assignees.length ? '+ add person' : 'Unassigned \u2014 add\u2026'}
+        onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; add(p.id, p.name) } }}
+        title={task.assignees.length ? 'Add another person \u2014 the current crew stays on it' : 'Search a name to assign this ' + task.dept + ' task'}
+        className={'text-xs rounded border px-2 py-1 bg-white ' + (task.assignees.length ? 'border-line text-ink w-[110px]' : 'border-amber-300 text-amber-800 placeholder:text-amber-800 font-medium w-[150px]')}
       />
+      {note && <span className="text-[10px] text-emerald-700">{note}</span>}
       {err && <span className="text-[10px] text-rose-700">{err}</span>}
     </span>
   )
@@ -1120,6 +1151,51 @@ function MoveTask({ task, onDone, onClose }: { task: Task; onDone: () => void; o
       </div>
       <div className="mt-1 text-[10px] text-muted">Crossed-out days have a guest in the unit &mdash; the server refuses those even if clicked.</div>
       {err && <div className="mt-1 text-[11px] text-rose-700">{err}</div>}
+    </div>
+  )
+}
+
+// ACT ON A GUEST ISSUE IN PLACE — the panel was read-only, so every escalation meant leaving the
+// board for Breezeway. Assign uses the verified crew endpoint; Urgent raises the Breezeway
+// priority; the comment box is the same three-way thread as every task row.
+function GlitchAct({ g, people, onChanged }: { g: any; people: Person[]; onChanged: () => void }) {
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [showCmt, setShowCmt] = useState(false)
+  const assign = async (id: number, name: string) => {
+    setBusy('assign'); setErr(''); setMsg('')
+    try {
+      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: g.id, assigneeIds: [id] }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Assign failed'); setBusy(''); return }
+      setMsg('Assigned to ' + (Array.isArray(j.assignees) && j.assignees.length ? j.assignees.join(', ') : name) + ' \u2713')
+      onChanged()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  const urgent = async () => {
+    setBusy('urgent'); setErr(''); setMsg('')
+    try {
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: g.id, action: 'priority', level: 'urgent' }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(j.error || 'Could not change the priority'); setBusy(''); return }
+      setMsg('Marked URGENT in Breezeway \u2713')
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  return (
+    <div className="w-full mt-1.5 rounded-lg border border-line bg-app/40 p-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input list="ppl-all" defaultValue="" disabled={busy === 'assign'} placeholder={busy === 'assign' ? 'Saving\u2026' : 'Assign to\u2026'}
+          onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(p.id, p.name) } }}
+          className="text-xs rounded border border-line px-2 py-1.5 bg-white w-[160px]" />
+        <button onClick={urgent} disabled={busy === 'urgent'} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-40" title="Raise the Breezeway priority to URGENT so it jumps the crew's queue">{busy === 'urgent' ? 'Saving\u2026' : 'Make urgent'}</button>
+        <button onClick={() => setShowCmt(!showCmt)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border ' + (showCmt ? 'bg-ink text-white border-ink' : 'border-line bg-white hover:bg-app')} title="Comment on this issue \u2014 posts to the app thread and the Breezeway crew thread">{showCmt ? 'Hide comments' : 'Comment'}</button>
+        {msg && <span className="text-[11px] text-emerald-700">{msg}</span>}
+        {err && <span className="text-[11px] text-rose-700">{err}</span>}
+      </div>
+      {showCmt && <div className="mt-2"><CommentThread type="task" id={String(g.id)} label={g.unit + ' \u2014 ' + g.issue} link="/plan" taskId={String(g.id)} /></div>}
     </div>
   )
 }
