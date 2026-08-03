@@ -91,14 +91,24 @@ async function createTaskForItem(db: any, item: any, opts: { department?: string
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
+  // WALK AUTO-DISPATCH: the mobile walk finishes with no session, only its share code. A valid
+  // code may batch-dispatch ITS OWN audit's work items — the same authority the code already has
+  // to create those items in the first place. Everything else still requires a login.
+  let auditId = String(body.auditId || '')
+  const code = String(body.code || '').trim()
+  if (!user) {
+    if (!code || !/^[a-z0-9]{8,20}$/i.test(code)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const { data: au } = await db.from('property_audits').select('id').eq('share_code', code).limit(1)
+    if (!au || !au[0]) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    auditId = String(au[0].id)          // the code decides the audit — body.auditId is ignored
+    body.itemIds = undefined            // and only the whole-audit batch path is open to it
+  }
+  if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const cache: Record<string, any> = {}
 
   // BATCH: create a task for every open actionable item on an audit (default kinds = maintenance + clean).
-  const auditId = String(body.auditId || '')
   if (auditId || Array.isArray(body.itemIds)) {
     let items: any[] = []
     if (Array.isArray(body.itemIds) && body.itemIds.length) {
@@ -121,7 +131,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, created, failed, results })
   }
 
-  // SINGLE item.
+  // SINGLE item — session-only (managers picking department/priority/assignee).
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const itemId = String(body.itemId || '')
   if (!itemId) return NextResponse.json({ error: 'itemId or auditId required' }, { status: 400 })
   const { data: rows } = await db.from('audit_items').select('*').eq('id', itemId).limit(1)
