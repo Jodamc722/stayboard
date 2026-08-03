@@ -181,10 +181,34 @@ export async function GET(req: NextRequest) {
     for (const r of upcoming) r.doorCode = null
     for (const r of departures) { if ((r.cleanDay || r.checkOut) !== today || r.extended) r.doorCode = null }
 
+    // Salato in-person verification: attach status + (this board is already password-gated) short-lived
+    // signed links to the ID / selfie / signature, so the front desk can view them right here.
+    const verifyEnabled = v === 'salato'
+    if (verifyEnabled) {
+      try {
+        const guestRows: any[] = arrivals.concat(active).concat(upcoming)
+        const rids: string[] = []
+        for (const r of guestRows) { if (r.id && rids.indexOf(r.id) < 0) rids.push(r.id) }
+        if (rids.length) {
+          const { data: sv } = await db.from('app_settings').select('key,value').in('key', rids.map(id => 'sv:' + id))
+          const recs: Record<string, any> = {}
+          for (const rowv of (sv || []) as any[]) { const id = String(rowv.key).slice(3); if (rowv.value) { try { recs[id] = JSON.parse(rowv.value) } catch {} } }
+          const sign = async (p: string) => { if (!p) return null; try { const s = await db.storage.from('salato-verify').createSignedUrl(p, 600); return s.data ? s.data.signedUrl : null } catch { return null } }
+          for (const r of guestRows) {
+            const rec = recs[r.id]
+            if (rec && rec.status === 'verified') {
+              r.verified = true; r.verifiedAt = rec.signedAt || null
+              r.idUrl = await sign(str(rec.idPath)); r.selfieUrl = await sign(str(rec.selfiePath)); r.signatureUrl = await sign(str(rec.signaturePath))
+            } else { r.verified = false }
+          }
+        }
+      } catch {}
+    }
+
     // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming })
+    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, verifyEnabled, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
