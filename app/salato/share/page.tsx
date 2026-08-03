@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; verified?: boolean; verifiedAt?: string | null }
 type Data = { ok: boolean; today: string; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
 
 const SEEN_KEY = 'salato_share_seen_v1'
@@ -91,29 +91,40 @@ export default function SalatoShare() {
           {rows.map((r, i) => {
             const dateIso = tab === 'departures' ? r.checkOut : r.checkIn
             const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
+            const showVerify = (tab === 'arrivals' || tab === 'active') && !!r.id
             return (
-              <div key={i} className={'rounded-2xl border bg-white shadow-sm px-4 py-3 flex items-center gap-3 ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
-                <div className='flex-1 min-w-0'>
-                  <div className='flex items-center gap-2 flex-wrap'>
-                    <span className='font-semibold truncate'>{r.unit}</span>
-                    {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
-                    {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200'>Same-day turn</span>}
+              <div key={i} className={'rounded-2xl border bg-white shadow-sm px-4 py-3 ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
+                <div className='flex items-center gap-3'>
+                  <div className='flex-1 min-w-0'>
+                    <div className='flex items-center gap-2 flex-wrap'>
+                      <span className='font-semibold truncate'>{r.unit}</span>
+                      {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
+                      {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200'>Same-day turn</span>}
+                    </div>
+                    <div className='text-xs text-neutral-500'>{r.guests ? r.guests + ' guests' : ''}{r.source ? (r.guests ? ' · ' : '') + r.source : ''}</div>
                   </div>
-                  <div className='text-xs text-neutral-500'>{r.guests ? r.guests + ' guests' : ''}{r.source ? (r.guests ? ' · ' : '') + r.source : ''}</div>
+                  <div className='text-right shrink-0'>
+                    {tab === 'active' ? (
+                      <>
+                        <div className='text-xs text-neutral-500'>in {fmtDate(r.checkIn)}</div>
+                        <div className='text-sm font-semibold'>out {fmtDate(r.checkOut)}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className='text-sm font-medium'>{fmtDate(dateIso)}</div>
+                        {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{fmtTime(time)}</div>}
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className='text-right shrink-0'>
-                  {tab === 'active' ? (
-                    <>
-                      <div className='text-xs text-neutral-500'>in {fmtDate(r.checkIn)}</div>
-                      <div className='text-sm font-semibold'>out {fmtDate(r.checkOut)}</div>
-                    </>
-                  ) : (
-                    <>
-                      <div className='text-sm font-medium'>{fmtDate(dateIso)}</div>
-                      {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{fmtTime(time)}</div>}
-                    </>
-                  )}
-                </div>
+                {showVerify && (
+                  <div className='mt-3 pt-3 border-t border-neutral-100 flex items-center justify-between gap-2'>
+                    {r.verified
+                      ? <span className='inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700'><span className='inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-[10px]'>✓</span>Verified{r.verifiedAt ? ' · ' + fmtDate(String(r.verifiedAt).slice(0, 10)) : ''}</span>
+                      : <span className='inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700'><span className='inline-flex h-1.5 w-1.5 rounded-full bg-amber-500'></span>Needs verification</span>}
+                    <a href={'/salato/verify/' + r.id} target='_blank' rel='noopener noreferrer' className={'text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ' + (r.verified ? 'border border-neutral-300 text-neutral-700 hover:bg-neutral-50' : 'bg-neutral-900 text-white hover:bg-neutral-800')}>{r.verified ? 'Open' : 'Start verification'}</a>
+                  </div>
+                )}
               </div>
             )
           })}
