@@ -13,12 +13,15 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
 import {
   Bucket, Family, State, Pay,
-  bucketFor, familyFor, isUnmappedSource, stateFor, isWon, payFor,
+  bucketFor, familyFor, otaGroupFor, isUnmappedSource, stateFor, isWon, payFor,
   accomOf, cleaningOf, num, etDay, addDaysIso, daysBetweenIso,
 } from '@/lib/marketing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+
+// How many individual bookings the list ships. Aggregates are never capped by this.
+const ROW_LIMIT = 6000
 
 type Row = {
   id: string
@@ -124,9 +127,13 @@ export async function GET(req: NextRequest) {
     const hiIso = addDaysIso(to, 2) + 'T00:00:00.000Z'
 
     const cols = 'id, listing_name, guest_name, check_in, check_out, nights, status, source, confirmation_code, money_total, money_paid, money_balance, created_at, money:raw->money'
+    // EVERY reservation created in the window is aggregated — this is the marketing tab, so a
+    // silently dropped page would understate the very number it exists to report. 40 pages =
+    // 40,000 bookings, well past a year of volume; `truncated` says so out loud if it is ever hit.
+    const MAX_PAGES = 40
     let raw: any[] = []
     let truncated = false
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < MAX_PAGES; i++) {
       const { data, error } = await db
         .from('guesty_reservations')
         .select(cols)
@@ -138,7 +145,7 @@ export async function GET(req: NextRequest) {
       if (!data || data.length === 0) break
       raw = raw.concat(data)
       if (data.length < 1000) break
-      if (i === 7) truncated = true
+      if (i === MAX_PAGES - 1) truncated = true
     }
 
     const rows: Row[] = []
@@ -196,6 +203,7 @@ export async function GET(req: NextRequest) {
       const bySource: Record<string, Agg> = {}
       const byFamily: Record<string, Agg> = {}
       const byBucket: Record<string, Agg> = {}
+      const byOtaGroup: Record<string, Agg> = {}
       const all = emptyAgg('all', 'All bookings')
       for (const r of list) {
         addTo(all, r)
@@ -205,8 +213,13 @@ export async function GET(req: NextRequest) {
         addTo(f, r)
         const b = byBucket[r.bucket] || (byBucket[r.bucket] = emptyAgg(r.bucket, r.bucket))
         addTo(b, r)
+        if (r.family === 'ota') {
+          const g = otaGroupFor(r.source)
+          const o = byOtaGroup[g] || (byOtaGroup[g] = emptyAgg(g, g))
+          addTo(o, r)
+        }
       }
-      return { all, bySource, byFamily, byBucket }
+      return { all, bySource, byFamily, byBucket, byOtaGroup }
     }
 
     const cur = roll(rows)
@@ -243,7 +256,10 @@ export async function GET(req: NextRequest) {
       current: cur,
       previous: prev,
       trend,
-      rows,
+      // Aggregates always cover EVERY booking created in the window. The row list is capped only
+      // so the payload stays sendable; the banner says so rather than quietly showing fewer.
+      rowsTotal: rows.length,
+      rows: rows.slice(0, ROW_LIMIT),
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
