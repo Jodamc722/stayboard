@@ -185,33 +185,49 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (s: string
   const setup = useCallback(() => {
     const c = canvasRef.current; if (!c) return
     const ratio = window.devicePixelRatio || 1
-    const w = c.clientWidth, h = c.clientHeight
+    const w = c.clientWidth || 300, h = c.clientHeight || 176
     c.width = Math.round(w * ratio); c.height = Math.round(h * ratio)
     const ctx = c.getContext('2d'); if (!ctx) return
-    ctx.scale(ratio, ratio)
-    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111827'
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.scale(ratio, ratio)
+    ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111827'
   }, [])
-  useEffect(() => { setup() }, [setup])
+  useEffect(() => {
+    setup()
+    const onResize = () => setup()
+    window.addEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onResize)
+    return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize) }
+  }, [setup])
 
-  const pos = (e: React.PointerEvent) => { const c = canvasRef.current!; const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
-  const down = (e: React.PointerEvent) => { e.preventDefault(); drawing.current = true; last.current = pos(e); const t = e.target as Element; if (t.setPointerCapture) t.setPointerCapture(e.pointerId) }
-  const move = (e: React.PointerEvent) => {
+  // Draw with BOTH touch and mouse events (no Pointer Events / setPointerCapture — that path
+  // silently drops move events on some iPads, so the signature never registered).
+  const point = (clientX: number, clientY: number) => { const c = canvasRef.current!; const r = c.getBoundingClientRect(); return { x: clientX - r.left, y: clientY - r.top } }
+  const start = (clientX: number, clientY: number) => { drawing.current = true; last.current = point(clientX, clientY) }
+  const draw = (clientX: number, clientY: number) => {
     if (!drawing.current) return
-    e.preventDefault()
     const c = canvasRef.current!; const ctx = c.getContext('2d'); if (!ctx) return
-    const p = pos(e); const l = last.current || p
+    const p = point(clientX, clientY); const l = last.current || p
     ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(p.x, p.y); ctx.stroke()
     last.current = p; dirty.current = true
   }
-  const up = () => { drawing.current = false; last.current = null; if (dirty.current && canvasRef.current) onChange(canvasRef.current.toDataURL('image/png')) }
+  const end = () => { drawing.current = false; last.current = null; if (dirty.current && canvasRef.current) onChange(canvasRef.current.toDataURL('image/png')) }
+
+  const onMouseDown = (e: React.MouseEvent) => { e.preventDefault(); start(e.clientX, e.clientY) }
+  const onMouseMove = (e: React.MouseEvent) => { if (drawing.current) { e.preventDefault(); draw(e.clientX, e.clientY) } }
+  const onTouchStart = (e: React.TouchEvent) => { const t = e.touches[0]; if (t) start(t.clientX, t.clientY) }
+  const onTouchMove = (e: React.TouchEvent) => { const t = e.touches[0]; if (t && drawing.current) { if (e.cancelable) e.preventDefault(); draw(t.clientX, t.clientY) } }
+
   const clear = () => { const c = canvasRef.current; if (!c) return; const ctx = c.getContext('2d'); if (!ctx) return; ctx.clearRect(0, 0, c.width, c.height); dirty.current = false; onChange('') }
 
   return (
     <div>
       <div className={'mt-1 rounded-xl border bg-white ' + (value ? 'border-emerald-300' : 'border-neutral-300')}>
-        <canvas ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up} className="w-full h-44 rounded-xl" style={{ touchAction: 'none' }} />
+        <canvas ref={canvasRef}
+          onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={end} onMouseLeave={end}
+          onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={end}
+          className="w-full h-44 rounded-xl touch-none select-none" style={{ touchAction: 'none' }} />
       </div>
-      <button onClick={clear} className="text-xs text-neutral-500 underline mt-1.5">Clear signature</button>
+      <button type="button" onClick={clear} className="text-xs text-neutral-500 underline mt-1.5">Clear signature</button>
     </div>
   )
 }
