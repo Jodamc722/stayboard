@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
       const checkInTime = raw.checkInDateLocalized ? String(raw.checkInDateLocalized).slice(11, 16) : (raw.plannedArrival ? String(raw.plannedArrival) : null)
       const checkOutTime = raw.checkOutDateLocalized ? String(raw.checkOutDateLocalized).slice(11, 16) : null
       const guests = raw.guestsCount ?? raw.numberOfGuests ?? null
-      return { unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || raw.source || null, sameDayTurn: false }
+      return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || raw.source || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
     }
     const rows = ((res || []) as any[]).filter(r => LIVE.test(str(r.status))).map(toRow)
     const arrivals = rows.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))
@@ -37,6 +37,19 @@ export async function GET(req: NextRequest) {
     const active = rows.filter(r => r.checkIn <= today && r.checkOut > today).sort((a, b) => a.checkOut.localeCompare(b.checkOut) || a.unit.localeCompare(b.unit))
     const arrKey = new Set(arrivals.map(a => a.unit + '|' + a.checkIn))
     for (const d of departures) d.sameDayTurn = arrKey.has(d.unit + '|' + d.checkOut)
+    // Verification status (from app_settings key sv:<reservationId>) for the rows a front desk verifies:
+    // arrivals (before/at check-in) and in-house guests. Status only — no photos on this public endpoint.
+    const wantIds: string[] = []
+    for (const r of arrivals) if (wantIds.indexOf(r.id) < 0) wantIds.push(r.id)
+    for (const r of active) if (wantIds.indexOf(r.id) < 0) wantIds.push(r.id)
+    if (wantIds.length) {
+      const keys = wantIds.map(id => 'sv:' + id)
+      const { data: sv } = await db.from('app_settings').select('key,value').in('key', keys)
+      const vmap: Record<string, string> = {}
+      for (const rowv of (sv || []) as any[]) { const id = String(rowv.key).slice(3); if (rowv.value) { try { const j = JSON.parse(rowv.value); if (j && j.status === 'verified') vmap[id] = str(j.signedAt) } catch {} } }
+      for (const r of arrivals) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
+      for (const r of active) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
+    }
     return NextResponse.json({ ok: true, today, start, end, unitCount: ids.length, arrivals, departures, active })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
