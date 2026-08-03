@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[] }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming'
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -238,6 +238,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                             {tab === 'departures' && r.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
                             {r.extended && <span title="Guest extended - this unit is still occupied. Do not clean." className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">Extended {'\u00b7'} do not clean</span>}
                             {(r.resNotes || r.notes) && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">Note</span>}
+                            {data.verifyEnabled && (tab === 'arrivals' || tab === 'active' || tab === 'upcoming') && (r.verified
+                              ? <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">Verified</span>
+                              : <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">Needs verification</span>)}
                           </div>
                           <div className="text-xs text-neutral-500 truncate">{r.guestName || 'Guest'}{r.guests ? ' · ' + r.guests + ' guests' : ''}{bedLabel(r.bedrooms) ? ' · ' + bedLabel(r.bedrooms) : ''}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.extended && r.extendedTo ? ' · now out ' + fmtDate(r.extendedTo) : ''}</div>
                         </div>
@@ -265,6 +268,23 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                               <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                                 {r.customFields.map((c, ci) => <Field key={ci} label={c.label} value={c.value} />)}
                               </div>
+                            </div>
+                          )}
+                          {data.verifyEnabled && (tab === 'arrivals' || tab === 'active' || tab === 'upcoming') && r.id && (
+                            <div className="col-span-2 mt-1 print:hidden">
+                              <div className="text-xs uppercase tracking-wide text-neutral-400 mb-1">ID verification</div>
+                              {r.verified ? (
+                                <div>
+                                  <div className="text-emerald-700 text-[13px] font-semibold mb-2">✓ Verified{r.verifiedAt ? ' · ' + fmtDate(String(r.verifiedAt).slice(0, 10)) : ''}</div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    {r.idUrl && <a href={r.idUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">ID</div><img src={r.idUrl} alt="ID" className="w-full rounded-lg border border-neutral-200" /></a>}
+                                    {r.selfieUrl && <a href={r.selfieUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Selfie</div><img src={r.selfieUrl} alt="Selfie" className="w-full rounded-lg border border-neutral-200" /></a>}
+                                    {r.signatureUrl && <a href={r.signatureUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Signature</div><img src={r.signatureUrl} alt="Signature" className="w-full rounded-lg border border-neutral-200 bg-white" /></a>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <a href={'/salato/verify/' + r.id} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-2 rounded-lg text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors">Start verification</a>
+                              )}
                             </div>
                           )}
                           <div className="col-span-2 mt-1">
