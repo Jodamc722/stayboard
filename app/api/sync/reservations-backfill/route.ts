@@ -11,9 +11,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { backfillReservationsByCreated } from '@/lib/guesty'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+
+// app_settings key holding the earliest date the booking table has been backfilled to.
+const BACKFILL_KEY = 'reservations_backfilled_from'
 
 export async function GET(req: NextRequest) {
   // Signed-in team only, OR the cron secret. This writes to the booking table, so it is never open.
@@ -41,6 +45,19 @@ export async function GET(req: NextRequest) {
   const started = Date.now()
   try {
     const r = await backfillReservationsByCreated(from + 'T00:00:00.000Z', to + 'T00:00:00.000Z', skip, pages)
+
+    // Record how far back the booking table is now genuinely complete. Without this the marketing
+    // timeline keeps calling backfilled months "not tracked yet" — its coverage floor is derived
+    // from min(synced_at), and a row imported today carries today's synced_at, not its own history.
+    try {
+      const db = supabaseAdmin()
+      const { data: cur } = await db.from('app_settings').select('value').eq('key', BACKFILL_KEY).maybeSingle()
+      const prev = cur && cur.value ? String(cur.value).slice(0, 10) : ''
+      if (!prev || from < prev) {
+        await db.from('app_settings').upsert({ key: BACKFILL_KEY, value: from }, { onConflict: 'key' })
+      }
+    } catch { /* the import still counts even if the marker fails to save */ }
+
     return NextResponse.json({ ok: true, from, to, ...r, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300), skip, elapsed_ms: Date.now() - started }, { status: 500 })
