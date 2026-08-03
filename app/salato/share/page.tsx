@@ -89,6 +89,12 @@ export default function SalatoShare() {
     } catch (e: any) { setViewErr(String(e?.message || e)); setPwBusy(false) }
   }
 
+  // Deep link from Guesty / anywhere: /salato/share?verify=<reservationId> opens that guest's record.
+  useEffect(() => {
+    try { const p = new URLSearchParams(window.location.search).get('verify'); if (p && /^[a-z0-9]{6,40}$/i.test(p)) openViewer(p) } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div className='min-h-screen bg-neutral-100 text-neutral-900'>
       <div className='max-w-2xl mx-auto px-4 py-6'>
