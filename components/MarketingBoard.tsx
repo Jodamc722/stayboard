@@ -24,7 +24,12 @@ type Agg = {
   nights: number; accom: number; cleaning: number; paidAmt: number; balanceAmt: number
   unpaidCount: number; leadSum: number; leadN: number
 }
-type Roll = { all: Agg; bySource: Record<string, Agg>; byFamily: Record<string, Agg>; byBucket: Record<string, Agg> }
+type Roll = { all: Agg; bySource: Record<string, Agg>; byFamily: Record<string, Agg>; byBucket: Record<string, Agg>; byOtaGroup?: Record<string, Agg> }
+type MonthRow = {
+  m: string; created: number; won: number; canceled: number; pending: number; revenue: number
+  direct: number; directRev: number; manual: number; owner: number; ota: number; otaRev: number; partial: boolean
+}
+type MonthsData = { ok: boolean; floorMonth?: string; truncated?: boolean; months?: MonthRow[]; error?: string }
 type Trend = { d: string; direct: number; manual: number; ota: number; directRev: number; otaRev: number }
 type Data = {
   ok: boolean; internal?: boolean; today?: string
@@ -32,7 +37,7 @@ type Data = {
   compare?: { from: string; to: string }
   lastSync?: string | null; truncated?: boolean; needsPassword?: boolean
   unmapped?: Record<string, number>
-  current?: Roll; previous?: Roll; trend?: Trend[]; rows?: Row[]; error?: string
+  current?: Roll; previous?: Roll; trend?: Trend[]; rows?: Row[]; rowsTotal?: number; error?: string
 }
 
 const BUCKET_LABEL: Record<Bucket, string> = {
@@ -94,6 +99,7 @@ const agg = (r: Roll | undefined, group: 'byFamily' | 'byBucket' | 'bySource', k
   const m = r[group] as Record<string, Agg>
   return m[k] || EMPTY_AGG
 }
+const monthLabel = (ym: string) => new Date(ym + '-15T12:00:00').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
 
 // ── small pieces ────────────────────────────────────────────────────────────
 function Delta({ now, before, invert }: { now: number; before: number; invert?: boolean }) {
@@ -196,6 +202,81 @@ function TrendChart({ trend }: { trend: Trend[] }) {
   )
 }
 
+// Month-by-month timeline — bookings by the month they were CREATED, so the marketing trend is
+// visible across the year rather than only inside the selected window. Months earlier than the
+// mirror's coverage floor are greyed and labelled: partial history must never read as a dip.
+function MonthTimeline({ data }: { data: MonthsData | null }) {
+  const months = (data && data.months) || []
+  const maxDirect = useMemo(() => {
+    let m = 0
+    for (const r of months) if (!r.partial && r.direct > m) m = r.direct
+    return m
+  }, [months])
+  if (!months.length) return null
+  const solid = months.filter(r => !r.partial)
+  const anyPartial = months.some(r => r.partial)
+  return (
+    <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+      <div className="px-4 py-3 border-b border-line">
+        <h3 className="text-sm font-semibold text-ink">Month by month — bookings created</h3>
+        <p className="text-xs text-muted mt-0.5">Each row counts the bookings <strong className="text-ink">made</strong> in that month, whenever the stay falls. This is the marketing trend line.</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-app text-[11px] uppercase tracking-wide text-muted">
+            <tr>
+              <th className="text-left px-4 py-2 font-semibold">Month</th>
+              <th className="text-left px-3 py-2 font-semibold w-40">Direct</th>
+              <th className="text-right px-3 py-2 font-semibold">Direct</th>
+              <th className="text-right px-3 py-2 font-semibold">Direct rev</th>
+              <th className="text-right px-3 py-2 font-semibold">Direct share</th>
+              <th className="text-right px-3 py-2 font-semibold">Manual</th>
+              <th className="text-right px-3 py-2 font-semibold">Owner</th>
+              <th className="text-right px-3 py-2 font-semibold">OTA</th>
+              <th className="text-right px-3 py-2 font-semibold">All booked</th>
+              <th className="text-right px-3 py-2 font-semibold">All revenue</th>
+              <th className="text-right px-3 py-2 font-semibold">Canceled</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {months.map(r => {
+              const share = r.won > 0 ? r.direct / r.won : 0
+              const w = maxDirect > 0 ? Math.round((r.direct / maxDirect) * 100) : 0
+              return (
+                <tr key={r.m} className={r.partial ? 'text-muted/70 bg-app/40' : ''}>
+                  <td className="px-4 py-2 whitespace-nowrap font-medium text-ink">
+                    {monthLabel(r.m)}
+                    {r.partial ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-600 font-semibold">partial</span> : null}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="h-2 rounded-full bg-app overflow-hidden">
+                      <div className={'h-full rounded-full ' + (r.partial ? 'bg-neutral-300' : 'bg-brand-600')} style={{ width: Math.max(r.direct > 0 ? 3 : 0, w) + '%' }} />
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">{r.direct || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.directRev ? money0(r.directRev) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.won ? pct1(share) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.manual || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.owner || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.ota || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.won || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.revenue ? money0(r.revenue) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.canceled || '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {anyPartial ? (
+        <div className="px-4 py-2 border-t border-line text-[11px] text-muted">
+          Months marked <strong className="text-amber-700">partial</strong> pre-date our booking mirror — stays that had already finished were never imported, so those counts are floors, not totals. {solid.length ? monthLabel(solid[0].m) + ' onward is complete.' : ''}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 // ── the board ───────────────────────────────────────────────────────────────
 export function MarketingBoard({ partner }: { partner?: boolean }) {
   const [data, setData] = useState<Data | null>(null)
@@ -217,6 +298,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const [sortKey, setSortKey] = useState<'created' | 'accom' | 'checkIn' | 'nights'>('created')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [limit, setLimit] = useState(100)
+  const [months, setMonths] = useState<MonthsData | null>(null)
 
   const load = useCallback(async (from?: string, to?: string) => {
     setLoading(true); setErr('')
@@ -234,6 +316,17 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // The month timeline spans a whole year, so it loads on its own and never delays the board.
+  useEffect(() => {
+    if (needsPw) return
+    let live = true
+    fetch('/api/public/marketing-months?back=13', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (live && j && j.ok) setMonths(j) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [needsPw])
 
   const applyPreset = (k: PresetKey) => {
     setPreset(k)
@@ -413,7 +506,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
             <Hero label="Direct revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom}
               sub="net accommodation" />
             <Hero label="Direct share" value={pct1(dirShare)} now={dirShare} before={dirSharePrev}
-              sub={dirNow.won + ' of ' + allNow.won + ' bookings'} />
+              sub={dirNow.won + ' of ' + allNow.won + ' bookings · ' + (allNow.accom > 0 ? pct1(dirNow.accom / allNow.accom) : '—') + ' of revenue'} />
             <Hero label="Avg direct booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
               now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0}
               sub={dirNow.leadN ? Math.round(dirNow.leadSum / dirNow.leadN) + ' days lead time' : undefined} />
@@ -430,6 +523,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
           </div>
 
           {data && data.trend ? <TrendChart trend={data.trend} /> : null}
+
+          <MonthTimeline data={months} />
 
           {/* source table */}
           <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
@@ -547,6 +642,11 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               <span className="text-[11px] text-muted ml-auto tabular-nums">
                 {shown.n} shown · {shown.won} booked · {money0(shown.accom)}{shown.bal ? ' · ' + money0(shown.bal) + ' outstanding' : ''}
               </span>
+              {data && data.rowsTotal !== undefined && data.rowsTotal > rows.length ? (
+                <span className="w-full text-[11px] text-amber-700">
+                  Listing the {rows.length.toLocaleString()} most recent of {data.rowsTotal.toLocaleString()} bookings created in this window — the totals and every table above still count all {data.rowsTotal.toLocaleString()}. Narrow the range to list them all.
+                </span>
+              ) : null}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -613,6 +713,15 @@ function useMemoOtaSources(cur: Roll | undefined) {
   return useMemo(() => {
     if (!cur) return [] as { key: string; label: string; a: Agg }[]
     const out: { key: string; label: string; a: Agg }[] = []
+    // Grouped by the company that owns the channel (Orbitz + Hotels.com sit under Expedia Group),
+    // falling back to raw sources on an older API response.
+    const grouped = cur.byOtaGroup
+    if (grouped) {
+      const gk = Object.keys(grouped)
+      for (const k of gk) out.push({ key: k, label: k, a: grouped[k] })
+      out.sort((a, b) => b.a.won - a.a.won || b.a.bookings - a.a.bookings)
+      return out
+    }
     const keys = Object.keys(cur.bySource)
     for (const k of keys) {
       const fam = k === 'be-api' || k === 'website' || k === 'direct' || k === 'manual' || k === 'owner' || k === 'owner-guest'
