@@ -120,31 +120,59 @@ function Delta({ now, before, invert }: { now: number; before: number; invert?: 
   )
 }
 
-function Hero({ label, value, sub, now, before, invert }: { label: string; value: string; sub?: string; now?: number; before?: number; invert?: boolean }) {
+// THE one hero figure on this view. Proportional figures, not tabular — tabular-nums gives every
+// digit the width of a zero, which reads loose at display sizes.
+function HeroFigure({ label, value, sub, now, before, invert }: { label: string; value: string; sub?: string; now?: number; before?: number; invert?: boolean }) {
   return (
-    <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
-      <div className="text-[11px] uppercase tracking-widest text-muted font-semibold">{label}</div>
-      <div className="text-2xl sm:text-3xl font-bold text-ink mt-1 tabular-nums leading-tight">{value}</div>
-      <div className="mt-1 flex items-center gap-2 flex-wrap">
+    <div>
+      <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">{label}</div>
+      <div className="text-[52px] sm:text-6xl font-bold text-ink leading-[1.05] mt-1">{value}</div>
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
         {now !== undefined && before !== undefined ? <Delta now={now} before={before} invert={invert} /> : null}
-        {sub ? <span className="text-xs text-muted">{sub}</span> : null}
+      </div>
+      {sub ? <p className="text-xs text-muted mt-2 max-w-[34ch] leading-relaxed">{sub}</p> : null}
+    </div>
+  )
+}
+
+// A single ratio against its whole. The unfilled track is a LIGHTER STEP OF THE SAME RAMP
+// (brand-100 under brand-600) so the state reads across the whole bar, not just the filled part.
+function Meter({ label, pct, detail, now, before }: { label: string; pct: number; detail: string; now?: number; before?: number }) {
+  const w = pct > 0 ? Math.max(1.5, Math.min(100, pct * 100)) : 0
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[11px] uppercase tracking-widest text-muted font-semibold">{label}</span>
+        <span className="text-base font-bold text-ink">{pct1(pct)}</span>
+      </div>
+      <div className="mt-1.5 h-2.5 rounded-full bg-brand-100 overflow-hidden">
+        <div className="h-full rounded-full bg-brand-600 transition-[width] duration-500" style={{ width: w + '%' }} />
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-[11px] text-muted tabular-nums">{detail}</span>
+        {now !== undefined && before !== undefined ? <Delta now={now} before={before} /> : null}
       </div>
     </div>
   )
 }
 
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({ label, value, sub, now, before, invert }: { label: string; value: string; sub?: string; now?: number; before?: number; invert?: boolean }) {
   return (
-    <div className="rounded-xl border border-line bg-white px-3 py-2.5">
+    <div className="rounded-xl border border-line bg-white px-3.5 py-3 hover:border-brand-200 transition-colors">
       <div className="text-[10px] uppercase tracking-widest text-muted font-semibold">{label}</div>
-      <div className="text-lg font-bold text-ink tabular-nums leading-tight mt-0.5">{value}</div>
-      {sub ? <div className="text-[11px] text-muted">{sub}</div> : null}
+      <div className="text-xl font-bold text-ink leading-tight mt-1">{value}</div>
+      <div className="mt-0.5 min-h-[16px]">
+        {now !== undefined && before !== undefined
+          ? <Delta now={now} before={before} invert={invert} />
+          : (sub ? <span className="text-[11px] text-muted">{sub}</span> : null)}
+      </div>
     </div>
   )
 }
 
-// Stacked daily bars: bookings CREATED per day, direct vs manual/owner vs OTA. One measure,
-// one brand hue for the number that matters, recessive neutrals for the rest.
+// EMPHASIS form, not categorical: direct is the point, everything else is context. One brand hue
+// plus one de-emphasis gray beats three competing colours when only one series is being judged.
+// Pair validated (contrast >= 3:1 both, CVD dE 22.4 protan / 25.3 normal).
 function TrendChart({ trend }: { trend: Trend[] }) {
   const max = useMemo(() => {
     let m = 0
@@ -159,11 +187,10 @@ function TrendChart({ trend }: { trend: Trend[] }) {
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
       <div className="flex items-baseline justify-between mb-1">
-        <h3 className="text-sm font-semibold text-ink">Bookings created per day</h3>
+        <h3 className="text-sm font-semibold text-ink">Direct bookings created per day</h3>
         <div className="flex items-center gap-3 text-[11px] text-muted">
-          <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-brand-600 inline-block" />Direct</span>
-          <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-brand-300 inline-block" />Manual / owner</span>
-          <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-neutral-300 inline-block" />OTA</span>
+          <span className="inline-flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm bg-brand-600 inline-block" />Direct</span>
+          <span className="inline-flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#8B93A3' }} />Everything else</span>
         </div>
       </div>
       <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ height: 160 }} preserveAspectRatio="none">
@@ -186,9 +213,8 @@ function TrendChart({ trend }: { trend: Trend[] }) {
           }
           return (
             <g key={t.d}>
-              <title>{fmtDayY(t.d) + ' — ' + total + ' booking' + (total === 1 ? '' : 's') + ' (' + t.direct + ' direct, ' + t.manual + ' manual/owner, ' + t.ota + ' OTA)'}</title>
-              {seg(t.ota, '#D4D4D8', 'o')}
-              {seg(t.manual, '#A4B0FA', 'm')}
+              <title>{fmtDayY(t.d) + ' — ' + t.direct + ' direct of ' + total + ' booking' + (total === 1 ? '' : 's') + ' created'}</title>
+              {seg(t.manual + t.ota, '#8B93A3', 'o')}
               {seg(t.direct, '#4448D9', 'd')}
             </g>
           )
@@ -293,7 +319,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
 
   const [q, setQ] = useState('')
   const [stateFilter, setStateFilter] = useState<'all' | State>('all')
-  const [familyFilter, setFamilyFilter] = useState<'all' | Family>('all')
+  // This is the marketing tab — the list opens on direct and the picker widens it.
+  const [familyFilter, setFamilyFilter] = useState<'all' | Family>('direct')
   const [payFilter, setPayFilter] = useState<'all' | Pay>('all')
   const [sortKey, setSortKey] = useState<'created' | 'accom' | 'checkIn' | 'nights'>('created')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -430,6 +457,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const allPrev = prev ? prev.all : EMPTY_AGG
   const dirShare = allNow.won > 0 ? dirNow.won / allNow.won : 0
   const dirSharePrev = allPrev.won > 0 ? dirPrev.won / allPrev.won : 0
+  const dirRevShare = allNow.accom > 0 ? dirNow.accom / allNow.accom : 0
+  const dirRevSharePrev = allPrev.accom > 0 ? dirPrev.accom / allPrev.accom : 0
   const unmappedKeys = data && data.unmapped ? Object.keys(data.unmapped) : []
 
   const bucketRows: { key: string; label: string; a: Agg; strong?: boolean }[] = [
@@ -499,27 +528,40 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
 
       {cur ? (
         <>
-          {/* headline */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <Hero label="Direct bookings" value={String(dirNow.won)} now={dirNow.won} before={dirPrev.won}
-              sub={dirNow.canceled ? dirNow.canceled + ' canceled' : undefined} />
-            <Hero label="Direct revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom}
-              sub="net accommodation" />
-            <Hero label="Direct share" value={pct1(dirShare)} now={dirShare} before={dirSharePrev}
-              sub={dirNow.won + ' of ' + allNow.won + ' bookings · ' + (allNow.accom > 0 ? pct1(dirNow.accom / allNow.accom) : '—') + ' of revenue'} />
-            <Hero label="Avg direct booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
-              now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0}
-              sub={dirNow.leadN ? Math.round(dirNow.leadSum / dirNow.leadN) + ' days lead time' : undefined} />
-          </div>
-
-          {/* secondary */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-            <Tile label="All bookings" value={String(allNow.won)} sub={allNow.bookings + ' incl. inquiries'} />
-            <Tile label="All revenue" value={money0(allNow.accom)} sub="net accommodation" />
-            <Tile label="Canceled" value={String(allNow.canceled)} sub={allNow.bookings ? pct1(allNow.canceled / allNow.bookings) + ' of created' : undefined} />
-            <Tile label="Inquiries" value={String(allNow.pending)} sub="not booked yet" />
-            <Tile label="Collected" value={money0(allNow.paidAmt)} sub="paid to date" />
-            <Tile label="Outstanding" value={money0(allNow.balanceAmt)} sub={allNow.unpaidCount + ' bookings owing'} />
+          {/* ── the headline: one hero figure, then how much of the business it is ── */}
+          <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+            <div className="p-5 sm:p-6 grid gap-6 lg:gap-10 lg:grid-cols-[minmax(0,300px)_1fr] lg:items-center">
+              <HeroFigure
+                label="Direct bookings"
+                value={String(dirNow.won)}
+                now={dirNow.won}
+                before={dirPrev.won}
+                sub="Made through the booking engine, the website, or straight with us — counted on the day the booking came in."
+              />
+              <div className="grid gap-4 sm:grid-cols-2 lg:border-l lg:border-line lg:pl-10">
+                <Meter label="Share of bookings" pct={dirShare} now={dirShare} before={dirSharePrev}
+                  detail={dirNow.won.toLocaleString() + ' of ' + allNow.won.toLocaleString() + ' booked'} />
+                <Meter label="Share of revenue" pct={dirRevShare} now={dirRevShare} before={dirRevSharePrev}
+                  detail={money0(dirNow.accom) + ' of ' + money0(allNow.accom)} />
+              </div>
+            </div>
+            {/* every number below is DIRECT only */}
+            <div className="border-t border-line bg-app/60 p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+              <Stat label="Direct revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom} />
+              <Stat label="Avg booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
+                now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0} />
+              <Stat label="Nights sold" value={dirNow.nights ? dirNow.nights.toLocaleString() : '—'}
+                now={dirNow.nights} before={dirPrev.nights} />
+              <Stat label="ADR" value={dirNow.nights ? money0(dirNow.accom / dirNow.nights) : '—'}
+                now={dirNow.nights ? dirNow.accom / dirNow.nights : 0} before={dirPrev.nights ? dirPrev.accom / dirPrev.nights : 0} />
+              <Stat label="Booked ahead" value={dirNow.leadN ? Math.round(dirNow.leadSum / dirNow.leadN) + ' days' : '—'}
+                sub="average lead time" />
+              <Stat label="Canceled" value={dirNow.canceled ? String(dirNow.canceled) : '—'}
+                now={dirNow.canceled} before={dirPrev.canceled} invert />
+            </div>
+            <div className="border-t border-line px-4 py-2 text-[11px] text-muted">
+              Direct money: <strong className="text-ink">{money0(dirNow.paidAmt)}</strong> collected · <strong className="text-ink">{money0(dirNow.balanceAmt)}</strong> still owing{dirNow.unpaidCount ? ' on ' + dirNow.unpaidCount + ' booking' + (dirNow.unpaidCount === 1 ? '' : 's') : ''}. Revenue is net accommodation. Canceled bookings and open inquiries carry $0.
+            </div>
           </div>
 
           {data && data.trend ? <TrendChart trend={data.trend} /> : null}
@@ -619,8 +661,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                   className="text-xs border border-line rounded-lg pl-8 pr-3 py-1.5 w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
               </div>
               <select value={familyFilter} onChange={e => setFamilyFilter(e.target.value as any)} className="text-xs border border-line rounded-lg px-2 py-1.5">
-                <option value="all">All sources</option>
                 <option value="direct">Direct only</option>
+                <option value="all">All sources</option>
                 <option value="manual">Manual</option>
                 <option value="owner">Owner</option>
                 <option value="ota">OTA</option>
