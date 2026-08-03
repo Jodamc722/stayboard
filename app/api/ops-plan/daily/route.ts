@@ -9,6 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, type HealthReview } from '@/lib/health-score'
 import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { LISTING_SLIM_SELECT, rehydrateRaw } from '@/lib/listing-slim'
 import { marketOf, isLux } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
@@ -109,7 +110,7 @@ export async function GET() {
   }
   const [revRows, { data: listings }, openByListing, resv] = await Promise.all([
     fetchAllReviews(),
-    sb.from('guesty_listings').select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, raw').limit(2000),
+    sb.from('guesty_listings').select(LISTING_SLIM_SELECT).limit(2000),
     openWorkByListing(sb),  // per-unit open work (listing_id), not the whole building's
     fetchResv(),
   ])
@@ -126,7 +127,7 @@ export async function GET() {
   const healthOf = (lid: string) => {
     if (healthCache.has(lid)) return healthCache.get(lid)
     const l = lmeta.get(lid); if (!l) return null
-    const h = computeListingHealth(l, byListing.get(lid) || [], { openWork: openByListing[String(lid)] || 0 })
+    const h = computeListingHealth(rehydrateRaw(l), byListing.get(lid) || [], { openWork: openByListing[String(lid)] || 0 })
     healthCache.set(lid, h); return h
   }
 
