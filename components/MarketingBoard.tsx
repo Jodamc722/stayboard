@@ -27,7 +27,9 @@ type Agg = {
 type Roll = { all: Agg; bySource: Record<string, Agg>; byFamily: Record<string, Agg>; byBucket: Record<string, Agg>; byOtaGroup?: Record<string, Agg> }
 type MonthRow = {
   m: string; created: number; won: number; canceled: number; pending: number
-  direct: number; manual: number; owner: number; ota: number; partial: boolean; failed?: boolean
+  nights: number; revenue: number
+  direct: number; directNights: number; directRev: number
+  manual: number; owner: number; ota: number; partial: boolean; failed?: boolean
 }
 type MonthsData = { ok: boolean; floorMonth?: string; truncated?: boolean; months?: MonthRow[]; error?: string }
 type Trend = { d: string; direct: number; manual: number; ota: number; directRev: number; otaRev: number }
@@ -228,66 +230,77 @@ function TrendChart({ trend }: { trend: Trend[] }) {
   )
 }
 
-// Month-by-month timeline — bookings by the month they were CREATED, so the marketing trend is
-// visible across the year rather than only inside the selected window. Months earlier than the
-// mirror's coverage floor are greyed and labelled: partial history must never read as a dip.
+// MONTH-BY-MONTH — the view a marketing partner actually reads. Columns of the day a booking was
+// MADE, so a campaign that ran in April is judged on April's bookings, not April's stays.
+// Direct only, by design: the OTA/manual/owner detail lives in the source table below, where the
+// share percentage has its denominator next to it.
+//
+// The bar is an EMPHASIS chart in table form — one measure (direct bookings), one hue, magnitude
+// read by length. Months the mirror never covered are dimmed AND labelled, never shown as a dip.
 function MonthTimeline({ data }: { data: MonthsData | null }) {
   const months = (data && data.months) || []
+  const solid = useMemo(() => months.filter(r => !r.partial), [months])
   const maxDirect = useMemo(() => {
     let m = 0
-    for (const r of months) if (!r.partial && r.direct > m) m = r.direct
+    for (const r of solid) if (r.direct > m) m = r.direct
+    if (m === 0) for (const r of months) if (r.direct > m) m = r.direct
     return m
-  }, [months])
-  if (!months.length) return null
-  const solid = months.filter(r => !r.partial)
+  }, [months, solid])
+
+  if (!months.length) {
+    return (
+      <div className="rounded-2xl border border-line bg-white p-6 shadow-soft">
+        <h3 className="text-sm font-semibold text-ink">Month by month</h3>
+        <div className="mt-3 h-24 rounded-xl bg-app animate-pulse" />
+      </div>
+    )
+  }
+
   const anyPartial = months.some(r => r.partial)
+  const firstSolid = solid.length ? solid[0] : null
+
   return (
     <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-      <div className="px-4 py-3 border-b border-line">
-        <h3 className="text-sm font-semibold text-ink">Month by month — bookings created</h3>
-        <p className="text-xs text-muted mt-0.5">Each row counts the bookings <strong className="text-ink">made</strong> in that month, whenever the stay falls. This is the marketing trend line. For a month&rsquo;s revenue, pick that month in the range picker above.</p>
+      <div className="px-5 py-4 border-b border-line">
+        <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">The trend</div>
+        <h3 className="text-base font-bold text-ink mt-0.5">Direct bookings by the month they were made</h3>
+        <p className="text-xs text-muted mt-1 max-w-[70ch] leading-relaxed">
+          A booking counts in the month it came in, whenever the guest actually stays — so a campaign that ran in April is judged on April&rsquo;s bookings, not April&rsquo;s check-ins.
+        </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-app text-[11px] uppercase tracking-wide text-muted">
             <tr>
-              <th className="text-left px-4 py-2 font-semibold">Month</th>
-              <th className="text-left px-3 py-2 font-semibold w-40">Direct</th>
-              <th className="text-right px-3 py-2 font-semibold">Direct</th>
-              <th className="text-right px-3 py-2 font-semibold">Direct share</th>
-              <th className="text-right px-3 py-2 font-semibold">Manual</th>
-              <th className="text-right px-3 py-2 font-semibold">Owner</th>
-              <th className="text-right px-3 py-2 font-semibold">OTA</th>
-              <th className="text-right px-3 py-2 font-semibold">All booked</th>
-              <th className="text-right px-3 py-2 font-semibold">Inquiries</th>
-              <th className="text-right px-3 py-2 font-semibold">Canceled</th>
-              <th className="text-right px-3 py-2 font-semibold">Created</th>
+              <th className="text-left px-5 py-2.5 font-semibold">Month</th>
+              <th className="text-left px-3 py-2.5 font-semibold" style={{ width: '34%' }}>Direct bookings</th>
+              <th className="text-right px-3 py-2.5 font-semibold">Bookings</th>
+              <th className="text-right px-3 py-2.5 font-semibold">Share</th>
+              <th className="text-right px-3 py-2.5 font-semibold">Revenue</th>
+              <th className="text-right px-5 py-2.5 font-semibold">Nights</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {months.map(r => {
               const share = r.won > 0 ? r.direct / r.won : 0
-              const w = maxDirect > 0 ? Math.round((r.direct / maxDirect) * 100) : 0
+              const w = maxDirect > 0 ? (r.direct / maxDirect) * 100 : 0
+              const dim = r.partial
               return (
-                <tr key={r.m} className={r.partial ? 'text-muted/70 bg-app/40' : ''}>
-                  <td className="px-4 py-2 whitespace-nowrap font-medium text-ink">
-                    {monthLabel(r.m)}
-                    {r.partial ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-600 font-semibold">partial</span> : null}
+                <tr key={r.m} className={dim ? 'bg-app/50' : 'hover:bg-brand-50/40 transition-colors'}>
+                  <td className="px-5 py-2.5 whitespace-nowrap">
+                    <span className={'font-semibold ' + (dim ? 'text-muted' : 'text-ink')}>{monthLabel(r.m)}</span>
+                    {dim ? <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-600 font-semibold">not tracked yet</span> : null}
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="h-2 rounded-full bg-app overflow-hidden">
-                      <div className={'h-full rounded-full ' + (r.partial ? 'bg-neutral-300' : 'bg-brand-600')} style={{ width: Math.max(r.direct > 0 ? 3 : 0, w) + '%' }} />
+                  <td className="px-3 py-2.5">
+                    <div className="h-2.5 rounded-full bg-brand-100/70 overflow-hidden" title={r.direct + ' direct bookings'}>
+                      <div className={'h-full rounded-full ' + (dim ? 'bg-neutral-300' : 'bg-brand-600')}
+                        style={{ width: Math.max(r.direct > 0 ? 2 : 0, Math.min(100, w)) + '%' }} />
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">{r.direct || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.won ? pct1(share) : '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.manual || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.owner || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.ota || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.won || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.pending || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.canceled || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-muted">{r.created || '—'}</td>
+                  <td className={'px-3 py-2.5 text-right tabular-nums font-bold ' + (dim ? 'text-muted' : 'text-ink')}>{r.direct || '—'}</td>
+                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (dim ? 'text-muted' : 'text-ink')}>{r.won ? pct1(share) : '—'}</td>
+                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (dim ? 'text-muted' : 'text-ink')}>{r.directRev ? money0(r.directRev) : '—'}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums text-muted">{r.directNights || '—'}</td>
                 </tr>
               )
             })}
@@ -295,8 +308,9 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
         </table>
       </div>
       {anyPartial ? (
-        <div className="px-4 py-2 border-t border-line text-[11px] text-muted">
-          Months marked <strong className="text-amber-700">partial</strong> pre-date our booking mirror — stays that had already finished were never imported, so those counts are floors, not totals. {solid.length ? monthLabel(solid[0].m) + ' onward is complete.' : ''}
+        <div className="px-5 py-3 border-t border-line bg-amber-50/50 text-[11px] text-amber-900 leading-relaxed">
+          <strong>&ldquo;Not tracked yet&rdquo;</strong> means we weren&rsquo;t recording bookings that month, so those rows are floors, not totals — treat them as incomplete rather than as a quiet month.
+          {firstSolid ? <> Every month from <strong>{monthLabel(firstSolid.m)}</strong> onward is complete and comparable.</> : null}
         </div>
       ) : null}
     </div>
