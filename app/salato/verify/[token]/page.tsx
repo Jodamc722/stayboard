@@ -48,12 +48,6 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
       .catch(() => setData({ ok: false, error: 'Could not load. Check your connection.' }))
   }, [rid])
 
-  const onPickImage = async (file: File | null, set: (s: string) => void, maxPx: number) => {
-    if (!file) return
-    setErr('')
-    try { set(await compressImage(file, maxPx, 0.72)) } catch { setErr('That photo could not be read — please try again.') }
-  }
-
   const submit = async () => {
     setBusy(true); setErr('')
     try {
@@ -139,22 +133,18 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
       <div className={card}>
         <div className="text-base font-bold mb-1">Photo of your ID</div>
         <p className="text-xs text-neutral-500 mb-3">Take a clear photo of your government-issued ID — make sure all corners and text are readable.</p>
-        {idPhoto ? <img src={idPhoto} alt="ID" className="w-full rounded-xl border border-neutral-200 mb-3" /> : <div className="w-full aspect-[16/10] rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 flex items-center justify-center text-neutral-400 text-sm mb-3">No photo yet</div>}
-        <label className={primaryBtn + ' block text-center cursor-pointer'}>
-          {idPhoto ? 'Retake ID photo' : 'Take ID photo'}
-          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => onPickImage(e.target.files && e.target.files[0], setIdPhoto, 1600)} />
-        </label>
+        <PhotoCapture facing="environment" maxPx={1600} placeholderClass="aspect-[16/10]"
+          takeLabel="Take ID photo" retakeLabel="Retake ID photo" value={idPhoto} onChange={setIdPhoto}
+          onError={setErr} primaryBtn={primaryBtn} />
       </div>
 
       {/* Selfie */}
       <div className={card}>
         <div className="text-base font-bold mb-1">Take a selfie</div>
         <p className="text-xs text-neutral-500 mb-3">A quick photo of your face so we can match it to your ID.</p>
-        {selfie ? <img src={selfie} alt="Selfie" className="w-full max-h-72 object-contain rounded-xl border border-neutral-200 mb-3 bg-neutral-50" /> : <div className="w-full aspect-[3/4] max-h-72 mx-auto rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 flex items-center justify-center text-neutral-400 text-sm mb-3">No photo yet</div>}
-        <label className={primaryBtn + ' block text-center cursor-pointer'}>
-          {selfie ? 'Retake selfie' : 'Take selfie'}
-          <input type="file" accept="image/*" capture="user" className="hidden" onChange={e => onPickImage(e.target.files && e.target.files[0], setSelfie, 1200)} />
-        </label>
+        <PhotoCapture facing="user" maxPx={1200} placeholderClass="aspect-[3/4] max-h-72 mx-auto"
+          takeLabel="Take selfie" retakeLabel="Retake selfie" value={selfie} onChange={setSelfie}
+          onError={setErr} primaryBtn={primaryBtn} />
       </div>
 
       {/* Signature */}
@@ -175,12 +165,109 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   )
 }
 
+// ---- Live camera capture (opens the camera in-page; falls back to the native file/camera picker) ----
+function PhotoCapture({ facing, maxPx, placeholderClass, takeLabel, retakeLabel, value, onChange, onError, primaryBtn }:
+  { facing: 'environment' | 'user'; maxPx: number; placeholderClass: string; takeLabel: string; retakeLabel: string
+    value: string; onChange: (s: string) => void; onError: (s: string) => void; primaryBtn: string }) {
+  const [streaming, setStreaming] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+
+  const stop = useCallback(() => {
+    const s = streamRef.current
+    if (s) { s.getTracks().forEach(t => t.stop()); streamRef.current = null }
+    setStreaming(false)
+  }, [])
+
+  // Always release the camera when this component unmounts.
+  useEffect(() => () => stop(), [stop])
+
+  // Attach the live stream to the <video> once it's mounted (after streaming flips true).
+  useEffect(() => {
+    if (streaming && videoRef.current && streamRef.current) {
+      const v = videoRef.current
+      v.srcObject = streamRef.current
+      const p = v.play(); if (p && p.catch) p.catch(() => {})
+    }
+  }, [streaming])
+
+  const openNativePicker = () => { if (fileRef.current) fileRef.current.click() }
+
+  const openCamera = async () => {
+    onError('')
+    const md = (typeof navigator !== 'undefined' && navigator.mediaDevices) ? navigator.mediaDevices : null
+    if (!md || !md.getUserMedia) { openNativePicker(); return }
+    setStarting(true)
+    try {
+      const stream = await md.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false })
+      streamRef.current = stream
+      setStreaming(true)
+    } catch {
+      // Permission denied or no camera — fall back to the OS camera/file picker so they can still finish.
+      openNativePicker()
+    }
+    setStarting(false)
+  }
+
+  const capture = () => {
+    const v = videoRef.current; if (!v) return
+    const vw = v.videoWidth, vh = v.videoHeight
+    if (!vw || !vh) return
+    const scale = Math.min(1, maxPx / Math.max(vw, vh))
+    const w = Math.round(vw * scale), h = Math.round(vh * scale)
+    const c = document.createElement('canvas'); c.width = w; c.height = h
+    const ctx = c.getContext('2d'); if (!ctx) { onError('Could not capture the photo — please try again.'); return }
+    // Front camera preview is mirrored; capture it un-mirrored so the saved photo reads correctly.
+    ctx.drawImage(v, 0, 0, w, h)
+    onChange(c.toDataURL('image/jpeg', 0.72))
+    stop()
+  }
+
+  const onFile = async (file: File | null) => {
+    if (!file) return
+    onError('')
+    try { onChange(await compressImage(file, maxPx, 0.72)) } catch { onError('That photo could not be read — please try again.') }
+  }
+
+  if (streaming) return (
+    <div>
+      <div className="w-full rounded-xl overflow-hidden border border-neutral-800 bg-black mb-3">
+        <video ref={videoRef} playsInline muted autoPlay
+          className="w-full max-h-80 object-contain bg-black"
+          style={facing === 'user' ? { transform: 'scaleX(-1)' } : undefined} />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={capture} className={primaryBtn + ' !py-3'}>Capture photo</button>
+        <button type="button" onClick={stop} className="w-full rounded-xl border border-neutral-300 text-neutral-700 font-semibold py-3 hover:bg-neutral-50 transition-colors">Cancel</button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div>
+      {value
+        ? <img src={value} alt="" className="w-full rounded-xl border border-neutral-200 mb-3" />
+        : <div className={'w-full rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 flex items-center justify-center text-neutral-400 text-sm mb-3 ' + placeholderClass}>No photo yet</div>}
+      <button type="button" onClick={openCamera} disabled={starting} className={primaryBtn}>
+        {starting ? 'Opening camera…' : (value ? retakeLabel : takeLabel)}
+      </button>
+      {/* Fallback for devices where the live camera isn't available; also lets guests choose an existing photo. */}
+      <input ref={fileRef} type="file" accept="image/*" capture={facing === 'user' ? 'user' : 'environment'} className="hidden"
+        onChange={e => onFile(e.target.files && e.target.files[0])} />
+    </div>
+  )
+}
+
 // ---- Signature canvas ----
 function SignaturePad({ value, onChange }: { value: string; onChange: (s: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const drawing = useRef(false)
   const last = useRef<{ x: number; y: number } | null>(null)
   const dirty = useRef(false)
+  const valueRef = useRef(value)
+  valueRef.current = value
 
   const setup = useCallback(() => {
     const c = canvasRef.current; if (!c) return
@@ -190,6 +277,9 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (s: string
     const ctx = c.getContext('2d'); if (!ctx) return
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.scale(ratio, ratio)
     ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111827'
+    // Resizing the canvas clears its pixels — repaint the saved signature so it doesn't disappear.
+    const saved = valueRef.current
+    if (saved) { const img = new Image(); img.onload = () => { ctx.drawImage(img, 0, 0, w, h) }; img.src = saved }
   }, [])
   useEffect(() => {
     setup()
@@ -228,6 +318,13 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (s: string
           className="w-full h-44 rounded-xl touch-none select-none" style={{ touchAction: 'none' }} />
       </div>
       <button type="button" onClick={clear} className="text-xs text-neutral-500 underline mt-1.5">Clear signature</button>
+      {/* Confirmation preview so the guest can see the signature they just drew. */}
+      {value ? (
+        <div className="mt-3">
+          <div className="text-[11px] font-medium text-emerald-700 mb-1">✓ Signature captured</div>
+          <img src={value} alt="Your signature" className="w-full h-24 object-contain rounded-lg border border-emerald-200 bg-white" />
+        </div>
+      ) : null}
     </div>
   )
 }
