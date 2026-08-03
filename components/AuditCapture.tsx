@@ -754,6 +754,7 @@ function quickTags(r: string): string[] {
       <div className="mb-4">
         <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-400 font-bold">Property audit</div>
         <h1 className="text-xl font-bold text-neutral-900 leading-tight">{data.listing.name}</h1>
+        <a href={'/walk/' + code} className="inline-block mt-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">&#9889; Try the new guided walk &rarr;</a>
         {data.listing.building ? <div className="text-xs text-neutral-500 mt-0.5">{data.listing.building}</div> : null}
         <div className="text-[11px] text-neutral-400 mt-2">{isOnboarding ? 'Tag each room, snap photos, build the inventory. FAQ and how-tos flow in automatically.' : T('Walk the unit room by room. In each room, tap Good on what checks out or flag anything to fix, replace, add or clean, and add a photo on any item. Prefer talking? Dictate the whole list up top.')}</div>
       </div>
