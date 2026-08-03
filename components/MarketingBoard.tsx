@@ -102,10 +102,10 @@ const agg = (r: Roll | undefined, group: 'byFamily' | 'byBucket' | 'bySource', k
 const monthLabel = (ym: string) => new Date(ym + '-15T12:00:00').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
 
 // ── small pieces ────────────────────────────────────────────────────────────
-function Delta({ now, before, invert }: { now: number; before: number; invert?: boolean }) {
+function Delta({ now, before, invert, compact }: { now: number; before: number; invert?: boolean; compact?: boolean }) {
   if (!before) {
-    if (!now) return <span className="text-xs text-muted">no prior data</span>
-    return <span className="text-xs text-emerald-700 font-medium">new</span>
+    if (!now) return <span className="text-[11px] text-muted whitespace-nowrap">no prior data</span>
+    return <span className="text-[11px] text-emerald-700 font-medium whitespace-nowrap">new</span>
   }
   const change = (now - before) / before
   const flat = Math.abs(change) < 0.005
@@ -113,9 +113,9 @@ function Delta({ now, before, invert }: { now: number; before: number; invert?: 
   const cls = flat ? 'text-muted' : good ? 'text-emerald-700' : 'text-rose-600'
   const Icon = flat ? Minus : (change > 0 ? TrendingUp : TrendingDown)
   return (
-    <span className={'text-xs font-medium inline-flex items-center gap-1 ' + cls}>
-      <Icon size={12} />{flat ? 'flat' : (change > 0 ? '+' : '') + pct1(change)}
-      <span className="text-muted font-normal">vs prior</span>
+    <span className={'font-medium inline-flex items-center gap-1 whitespace-nowrap ' + (compact ? 'text-[11px] ' : 'text-xs ') + cls}>
+      <Icon size={compact ? 11 : 12} />{flat ? 'flat' : (change > 0 ? '+' : '') + pct1(change)}
+      {compact ? null : <span className="text-muted font-normal">vs prior</span>}
     </span>
   )
 }
@@ -163,7 +163,7 @@ function Stat({ label, value, sub, now, before, invert }: { label: string; value
       <div className="text-xl font-bold text-ink leading-tight mt-1">{value}</div>
       <div className="mt-0.5 min-h-[16px]">
         {now !== undefined && before !== undefined
-          ? <Delta now={now} before={before} invert={invert} />
+          ? <Delta now={now} before={before} invert={invert} compact />
           : (sub ? <span className="text-[11px] text-muted">{sub}</span> : null)}
       </div>
     </div>
@@ -547,7 +547,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
             </div>
             {/* every number below is DIRECT only */}
             <div className="border-t border-line bg-app/60 p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-              <Stat label="Direct revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom} />
+              <Stat label="Revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom} />
               <Stat label="Avg booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
                 now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0} />
               <Stat label="Nights sold" value={dirNow.nights ? dirNow.nights.toLocaleString() : '—'}
