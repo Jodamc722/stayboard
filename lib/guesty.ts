@@ -305,6 +305,48 @@ export async function syncReservations(maxPages = 40, since: string | null = nul
   return total
 }
 
+// ------------------------------------------------------------
+// BACKFILL BY CREATION DATE
+//
+// The routine sync only ever pulls stays that have not finished yet (checkOut >= now-3d), so a
+// booking MADE in March for a stay that ended in April was never imported. That is invisible for
+// operations — the stay is over — but it silently truncates any report keyed on when a booking was
+// created, which is exactly what the marketing board measures.
+//
+// This pulls straight by createdAt instead, so history can be filled in properly. It is paged by
+// the CALLER (skip/pages) so one request never runs past the serverless ceiling.
+export async function backfillReservationsByCreated(
+  fromIso: string,
+  toIso: string,
+  skip = 0,
+  pages = 20,
+): Promise<{ fetched: number; nextSkip: number; done: boolean }> {
+  const sb = supabaseAdmin()
+  const filter = `&filters=${encodeURIComponent(JSON.stringify([
+    { field: 'createdAt', operator: '$gte', value: fromIso },
+    { field: 'createdAt', operator: '$lt', value: toIso },
+  ]))}`
+  let fetched = 0
+  let cursor = skip
+  let done = false
+  for (let page = 0; page < pages; page++) {
+    const data = await api<{ results: any[]; count?: number }>(
+      `/reservations?limit=100&skip=${cursor}&fields=${FIELDS}&sort=createdAt${filter}`
+    )
+    const results = data.results || []
+    if (results.length === 0) { done = true; break }
+    const rows = results.map(mapReservation)
+    // Backfilled rows must never clobber a live one that the routine sync keeps fresher, but an
+    // upsert on id is safe here: mapReservation writes the same shape from the same source.
+    const { error } = await sb.from('guesty_reservations').upsert(rows, { onConflict: 'id' })
+    if (error) throw new Error(`backfill upsert: ${error.message}`)
+    fetched += rows.length
+    cursor += results.length
+    if (results.length < 100) { done = true; break }
+  }
+  return { fetched, nextSkip: cursor, done }
+}
+
 export async function syncListings(maxPages = 20, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
