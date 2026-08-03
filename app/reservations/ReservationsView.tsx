@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { SyncNowButton } from '@/components/SyncNowButton'
 import { Search, X } from 'lucide-react'
 
@@ -61,6 +61,21 @@ export function ReservationsView({
       return true
     })
   }, [source, q, src])
+
+  // Salato in-person verification status (Verify / Verified) — Salato reservations only.
+  const [vmap, setVmap] = useState<Record<string, { verified: boolean; verifiedAt: string | null }>>({})
+  const salatoRids = useMemo(() => {
+    const seen: Record<string, boolean> = {}; const out: string[] = []
+    source.forEach(r => { if (/salato/i.test(r.listing_name || '') && r.id && !seen[r.id]) { seen[r.id] = true; out.push(r.id) } })
+    return out
+  }, [source])
+  useEffect(() => {
+    if (!salatoRids.length) return
+    let cancelled = false
+    fetch('/api/public/salato-verify-status?rids=' + encodeURIComponent(salatoRids.join(',')), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { if (!cancelled && j && j.statuses) setVmap(prev => ({ ...prev, ...j.statuses })) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [salatoRids])
 
   return (
     <>
@@ -126,7 +141,7 @@ export function ReservationsView({
             <table className="min-w-full">
               <thead className="bg-app">
                 <tr>
-                  {['Guest', 'Property', 'Dates', 'Nights', 'Status', 'Flags', 'Source', 'Total'].map(h => (
+                  {['Guest', 'Property', 'Dates', 'Nights', 'Status', 'Flags', 'Verify', 'Source', 'Total'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-muted uppercase tracking-[0.08em]">{h}</th>
                   ))}
                 </tr>
@@ -152,6 +167,13 @@ export function ReservationsView({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs"><FlagChips fields={r.custom_fields ?? []} /></td>
+                    <td className="px-4 py-3 text-xs whitespace-nowrap">
+                      {/salato/i.test(r.listing_name || '')
+                        ? (vmap[r.id]?.verified
+                            ? <a href={`/salato/share?verify=${r.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-700 font-semibold hover:underline"><span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-[9px]">✓</span>Verified</a>
+                            : <a href={`/salato/verify/${r.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors">Verify</a>)
+                        : <span className="text-line">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-[11px] text-muted uppercase tracking-wide font-medium whitespace-nowrap">{SOURCE_LABEL[r.source || ''] || r.source || '—'}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-ink text-right whitespace-nowrap tabular-nums">{fmtMoney(r.money_total, r.money_currency)}</td>
                   </tr>
