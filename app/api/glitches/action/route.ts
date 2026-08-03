@@ -44,6 +44,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, status })
     }
 
+    if (action === 'refund') {
+      // LOG THE REFUND where the decision happens. A card used to be droppable into the Refund
+      // column with nothing recorded — the money then lived nowhere but someone's memory.
+      const amount = Number(b.amount)
+      if (!Number.isFinite(amount) || amount < 0) return NextResponse.json({ ok: false, error: 'A refund amount is required (0 is allowed for "declined").' }, { status: 400 })
+      const note = str(b.note).slice(0, 300)
+      const { error } = await db.from('glitches').update({
+        refund_approved: amount,
+        history: stamp('refund_logged', { amount, note: note || undefined }),
+        updated_at: new Date().toISOString(),
+      }).eq('id', id)
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, amount })
+    }
+
     if (action === 'update') {
       const patch: Record<string, any> = {}
       if (b.overview !== undefined) patch.overview = str(b.overview)
