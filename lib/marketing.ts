@@ -33,9 +33,23 @@ export const FAMILY_LABEL: Record<Family, string> = {
 // invented (which we surface rather than hide).
 const KNOWN_OTA = [
   'airbnb', 'airbnb2', 'booking.com', 'booking', 'bookingcom', 'expedia',
-  'expedia affiliate network', 'hotels.com', 'vrbo', 'homeaway', 'homeaway ca',
-  'homeaway cafr', 'homeaway uk', 'bluegroundnestpick', 'tripadvisor', 'agoda', 'marriott',
+  'expedia affiliate network', 'hotels.com', 'orbitz', 'travelocity', 'ebookers', 'cheaptickets',
+  'vrbo', 'homeaway', 'homeaway ca', 'homeaway cafr', 'homeaway uk',
+  'bluegroundnestpick', 'tripadvisor', 'agoda', 'marriott',
 ]
+
+// OTA breakdown rows are grouped by the company that actually controls the channel, not by the
+// raw Guesty string. Orbitz, Hotels.com and Travelocity are all Expedia Group — showing them as
+// separate "sites" overstates how many OTAs we really sell through. Matches the Channels page.
+export function otaGroupFor(rawSource: string | null | undefined): string {
+  const s = (rawSource || '').trim().toLowerCase()
+  if (!s) return 'Unknown'
+  if (s === 'airbnb' || s === 'airbnb2') return 'Airbnb'
+  if (s === 'booking' || s === 'booking.com' || s === 'bookingcom') return 'Booking.com'
+  if (s === 'expedia' || s === 'expedia affiliate network' || s === 'hotels.com' || s === 'orbitz' || s === 'travelocity' || s === 'ebookers' || s === 'cheaptickets') return 'Expedia Group'
+  if (s === 'vrbo' || s.indexOf('homeaway') === 0) return 'Vrbo'
+  return s.split(/[\s_-]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+}
 
 export function bucketFor(rawSource: string | null | undefined): Bucket {
   const s = (rawSource || '').trim().toLowerCase()
