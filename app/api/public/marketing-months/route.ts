@@ -20,6 +20,7 @@ export const maxDuration = 60
 
 type Month = {
   m: string            // YYYY-MM
+  failed?: boolean     // this month's query timed out; its numbers are unknown, not zero
   created: number      // every reservation created that month, any status
   won: number          // confirmed / in house / stayed
   canceled: number
@@ -81,23 +82,34 @@ export async function GET(req: NextRequest) {
       if (row && row.check_out) floorMonth = str(row.check_out).slice(0, 7)
     } catch { /* no floor detected — every month is then reported as complete */ }
 
-    const loIso = firstMonth + '-01T00:00:00.000Z'
+    // ONE QUERY PER MONTH, not one for the whole year. Pulling `raw->money` across a year of
+    // bookings in a single statement blew Postgres's statement timeout (the JSONB extraction is
+    // the expensive part); a month at a time is the same volume the main report already handles
+    // comfortably. A month that still fails is reported as failed rather than taking the page down.
     const cols = 'created_at, source, status, nights, money:raw->money'
-    const MAX_PAGES = 40
+    const PAGES_PER_MONTH = 6
     let raw: any[] = []
     let truncated = false
-    for (let i = 0; i < MAX_PAGES; i++) {
-      const { data, error } = await db
-        .from('guesty_reservations')
-        .select(cols)
-        .gte('created_at', loIso)
-        .order('created_at', { ascending: false })
-        .range(i * 1000, i * 1000 + 999)
-      if (error) throw new Error(error.message)
-      if (!data || data.length === 0) break
-      raw = raw.concat(data)
-      if (data.length < 1000) break
-      if (i === MAX_PAGES - 1) truncated = true
+    const failed: string[] = []
+    for (let m = firstMonth; m <= thisMonth; m = addMonths(m, 1)) {
+      const lo = m + '-01T00:00:00.000Z'
+      const hi = addMonths(m, 1) + '-01T00:00:00.000Z'
+      try {
+        for (let i = 0; i < PAGES_PER_MONTH; i++) {
+          const { data, error } = await db
+            .from('guesty_reservations')
+            .select(cols)
+            .gte('created_at', lo)
+            .lt('created_at', hi)
+            .order('created_at', { ascending: false })
+            .range(i * 1000, i * 1000 + 999)
+          if (error) throw new Error(error.message)
+          if (!data || data.length === 0) break
+          raw = raw.concat(data)
+          if (data.length < 1000) break
+          if (i === PAGES_PER_MONTH - 1) truncated = true
+        }
+      } catch { failed.push(m) }
     }
 
     const byMonth: Record<string, Month> = {}
@@ -132,7 +144,9 @@ export async function GET(req: NextRequest) {
       else { row.ota += 1; row.otaRev += accom }
     }
 
-    return NextResponse.json({ ok: true, today, floorMonth, truncated, months })
+    for (const m of failed) { const row = byMonth[m]; if (row) row.failed = true }
+
+    return NextResponse.json({ ok: true, today, floorMonth, truncated, failed, months })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
