@@ -478,6 +478,46 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
             <p className="text-[12px] text-muted mb-2">Booked occupancy by night from today · booked revenue next 30d: <span className="font-semibold text-ink tabular-nums">{fmtMoney(d.otb.rev30)}</span></p>
             <PaceChart fwdDaily={d.fwdDaily} activeUnits={d.activeUnits} />
           </section>
+
+          {/* Revenue leakage — refunds/comps logged on guest-issue cards, rolled into the money view. */}
+          <section className="rounded-2xl border border-line bg-white p-5 mb-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-0.5">
+              <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><TrendingDown size={14} className="text-rose-600" /> Revenue leakage <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">refunds &amp; comps · this range</span></h2>
+              <div className="text-right">
+                <div className="text-2xl font-extrabold text-rose-700 tabular-nums leading-none">{fmtExact(d.leakage.total)}</div>
+                <div className="text-[11px] text-muted mt-0.5">{d.leakage.count} refund{d.leakage.count === 1 ? '' : 's'} · {d.leakage.pctOfGross}% of gross{d.leakage.fixCost > 0 ? ` · ${fmtExact(d.leakage.fixCost)} fix cost` : ''}</div>
+              </div>
+            </div>
+            <p className="text-[12px] text-muted mb-3">Guest-issue refunds logged on the board, rolled into the money view — where the portfolio is giving revenue back, by building and by cause.</p>
+            {d.leakage.count === 0 ? (
+              <div className="text-[13px] text-emerald-700">No refunds logged in this range.</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">By building</div>
+                  <div>
+                    {d.leakage.byBuilding.map(b => (
+                      <div key={b.building} className="flex items-center justify-between gap-2 text-[13px] border-b border-line/60 py-1.5">
+                        <span className="text-ink truncate">{b.building}</span>
+                        <span className="text-muted shrink-0"><b className="text-rose-700 tabular-nums">{fmtExact(b.amount)}</b> · {b.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">By cause</div>
+                  <div>
+                    {d.leakage.byCause.map(c => (
+                      <div key={c.cause} className="flex items-center justify-between gap-2 text-[13px] border-b border-line/60 py-1.5">
+                        <span className="text-ink truncate capitalize">{c.cause}</span>
+                        <span className="text-muted shrink-0"><b className="text-rose-700 tabular-nums">{fmtExact(c.amount)}</b> · {c.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
         </>
       )}
 
