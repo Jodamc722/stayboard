@@ -20,12 +20,20 @@ export function ShareLinksCard() {
   const [adminMsg, setAdminMsg] = useState('')
   const [adminErr, setAdminErr] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  // Marketing partner link — its own password so an agency gets booking numbers, never the ops boards.
+  const [mktLinks, setMktLinks] = useState<ShareLink[]>([])
+  const [mktSet, setMktSet] = useState(false)
+  const [mktCurrent, setMktCurrent] = useState('')
+  const [mktDraft, setMktDraft] = useState('')
+  const [mktMsg, setMktMsg] = useState('')
+  const [mktErr, setMktErr] = useState('')
+  const [mktBusy, setMktBusy] = useState(false)
 
   useEffect(() => { setOrigin(window.location.origin) }, [])
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || '') } })
+      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || '') } })
       .catch(() => {})
   }, [])
 
@@ -49,6 +57,17 @@ export function ShareLinksCard() {
       setAdminSet(true); setAdminDraft(''); setAdminMsg('Admin password saved. Deleting a clean from the scheduler now requires it.')
     } catch (e: any) { setAdminErr(String(e?.message || e)) }
     setAdminBusy(false)
+  }
+
+  const saveMkt = async () => {
+    setMktBusy(true); setMktErr(''); setMktMsg('')
+    try {
+      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ marketingPassword: mktDraft.trim() }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setMktErr(j.error || 'Could not save'); setMktBusy(false); return }
+      setMktSet(true); setMktCurrent(j.marketingPassword || mktDraft.trim()); setMktMsg('Marketing password saved. Send it with the link above.')
+    } catch (e: any) { setMktErr(String(e?.message || e)) }
+    setMktBusy(false)
   }
 
   const copy = (v: string, url: string) => { try { navigator.clipboard.writeText(url); setCopied(v); setTimeout(() => setCopied(''), 1500) } catch {} }
@@ -75,6 +94,25 @@ export function ShareLinksCard() {
         </div>
         {msg && <div className="text-xs text-emerald-700 mt-2">{msg}</div>}
         {err && <div className="text-xs text-red-600 mt-2">{err}</div>}
+      </div>
+      <div className="border-t border-line pt-4 mt-4">
+        <label className="text-xs uppercase tracking-wide text-muted">Marketing partner link &mdash; separate password</label>
+        <p className="text-xs text-muted mt-0.5 mb-2">Direct-booking performance for marketing partners. Booking numbers only &mdash; guest names are shortened and this password does not open any ops board. {mktSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
+        <div className="space-y-2 mb-3">
+          {mktLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
+            <div key={l.v} className="flex items-center gap-2 text-sm">
+              <span className="w-44 shrink-0 font-medium text-ink">{l.label}</span>
+              <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
+              <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
+            </div>
+          )})}
+        </div>
+        <div className="flex gap-2 mt-1 max-w-md">
+          <input value={mktDraft} onChange={e => setMktDraft(e.target.value)} placeholder={mktSet ? 'Marketing password' : 'Create marketing password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <button onClick={saveMkt} disabled={mktBusy || mktDraft.trim().length < 4 || mktDraft.trim() === mktCurrent} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{mktBusy ? 'Saving…' : mktSet ? 'Update' : 'Set'}</button>
+        </div>
+        {mktMsg && <div className="text-xs text-emerald-700 mt-2">{mktMsg}</div>}
+        {mktErr && <div className="text-xs text-red-600 mt-2">{mktErr}</div>}
       </div>
       <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>
