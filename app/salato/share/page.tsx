@@ -6,7 +6,9 @@ type Data = { ok: boolean; today: string; arrivals: Row[]; departures: Row[]; ac
 type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
 const SEEN_KEY = 'salato_share_seen_v1'
-const TABS: { key: 'arrivals' | 'departures' | 'active'; label: string }[] = [
+type TabKey = 'verify' | 'arrivals' | 'departures' | 'active'
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'verify', label: 'Verify' },
   { key: 'arrivals', label: 'Arrivals' },
   { key: 'departures', label: 'Departure cleans' },
   { key: 'active', label: 'In-house' },
@@ -18,7 +20,7 @@ function keyOf(r: Row, mode: string) { return r.unit + '|' + (mode === 'departur
 
 export default function SalatoShare() {
   const [data, setData] = useState<Data | null>(null)
-  const [tab, setTab] = useState<'arrivals' | 'departures' | 'active'>('arrivals')
+  const [tab, setTab] = useState<TabKey>('verify')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -49,7 +51,8 @@ export default function SalatoShare() {
     setSyncing(false)
   }, [load])
 
-  const rows = data ? data[tab] : []
+  // "Verify" lists everyone a front desk checks in: upcoming arrivals + in-house guests.
+  const rows = data ? (tab === 'verify' ? data.arrivals.concat(data.active) : data[tab]) : []
   const idPrefix = tab === 'arrivals' ? 'a' : tab === 'departures' ? 'd' : 'v'
   const isNew = (r: Row) => seenInit.current && !seen.has(idPrefix + keyOf(r, tab))
   const allIds = data ? [...data.arrivals.map(r => 'a' + keyOf(r, 'arrivals')), ...data.departures.map(r => 'd' + keyOf(r, 'departures')), ...data.active.map(r => 'v' + keyOf(r, 'active'))] : []
@@ -119,7 +122,7 @@ export default function SalatoShare() {
         </div>
 
         <div className='flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm'>
-          {TABS.map(t => { const n = data ? data[t.key].length : 0; return (
+          {TABS.map(t => { const n = data ? (t.key === 'verify' ? (data.arrivals.length + data.active.length) : data[t.key].length) : 0; return (
             <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
           )})}
         </div>
@@ -131,7 +134,7 @@ export default function SalatoShare() {
           {rows.map((r, i) => {
             const dateIso = tab === 'departures' ? r.checkOut : r.checkIn
             const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
-            const showVerify = (tab === 'arrivals' || tab === 'active') && !!r.id
+            const showVerify = (tab === 'arrivals' || tab === 'active' || tab === 'verify') && !!r.id
             return (
               <div key={i} className={'rounded-2xl border bg-white shadow-sm px-4 py-3 ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
                 <div className='flex items-center gap-3'>
@@ -144,7 +147,7 @@ export default function SalatoShare() {
                     <div className='text-xs text-neutral-500'>{r.guests ? r.guests + ' guests' : ''}{r.source ? (r.guests ? ' · ' : '') + r.source : ''}</div>
                   </div>
                   <div className='text-right shrink-0'>
-                    {tab === 'active' ? (
+                    {(tab === 'active' || tab === 'verify') ? (
                       <>
                         <div className='text-xs text-neutral-500'>in {fmtDate(r.checkIn)}</div>
                         <div className='text-sm font-semibold'>out {fmtDate(r.checkOut)}</div>
