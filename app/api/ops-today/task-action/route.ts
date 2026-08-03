@@ -70,6 +70,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, name: newName, vendor: on })
     }
 
+    if (action === 'priority') {
+      // Escalate (or calm) a task without leaving the board — used by the glitch panel.
+      const level = ['urgent', 'high', 'normal', 'low'].indexOf(str(body.level)) >= 0 ? str(body.level) : 'urgent'
+      const r = await updateBreezewayTask(taskId, { type_priority: level })
+      if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway: ' + str(r.text).slice(0, 140) }, { status: 502 })
+      return NextResponse.json({ ok: true, priority: level })
+    }
+
     if (action === 'complete') {
       // Close a task the crew finished but never closed. Verified by reading the status back —
       // "the call returned 200" and "it is actually complete" are different facts in Breezeway.
