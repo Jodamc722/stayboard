@@ -6,12 +6,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SALATO_RULES, SALATO_RULES_VERSION } from '@/lib/salato-rules'
+import { getToken } from '@/lib/guesty'
+import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const SALATO = /salato/i
 const BUCKET = 'salato-verify'
+const RES_NOTES_FIELD = '695f16830cb54c001400b3ff' // Guesty reservation "reservation_notes" custom field
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function keyFor(rid: string) { return 'sv:' + rid }
 
@@ -98,17 +101,49 @@ export async function POST(req: NextRequest) {
     const selfiePath = await put('selfie', self, self.ext === 'png' ? 'image/png' : 'image/jpeg')
     const signaturePath = await put('signature', sig, sig.ext === 'png' ? 'image/png' : 'image/jpeg')
 
-    const record = {
+    const record: any = {
       status: 'verified', rid, unit: info.unit, guestFirst: info.guestFirst,
       fullName, rulesVersion: SALATO_RULES_VERSION, rulesAcknowledged: true,
       idPath, selfiePath, signaturePath,
       signedAt: new Date().toISOString(),
       pushedToGuesty: false,
     }
+
+    // Push to the Guesty reservation: mark in-person verification complete + a link the team can
+    // open (share-password gated) to view the ID, selfie, and signature. Best-effort — never blocks
+    // the guest's submission. Uses the safe read-merge-write helper so no other custom field is lost.
+    try {
+      const origin = new URL(req.url).origin
+      const link = origin + '/salato/share?verify=' + rid
+      let token = ''
+      try { token = await getToken() } catch { token = '' }
+      if (token) {
+        const live = await readCustomFields(rid, token)
+        if (live) {
+          const isNotes = (c: any) => String(fieldIdOf(c) || '') === RES_NOTES_FIELD
+          const existing = live.find(isNotes)
+          const prior = existing && typeof existing.value === 'string' ? existing.value : ''
+          const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+          const line = '[' + stamp + '] ✅ In-person verification completed — ' + fullName + '. View ID, selfie & signature: ' + link
+          const newNotes = prior ? prior + '\n' + line : line
+          const notesId = existing ? (fieldIdOf(existing) || RES_NOTES_FIELD) : RES_NOTES_FIELD
+          const w = await writeCustomFields(rid, token, [{ fieldId: notesId, value: newNotes }])
+          record.pushedToGuesty = !!w.ok
+          if (w.ok && w.fields) {
+            try {
+              const { data: rrow } = await db.from('guesty_reservations').select('raw').eq('id', rid).maybeSingle()
+              const rraw: any = (rrow && rrow.raw && typeof rrow.raw === 'object') ? rrow.raw : {}
+              await db.from('guesty_reservations').update({ custom_fields: w.fields, raw: Object.assign({}, rraw, { customFields: w.fields }) }).eq('id', rid)
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+
     const { error } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() })
     if (error) return NextResponse.json({ ok: false, error: String(error.message || error).slice(0, 160) }, { status: 500 })
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, pushedToGuesty: record.pushedToGuesty })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
