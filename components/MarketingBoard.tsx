@@ -26,8 +26,8 @@ type Agg = {
 }
 type Roll = { all: Agg; bySource: Record<string, Agg>; byFamily: Record<string, Agg>; byBucket: Record<string, Agg>; byOtaGroup?: Record<string, Agg> }
 type MonthRow = {
-  m: string; created: number; won: number; canceled: number; pending: number; revenue: number
-  direct: number; directRev: number; manual: number; owner: number; ota: number; otaRev: number; partial: boolean; failed?: boolean
+  m: string; created: number; won: number; canceled: number; pending: number
+  direct: number; manual: number; owner: number; ota: number; partial: boolean; failed?: boolean
 }
 type MonthsData = { ok: boolean; floorMonth?: string; truncated?: boolean; months?: MonthRow[]; error?: string }
 type Trend = { d: string; direct: number; manual: number; ota: number; directRev: number; otaRev: number }
@@ -209,7 +209,7 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
   const months = (data && data.months) || []
   const maxDirect = useMemo(() => {
     let m = 0
-    for (const r of months) if (!r.partial && !r.failed && r.direct > m) m = r.direct
+    for (const r of months) if (!r.partial && r.direct > m) m = r.direct
     return m
   }, [months])
   if (!months.length) return null
@@ -219,7 +219,7 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
     <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
       <div className="px-4 py-3 border-b border-line">
         <h3 className="text-sm font-semibold text-ink">Month by month — bookings created</h3>
-        <p className="text-xs text-muted mt-0.5">Each row counts the bookings <strong className="text-ink">made</strong> in that month, whenever the stay falls. This is the marketing trend line.</p>
+        <p className="text-xs text-muted mt-0.5">Each row counts the bookings <strong className="text-ink">made</strong> in that month, whenever the stay falls. This is the marketing trend line. For a month&rsquo;s revenue, pick that month in the range picker above.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -228,14 +228,14 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
               <th className="text-left px-4 py-2 font-semibold">Month</th>
               <th className="text-left px-3 py-2 font-semibold w-40">Direct</th>
               <th className="text-right px-3 py-2 font-semibold">Direct</th>
-              <th className="text-right px-3 py-2 font-semibold">Direct rev</th>
               <th className="text-right px-3 py-2 font-semibold">Direct share</th>
               <th className="text-right px-3 py-2 font-semibold">Manual</th>
               <th className="text-right px-3 py-2 font-semibold">Owner</th>
               <th className="text-right px-3 py-2 font-semibold">OTA</th>
               <th className="text-right px-3 py-2 font-semibold">All booked</th>
-              <th className="text-right px-3 py-2 font-semibold">All revenue</th>
+              <th className="text-right px-3 py-2 font-semibold">Inquiries</th>
               <th className="text-right px-3 py-2 font-semibold">Canceled</th>
+              <th className="text-right px-3 py-2 font-semibold">Created</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -243,26 +243,25 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
               const share = r.won > 0 ? r.direct / r.won : 0
               const w = maxDirect > 0 ? Math.round((r.direct / maxDirect) * 100) : 0
               return (
-                <tr key={r.m} className={r.partial || r.failed ? 'text-muted/70 bg-app/40' : ''}>
+                <tr key={r.m} className={r.partial ? 'text-muted/70 bg-app/40' : ''}>
                   <td className="px-4 py-2 whitespace-nowrap font-medium text-ink">
                     {monthLabel(r.m)}
-                    {r.failed ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-rose-600 font-semibold">no data</span>
-                      : r.partial ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-600 font-semibold">partial</span> : null}
+                    {r.partial ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-600 font-semibold">partial</span> : null}
                   </td>
                   <td className="px-3 py-2">
                     <div className="h-2 rounded-full bg-app overflow-hidden">
                       <div className={'h-full rounded-full ' + (r.partial ? 'bg-neutral-300' : 'bg-brand-600')} style={{ width: Math.max(r.direct > 0 ? 3 : 0, w) + '%' }} />
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">{r.failed ? '?' : (r.direct || '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.directRev ? money0(r.directRev) : '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.won ? pct1(share) : '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.manual || '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.owner || '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.ota || '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.failed ? '?' : (r.won || '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.revenue ? money0(r.revenue) : '—')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.failed ? '?' : (r.canceled || '—')}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">{r.direct || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.won ? pct1(share) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.manual || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.owner || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.ota || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.won || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.pending || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.canceled || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted">{r.created || '—'}</td>
                 </tr>
               )
             })}
