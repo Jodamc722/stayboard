@@ -26,6 +26,9 @@ type Row = {
   // Set when the notice came from a Guesty booking rather than being typed by hand — it is what
   // makes the guest name a link straight to that booking.
   reservation_id?: string | null
+  // Frozen copy of the email as it went out (migration 016). Present only on sent notices.
+  sent_to?: string | null; sent_cc?: string | null; sent_subject?: string | null
+  sent_body?: string | null; sent_doc_name?: string | null
   sent_at?: string | null; sent_by?: string | null
   doc_path?: string | null; doc_name?: string | null
   leadHours: number | null; urgency: 'sent' | 'late' | 'due' | 'upcoming'
@@ -520,7 +523,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                   </div>
                 </div>
                 <button onClick={() => startEdit(r)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Edit</button>
-                {r.attach && (
+                {r.attach && !r.sent_at && (
                   <button onClick={() => makePdf(r)} disabled={pdfBusy === r.id}
                     title={r.doc_path ? 'Rebuild the registration form and replace the filed copy' : 'Build the registration form, download it and file it'}
                     className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
@@ -531,17 +534,19 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                 {r.attach && r.doc_path && (
                   <button onClick={() => openFiled(r)} title={r.doc_name || 'Filed form'}
                     className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
-                    <Download size={13} /> Filed
+                    <Download size={13} /> {r.sent_at ? 'Report' : 'Filed'}
                   </button>
                 )}
-                {r.draft && (
+                {(r.draft || r.sent_body) && (
                   // Toggles. When it IS open the button says so and says how to close it, because a
                   // draft is tall enough to push this row off screen — someone who scrolled down to
                   // read it should not have to hunt back up to work out how to get rid of it.
                   <button onClick={() => setOpenDraft(openDraft === r.id ? null : r.id)}
                     aria-expanded={openDraft === r.id}
                     className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (openDraft === r.id ? 'border-brand-600 bg-brand-600 text-white hover:bg-brand-700' : 'border-brand-300 text-brand-700 hover:bg-brand-50')}>
-                    {openDraft === r.id ? <><X size={13} /> Close draft</> : <><Mail size={13} /> Email draft</>}
+                    {openDraft === r.id
+                      ? <><X size={13} /> Close</>
+                      : <><Mail size={13} /> {r.sent_at ? 'Sent email' : 'Email draft'}</>}
                   </button>
                 )}
                 {r.sent_at
@@ -550,45 +555,77 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                 <button onClick={() => remove(r.id, r.guest_name)} className="text-muted hover:text-rose-600" title="Delete"><Trash2 size={14} /></button>
               </div>
 
-              {openDraft === r.id && r.draft && (
+              {openDraft === r.id && (r.draft || r.sent_body) && (() => {
+                // A SENT NOTICE SHOWS WHAT WENT OUT, NOT WHAT WOULD GO OUT NOW. The snapshot is
+                // frozen at mark-sent; re-rendering from the current template would quietly rewrite
+                // history every time somebody edits a recipient or a line of wording.
+                const sentCopy = !!(r.sent_at && r.sent_body)
+                const to = sentCopy ? (r.sent_to || '') : (r.draft ? r.draft.to : '')
+                const cc = sentCopy ? (r.sent_cc || '') : (r.draft ? r.draft.cc : '')
+                const subject = sentCopy ? (r.sent_subject || '') : (r.draft ? r.draft.subject : '')
+                const body = sentCopy ? (r.sent_body || '') : (r.draft ? r.draft.body : '')
+                const attachName = sentCopy ? (r.sent_doc_name || '') : (r.draft && r.draft.attach ? r.draft.attachName : '')
+                return (
                 <div className="px-4 pb-4">
-                  <div className="rounded-xl border border-line overflow-hidden">
-                    <div className="px-3 py-2 bg-app border-b border-line text-[12px] space-y-0.5 relative">
-                      <button onClick={() => setOpenDraft(null)} title="Close this draft (Esc)" aria-label="Close draft"
+                  <div className={'rounded-xl border overflow-hidden ' + (sentCopy ? 'border-emerald-300' : 'border-line')}>
+                    <div className={'px-3 py-2 border-b border-line text-[12px] space-y-0.5 relative ' + (sentCopy ? 'bg-emerald-50/60' : 'bg-app')}>
+                      <button onClick={() => setOpenDraft(null)} title="Close (Esc)" aria-label="Close"
                         className="absolute top-1.5 right-1.5 p-1 rounded-md text-muted hover:text-ink hover:bg-line/60">
                         <X size={14} />
                       </button>
-                      <div className="pr-7"><strong>To:</strong> {r.draft.to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
-                      <div><strong>CC:</strong> {r.draft.cc}</div>
-                      <div><strong>Subject:</strong> {r.draft.subject}</div>
-                      {r.draft.attach && (
+                      {sentCopy && (
+                        <div className="pr-7 text-[11px] font-semibold uppercase tracking-wider text-emerald-800 pb-1">
+                          Sent {fmt(String(r.sent_at).slice(0, 10))}{r.sent_by ? ' by ' + r.sent_by : ''} — exactly as it went out
+                        </div>
+                      )}
+                      <div className="pr-7"><strong>To:</strong> {to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
+                      <div><strong>CC:</strong> {cc}</div>
+                      <div><strong>Subject:</strong> {subject}</div>
+                      {attachName && (
                         <div className={'flex items-start gap-1.5 pt-1 ' + (r.doc_path ? 'text-emerald-700' : 'text-amber-800')}>
                           <Paperclip size={12} className="mt-0.5 flex-shrink-0" />
-                          <span>
-                            <strong>Attach {r.draft.attachName}</strong> before sending — a mail link can&apos;t carry the file.
-                            {r.doc_path ? ' It is filed and in your downloads.' : ' Hit Build form first.'}
-                          </span>
+                          {sentCopy ? (
+                            <span>
+                              <strong>{attachName}</strong> went with it.
+                              {r.doc_path
+                                ? <button onClick={() => openFiled(r)} className="ml-1 font-semibold underline decoration-dotted underline-offset-2 hover:text-emerald-900">Open the report</button>
+                                : ' The filed copy is no longer available.'}
+                            </span>
+                          ) : (
+                            <span>
+                              <strong>Attach {attachName}</strong> before sending — a mail link can&apos;t carry the file.
+                              {r.doc_path ? ' It is filed and in your downloads.' : ' Hit Build form first.'}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
-                    <pre className="px-3 py-2 text-[12px] whitespace-pre-wrap font-sans text-ink">{r.draft.body}</pre>
+                    <pre className="px-3 py-2 text-[12px] whitespace-pre-wrap font-sans text-ink">{body}</pre>
                     <div className="px-3 py-2 border-t border-line flex items-center gap-2 flex-wrap">
-                      <a href={r.draft.mailto} className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg ' + (r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted pointer-events-none opacity-50')}>
-                        <Mail size={13} /> Open in mail app
-                      </a>
-                      <button onClick={() => copyDraft(r.draft!)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
+                      {!sentCopy && r.draft && (
+                        <a href={r.draft.mailto} className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg ' + (r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted pointer-events-none opacity-50')}>
+                          <Mail size={13} /> Open in mail app
+                        </a>
+                      )}
+                      <button onClick={() => copyDraft({ to, cc, subject, body } as any)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
                         <Copy size={13} /> Copy email
                       </button>
-                      {/* A second way out, at the bottom — where you end up after reading the draft. */}
+                      {sentCopy && r.doc_path && (
+                        <button onClick={() => openFiled(r)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                          <Download size={13} /> Open the report
+                        </button>
+                      )}
+                      {/* A second way out, at the bottom — where you end up after reading it. */}
                       <button onClick={() => setOpenDraft(null)}
                         className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
                         <X size={13} /> Close
                       </button>
-                      <span className="text-[11px] text-muted inline-flex items-center gap-1"><Clock size={11} /> Hit Mark sent once it&apos;s gone.</span>
+                      {!sentCopy && <span className="text-[11px] text-muted inline-flex items-center gap-1"><Clock size={11} /> Hit Mark sent once it&apos;s gone.</span>}
                     </div>
                   </div>
                 </div>
-              )}
+                )
+              })()}
             </div>
     )
   }
