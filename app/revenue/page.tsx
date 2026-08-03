@@ -175,6 +175,12 @@ export type RevenueData = {
   daily: { d: string; rev: number; nights: number }[]
   // Forward on-the-books nights per day for the next 90 days (portfolio).
   fwdDaily: { d: string; nights: number }[]
+  // Revenue leakage — refunds/comps logged on guest-issue cards in this window, by building + cause.
+  leakage: {
+    total: number; count: number; fixCost: number; pctOfGross: number
+    byBuilding: { building: string; amount: number; count: number }[]
+    byCause: { cause: string; amount: number; count: number }[]
+  }
 }
 
 function prettyChannel(s: string): string {
@@ -471,9 +477,40 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const fwdDaily: { d: string; nights: number }[] = []
     for (let dd = todayStr; dd < t90; dd = addDays(dd, 1)) fwdDaily.push({ d: dd, nights: fwdDayN[dd] || 0 })
 
+    // ---- Revenue leakage: refunds/comps logged on guest-issue cards in this window ----
+    // Closes the loop guest-issue → money: what the portfolio gave back, by building and by cause.
+    const buildingByListing: Record<string, string> = {}
+    for (const l of listings) buildingByListing[String(l.id)] = rollupBuilding(l.building)
+    const { data: glitchRows } = await sb.from('glitches')
+      .select('id, listing_id, unit, category, created_at, recovery_cost, refund_approved, status')
+      .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z')
+      .neq('status', 'deleted')
+      .limit(5000)
+    let leakTotal = 0, leakCount = 0, fixCostTotal = 0
+    const leakByBuilding: Record<string, { amount: number; count: number }> = {}
+    const leakByCause: Record<string, { amount: number; count: number }> = {}
+    for (const g of (glitchRows || []) as any[]) {
+      fixCostTotal += Number(g.recovery_cost) || 0
+      const amt = Number(g.refund_approved) || 0
+      if (amt <= 0) continue
+      leakTotal += amt; leakCount++
+      const b = buildingByListing[String(g.listing_id)] || (g.unit ? rollupBuilding(String(g.unit)) : 'Unassigned')
+      const bb = (leakByBuilding[b] ||= { amount: 0, count: 0 }); bb.amount += amt; bb.count++
+      const cause = String(g.category || '').trim() || 'Uncategorized'
+      const cc = (leakByCause[cause] ||= { amount: 0, count: 0 }); cc.amount += amt; cc.count++
+    }
+    const grossBase = totals.grossAccom || totals.total || 0
+    const leakage = {
+      total: Math.round(leakTotal), count: leakCount, fixCost: Math.round(fixCostTotal),
+      pctOfGross: grossBase > 0 ? Math.round((leakTotal / grossBase) * 1000) / 10 : 0,
+      byBuilding: Object.entries(leakByBuilding).map(([building, v]) => ({ building, amount: Math.round(v.amount), count: v.count })).sort((a, b) => b.amount - a.amount).slice(0, 12),
+      byCause: Object.entries(leakByCause).map(([cause, v]) => ({ cause, amount: Math.round(v.amount), count: v.count })).sort((a, b) => b.amount - a.amount),
+    }
+
     return {
       from, to, days, currency,
       activeUnits: active.length, inactiveUnits,
+      leakage,
       totals, nightsSold, occupiedNights: nightsSold, availableNights, bookings,
       prev: { from: prevFrom, to: addDays(from, -1), total: prevTotalAll, nightsSold: prevNights, occupiedNights: prevNights, availableNights, grossAccom: prevGross },
       otb: {
@@ -484,7 +521,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       },
       channels, buildingAvg, units, recs, daily, fwdDaily,
     }
-  }, ['revenue-center-v7'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v8'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 
