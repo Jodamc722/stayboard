@@ -22,6 +22,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
 import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
+import { buildDraft } from '@/lib/reservation-draft'
 import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
 
 export const dynamic = 'force-dynamic'
@@ -112,24 +113,42 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   try {
     const { data: notice, error: findErr } = await db.from(TABLE)
-      .select('id, reservation_id, guest_name, unit_no, property_id').eq('id', id).is('deleted_at', null).single()
+      .select('*').eq('id', id).is('deleted_at', null).single()
     if (findErr || !notice) return NextResponse.json({ ok: false, error: 'That notice no longer exists.' }, { status: 404 })
 
     // The note should name the building the way the operator does, not by slug. The row stores the
     // slug precisely so a renamed building doesn't orphan it, so resolve the label at write time.
     let building = str((notice as any).property_id)
+    let draft: any = null
     try {
       const props = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
       const hit = props.find((p) => p.id === (notice as any).property_id)
       if (hit?.name) building = hit.name
-    } catch { /* slug is a perfectly readable fallback */ }
+      // FREEZE THE EMAIL. From here on the Sent list shows this copy, not one re-rendered from
+      // whatever the template happens to say next month. A record that moves when you edit a
+      // setting is not a record.
+      if (hit) draft = buildDraft(hit, notice as any)
+    } catch { /* slug is a perfectly readable fallback, and an unfrozen email beats a failed send */ }
 
     const now = new Date()
 
     // Local record first — it stands whatever Guesty does next.
-    const { error: updErr } = await db.from(TABLE)
-      .update({ sent_at: now.toISOString(), sent_by: initials, updated_at: now.toISOString() })
-      .eq('id', id)
+    const patch: any = { sent_at: now.toISOString(), sent_by: initials, updated_at: now.toISOString() }
+    if (draft) {
+      patch.sent_to = str(draft.to)
+      patch.sent_cc = str(draft.cc)
+      patch.sent_subject = str(draft.subject)
+      patch.sent_body = str(draft.body)
+      patch.sent_doc_name = str((notice as any).doc_name) || (draft.attach ? str(draft.attachName) : '')
+    }
+    let { error: updErr } = await db.from(TABLE).update(patch).eq('id', id)
+    // Migration 016 adds the snapshot columns. Until it is run, still record the send rather than
+    // refusing it — losing the fact that a building was told is far worse than losing the copy.
+    if (updErr && /column .* does not exist|schema cache|sent_body/i.test(String(updErr.message || ''))) {
+      const retry = await db.from(TABLE)
+        .update({ sent_at: patch.sent_at, sent_by: initials, updated_at: patch.updated_at }).eq('id', id)
+      updErr = retry.error as any
+    }
     if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 })
 
     let guesty: { ok: boolean; note?: string } = { ok: false, note: 'no Guesty reservation linked to this notice' }
