@@ -68,18 +68,19 @@ export async function GET(req: NextRequest) {
     const thisMonth = today.slice(0, 7)
     const firstMonth = addMonths(thisMonth, -(back - 1))
 
-    // The mirror's coverage floor: the earliest stay it holds. Anything created before this month
-    // is necessarily incomplete, because bookings whose stay ended earlier were never synced.
+    // The mirror's coverage floor is WHEN THE MIRROR STARTED WRITING — min(synced_at) — not the
+    // earliest stay it happens to hold. A single long stay that was still running when the sync
+    // began would otherwise vouch for months of history the mirror never actually saw.
     let floorMonth = ''
     try {
       const { data: fl } = await db
         .from('guesty_reservations')
-        .select('check_out')
-        .not('check_out', 'is', null)
-        .order('check_out', { ascending: true })
+        .select('synced_at')
+        .not('synced_at', 'is', null)
+        .order('synced_at', { ascending: true })
         .limit(1)
       const row: any = Array.isArray(fl) ? fl[0] : null
-      if (row && row.check_out) floorMonth = str(row.check_out).slice(0, 7)
+      if (row && row.synced_at) floorMonth = etDay(str(row.synced_at)).slice(0, 7)
     } catch { /* no floor detected — every month is then reported as complete */ }
 
     // ONE QUERY PER MONTH, not one for the whole year. Pulling `raw->money` across a year of
@@ -95,33 +96,52 @@ export async function GET(req: NextRequest) {
     const monthKeys: string[] = []
     for (let m = firstMonth; m <= thisMonth; m = addMonths(m, 1)) monthKeys.push(m)
 
-    // Months run CONCURRENTLY. Sequentially, thirteen months of `raw->money` extraction ran past
-    // the function's own 60s ceiling even though each month alone is fine; in parallel the whole
-    // year costs about what one month costs.
-    const perMonth = await Promise.all(monthKeys.map(async (m) => {
+    // Months run a FEW AT A TIME. All thirteen at once made Postgres cancel over half of them on
+    // statement timeout (the `raw->money` extraction is heavy and they compete); one at a time ran
+    // past this function's own 60s ceiling. Three in flight is the band where every month lands.
+    // Each month gets one retry, because a timeout here is contention, not a broken query.
+    const CONCURRENCY = 3
+    const pullMonth = async (m: string): Promise<any[]> => {
       const lo = m + '-01T00:00:00.000Z'
       const hi = addMonths(m, 1) + '-01T00:00:00.000Z'
       const acc: any[] = []
-      try {
-        for (let i = 0; i < PAGES_PER_MONTH; i++) {
-          const { data, error } = await db
-            .from('guesty_reservations')
-            .select(cols)
-            .gte('created_at', lo)
-            .lt('created_at', hi)
-            .order('created_at', { ascending: false })
-            .range(i * 1000, i * 1000 + 999)
-          if (error) throw new Error(error.message)
-          if (!data || data.length === 0) break
-          for (const d of data) acc.push(d)
-          if (data.length < 1000) break
-          if (i === PAGES_PER_MONTH - 1) truncated = true
-        }
-      } catch { return { m, rows: [] as any[], ok: false } }
-      return { m, rows: acc, ok: true }
-    }))
+      for (let i = 0; i < PAGES_PER_MONTH; i++) {
+        const { data, error } = await db
+          .from('guesty_reservations')
+          .select(cols)
+          .gte('created_at', lo)
+          .lt('created_at', hi)
+          .order('created_at', { ascending: false })
+          .range(i * 1000, i * 1000 + 999)
+        if (error) throw new Error(error.message)
+        if (!data || data.length === 0) break
+        for (const d of data) acc.push(d)
+        if (data.length < 1000) break
+        if (i === PAGES_PER_MONTH - 1) truncated = true
+      }
+      return acc
+    }
 
-    for (const r of perMonth) {
+    let cursor = 0
+    const collected: { m: string; rows: any[]; ok: boolean }[] = []
+    const worker = async () => {
+      while (true) {
+        const idx = cursor++
+        if (idx >= monthKeys.length) return
+        const m = monthKeys[idx]
+        try {
+          collected.push({ m, rows: await pullMonth(m), ok: true })
+        } catch {
+          try { collected.push({ m, rows: await pullMonth(m), ok: true }) }
+          catch { collected.push({ m, rows: [], ok: false }) }
+        }
+      }
+    }
+    const workers: Promise<void>[] = []
+    for (let i = 0; i < Math.min(CONCURRENCY, monthKeys.length); i++) workers.push(worker())
+    await Promise.all(workers)
+
+    for (const r of collected) {
       if (!r.ok) { failed.push(r.m); continue }
       raw = raw.concat(r.rows)
     }
