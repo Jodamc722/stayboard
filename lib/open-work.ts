@@ -11,9 +11,12 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function openWorkByListing(db = supabaseAdmin()): Promise<Record<string, number>> {
-  const [reqRes, glRes] = await Promise.all([
+  const [reqRes, glRes, auRes] = await Promise.all([
     db.from('field_requests').select('listing_id, priority, status').in('status', ['open', 'in_progress']).limit(3000),
     db.from('glitches').select('listing_id, status').not('status', 'in', '("done","resolved","closed")').limit(3000),
+    // AUDIT FINDINGS (walk engine / audit form): an open Fix or Clean found on a walk is real
+    // per-unit open work — the audit programme finally feeds Property Health (full-audit #13).
+    db.from('audit_items').select('listing_id, kind, severity, status').in('kind', ['maintenance', 'clean']).in('status', ['open', 'task_created']).limit(3000),
   ])
   const out: Record<string, number> = {}
   for (const w of (reqRes.data || []) as any[]) {
@@ -24,6 +27,10 @@ export async function openWorkByListing(db = supabaseAdmin()): Promise<Record<st
   for (const g of (glRes.data || []) as any[]) {
     const id = str(g.listing_id); if (!id) continue
     out[id] = (out[id] || 0) + 2
+  }
+  for (const a of (auRes.data || []) as any[]) {
+    const id = str(a.listing_id); if (!id || id.startsWith('NEW:') || id.startsWith('BLDG:')) continue
+    out[id] = (out[id] || 0) + (str(a.severity) === 'high' ? 2 : 1)
   }
   return out
 }
