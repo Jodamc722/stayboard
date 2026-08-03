@@ -84,6 +84,22 @@ function addTo(a: Agg, r: Row) {
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
+// Rebuild the shape lib/marketing expects out of the flat scalars PostgREST returns (all text).
+function moneyOf(x: any) {
+  // A missing JSON key comes back as null; leave those UNDEFINED so the plain-column fallbacks in
+  // payFor/hostPayout still fire instead of silently reading as zero.
+  const v = (raw: any) => (raw === null || raw === undefined || raw === '' ? undefined : raw)
+  return {
+    fareAccommodationAdjusted: v(x.m_accom_adj),
+    fareAccommodation: v(x.m_accom),
+    fareCleaning: v(x.m_clean),
+    hostPayout: v(x.m_payout),
+    totalPaid: v(x.m_paid),
+    balanceDue: v(x.m_bal),
+    isFullyPaid: x.m_full === true || x.m_full === 'true',
+  }
+}
+
 // "Jonathan McGill" -> "Jonathan M." for the partner link.
 function maskName(n: string): string {
   const parts = n.trim().split(/\s+/).filter(Boolean)
@@ -126,7 +142,21 @@ export async function GET(req: NextRequest) {
     const loIso = prevFrom + 'T00:00:00.000Z'
     const hiIso = addDaysIso(to, 2) + 'T00:00:00.000Z'
 
-    const cols = 'id, listing_name, guest_name, check_in, check_out, nights, status, source, confirmation_code, money_total, money_paid, money_balance, created_at, money:raw->money'
+    // Pull the SIX money scalars, not the whole `raw.money` object. That object carries the
+    // payments, invoiceItems and bundledFees arrays; hauling it for a few thousand bookings is
+    // what made Postgres cancel this query on statement timeout. Scalars are the same numbers at a
+    // fraction of the bytes.
+    const cols = [
+      'id, listing_name, guest_name, check_in, check_out, nights, status, source, confirmation_code',
+      'money_total, money_paid, money_balance, created_at',
+      'm_accom_adj:raw->money->>fareAccommodationAdjusted',
+      'm_accom:raw->money->>fareAccommodation',
+      'm_clean:raw->money->>fareCleaning',
+      'm_payout:raw->money->>hostPayout',
+      'm_paid:raw->money->>totalPaid',
+      'm_bal:raw->money->>balanceDue',
+      'm_full:raw->money->>isFullyPaid',
+    ].join(', ')
     // EVERY reservation created in the window is aggregated — this is the marketing tab, so a
     // silently dropped page would understate the very number it exists to report. 40 pages =
     // 40,000 bookings, well past a year of volume; `truncated` says so out loud if it is ever hit.
@@ -159,7 +189,7 @@ export async function GET(req: NextRequest) {
       const inPrev = created >= prevFrom && created <= prevTo
       if (!inCur && !inPrev) continue
 
-      const money = x.money || null
+      const money = moneyOf(x)
       const src = str(x.source).toLowerCase() || 'unknown'
       const bucket = bucketFor(src)
       const ci = str(x.check_in).slice(0, 10)
