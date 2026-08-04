@@ -130,7 +130,15 @@ export function ClaimDesk({ id }: Props) {
             {claim.deadline_on
               ? <>
                   Hard cutoff <span className="font-semibold">{claim.deadline_on}</span>
-                  {hardD !== null && (hardD < 0 ? ' — the window has closed.' : ' — ' + hardD + ' day(s) of runway behind the due date.')}
+                  {(() => {
+                    if (hardD === null) return null
+                    if (hardD < 0) return ' — the window has closed.'
+                    // Runway is the GAP between the two dates, not the days left on the cutoff.
+                    const gap = d === null ? null : hardD - d
+                    if (gap === null) return null
+                    if (gap <= 0) return ' — the due date is the cutoff, so there is no runway behind it.'
+                    return ' — ' + gap + ' day(s) of runway behind the due date.'
+                  })()}
                 </>
               : <>This channel sets no filing window &mdash; we hold the card, so the only clock is how fresh the charge looks to the bank.</>}
             {policy?.note && <span className="block mt-0.5">{policy.note}</span>}
