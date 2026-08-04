@@ -144,14 +144,36 @@ export function ReviewsPanel() {
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
 
-  async function rewriteAI(r: Review, instruction?: string) {
+  // RESEARCH — the 360 look-before-you-claim step. Pulls the property's recently COMPLETED work
+  // (Breezeway tasks, resolved guest issues, closed work orders) and shows it to the operator, so
+  // "that's been addressed" is only ever written over evidence a human has seen. Quick drafts
+  // ("Rewrite with AI") never do this — they stay fast and generic by design.
+  const [research, setResearch] = useState<Record<string, { open: boolean; loading: boolean; evidence: string }>>({})
+  async function doResearch(r: Review) {
+    const cur = research[r.id]
+    if (cur && cur.open) { setResearch(x => ({ ...x, [r.id]: { ...cur, open: false } })); return }
+    if (cur && cur.evidence !== undefined && !cur.loading && cur.evidence !== '') { setResearch(x => ({ ...x, [r.id]: { ...cur, open: true } })); return }
+    setResearch(x => ({ ...x, [r.id]: { open: true, loading: true, evidence: '' } }))
+    try {
+      const res = await fetch('/api/reviews/draft', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ researchOnly: true, listingId: r.listingId })
+      })
+      const d = await res.json()
+      setResearch(x => ({ ...x, [r.id]: { open: true, loading: false, evidence: d.evidence || '' } }))
+    } catch {
+      setResearch(x => ({ ...x, [r.id]: { open: true, loading: false, evidence: '' } }))
+    }
+  }
+
+  async function rewriteAI(r: Review, instruction?: string, withEvidence?: boolean) {
     setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
       // Retry on the org's 5-req/min rate limit with a backoff so drafts still land.
       for (let attempt = 0; attempt < 4; attempt++) {
         const res = await fetch('/api/reviews/draft', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction, currentDraft: drafts[r.id] || '' })
+          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction, currentDraft: drafts[r.id] || '', listingId: r.listingId, withEvidence: !!withEvidence })
         })
         const d = await res.json()
         if (res.ok && d.draft) { setDraft(r.id, d.draft); return }
@@ -420,12 +442,33 @@ export function ReviewsPanel() {
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
                     Rephrase…
                   </button>
+                  <button onClick={() => doResearch(r)} disabled={aiBusy[r.id] || rowBusy[r.id]}
+                    title="Check what our ops systems show was actually completed at this property, then draft a reply that can say so with confidence"
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
+                    {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide research' : 'Research'}
+                  </button>
                   <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
                     <XCircle size={12} /> Dismiss
                   </button>
                   <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>
+                {research[r.id]?.open && !research[r.id]?.loading && (
+                  <div className="mt-2 rounded-lg border border-line bg-app/60 p-2.5">
+                    {research[r.id]?.evidence ? (
+                      <>
+                        <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">Verified work at this property (internal — never posted)</div>
+                        <pre className="text-[11px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{research[r.id].evidence.replace(/^Verified internal record[^\n]*\n/, '')}</pre>
+                        <button onClick={() => rewriteAI(r, undefined, true)} disabled={aiBusy[r.id] || rowBusy[r.id]}
+                          className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                          <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Draft detailed reply from this'}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-muted">No completed work on record for this property in the last 45 days — the reply should not claim anything was fixed.</p>
+                    )}
+                  </div>
+                )}
                 <ReviewFollowUp r={r} />
               </div>
             </li>
