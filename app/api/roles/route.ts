@@ -1,4 +1,4 @@
-// Role management API (migration 022). Roles = saved member types: a label + landing page + a
+// Role management API (migration 023). Roles = saved member types: a label + landing page + a
 // permission level (off/view/edit/full) per tab. GET is admin (the /users console needs the list
 // to show role chips); ALL writes are OWNER-ONLY — nobody else can grant themselves access.
 // The 'admin' role is system-locked: full access, cannot be edited or deleted.
@@ -39,7 +39,7 @@ export async function GET() {
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
   const sb = supabaseAdmin()
   const { data, error } = await sb.from('app_roles').select('*').order('sort', { ascending: true })
-  if (error) return NextResponse.json({ error: `Could not load roles: ${error.message}. Has migration 022 run?`, needsMigration: true }, { status: 500 })
+  if (error) return NextResponse.json({ error: `Could not load roles: ${error.message}. Has migration 023 run?`, needsMigration: true }, { status: 500 })
   // How many people hold each role (drives the "in use" guard + the People tab chips).
   const { data: users } = await sb.from('app_users').select('email,access_role')
   const counts: Record<string, number> = {}
