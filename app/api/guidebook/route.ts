@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { photoForPlace } from '@/lib/place-photo'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -57,6 +58,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'guidebooks' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('guidebooks', 'edit')
+  if (!__gate.ok) return __gate.res
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
@@ -73,6 +78,10 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-full access on 'guidebooks' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('guidebooks', 'full')
+  if (!__gate.ok) return __gate.res
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const id = new URL(req.url).searchParams.get('id') || ''
@@ -98,6 +107,10 @@ async function anthropic(key: string, payload: any): Promise<string | null> {
 }
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'guidebooks' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('guidebooks', 'edit')
+  if (!__gate.ok) return __gate.res
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
