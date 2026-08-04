@@ -7,7 +7,7 @@
 // Recipients/wording/lead time come from app_settings 'reservation_emails' (the /users admin card),
 // never from this table — a building changing its front-desk address is not a schema change.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, isSuperadmin } from '@/lib/access'
+import { getAccess, isSuperadmin , requireLevel} from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
@@ -152,6 +152,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'reservation-emails' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reservation-emails', 'edit')
+  if (!__gate.ok) return __gate.res
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({} as any))
@@ -192,6 +196,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'reservation-emails' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reservation-emails', 'edit')
+  if (!__gate.ok) return __gate.res
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({} as any))
@@ -226,6 +234,10 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'reservation-emails' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reservation-emails', 'edit')
+  if (!__gate.ok) return __gate.res
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   // Deleting is owner-only and soft: a notice is the evidence we told a building, so it is never
