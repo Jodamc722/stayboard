@@ -72,10 +72,15 @@ export async function POST(req: NextRequest) {
   // Upsert the allowlist row first so access is granted even if the email can't be delivered.
   const row: any = { email, role, status: 'active', invited_by: access.email, last_invited_at: new Date().toISOString() }
   if (typeof body?.workspace === 'string' && body.workspace) row.workspace = normWorkspace(body.workspace)
+  // Role template (migration 023): validate against app_roles; admins always get the admin role.
+  if (typeof body?.access_role === 'string' && body.access_role) {
+    const { data: r } = await sb.from('app_roles').select('key').eq('key', body.access_role).maybeSingle()
+    if (r) row.access_role = role === 'admin' ? 'admin' : body.access_role
+  } else if (role === 'admin') row.access_role = 'admin'
   let { error: upErr } = await sb.from('app_users').upsert(row, { onConflict: 'email' })
-  if (upErr && row.workspace && /workspace/i.test(upErr.message || '')) {
-    // Pre-migration-013 fallback: retry without the workspace column.
-    delete row.workspace
+  if (upErr && (row.workspace || row.access_role) && /workspace|access_role/i.test(upErr.message || '')) {
+    // Pre-migration fallback (013 workspace / 023 access_role): retry without the new columns.
+    delete row.workspace; delete row.access_role
     const retry = await sb.from('app_users').upsert(row, { onConflict: 'email' })
     upErr = retry.error
   }
@@ -134,6 +139,18 @@ export async function PATCH(req: NextRequest) {
     if (!isOwnerCall) return NextResponse.json({ error: 'Only the owner can change workspaces.' }, { status: 403 })
     if (email !== OWNER) patch.workspace = normWorkspace(body.workspace)
   }
+  // Role assignment (migration 023): owner-only, like page access. Validated against app_roles.
+  if (typeof body?.access_role === 'string' && body.access_role) {
+    if (!isOwnerCall) return NextResponse.json({ error: 'Only the owner can change roles.' }, { status: 403 })
+    if (email !== OWNER) {
+      const { data: r } = await supabaseAdmin().from('app_roles').select('key').eq('key', body.access_role).maybeSingle()
+      if (!r) return NextResponse.json({ error: `No such role: ${body.access_role}` }, { status: 400 })
+      patch.access_role = body.access_role
+      // Holding the 'admin' ROLE and having admin console rights travel together.
+      if (body.access_role === 'admin') patch.role = 'admin'
+      else if (patch.role == null) patch.role = 'member'
+    }
+  }
   // Profile details + notification preferences: any admin can edit.
   if (body?.profile && typeof body.profile === 'object' && !Array.isArray(body.profile)) patch.profile = body.profile
   if (body?.prefs && typeof body.prefs === 'object' && !Array.isArray(body.prefs)) patch.prefs = body.prefs
@@ -146,8 +163,9 @@ export async function PATCH(req: NextRequest) {
   if (Object.keys(patch).length) {
     const { error: e } = await sb.from('app_users').update(patch).eq('email', email)
     if (e) {
-      const missing = /column .*(workspace|profile|prefs)/i.test(e.message || '')
-      return NextResponse.json({ error: missing ? 'This needs the workspaces migration — run supabase/migrations/013_user_workspaces.sql in Supabase, then try again.' : e.message }, { status: 500 })
+      const missing = /column .*(workspace|profile|prefs|access_role)/i.test(e.message || '')
+      const which = /access_role/i.test(e.message || '') ? '023_roles_permissions.sql' : '013_user_workspaces.sql'
+      return NextResponse.json({ error: missing ? `This needs a migration — run supabase/migrations/${which} in Supabase, then try again.` : e.message }, { status: 500 })
     }
   }
   // Optional password reset for the existing account.
