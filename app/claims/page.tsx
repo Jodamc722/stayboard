@@ -12,7 +12,7 @@ export default function ClaimsPage() {
         <h1 className="text-3xl font-bold text-ink mt-1">Claims</h1>
         <p className="text-sm text-muted mt-1">
           Damage and theft claims against AirCover, Vrbo and Booking cover, or the guest&rsquo;s card &mdash; built on the reservation,
-          evidenced item by item, and filed before the 14-day window closes.
+          evidenced item by item, and filed before that channel&rsquo;s window closes.
         </p>
       </header>
       <ClaimsBoard />
