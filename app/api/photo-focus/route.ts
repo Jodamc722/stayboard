@@ -1,4 +1,4 @@
-// AI "focus" for the Hero Studio. POST { url, prompt } → { cx, cy, zoom }.
+// AI "focus" for the Hero Studio. POST { url | imageData, prompt } → { cx, cy, zoom }.
 // Claude vision looks at the photo and returns where the hero crop should CENTER (cx,cy as a 0-1
 // fraction of the image) and how tight to crop (zoom 1-3). It GUIDES the framing — it does not
 // repaint pixels (that would need a generative image model + its own key). The component turns the
@@ -24,15 +24,25 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({} as any))
   const url = String(body?.url || '').trim()
+  const imageData = String(body?.imageData || '')   // data: URL for host uploads the server can't fetch
   const prompt = String(body?.prompt || '').trim().slice(0, 300)
-  if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
+  if (!url && !imageData) return NextResponse.json({ error: 'url or imageData required' }, { status: 400 })
 
   try {
-    const ir = await fetch(smallUrl(url), { cache: 'no-store' })
-    if (!ir.ok) return NextResponse.json({ error: 'Could not load that image.' }, { status: 400 })
-    const buf = Buffer.from(await ir.arrayBuffer())
+    let buf: Buffer, media: string
+    if (imageData) {
+      // Uploaded/local photo: the client already downscaled it and sends bytes inline.
+      const m = imageData.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/i)
+      if (!m) return NextResponse.json({ error: 'Unsupported image data.' }, { status: 400 })
+      media = m[1].toLowerCase()
+      buf = Buffer.from(m[2], 'base64')
+    } else {
+      const ir = await fetch(smallUrl(url), { cache: 'no-store' })
+      if (!ir.ok) return NextResponse.json({ error: 'Could not load that image.' }, { status: 400 })
+      buf = Buffer.from(await ir.arrayBuffer())
+      media = (ir.headers.get('content-type') || '').includes('png') ? 'image/png' : 'image/jpeg'
+    }
     if (buf.length > 4_500_000) return NextResponse.json({ error: 'Image too large to analyze.' }, { status: 400 })
-    const media = (ir.headers.get('content-type') || '').includes('png') ? 'image/png' : 'image/jpeg'
     const b64 = buf.toString('base64')
 
     const instruction = `You are framing a short-term-rental HERO photo.${prompt ? ` The host wants to emphasize: "${prompt}".` : ''} Choose the most appealing, on-brand framing. Reply with ONLY compact JSON: {"cx":0-1,"cy":0-1,"zoom":1-3} where cx,cy is the focal point to center the crop on (as a fraction of width and height) and zoom is how tight to crop (1 = whole image, 2 = noticeably tighter on the subject, 3 = very tight). No prose.`
