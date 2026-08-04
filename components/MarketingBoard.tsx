@@ -14,7 +14,7 @@ type State = 'booked' | 'inhouse' | 'stayed' | 'pending' | 'canceled'
 type Pay = 'paid' | 'partial' | 'unpaid'
 
 type Row = {
-  id: string; created: string; createdTs: string; guest: string; property: string
+  id: string; created: string; createdTs: string; guest: string; property: string; building?: string
   source: string; bucket: Bucket; family: Family; state: State; status: string; pay: Pay
   checkIn: string; checkOut: string; nights: number; lead: number | null
   accom: number; cleaning: number; total: number; paid: number; balance: number; conf: string
@@ -24,7 +24,7 @@ type Agg = {
   nights: number; accom: number; cleaning: number; paidAmt: number; balanceAmt: number
   unpaidCount: number; leadSum: number; leadN: number
 }
-type Roll = { all: Agg; bySource: Record<string, Agg>; byFamily: Record<string, Agg>; byBucket: Record<string, Agg>; byOtaGroup?: Record<string, Agg> }
+type Roll = { all: Agg; bySource: Record<string, Agg>; byFamily: Record<string, Agg>; byBucket: Record<string, Agg>; byOtaGroup?: Record<string, Agg>; byBuilding?: Record<string, Agg> }
 type MonthRow = {
   m: string; created: number; won: number; canceled: number; pending: number
   nights: number; revenue: number
@@ -370,18 +370,28 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const [limit, setLimit] = useState(100)
   const [months, setMonths] = useState<MonthsData | null>(null)
 
-  const load = useCallback(async (from?: string, to?: string) => {
+  // `fresh` = the range itself changed. In that case the numbers on screen belong to a DIFFERENT
+  // period, so they are cleared before the request goes out: a slow or failed load must never
+  // leave July's figures sitting under a "Year to date" chip. (That is exactly what happened —
+  // long ranges timed out server-side and the board kept showing the old window.)
+  const load = useCallback(async (from?: string, to?: string, fresh?: boolean) => {
     setLoading(true); setErr('')
+    if (fresh) setData(null)
     try {
       const qs = from && to ? '?from=' + from + '&to=' + to : ''
       const r = await fetch('/api/public/marketing-report' + qs, { cache: 'no-store' })
       const j: Data = await r.json()
       if (r.status === 401 || j.needsPassword) { setNeedsPw(true); setLoading(false); return }
-      if (!r.ok || !j.ok) { setErr(j.error || 'Could not load'); setLoading(false); return }
+      if (!r.ok || !j.ok) {
+        // Show nothing rather than the wrong period.
+        setData(null)
+        setErr(j.error || (r.status === 504 ? 'That range took too long to read. Try a shorter one.' : 'Could not load'))
+        setLoading(false); return
+      }
       setNeedsPw(false)
       setData(j)
       if (j.range) { setFromD(j.range.from); setToD(j.range.to) }
-    } catch (e: any) { setErr(String(e && e.message ? e.message : e)) }
+    } catch (e: any) { setData(null); setErr(String(e && e.message ? e.message : e)) }
     setLoading(false)
   }, [])
 
@@ -404,7 +414,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
     const today = (data && data.today) || new Date().toISOString().slice(0, 10)
     const r = rangeFor(k, today)
     setFromD(r.from); setToD(r.to)
-    load(r.from, r.to)
+    load(r.from, r.to, true)
   }
 
   const submitPw = async () => {
@@ -469,6 +479,26 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const cur = data && data.current ? data.current : undefined
   const prev = data && data.previous ? data.previous : undefined
 
+  // Direct bookings per building, this window vs the same length before it. Buildings with none in
+  // EITHER window are dropped — a list of zeros hides the movement that matters.
+  const buildingRows = useMemo(() => {
+    const nowMap = (cur && cur.byBuilding) || {}
+    const beforeMap = (prev && prev.byBuilding) || {}
+    const keys: string[] = []
+    for (const k of Object.keys(nowMap)) keys.push(k)
+    for (const k of Object.keys(beforeMap)) if (keys.indexOf(k) < 0) keys.push(k)
+    const out = keys.map(k => ({
+      key: k,
+      now: (nowMap[k] || EMPTY_AGG).won,
+      before: (beforeMap[k] || EMPTY_AGG).won,
+      rev: (nowMap[k] || EMPTY_AGG).accom,
+      nights: (nowMap[k] || EMPTY_AGG).nights,
+    })).filter(b => b.now > 0 || b.before > 0)
+    out.sort((a, b) => b.now - a.now || (b.now - b.before) - (a.now - a.before) || a.key.localeCompare(b.key))
+    return out
+  }, [cur, prev])
+  const buildingMax = buildingRows.reduce((m, b) => (b.now > m ? b.now : m), 0)
+
   // ── password gate ─────────────────────────────────────────────────────────
   if (needsPw) {
     return (
@@ -509,6 +539,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
     { key: 'other', label: 'Manual & owner', n: manNow.won + ownNow.won, color: '#C9CDD6' },
   ].filter(x => x.n > 0)
   const splitTotal = splitParts.reduce((a, x) => a + x.n, 0) || 1
+
   // One sentence a partner can read without decoding a single tile.
   const takeaway = (() => {
     const c = dirPrev.won ? (dirNow.won - dirPrev.won) / dirPrev.won : 0
@@ -565,7 +596,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               <input type="date" value={fromD} onChange={e => setFromD(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5" />
               <span className="text-xs text-muted">to</span>
               <input type="date" value={toD} onChange={e => setToD(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5" />
-              <button onClick={() => load(fromD, toD)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white">Apply</button>
+              <button onClick={() => load(fromD, toD, true)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white">Apply</button>
             </span>
           ) : null}
           {data && data.lastSync ? <span className="text-[11px] text-muted ml-auto">Guesty synced {new Date(data.lastSync).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span> : null}
@@ -573,7 +604,17 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
       </div>
 
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-4 py-3">{err}</div> : null}
-      {loading && !data ? <div className="rounded-2xl border border-line bg-white p-8 text-center text-sm text-muted">Loading bookings…</div> : null}
+      {loading && !data ? (
+        <div className="rounded-2xl border border-line bg-white p-10 text-center">
+          <div className="inline-flex items-center gap-2.5 text-sm text-muted">
+            <RefreshCw size={15} className="animate-spin" />
+            Reading every booking made {fromD && toD ? 'between ' + fmtDay(fromD) + ' and ' + fmtDay(toD) : 'in this window'}…
+          </div>
+          <div className="mt-5 grid grid-cols-2 sm:grid-cols-6 gap-2.5 max-w-3xl mx-auto">
+            {[0,1,2,3,4,5].map(i => <div key={i} className="h-14 rounded-xl bg-app animate-pulse" />)}
+          </div>
+        </div>
+      ) : null}
 
       {data && data.truncated ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm px-4 py-2.5 inline-flex items-center gap-2">
@@ -654,6 +695,57 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                     </span>
                   ))}
                 </div>
+              </div>
+            </div>
+          ) : null}
+
+          {buildingRows.length ? (
+            <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+              <div className="px-6 py-4 border-b border-line">
+                <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Traction</div>
+                <h3 className="text-base font-bold text-ink tracking-tight mt-1">Which buildings direct bookings are landing in</h3>
+                <p className="text-xs text-muted mt-1.5 max-w-[74ch] leading-relaxed">
+                  Direct bookings only, per building, against the same length of time before it. If spend went into one building, this is where it should show up.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-[#FAFBFC] text-[10px] uppercase tracking-[0.12em] text-muted">
+                      <th className="text-left pl-6 pr-3 py-2.5 font-bold border-b border-line">Building</th>
+                      <th className="py-2.5 border-b border-line" style={{ width: '26%' }} />
+                      <th className="text-right px-3 py-2.5 font-bold border-b border-line">Direct</th>
+                      <th className="text-right px-3 py-2.5 font-bold border-b border-line">Was</th>
+                      <th className="text-right px-3 py-2.5 font-bold border-b border-line">Move</th>
+                      <th className="text-right px-3 py-2.5 font-bold border-b border-line">Revenue</th>
+                      <th className="text-right pr-6 pl-3 py-2.5 font-bold border-b border-line">Nights</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buildingRows.map(b => (
+                      <tr key={b.key} className="border-b border-[#F1F2F5] last:border-b-0 hover:bg-[#FBFBFE] transition-colors">
+                        <td className="pl-6 pr-3 py-2.5 whitespace-nowrap font-bold text-ink">{b.key}</td>
+                        <td className="pr-6 py-2.5">
+                          <div className="h-2.5 rounded-full bg-brand-100/80 overflow-hidden">
+                            <div className="h-full rounded-full bg-brand-600"
+                              style={{ width: Math.min(100, buildingMax ? (b.now / buildingMax) * 100 : 0) + '%', minWidth: b.now > 0 ? 4 : 0 }} />
+                          </div>
+                        </td>
+                        <td className={'px-3 py-2.5 text-right tabular-nums font-bold ' + (b.now ? 'text-ink' : 'text-neutral-300')}>{b.now}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-muted">{b.before}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          {b.before || b.now
+                            ? <span className={'text-[12px] font-bold tabular-nums ' + (b.now > b.before ? 'text-emerald-700' : b.now < b.before ? 'text-rose-700' : 'text-muted')}>
+                                {b.now === b.before ? 'flat' : (b.now > b.before ? '+' : '') + (b.now - b.before)}
+                              </span>
+                            : <span className="text-neutral-300">—</span>}
+                        </td>
+                        <td className={'px-3 py-2.5 text-right tabular-nums ' + (b.rev ? 'text-ink' : 'text-neutral-300')}>{b.rev ? money0(b.rev) : '$0'}</td>
+                        <td className={'pr-6 pl-3 py-2.5 text-right tabular-nums ' + (b.nights ? 'text-muted' : 'text-neutral-300')}>{b.nights || 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           ) : null}
