@@ -54,6 +54,10 @@ export type AuditItem = {
   source: string
   reservationId: string          // guesty_reservations.id — powers the "open in Guesty" link
   resNote: string                // Guesty "Reservation Notes" custom field — prior history on the booking
+  benchRate: number | null       // cohort average $/night (this + last month, self excluded)
+  benchLabel: string             // which cohort: "Botanica 2BR average", "portfolio average", …
+  benchPct: number | null        // this stay's rate as % of benchRate
+  benchPrev: number | null       // last month's cohort average alone, when it has enough nights
   rental: number
   commission: number
   other: number
@@ -129,55 +133,67 @@ const REIMB_RE = /reimburs|cleaning/i
 const OWNERISH_RE = /owner/i
 
 // ── EDITABLE RULES ────────────────────────────────────────────────────────────
-// The thresholds behind the flags are policy, not physics — $60/night was right for this
-// portfolio in 2026 but it should move when the portfolio does. Stored in app_settings
-// (JSON over TEXT, via lib/app-settings) and merged over these defaults, so a missing or
-// mangled setting can never change what the audit flags — it just falls back.
+// The thresholds behind the flags are policy, not physics. Stored in app_settings (JSON over
+// TEXT, via lib/app-settings) and merged over these defaults, so a missing or mangled setting
+// can never change what the audit flags — it just falls back.
+//
+// LOW RATE has two modes. A flat $/night threshold treats a $500/n three-bedroom and a $70/n
+// studio as the same animal — so the default mode is RELATIVE: each reservation's in-month
+// rate is compared to the average rate of its cohort this month (same building + same bedroom
+// count, falling back to the whole building, then portfolio same-size, then portfolio), with
+// the reservation's own nights excluded so a night is judged against the OTHER nights around
+// it. A hard floor still catches absurd rates even when a whole cohort is cheap.
+export type LowRateMode = 'relative' | 'absolute'
 export type AuditRules = {
-  lowRate: number                              // flag when in-month $/night falls below this
+  lowRateMode: LowRateMode
+  lowRatePct: number                           // relative: flag under this % of the cohort average
+  lowRateFloor: number                         // relative: always flag under this $/night
+  lowRate: number                              // absolute mode: flag when in-month $/night falls below this
   passthruLo: number                           // commission/rental band treated as a wash
   passthruHi: number
   enabled: Record<AuditFlagType, boolean>      // per-flag kill switch
 }
 export const DEFAULT_AUDIT_RULES: AuditRules = {
+  lowRateMode: 'relative', lowRatePct: 55, lowRateFloor: 30,
   lowRate: 60, passthruLo: 0.9, passthruHi: 1.1,
   enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
+// A cohort average is only trusted when built on at least this many OTHER in-month nights;
+// thinner cohorts fall through to the next wider one.
+const BENCH_MIN_NIGHTS = 20
+
 const num = (v: any, fb: number) => { const n = Number(v); return Number.isFinite(n) ? n : fb }
 
-export async function auditRules(): Promise<AuditRules> {
-  const s = await getSetting<any>(AUDIT_RULES_KEY, null)
-  const d = DEFAULT_AUDIT_RULES
-  if (!s || typeof s !== 'object') return { ...d, enabled: { ...d.enabled } }
-  const enabled: Record<AuditFlagType, boolean> = { ...d.enabled }
-  if (s.enabled && typeof s.enabled === 'object') {
+function sanitizeRules(s: any, base: AuditRules): AuditRules {
+  const enabled: Record<AuditFlagType, boolean> = { ...base.enabled }
+  if (s?.enabled && typeof s.enabled === 'object') {
     for (const k of Object.keys(enabled) as AuditFlagType[]) {
       if (typeof s.enabled[k] === 'boolean') enabled[k] = s.enabled[k]
     }
   }
   return {
-    lowRate: Math.max(0, num(s.lowRate, d.lowRate)),
-    passthruLo: Math.min(1, Math.max(0.5, num(s.passthruLo, d.passthruLo))),
-    passthruHi: Math.max(1, Math.min(2, num(s.passthruHi, d.passthruHi))),
+    lowRateMode: s?.lowRateMode === 'absolute' ? 'absolute' : s?.lowRateMode === 'relative' ? 'relative' : base.lowRateMode,
+    lowRatePct: Math.min(95, Math.max(10, num(s?.lowRatePct, base.lowRatePct))),
+    lowRateFloor: Math.max(0, num(s?.lowRateFloor, base.lowRateFloor)),
+    lowRate: Math.max(0, num(s?.lowRate, base.lowRate)),
+    passthruLo: Math.min(1, Math.max(0.5, num(s?.passthruLo, base.passthruLo))),
+    passthruHi: Math.max(1, Math.min(2, num(s?.passthruHi, base.passthruHi))),
     enabled,
   }
 }
 
+export async function auditRules(): Promise<AuditRules> {
+  const s = await getSetting<any>(AUDIT_RULES_KEY, null)
+  const d: AuditRules = { ...DEFAULT_AUDIT_RULES, enabled: { ...DEFAULT_AUDIT_RULES.enabled } }
+  if (!s || typeof s !== 'object') return d
+  return sanitizeRules(s, d)
+}
+
 export async function saveAuditRules(patch: any, by: string): Promise<AuditRules> {
   const cur = await auditRules()
-  const next: AuditRules = {
-    lowRate: Math.max(0, num(patch?.lowRate, cur.lowRate)),
-    passthruLo: Math.min(1, Math.max(0.5, num(patch?.passthruLo, cur.passthruLo))),
-    passthruHi: Math.max(1, Math.min(2, num(patch?.passthruHi, cur.passthruHi))),
-    enabled: { ...cur.enabled },
-  }
-  if (patch?.enabled && typeof patch.enabled === 'object') {
-    for (const k of Object.keys(next.enabled) as AuditFlagType[]) {
-      if (typeof patch.enabled[k] === 'boolean') next.enabled[k] = patch.enabled[k]
-    }
-  }
+  const next = sanitizeRules(patch, cur)
   const w = await setSetting(AUDIT_RULES_KEY, next, by)
   if (!w.ok) throw new Error('rules save: ' + (w.error || 'failed'))
   return next
@@ -344,19 +360,52 @@ export async function buildAudit(month: string): Promise<AuditData> {
     }
   }
 
+  // 5b. Last month's AF rows — rate context for the relative low-rate rule. AF lines are
+  // per-night, so distinct (listing, date) counts nights without needing the reservation
+  // join (two bookings can't occupy the same unit on the same night). Best-effort: a read
+  // error here degrades to "no last-month context", never a lost audit.
+  const prevMonth = (() => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7) })()
+  const prevByListing: Record<string, { rental: number; nights: number }> = {}
+  {
+    const seenNight = new Set<string>()
+    for (let off = 0; off < 100_000; off += PAGE) {
+      const { data, error } = await sb.from('guesty_owner_ledger')
+        .select('listing_id, entry_date, amount')
+        .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
+        .range(off, off + PAGE - 1)
+      if (error) break
+      const batch = (data || []) as any[]
+      for (const r of batch) {
+        const lid = String(r.listing_id || '')
+        if (!lid) continue
+        const a = prevByListing[lid] || (prevByListing[lid] = { rental: 0, nights: 0 })
+        a.rental = money(a.rental - (Number(r.amount) || 0))    // owner effect: flip the sign
+        const nk = lid + '|' + String(r.entry_date || '')
+        if (!seenNight.has(nk)) { seenNight.add(nk); a.nights++ }
+        listingIds.add(lid)
+      }
+      if (batch.length < PAGE) break
+    }
+  }
+
   const [{ data: ownerRows }, { data: listingRows }] = await Promise.all([
     ownerIds.length
       ? sb.from('guesty_owners').select('id, full_name').in('id', ownerIds)
       : Promise.resolve({ data: [] } as any),
     listingIds.size
-      ? sb.from('guesty_listings').select('id, nickname, title, building, unit').in('id', Array.from(listingIds))
+      ? sb.from('guesty_listings').select('id, nickname, title, building, unit, bedrooms').in('id', Array.from(listingIds))
       : Promise.resolve({ data: [] } as any),
   ])
   const ownerName: Record<string, string> = {}
   for (const o of (ownerRows || []) as any[]) ownerName[String(o.id)] = String(o.full_name || '')
   const unitOf: Record<string, string> = {}
+  const bldgOf: Record<string, string> = {}
+  const bedsOf: Record<string, number> = {}
   for (const l of (listingRows || []) as any[]) {
-    unitOf[String(l.id)] = String(l.nickname || l.title || (l.building ? l.building + '/' + (l.unit ?? '') : '') || l.id)
+    const id = String(l.id)
+    unitOf[id] = String(l.nickname || l.title || (l.building ? l.building + '/' + (l.unit ?? '') : '') || l.id)
+    bldgOf[id] = String(l.building || '')
+    bedsOf[id] = Number(l.bedrooms) || 0
   }
 
   for (const o of Object.values(owners)) {
@@ -384,8 +433,33 @@ export async function buildAudit(month: string): Promise<AuditData> {
     reviews[String(r.owner_id) + '|' + key] = r
   }
 
-  // 7. Items + flags.
-  const items: AuditItem[] = []
+  // 7. Items + flags — two passes. Pass A computes each group's dates/nights/rate and pools
+  // the rate cohorts (building + bedrooms, this month) that the relative low-rate rule
+  // compares against. Pass B judges each group against the cohorts and builds the items.
+  type Pre = {
+    g: Group; res: any; bestListing: string
+    checkIn: string; checkOut: string; totalNights: number; monthNights: number
+    splitMonth: boolean; net: number; rate: number | null; inCohort: boolean
+  }
+  const pres: Pre[] = []
+  const curC: Record<string, { r: number; n: number }> = {}
+  const prevC: Record<string, { r: number; n: number }> = {}
+  const bump = (m: Record<string, { r: number; n: number }>, k: string, r: number, n: number) => {
+    const c = m[k] || (m[k] = { r: 0, n: 0 }); c.r = money(c.r + r); c.n += n
+  }
+  const cohortKeys = (lid: string): [string, string][] => {
+    const b = bldgOf[lid] || ''
+    const bd = bedsOf[lid] || 0
+    const out: [string, string][] = []
+    if (b) {
+      if (bd) out.push(['B|' + b + '|' + bd, b + ' ' + bd + 'BR average'])
+      out.push(['B|' + b + '|*', b + ' average'])
+    }
+    if (bd) out.push(['P|' + bd, 'portfolio ' + bd + 'BR average'])
+    out.push(['P|*', 'portfolio average'])
+    return out
+  }
+
   for (const g of Object.values(groups)) {
     const res = g.resCode ? resByCode[g.resCode] : null
     const bestListing = Object.keys(g.listingIds).sort((a, b) => g.listingIds[b] - g.listingIds[a])[0]
@@ -402,6 +476,44 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const splitMonth = !!(checkIn && checkOut) && (checkIn < win.start || checkOut > win.endExcl)
     const net = money(g.rental - g.commission + g.other)
     const rate = monthNights > 0 ? money(g.rental / monthNights) : null
+
+    const inCohort = !!g.resCode && g.rental > 0.005 && monthNights > 0 && !!bestListing
+    if (inCohort) for (const [k] of cohortKeys(bestListing)) bump(curC, k, g.rental, monthNights)
+    pres.push({ g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, inCohort })
+  }
+
+  // Last month's nights join the same cohorts (they need no leave-one-out — nothing this
+  // month is part of them).
+  for (const lid of Object.keys(prevByListing)) {
+    const a = prevByListing[lid]
+    if (a.rental <= 0 || a.nights <= 0) continue
+    for (const [k] of cohortKeys(lid)) bump(prevC, k, a.rental, a.nights)
+  }
+
+  // Narrowest trustworthy cohort for one group: same building + size, then building, then
+  // portfolio same-size, then portfolio — pooled across this month (minus the group itself)
+  // and last month.
+  const benchOf = (pre: Pre): { rate: number; label: string; prevAvg: number | null } | null => {
+    if (!pre.bestListing) return null
+    for (const [k, label] of cohortKeys(pre.bestListing)) {
+      const c = curC[k] || { r: 0, n: 0 }
+      const p = prevC[k] || { r: 0, n: 0 }
+      const selfR = pre.inCohort ? pre.g.rental : 0
+      const selfN = pre.inCohort ? pre.monthNights : 0
+      const n = c.n - selfN + p.n
+      const r = money(c.r - selfR + p.r)
+      if (n >= BENCH_MIN_NIGHTS && r > 0) {
+        return { rate: money(r / n), label, prevAvg: p.n >= 5 && p.r > 0 ? money(p.r / p.n) : null }
+      }
+    }
+    return null
+  }
+
+  const items: AuditItem[] = []
+  for (const pre of pres) {
+    const { g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate } = pre
+    const bench = g.resCode ? benchOf(pre) : null
+    const benchPct = bench && rate != null && bench.rate > 0 ? Math.round((rate / bench.rate) * 100) : null
 
     const flags: AuditFlag[] = []
     const on = rules.enabled
@@ -423,14 +535,23 @@ export async function buildAudit(month: string): Promise<AuditData> {
         flags.push({ type: 'zero_rev', severity: ownerish ? 'info' : 'review',
           detail: ownerish ? 'Owner stay — $0 revenue by design; note any associated costs.' : '$0 revenue and not obviously an owner stay.' })
       }
-      if (on.low_rate && g.rental > 0.005 && rate != null && rate < rules.lowRate && monthNights > 0) {
-        if (!splitMonth) {
-          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + monthNights + ' in-month night' + (monthNights === 1 ? '' : 's') + ' (threshold $' + rules.lowRate + ').' })
-        }
-        // Split-month with a healthy in-month rate is expected and stays unflagged; a
-        // split-month stay that is STILL under the threshold on its in-month nights gets flagged too.
-        else {
-          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Split-month stay, but the in-month portion still runs $' + rate.toFixed(2) + '/night over ' + monthNights + ' night' + (monthNights === 1 ? '' : 's') + ' (threshold $' + rules.lowRate + ').' })
+      // LOW RATE — always on in-month nights only, so split-month stays are never flagged
+      // for looking small on this month's statement.
+      if (on.low_rate && g.rental > 0.005 && rate != null && monthNights > 0) {
+        const nightsTxt = monthNights + ' in-month night' + (monthNights === 1 ? '' : 's') + (splitMonth ? ' (split-month stay)' : '')
+        if (rules.lowRateMode === 'absolute') {
+          if (rate < rules.lowRate) {
+            flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + nightsTxt + ' — under the $' + rules.lowRate + ' threshold.' })
+          }
+        } else if (rate < rules.lowRateFloor) {
+          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + nightsTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' })
+        } else if (bench && benchPct != null && rate < bench.rate * (rules.lowRatePct / 100)) {
+          flags.push({
+            type: 'low_rate', severity: 'review', amount: rate,
+            detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + nightsTxt + ' is ' + benchPct + '% of the ' + bench.label
+              + ' ($' + bench.rate.toFixed(0) + '/night across this and last month'
+              + (bench.prevAvg != null ? '; last month alone ran $' + bench.prevAvg.toFixed(0) + '/night' : '') + ').',
+          })
         }
       }
       if (on.passthru && isPassthru) {
@@ -466,6 +587,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
       source: res ? String(res.source || '') : '',
       reservationId: res ? String(res.id || '') : '',
       resNote: res ? reservationNoteOf(res.custom_fields) : '',
+      benchRate: bench ? bench.rate : null,
+      benchLabel: bench ? bench.label : '',
+      benchPct,
+      benchPrev: bench ? bench.prevAvg : null,
       rental: g.rental, commission: g.commission, other: g.other, net,
       rate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
