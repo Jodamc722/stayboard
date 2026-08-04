@@ -12,6 +12,7 @@ import { canDelete, trashRecord } from '@/lib/trash'
 import { claimNoteLine, claimTitle, deadlineFor, dueDateFor, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor } from '@/lib/claim-turnover'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -56,6 +57,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'claims' is rejected here.
+  const __gate = await requireLevel('claims', 'edit')
+  if (!__gate.ok) return __gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -193,6 +197,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 // put the whole thing back. Attachments stay in the bucket, so a restored claim still has its
 // photos and receipts.
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  // Roles+levels write gate (2026-08-04): below-full access on 'claims' is rejected here.
+  const __gate = await requireLevel('claims', 'full')
+  if (!__gate.ok) return __gate.res
   const who = await canDelete()
   if (!who.ok) return NextResponse.json({ ok: false, error: who.reason }, { status: 403 })
   const db = supabaseAdmin()
