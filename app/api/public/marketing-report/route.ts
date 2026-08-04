@@ -266,9 +266,12 @@ export async function GET(req: NextRequest) {
       const i = tIdx[r.created]
       if (i === undefined) continue
       const t = trend[i]
-      const dead = r.state === 'canceled' || r.state === 'pending'
-      if (r.family === 'direct') { t.direct += 1; if (!dead) t.directRev += r.accom }
-      else if (r.family === 'ota') { t.ota += 1; if (!dead) t.otaRev += r.accom }
+      // BOOKED only, exactly like the headline figure. Counting canceled bookings here made the
+      // daily chart say "24 in this window" while the hero said 10 — the first thing a reader
+      // would catch, and rightly.
+      if (r.state === 'canceled' || r.state === 'pending') continue
+      if (r.family === 'direct') { t.direct += 1; t.directRev += r.accom }
+      else if (r.family === 'ota') { t.ota += 1; t.otaRev += r.accom }
       else { t.manual += 1 }
     }
 
