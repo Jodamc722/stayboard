@@ -57,6 +57,18 @@ function DeadlineChip({ claim }: { claim: Claim }) {
   )
 }
 
+// The evidence clock. Only shown while it is the thing that decides the day.
+function TurnoverChip({ claim }: { claim: Claim }) {
+  if (!claim.next_check_in) return null
+  const a = daysUntil(claim.next_check_in)
+  if (a === null || a > 2) return null
+  return (
+    <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (a < 0 ? 'bg-app text-muted border-line' : 'bg-violet-50 text-violet-800 border-violet-200')}>
+      {a < 0 ? 'unit turned' : a === 0 ? 'guest arrives TODAY' : a === 1 ? 'guest arrives tomorrow' : 'guest in ' + a + 'd'}
+    </span>
+  )
+}
+
 function HardChip({ claim }: { claim: Claim }) {
   if (!hardDeadlineBiting(claim)) return null
   const h = daysUntil(claim.deadline_on)
@@ -277,6 +289,7 @@ function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<strin
       <div className="mt-2 flex items-center gap-1.5 flex-wrap">
         <DeadlineChip claim={claim} />
         <HardChip claim={claim} />
+        <TurnoverChip claim={claim} />
         {claim.channel && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded border border-line text-muted">{claim.channel}</span>}
         {claim.waiting_on && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-sky-200 bg-sky-50 text-sky-800">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</span>}
         {claim.outcome && (

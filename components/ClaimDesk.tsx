@@ -126,6 +126,21 @@ export function ClaimDesk({ id }: Props) {
             {claim.due_source === 'manual' && <span className="text-[11px] px-1.5 py-0.5 rounded border border-current/30 opacity-80">set by hand</span>}
             {policy && <span className="text-[11px] opacity-80 ml-auto">{claim.channel}: {policy.route}</span>}
           </div>
+          {/* THE OTHER CLOCK: the channel may still accept it next week, but once the next guest
+              walks in the damage cannot be photographed or attributed to anybody. */}
+          {claim.next_check_in && (() => {
+            const a = daysUntil(claim.next_check_in)
+            if (a === null) return null
+            const gone = a < 0
+            return (
+              <div className={'text-[12px] mt-1.5 rounded-lg px-2 py-1.5 ' + (gone ? 'bg-rose-100/70 text-rose-900' : a <= 1 ? 'bg-rose-100/70 text-rose-900 font-medium' : 'bg-white/50')}>
+                {gone
+                  ? 'The next guest checked in on ' + claim.next_check_in + ' — the unit has been turned, so photograph nothing new and rely on what was captured before.'
+                  : 'Next guest arrives ' + claim.next_check_in + (a === 0 ? ' (today)' : a === 1 ? ' (tomorrow)' : ' — ' + a + ' day(s)') + '. After that the damage cannot be photographed or attributed.'}
+                {claim.due_reason === 'turnover' && !gone && <span className="block mt-0.5">The due date was pulled forward to beat it.</span>}
+              </div>
+            )
+          })()}
           <div className="text-[12px] mt-1 opacity-90">
             {claim.deadline_on
               ? <>
@@ -632,8 +647,9 @@ function Rail({ claim, items, gates, patch, busy, onDelete }: {
           <RailRow label="Paid" value={claim.amount_paid == null ? '—' : money(claim.amount_paid)} />
           <RailRow label="Deposit held" value={claim.deposit_held ? money(claim.deposit_held) : '—'} />
           <RailRow label="Discovered" value={claim.discovered_on || '—'} />
-          <RailRow label="Due" value={(claim.due_on || '—') + (claim.due_source === 'manual' ? ' (set)' : '')} />
+          <RailRow label="Due" value={(claim.due_on || '—') + (claim.due_source === 'manual' ? ' (set)' : claim.due_reason === 'turnover' ? ' (turnover)' : '')} />
           <RailRow label="Hard cutoff" value={claim.deadline_on || 'none'} />
+          <RailRow label="Next guest" value={claim.next_check_in || '—'} />
           <RailRow label="Submitted" value={claim.submitted_on || '—'} />
           <RailRow label="Decided" value={claim.decided_on || '—'} />
           <RailRow label="Owner" value={claim.assignee_email || '—'} />
