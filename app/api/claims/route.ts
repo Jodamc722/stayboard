@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { deadlineFor, dueDateFor, dueWithTurnover, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
-import { nextCheckInFor } from '@/lib/claim-turnover'
+import { nextCheckInFor, nextCheckInMap } from '@/lib/claim-turnover'
 
 const POLICY_KEY = 'claims_channel_policy'
 const loadPolicy = () => getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
@@ -121,7 +121,14 @@ export async function GET(req: NextRequest) {
         byClaim[k].push(it as ClaimItem)
       }
     }
-    const out = ((claims || []) as any[]).map(c => ({ ...c, items: byClaim[String(c.id)] || [] }))
+    // The turnover clock, one query for the whole board. Attached to each claim rather than
+    // stored, so a booking added or cancelled after the claim was opened is reflected immediately.
+    const arrivals = await nextCheckInMap(db, (claims || []) as any[])
+    const out = ((claims || []) as any[]).map(c => ({
+      ...c,
+      items: byClaim[String(c.id)] || [],
+      next_check_in: arrivals[String(c.id)] || null,
+    }))
     // Roll-ups the board header reads. Computed here so every surface agrees on the numbers.
     let sought = 0, recovered = 0, openCount = 0
     for (const c of out) {
@@ -165,9 +172,8 @@ export async function POST(req: NextRequest) {
     const ch = channelName((r as any).source)
     const pol = await loadPolicy()
     const p = policyFor(ch, pol)
-    // Who arrives next on this unit — once they do, the damage cannot be photographed.
-    const nextArrival = await nextCheckInFor(db, str((r as any).listing_id), checkOut)
-    const due = dueWithTurnover(checkOut, ch, nextArrival, pol)
+    // The stored due date is the channel target. The turnover clock is applied on read.
+    const due = { due: dueDateFor(checkOut, ch, pol) }
     const row: Record<string, any> = {
       stage: 'draft',
       reservation_id: reservationId,
@@ -181,10 +187,10 @@ export async function POST(req: NextRequest) {
       check_out: checkOut || null,
       discovered_on: str(b.discoveredOn).slice(0, 10) || todayET(),
       deadline_on: deadlineFor(checkOut, ch, pol),
+      // due_on holds the CHANNEL TARGET. The turnover is not stored — it is read fresh on every
+      // load (see lib/claim-turnover) because bookings move after a claim is opened.
       due_on: due.due,
       due_source: 'policy',
-      due_reason: due.reason,
-      next_check_in: nextArrival,
       deposit_held: p.deposit,
       guesty_url: 'https://app.guesty.com/reservations/' + reservationId + '/summary',
       created_by: str(user.email) || null,
@@ -196,7 +202,6 @@ export async function POST(req: NextRequest) {
       // Migration 020 (due dates) has not run on this database yet — save the claim rather than
       // failing in the user's face over a column they cannot add.
       delete row.due_on; delete row.due_source; delete row.deposit_held
-      delete row.due_reason; delete row.next_check_in
       ins = await db.from('claims').insert(row).select('id').single()
     }
     const { data, error } = ins
