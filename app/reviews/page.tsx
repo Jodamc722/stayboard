@@ -1,10 +1,9 @@
 import { redirect } from 'next/navigation'
-import { Star } from 'lucide-react'
+import { Star, ClipboardList, ChevronRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ReviewsPanel } from '@/app/command/ReviewsPanel'
 import { ReviewKpis } from '@/components/ReviewKpis'
-import { ReviewActionBoard } from '@/components/ReviewActionBoard'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +27,16 @@ export default async function ReviewsPage() {
       </header>
 
       <ReviewKpis />
-      <ReviewActionBoard />
+
+      {/* The action board lives on its own page: it is a work queue, not a metric, and reading the
+          reputation numbers is a different job from working the list. */}
+      <a href="/reviews/actions"
+        className="flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50/50 px-4 py-3 mb-5 hover:bg-brand-50 group">
+        <ClipboardList size={16} className="text-brand-600 flex-shrink-0" />
+        <span className="text-[13px] font-semibold text-ink">Actions from feedback</span>
+        <span className="text-[12px] text-muted">Turn the last 10 days of guest complaints into jobs, grouped by unit</span>
+        <ChevronRight size={15} className="ml-auto text-muted group-hover:text-brand-700 flex-shrink-0" />
+      </a>
 
       <div className="grid grid-cols-1">
         <ReviewsPanel />
