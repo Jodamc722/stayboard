@@ -33,6 +33,7 @@ const SECTIONS: {
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
       { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
+      { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
       { to: '/faq',          label: 'Unit Knowledge', Icon: Sparkles },
     ],
   },
@@ -62,7 +63,6 @@ const SECTIONS: {
       { to: '/channels', label: 'Channels',     Icon: Share2 },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
       { to: '/reports',  label: 'Owner Reports', Icon: FileText },
-      { to: '/claims',   label: 'Claims',       Icon: ShieldAlert },
     ],
   },
   {
@@ -88,6 +88,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [isOwner, setIsOwner] = useState(false)
   const [features, setFeatures] = useState<Record<string, boolean> | null>(null)
   const [workspace, setWorkspace] = useState<string | null>(null)
+  const [levels, setLevels] = useState<Record<string, string> | null>(null)
+  const [roleLabel, setRoleLabel] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
 
   useEffect(() => {
@@ -97,6 +99,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner)
       setFeatures(j?.features && typeof j.features === 'object' ? j.features : {})
       setWorkspace(typeof j?.workspace === 'string' ? j.workspace : null)
+      if (j?.levels && typeof j.levels === 'object') setLevels(j.levels)
+      if (typeof j?.accessRole === 'string' && j.accessRole) setRoleLabel(j.accessRole)
       if (j?.profile?.name) setDisplayName(String(j.profile.name))
     }).catch(() => {})
   }, [])
@@ -115,9 +119,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // While /api/access/me is still loading (workspace === null) show everything — no nav flicker,
   // and the middleware is the real gate anyway.
   const canSee = (to: string) => {
-    if (isOwner || workspace === null) return true
+    if (isOwner || (workspace === null && levels === null)) return true
     const feat = featureForPath(to)
-    return !feat || pageAllowed(workspace, features, feat.key)
+    if (!feat) return true
+    // Roles + levels (migration 023): 'off' hides the tab. Falls back to the legacy
+    // workspace-bundle check when levels haven't arrived (pre-migration or fetch failure).
+    if (levels && levels[feat.key] != null) return levels[feat.key] !== 'off'
+    return pageAllowed(workspace, features, feat.key)
   }
   const sections = SECTIONS
     .map(sec => sec.title === 'Settings' && isAdmin
@@ -126,7 +134,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
     .map(sec => ({ ...sec, items: sec.items.filter(it => it.to === '/users' || canSee(it.to)) }))
     .filter(sec => sec.items.length > 0)
 
-  const wsLabel = workspace ? workspaceDef(workspace).label : null
+  // Badge shows the DB role when assigned (pretty-printed key), else the legacy workspace label.
+  const wsLabel = roleLabel
+    ? roleLabel.split('_').map(w => w === 'cs' ? 'CS' : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    : (workspace ? workspaceDef(workspace).label : null)
 
   return (
     <div className="min-h-screen flex bg-app">
