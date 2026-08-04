@@ -503,6 +503,12 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const dirRevSharePrev = allPrev.accom > 0 ? dirPrev.accom / allPrev.accom : 0
   const unmappedKeys = data && data.unmapped ? Object.keys(data.unmapped) : []
   const spanDays = data && data.range ? data.range.span : 30
+  const splitParts = [
+    { key: 'direct', label: 'Direct', n: dirNow.won, color: '#4448D9' },
+    { key: 'ota', label: 'OTA', n: otaNow.won, color: '#8B93A3' },
+    { key: 'other', label: 'Manual & owner', n: manNow.won + ownNow.won, color: '#C9CDD6' },
+  ].filter(x => x.n > 0)
+  const splitTotal = splitParts.reduce((a, x) => a + x.n, 0) || 1
   // One sentence a partner can read without decoding a single tile.
   const takeaway = (() => {
     const c = dirPrev.won ? (dirNow.won - dirPrev.won) / dirPrev.won : 0
@@ -596,9 +602,9 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:border-l lg:border-line lg:pl-10">
                 <Meter label="Share of bookings" pct={dirShare} now={dirShare} before={dirSharePrev}
-                  detail={dirNow.won.toLocaleString() + ' of ' + allNow.won.toLocaleString()} />
+                  detail={dirNow.won.toLocaleString() + ' of ' + allNow.won.toLocaleString() + ' bookings'} />
                 <Meter label="Share of revenue" pct={dirRevShare} now={dirRevShare} before={dirRevSharePrev}
-                  detail={money0(dirNow.accom) + ' of ' + moneyC(allNow.accom)} />
+                  detail={money0(dirNow.accom) + ' direct revenue'} />
               </div>
             </div>
             {/* every number below is DIRECT only */}
@@ -619,6 +625,38 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               Direct money: <strong className="text-ink">{money0(dirNow.paidAmt)}</strong> collected · <strong className="text-ink">{money0(dirNow.balanceAmt)}</strong> still owing{dirNow.unpaidCount ? ' on ' + dirNow.unpaidCount + ' booking' + (dirNow.unpaidCount === 1 ? '' : 's') : ''}. Revenue is net accommodation. Canceled bookings and open inquiries carry $0.
             </div>
           </div>
+
+          {/* THE SPLIT — the one place OTA appears, and only ever as a percentage of bookings.
+              No OTA revenue anywhere on this page. */}
+          {allNow.won > 0 ? (
+            <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+              <div className="px-6 py-4 border-b border-line">
+                <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">The split</div>
+                <h3 className="text-base font-bold text-ink tracking-tight mt-1">Where every booking came from</h3>
+                <p className="text-xs text-muted mt-1.5 leading-relaxed">Share of the bookings made in this window &mdash; percentages only.</p>
+              </div>
+              <div className="px-6 pt-5 pb-6">
+                <div className="flex h-4 rounded-full overflow-hidden gap-[2px]">
+                  {splitParts.map((sp, i) => (
+                    <div key={sp.key}
+                      className={'h-full ' + (i === 0 ? 'rounded-l-full ' : '') + (i === splitParts.length - 1 ? 'rounded-r-full' : '')}
+                      style={{ width: (sp.n / splitTotal) * 100 + '%', background: sp.color, minWidth: 4 }}
+                      title={sp.label + ': ' + sp.n.toLocaleString()} />
+                  ))}
+                </div>
+                <div className="flex gap-7 mt-3.5 flex-wrap text-[12.5px] text-muted">
+                  {splitParts.map(sp => (
+                    <span key={sp.key} className="inline-flex items-baseline">
+                      <i className="w-2.5 h-2.5 rounded-[3px] mr-2 translate-y-[1px] inline-block" style={{ background: sp.color }} />
+                      <strong className="text-ink font-extrabold text-sm tabular-nums">{pct1(sp.n / splitTotal)}</strong>
+                      <span className="ml-1.5">{sp.label}</span>
+                      <span className="ml-1.5 text-neutral-400 tabular-nums">{sp.n.toLocaleString()}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {data && data.trend ? <TrendChart trend={data.trend} /> : null}
 
