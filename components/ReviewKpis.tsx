@@ -5,7 +5,7 @@
 // channels sit beside it because they score on different scales, and everything granular hides
 // behind one "Details" fold. The whole strip collapses to a single line and remembers that choice.
 import { useCallback, useEffect, useState } from 'react'
-import { Star, TrendingUp, TrendingDown, Minus, ChevronRight, RefreshCw } from 'lucide-react'
+import { Star, TrendingUp, TrendingDown, Minus, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
 
 const PERIODS = [{ d: 30, l: '30d' }, { d: 90, l: '90d' }, { d: 180, l: '6m' }, { d: 365, l: '12m' }]
 const AT_RISK = 4.5
@@ -34,6 +34,54 @@ function Fold({ title, summary, children }: { title: string; summary: string; ch
       {open && <div className="pb-3 pl-5">{children}</div>}
     </div>
   )
+}
+
+// ── DRILL-DOWNS ─────────────────────────────────────────────────────────────────────────────────
+// A count on its own is a dead end: "needs maintenance 7" tells nobody which door to knock on. Every
+// number in the folds below opens into the UNITS it came from (each a link straight to the listing)
+// and, where we have them, the guests' own words. Jon's rule: a metric you cannot act on is decoration.
+
+function UnitLink({ id, children }: { id: string; children: any }) {
+  return (
+    <a href={'/listings/' + id} className="flex items-center gap-2 text-[12px] py-0.5 px-1 -mx-1 rounded hover:bg-app group/u">
+      {children}
+      <ExternalLink size={10} className="text-muted opacity-0 group-hover/u:opacity-100 flex-shrink-0" />
+    </a>
+  )
+}
+
+function Quote({ s }: { s: any }) {
+  if (!s?.comment) return null
+  return (
+    <div className="text-[11.5px] border-l-2 border-rose-200 pl-2 py-0.5">
+      <span className="text-ink">{'“'}{s.comment}{'”'}</span>
+      <div className="text-[10.5px] text-muted">
+        {s.unit}{s.at ? ' · ' + s.at : ''}{s.channel ? ' · ' + s.channel : ''}
+        {s.rating != null ? ' · ' + s.rating + '★' : ''}
+      </div>
+    </div>
+  )
+}
+
+/** One expandable row. `head` is always visible; children render when opened. */
+function Drill({ head, canOpen, children }: { head: (open: boolean) => any; canOpen: boolean; children: any }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button onClick={() => canOpen && setOpen(o => !o)} disabled={!canOpen}
+        className={'w-full flex items-center gap-2 text-[12.5px] py-0.5 text-left ' + (canOpen ? 'group hover:text-brand-700' : 'cursor-default')}>
+        {canOpen
+          ? <ChevronRight size={11} className={'text-muted flex-shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
+          : <span className="w-[11px] flex-shrink-0" />}
+        {head(open)}
+      </button>
+      {open && <div className="pl-4 pb-2 pt-0.5">{children}</div>}
+    </div>
+  )
+}
+
+function Sub({ children }: { children: any }) {
+  return <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-1.5 mb-0.5">{children}</div>
 }
 
 export function ReviewKpis() {
@@ -168,14 +216,24 @@ export function ReviewKpis() {
             {(d?.categories || []).map((c: any) => {
               const gap = h.avg != null ? Math.round((c.avg - h.avg) * 100) / 100 : null
               return (
-                <div key={c.key} className="flex items-center gap-2 text-[12.5px] py-0.5">
-                  <span className="w-28 text-ink">{c.label}</span>
-                  <span className="font-bold text-ink w-9 text-right tabular-nums">{c.avg}</span>
-                  <span className={'flex-1 text-[11.5px] ' + (gap != null && gap < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>
-                    {gap == null ? '' : gap < 0 ? Math.abs(gap) + ' below average' : gap > 0 ? gap + ' above' : 'at average'}
-                  </span>
-                  <span className={'text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded ' + (c.ops ? 'bg-ink text-white' : 'bg-slate-100 text-muted')}>{c.ops ? 'ops' : 'listing'}</span>
-                </div>
+                <Drill key={c.key} canOpen={!!(c.units || []).length}
+                  head={() => (<>
+                    <span className="w-28 text-ink">{c.label}</span>
+                    <span className="font-bold text-ink w-9 text-right tabular-nums">{c.avg}</span>
+                    <span className={'flex-1 text-[11.5px] ' + (gap != null && gap < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>
+                      {gap == null ? '' : gap < 0 ? Math.abs(gap) + ' below average' : gap > 0 ? gap + ' above' : 'at average'}
+                    </span>
+                    <span className={'text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded ' + (c.ops ? 'bg-ink text-white' : 'bg-slate-100 text-muted')}>{c.ops ? 'ops' : 'listing'}</span>
+                  </>)}>
+                  <Sub>Weakest units on {c.label.toLowerCase()} · {c.unitCount} rated</Sub>
+                  {(c.units || []).map((u: any) => (
+                    <UnitLink key={u.listingId} id={u.listingId}>
+                      <span className="flex-1 truncate text-ink">{u.unit} <span className="text-muted">· {u.building}</span></span>
+                      <span className="text-muted tabular-nums w-8 text-right">{u.n}</span>
+                      <span className={'font-bold w-9 text-right tabular-nums ' + (u.avg < c.avg ? 'text-rose-700' : 'text-ink')}>{u.avg}</span>
+                    </UnitLink>
+                  ))}
+                </Drill>
               )
             })}
           </Fold>
@@ -183,13 +241,25 @@ export function ReviewKpis() {
           {!!(d?.themes || []).length && (
             <Fold title="Complaints" summary={(d.themes || []).slice(0, 3).map((t: any) => t.tag.toLowerCase() + ' ' + t.n).join(' · ')}>
               {(d.themes || []).map((t: any) => (
-                <div key={t.tag} className="flex items-center gap-2 text-[12.5px] py-0.5">
-                  <span className="flex-1 text-ink">{t.tag}</span>
-                  <span className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                    <span className="block h-full bg-rose-500" style={{ width: Math.max(4, (t.n / Math.max(1, d.themes[0].n)) * 100) + '%' }} />
-                  </span>
-                  <span className="w-7 text-right text-muted tabular-nums">{t.n}</span>
-                </div>
+                <Drill key={t.tag} canOpen={!!(t.units || []).length}
+                  head={() => (<>
+                    <span className="flex-1 text-ink truncate">{t.tag}</span>
+                    <span className="text-[10.5px] text-muted flex-shrink-0">{t.unitCount} unit{t.unitCount === 1 ? '' : 's'}</span>
+                    <span className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
+                      <span className="block h-full bg-rose-500" style={{ width: Math.max(4, (t.n / Math.max(1, d.themes[0].n)) * 100) + '%' }} />
+                    </span>
+                    <span className="w-7 text-right text-muted tabular-nums flex-shrink-0">{t.n}</span>
+                  </>)}>
+                  <Sub>Which units {'·'} most mentions first</Sub>
+                  {(t.units || []).map((u: any) => (
+                    <UnitLink key={u.listingId} id={u.listingId}>
+                      <span className="flex-1 truncate text-ink">{u.unit} <span className="text-muted">· {u.building}</span></span>
+                      <span className="text-rose-700 font-semibold tabular-nums w-8 text-right">{u.n}×</span>
+                    </UnitLink>
+                  ))}
+                  {!!(t.samples || []).length && <Sub>What guests said</Sub>}
+                  <div className="space-y-1">{(t.samples || []).map((s: any, i: number) => <Quote key={i} s={s} />)}</div>
+                </Drill>
               ))}
             </Fold>
           )}
@@ -197,11 +267,29 @@ export function ReviewKpis() {
           {d?.cleaners && (
             <Fold title="Cleaning team" summary={(d.cleaners || []).filter((c: any) => c.ranked).length + ' with ' + d.minTurns + '+ turns'}>
               {[...(d.cleaners || [])].sort((a: any, b: any) => (a.ranked === b.ranked ? a.score - b.score : a.ranked ? -1 : 1)).map((c: any) => (
-                <div key={c.name} className="flex items-center gap-2 text-[12.5px] py-0.5">
-                  <span className="flex-1 text-ink">{c.name} <span className="text-muted">· {c.turns} turns</span></span>
-                  {!c.ranked && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-muted">too few</span>}
-                  <span className="font-bold text-ink w-9 text-right tabular-nums">{c.avg}</span>
-                </div>
+                <Drill key={c.name} canOpen={!!(c.units || []).length}
+                  head={() => (<>
+                    <span className="flex-1 text-ink truncate">{c.name} <span className="text-muted">· {c.turns} turns · {c.unitCount} unit{c.unitCount === 1 ? '' : 's'}</span></span>
+                    {!!c.lowCount && <span className="text-[10.5px] text-rose-700 font-semibold flex-shrink-0">{c.lowCount} low</span>}
+                    {!c.ranked && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-muted flex-shrink-0">too few</span>}
+                    <span className="font-bold text-ink w-9 text-right tabular-nums flex-shrink-0">{c.avg}</span>
+                  </>)}>
+                  {/* The coaching view: same person, unit by unit. `gap` is this unit against THEIR OWN
+                      average, which separates "this unit is hard" from "they slipped here". */}
+                  <Sub>Departure cleans by unit · weakest first · vs their {c.avg} average</Sub>
+                  {(c.units || []).map((u: any) => (
+                    <UnitLink key={u.listingId} id={u.listingId}>
+                      <span className="flex-1 truncate text-ink">{u.unit}{u.low ? <span className="text-rose-700"> · {u.low} low</span> : null}</span>
+                      <span className="text-muted tabular-nums w-14 text-right">{u.turns} turn{u.turns === 1 ? '' : 's'}</span>
+                      <span className="font-bold text-ink w-9 text-right tabular-nums">{u.avg}</span>
+                      <span className={'w-11 text-right text-[11px] font-semibold tabular-nums ' + (u.gap < -0.1 ? 'text-rose-700' : u.gap > 0.1 ? 'text-emerald-600' : 'text-muted')}>
+                        {u.gap > 0 ? '+' : ''}{u.gap}
+                      </span>
+                    </UnitLink>
+                  ))}
+                  {!!(c.flagged || []).length && <Sub>The reviews behind the low scores</Sub>}
+                  <div className="space-y-1">{(c.flagged || []).map((f: any, i: number) => <Quote key={i} s={{ ...f, rating: f.rating }} />)}</div>
+                </Drill>
               ))}
             </Fold>
           )}
