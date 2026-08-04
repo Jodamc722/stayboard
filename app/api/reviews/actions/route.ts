@@ -18,13 +18,23 @@ import { THEMES, THEME_BY_KEY, sentenceAbout, looksNegative } from '@/lib/review
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const LOOKBACK = 180        // a complaint older than six months is history, not a job
+// TEN DAYS, ROLLING. A six-month sweep produced a 400-row backlog nobody could work. The board is
+// meant to be the live edge of guest feedback: what came in since roughly last week, and everything
+// that arrives from here on. Older complaints still shape the field intel via the theme history —
+// they just do not sit here pretending to be today's work.
+const LOOKBACK = 10
 const LOW_STAR = 3          // at or below this, one mention is enough
 const HAPPY = 4.6           // above this the guest was delighted; their words are not a work order
+const SINGLE_FRESH = 90     // a ONE-OFF complaint goes stale; a repeated one does not
+const URGENT_PAIR = 60      // two mentions this recently is a live pattern
+const URGENT_BAD = 30       // a very bad review this recently still needs answering
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
+function daysBetween(a: string, b: string) {
+  return Math.round((new Date(b + 'T12:00:00').getTime() - new Date(a + 'T12:00:00').getTime()) / 86400000)
+}
 
 export async function GET(req: NextRequest) {
   const access = await getAccess()
@@ -87,7 +97,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   if (str(body?.op) !== 'generate') return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 
-  const days = Math.min(Math.max(Number(body?.days) || LOOKBACK, 30), 730)
+  const days = Math.min(Math.max(Number(body?.days) || LOOKBACK, 1), 730)
   const today = ymd(new Date())
   const from = addDays(today, -days)
   const db = supabaseAdmin()
@@ -168,21 +178,34 @@ export async function POST(req: NextRequest) {
       const bad = worst != null && worst <= LOW_STAR
       // Two mentions, or one inside a genuinely bad review.
       if (hits.length < 2 && !bad) continue
-      keep.add(lid + '|' + key)
 
       const dates = hits.map(h => h.at).filter(Boolean).sort()
       const firstSeen = dates[0] || null
       const lastSeen = dates[dates.length - 1] || null
+      const ageDays = lastSeen ? daysBetween(lastSeen, today) : 9999
+
+      // A SINGLE complaint goes stale. One guest disliked the kitchen five months ago and the unit
+      // has been cleaned forty times since — that is history, not a job. A REPEATED complaint stays
+      // on the board for the whole window, because repetition is the evidence that it is structural.
+      if (hits.length < 2 && ageDays > SINGLE_FRESH) continue
+      keep.add(lid + '|' + key)
+
+      // Urgency is RECURRENCE and RECENCY, not just a low star. In a portfolio where two-star
+      // reviews are common, "worst <= 2" flagged 400 of 401 rows — a badge on everything is a badge
+      // on nothing. What actually deserves jumping the queue is a pattern that is still live.
+      const urgent = hits.length >= 3
+        || (hits.length >= 2 && ageDays <= URGENT_PAIR)
+        || (worst != null && worst <= 2 && ageDays <= URGENT_BAD)
       const evidence = hits.slice(0, 3).map(h => ({ quote: h.quote, at: h.at, rating: h.rating, channel: h.channel, reviewId: h.reviewId }))
       const row = {
         listing_id: lid,
         unit: li.name,
         building: li.building,
         theme_key: key,
-        kind: theme.who[0],
+        kind: theme.owner,
         title: theme.label.charAt(0).toUpperCase() + theme.label.slice(1) + ' — ' + li.name,
         action: theme.action,
-        severity: (bad || hits.length >= 3) ? 'urgent' : 'normal',
+        severity: urgent ? 'urgent' : 'normal',
         mentions: hits.length,
         worst_rating: worst,
         evidence,
@@ -204,6 +227,7 @@ export async function POST(req: NextRequest) {
         patch.reopened_count = Number(prev.reopened_count || 0) + 1
         patch.completed_at = null
         patch.completed_by = null
+        patch.severity = 'urgent'      // a fix that did not hold always jumps the queue
         reopened++
       } else {
         // Don't yank a finished row back onto the board just because we recounted old reviews.
@@ -224,12 +248,18 @@ export async function POST(req: NextRequest) {
     await db.from('review_actions').update(u.patch).eq('id', u.id)
   }
 
-  // PRUNE. An open action the reviews no longer justify — the complaint aged out of the window, or
-  // a tightened matcher decided it was never a complaint — is retired. Only untouched OPEN rows go:
-  // anything someone started, finished, dismissed or annotated is that person's record, not ours.
+  // PRUNE, BUT ONLY INSIDE THE WINDOW WE ACTUALLY SCANNED.
+  //
+  // This run only looked at the last `days` of reviews, so it can only speak for that period. A row
+  // whose evidence predates the window is not "unjustified" — it is simply outside this scan's
+  // authority, and deleting it would quietly bin open work every time the board refreshed. So a row
+  // is retired only when its own evidence sits inside the window and no longer qualifies.
+  // Untouched OPEN rows only: anything started, finished, dismissed or annotated is someone's record.
   let pruned = 0
   const stale = ((existingRows || []) as any[]).filter(r =>
-    str(r.status) === 'open' && !str(r.note).trim() && !keep.has(str(r.listing_id) + '|' + str(r.theme_key)))
+    str(r.status) === 'open' && !str(r.note).trim()
+    && str(r.last_seen) >= from
+    && !keep.has(str(r.listing_id) + '|' + str(r.theme_key)))
   for (let i = 0; i < stale.length; i += 100) {
     const ids = stale.slice(i, i + 100).map(r => str(r.id))
     const { error } = await db.from('review_actions').delete().in('id', ids)
