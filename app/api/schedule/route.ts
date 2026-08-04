@@ -10,7 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorNameOf, noBreezewayRegex } from '@/lib/ops-presets'
-import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
+import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pickDepartureClean, isDepartureCleanName} from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -168,7 +168,9 @@ assignedNames: [],
 let mirror: any[] = []
 try {
 const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -14)).lte('scheduled_date', addDays(end, 3)).limit(3000)
-mirror = (bzTasks || []).filter((t: any) => /depart|clean|turn/i.test(String(t.name || '')) && !/cancel|delet/i.test(String(t.status || '')))
+// The board is departure cleans ONLY. isDepartureCleanName is the single shared rule — see
+// lib/breezeway.ts for why the old /depart|clean|turn/ let an oven clean onto the scheduler.
+mirror = (bzTasks || []).filter((t: any) => isDepartureCleanName(t.name) && !/cancel|delet/i.test(String(t.status || '')))
 } catch (e) { console.error('schedule: mirror pull failed', e) }
 
 let enrichedOk = 0
