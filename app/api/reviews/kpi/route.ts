@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
     return out
   }
   const [reviewRows, lRes, stayRows] = await Promise.all([
-    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,excluded_from_score,raw',
+    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,raw',
       q => q.gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false })),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
     // Review RATE needs a denominator: stays that ENDED early enough to have been reviewed. Guests
@@ -151,18 +151,6 @@ export async function GET(req: NextRequest) {
       active: str(l.status).trim().toLowerCase() === 'active',
     }
   }
-  // Can a human actually reply to this review? Mirrors app/api/reviews/route.ts exactly:
-  // an inactive/dead listing, a Waves unit, or a review the channel will not accept a response on
-  // is not "awaiting" anything — counting it just manufactures phantom work.
-  const replyable = (lid: string, r: any) => {
-    if (r && r.excluded_from_score) return false
-    const li = lmap[lid]
-    if (!li) return false                                   // listing not synced -> cannot reply
-    if (!li.active) return false                            // inactive / disabled / archived
-    if (str(li.building).toLowerCase() === 'waves') return false
-    return true
-  }
-
   const inScope = (lid: string) => {
     const li = lmap[lid]
     if (!li) return market === 'all' && building === 'all'
@@ -349,6 +337,102 @@ export async function GET(req: NextRequest) {
     } catch { cleaners = [] }
   }
 
+  // ---- DID THE INSPECTION ACTUALLY WORK? (gated)
+  //
+  // An inspection is only worth its hour if the next guest does not complain. So each inspection is
+  // scored against what happened AFTER it: reviews for that unit in the following AFTER_DAYS.
+  //   held   - the unit got reviews and none of them were bad. The walk did its job.
+  //   missed - a guest still left a 3-or-below. Something was there and it was not caught.
+  //   lift   - the unit's review average after the walk minus the average before it.
+  // Inspections too recent to have collected a review yet are counted but NOT judged (covered), so
+  // nobody's rate is dragged down by work the guests have not reacted to.
+  //
+  // RUBBER-STAMP is the sharp one: an inspector whose own scores are near-perfect while guests
+  // score the same units below the portfolio is passing units that are not passing.
+  let inspectors: any[] = []
+  if (canSeeCleaners) {
+    try {
+      const AFTER = 45, BEFORE = 45, MIN_INSP = 5
+      const { data: inspRows } = await db.from('unit_inspections')
+        .select('id,unit,inspector,rating,inspected_on,follow_up')
+        .gte('inspected_on', addDays(from, -BEFORE)).lte('inspected_on', to)
+        .order('inspected_on', { ascending: false }).limit(2000)
+
+      // unit_inspections is keyed by the unit NAME the coordinator typed, not by listing id.
+      const byName: Record<string, string> = {}
+      for (const id of Object.keys(lmap)) byName[str(lmap[id].name).trim().toLowerCase()] = id
+
+      const revByListing: Record<string, any[]> = {}
+      for (const r of all) { const k = str(r.listing_id); (revByListing[k] = revByListing[k] || []).push(r) }
+      for (const k of Object.keys(revByListing)) revByListing[k].sort((a, b) => (str(a.created_at) < str(b.created_at) ? -1 : 1))
+
+      type Insp = { n: number; given: number[]; covered: number; held: number; missed: number; followUps: number; afterSum: number; afterN: number; liftSum: number; liftN: number; misses: any[] }
+      const byInspector: Record<string, Insp> = {}
+
+      for (const ins of ((inspRows || []) as any[])) {
+        const who = str(ins.inspector).trim()
+        if (!who) continue
+        const lid = byName[str(ins.unit).trim().toLowerCase()]
+        if (!lid || !inScope(lid)) continue
+        const d0 = str(ins.inspected_on).slice(0, 10)
+        if (!d0) continue
+
+        const e = byInspector[who] = byInspector[who] || { n: 0, given: [], covered: 0, held: 0, missed: 0, followUps: 0, afterSum: 0, afterN: 0, liftSum: 0, liftN: 0, misses: [] }
+        e.n++
+        const given = Number(ins.rating)
+        if (Number.isFinite(given)) e.given.push(given)
+        if (ins.follow_up) e.followUps++
+
+        const revs = revByListing[lid] || []
+        const afterEnd = addDays(d0, AFTER), beforeStart = addDays(d0, -BEFORE)
+        const after = revs.filter(r => { const d = str(r.created_at).slice(0, 10); return d > d0 && d <= afterEnd })
+        if (!after.length) continue                 // no guest verdict yet — counted, not judged
+        e.covered++
+        const aAvg = after.reduce((s, r) => s + Number(r.rating), 0) / after.length
+        e.afterSum += aAvg; e.afterN++
+
+        const bad = after.filter(r => Number(r.rating) <= 3).sort((a, b) => Number(a.rating) - Number(b.rating))[0]
+        if (bad) {
+          e.missed++
+          e.misses.push({
+            unit: (lmap[lid] || {}).name || 'Unit', listingId: lid, inspected: d0,
+            at: str(bad.created_at).slice(0, 10), rating: Number(bad.rating),
+            given: Number.isFinite(given) ? given : null,
+            comment: str(bad.content).replace(/\s+/g, ' ').trim().slice(0, 200),
+          })
+        } else e.held++
+
+        const before = revs.filter(r => { const d = str(r.created_at).slice(0, 10); return d >= beforeStart && d < d0 })
+        if (before.length) {
+          const bAvg = before.reduce((s, r) => s + Number(r.rating), 0) / before.length
+          e.liftSum += (aAvg - bAvg); e.liftN++
+        }
+      }
+
+      inspectors = Object.keys(byInspector).map(name => {
+        const e = byInspector[name]
+        const avgGiven = e.given.length ? round(e.given.reduce((s, x) => s + x, 0) / e.given.length) : null
+        const guestAfter = e.afterN ? round(e.afterSum / e.afterN) : null
+        return {
+          name, inspections: e.n, covered: e.covered, held: e.held, missed: e.missed, followUps: e.followUps,
+          holdRate: e.covered ? round((e.held / e.covered) * 100, 1) : null,
+          lift: e.liftN ? round(e.liftSum / e.liftN) : null,
+          avgGiven, guestAfter,
+          rubberStamp: !!(avgGiven != null && guestAfter != null && avgGiven >= 4.8 && guestAfter < mean - 0.15 && e.covered >= 3),
+          ranked: e.n >= MIN_INSP,
+          misses: e.misses.sort((a, b) => a.rating - b.rating).slice(0, 6),
+        }
+      }).sort((a, b) => {
+        if (a.ranked !== b.ranked) return a.ranked ? -1 : 1
+        return (a.holdRate == null ? 101 : a.holdRate) - (b.holdRate == null ? 101 : b.holdRate)
+      })
+      // Portfolio hold rate, so an individual number has something to be compared against.
+      const cov = inspectors.reduce((s, i) => s + i.covered, 0)
+      const hel = inspectors.reduce((s, i) => s + i.held, 0)
+      ;(inspectors as any).portfolioHoldRate = cov ? round((hel / cov) * 100, 1) : null
+    } catch { inspectors = [] }
+  }
+
   // PORTFOLIO CATEGORY BENCHMARK, saved for the field.
   // The intel block a cleaner or inspector gets names the ONE category a unit is behind the
   // portfolio on — which needs a portfolio number, and computing that inside a push would mean
@@ -381,11 +465,7 @@ export async function GET(req: NextRequest) {
       medianReplyHours: replyTimes.length ? round(replyTimes.sort((a, b) => a - b)[Math.floor(replyTimes.length / 2)] / 60, 1) : null,
       // Still waiting excludes reviews the team dismissed ('no reply needed') so this number
       // agrees with the Mission Control tile instead of quietly counting closed-out reviews.
-      // AWAITING = work someone can actually do. The feed on /reviews hides reviews that cannot be
-      // replied to (listing gone inactive, or the channel does not accept a host response) and ones
-      // the team has dismissed as "no reply needed". This header used to count all of them, so it
-      // told you to chase 3 reviews while the list below it correctly showed 0. Same rule now.
-      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed && replyable(String(r.listing_id), r)).length,
+      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed).length,
       staysEnded: stays.length,
       reviewRate: stays.length ? round((overall.n / stays.length) * 100, 1) : null,
       reviewRateNote: 'reviews received in this window against stays that ended in time to be reviewed',
@@ -418,6 +498,8 @@ export async function GET(req: NextRequest) {
       return { tag: t, n: tagCount[t], units: uRows.slice(0, 10), unitCount: uRows.length, samples: td.samples.slice(0, 4) }
     }).sort((a, b) => b.n - a.n).slice(0, 12),
     cleaners: canSeeCleaners ? cleaners : null,
-    minReviews: MIN_N, minTurns: MIN_TURNS,
+    inspectors: canSeeCleaners ? inspectors : null,
+    inspectorHoldRate: canSeeCleaners ? ((inspectors as any).portfolioHoldRate ?? null) : null,
+    minReviews: MIN_N, minTurns: MIN_TURNS, minInspections: 5, inspectionWindow: 45,
   })
 }
