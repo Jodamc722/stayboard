@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase-server'
 import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadIntel, renderIntel, INTEL_STRIP_RE, type IntelCtx } from '@/lib/listingIntel'
+import { requireLevel } from '@/lib/access'
 
 // STAY INTEL now lives in lib/listingIntel.ts and is written FOR THE CLEANER: the deadline, how
 // long the stay that just ended was, what guests keep saying about this unit, and what the last
@@ -19,6 +20,10 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'schedule' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('schedule', 'edit')
+  if (!__gate.ok) return __gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
