@@ -4,10 +4,15 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'reviews' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reviews', 'edit')
+  if (!__gate.ok) return __gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
