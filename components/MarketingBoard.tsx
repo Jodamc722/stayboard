@@ -67,6 +67,16 @@ const PAY_CLS: Record<Pay, string> = {
 const money0 = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const money2 = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const pct1 = (n: number) => (Math.round(n * 1000) / 10).toFixed(1) + '%'
+// Compact form for the BIG side of a comparison ("$9,647 of $678k") — never for the number the
+// reader is actually judging.
+const moneyC = (n: number) => {
+  const v = Math.round(n)
+  if (Math.abs(v) >= 1000000) return '$' + (v / 1000000).toFixed(1) + 'M'
+  if (Math.abs(v) >= 1000) return '$' + Math.round(v / 1000) + 'k'
+  return '$' + v
+}
+// Guests type their own names; "cathy black" in a report you hand to a partner reads as sloppy.
+const titleCase = (s: string) => s.replace(/\S+/g, w => (w.length > 2 && w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w))
 const fmtDay = (iso: string) => { if (!iso) return '—'; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 const fmtDayY = (iso: string) => { if (!iso) return '—'; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
 const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
@@ -107,17 +117,16 @@ const monthLabel = (ym: string) => new Date(ym + '-15T12:00:00').toLocaleDateStr
 function Delta({ now, before, invert, compact }: { now: number; before: number; invert?: boolean; compact?: boolean }) {
   if (!before) {
     if (!now) return <span className="text-[11px] text-muted whitespace-nowrap">no prior data</span>
-    return <span className="text-[11px] text-emerald-700 font-medium whitespace-nowrap">new</span>
+    return <span className="text-[11px] text-emerald-700 font-semibold whitespace-nowrap">new</span>
   }
   const change = (now - before) / before
   const flat = Math.abs(change) < 0.005
   const good = invert ? change < 0 : change > 0
-  const cls = flat ? 'text-muted' : good ? 'text-emerald-700' : 'text-rose-600'
-  const Icon = flat ? Minus : (change > 0 ? TrendingUp : TrendingDown)
+  const cls = flat ? 'text-muted' : good ? 'text-emerald-700' : 'text-rose-700'
   return (
-    <span className={'font-medium inline-flex items-center gap-1 whitespace-nowrap ' + (compact ? 'text-[11px] ' : 'text-xs ') + cls}>
-      <Icon size={compact ? 11 : 12} />{flat ? 'flat' : (change > 0 ? '+' : '') + pct1(change)}
-      {compact ? null : <span className="text-muted font-normal">vs prior</span>}
+    <span className={'font-semibold inline-flex items-center gap-1 whitespace-nowrap tabular-nums ' + (compact ? 'text-[11.5px] ' : 'text-xs ') + cls}>
+      <span className="text-[9px] leading-none">{flat ? '\u00B7' : change > 0 ? '\u25B2' : '\u25BC'}</span>
+      {flat ? 'flat' : (change > 0 ? '+' : '') + pct1(change)}
     </span>
   )
 }
@@ -138,21 +147,22 @@ function HeroFigure({ label, value, sub, now, before, invert }: { label: string;
 }
 
 // A single ratio against its whole. The unfilled track is a LIGHTER STEP OF THE SAME RAMP
-// (brand-100 under brand-600) so the state reads across the whole bar, not just the filled part.
+// (brand-100 under brand-600) so the state reads across the whole bar. At 1% the fill would be
+// sub-pixel, so a non-zero value always keeps a 4px mark — a real number must never render as
+// nothing, but a true zero still shows an empty track.
 function Meter({ label, pct, detail, now, before }: { label: string; pct: number; detail: string; now?: number; before?: number }) {
-  const w = pct > 0 ? Math.max(1.5, Math.min(100, pct * 100)) : 0
+  const w = Math.min(100, Math.max(0, pct * 100))
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[11px] uppercase tracking-widest text-muted font-semibold">{label}</span>
-        <span className="text-base font-bold text-ink">{pct1(pct)}</span>
+      <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted font-bold">{label}</div>
+      <div className="text-2xl sm:text-[26px] font-extrabold text-ink tracking-tight leading-none mt-1.5">{pct1(pct)}</div>
+      <div className="mt-2.5 h-[9px] rounded-full bg-brand-100 overflow-hidden">
+        <div className="h-full rounded-full bg-brand-600 transition-[width] duration-700"
+          style={{ width: w + '%', minWidth: pct > 0 ? 4 : 0 }} />
       </div>
-      <div className="mt-1.5 h-2.5 rounded-full bg-brand-100 overflow-hidden">
-        <div className="h-full rounded-full bg-brand-600 transition-[width] duration-500" style={{ width: w + '%' }} />
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-[11px] text-muted tabular-nums">{detail}</span>
-        {now !== undefined && before !== undefined ? <Delta now={now} before={before} /> : null}
+      <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-[11.5px] text-muted tabular-nums">{detail}</span>
+        {now !== undefined && before !== undefined ? <Delta now={now} before={before} compact /> : null}
       </div>
     </div>
   )
@@ -160,13 +170,13 @@ function Meter({ label, pct, detail, now, before }: { label: string; pct: number
 
 function Stat({ label, value, sub, now, before, invert }: { label: string; value: string; sub?: string; now?: number; before?: number; invert?: boolean }) {
   return (
-    <div className="rounded-xl border border-line bg-white px-3.5 py-3 hover:border-brand-200 transition-colors">
-      <div className="text-[10px] uppercase tracking-widest text-muted font-semibold">{label}</div>
-      <div className="text-xl font-bold text-ink leading-tight mt-1">{value}</div>
-      <div className="mt-0.5 min-h-[16px]">
+    <div className="px-4 py-3.5 border-r border-line last:border-r-0">
+      <div className="text-[10px] uppercase tracking-[0.13em] text-muted font-bold">{label}</div>
+      <div className="text-xl font-bold text-ink tracking-tight leading-tight mt-1.5">{value}</div>
+      <div className="mt-1.5 min-h-[17px]">
         {now !== undefined && before !== undefined
           ? <Delta now={now} before={before} invert={invert} compact />
-          : (sub ? <span className="text-[11px] text-muted">{sub}</span> : null)}
+          : (sub ? <span className="text-[11.5px] text-muted">{sub}</span> : null)}
       </div>
     </div>
   )
@@ -199,11 +209,8 @@ function TrendChart({ trend }: { trend: Trend[] }) {
     <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
       <div className="px-5 py-4 border-b border-line flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Day by day</div>
-          <h3 className="text-base font-bold text-ink mt-0.5">Direct bookings as they came in</h3>
-        </div>
-        <div className="text-xs text-muted">
-          <strong className="text-ink tabular-nums">{total}</strong> in this window · busiest day <strong className="text-ink tabular-nums">{max}</strong>
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Day by day</div>
+          <h3 className="text-base font-bold text-ink tracking-tight mt-1">Direct bookings as they came in</h3>
         </div>
       </div>
       <div className="px-4 pt-3 pb-1">
@@ -234,8 +241,9 @@ function TrendChart({ trend }: { trend: Trend[] }) {
           })}
         </svg>
       </div>
-      <div className="flex justify-between text-[11px] text-muted px-5 pb-3">
+      <div className="flex justify-between items-baseline text-[11px] text-muted px-6 pb-3.5 gap-3">
         <span>{fmtDay(trend[0].d)}</span>
+        <span><strong className="text-ink tabular-nums">{total}</strong> bookings &middot; busiest day <strong className="text-ink tabular-nums">{max}</strong></span>
         <span>{fmtDay(trend[trend.length - 1].d)}</span>
       </div>
     </div>
@@ -250,7 +258,14 @@ function TrendChart({ trend }: { trend: Trend[] }) {
 // The bar is an EMPHASIS chart in table form — one measure (direct bookings), one hue, magnitude
 // read by length. Months the mirror never covered are dimmed AND labelled, never shown as a dip.
 function MonthTimeline({ data }: { data: MonthsData | null }) {
-  const months = (data && data.months) || []
+  const all = (data && data.months) || []
+  // Drop the lead-in months that carry no direct activity at all. They are true zeros, but a
+  // report opening on four empty rows reads as broken data rather than as a quiet quarter.
+  const months = useMemo(() => {
+    const out = all.slice()
+    while (out.length > 6 && out[0].direct === 0 && out[0].directRev === 0) out.shift()
+    return out
+  }, [all])
   const solid = useMemo(() => months.filter(r => !r.partial), [months])
   const maxDirect = useMemo(() => {
     let m = 0
@@ -262,7 +277,7 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
   if (!months.length) {
     return (
       <div className="rounded-2xl border border-line bg-white p-6 shadow-soft">
-        <h3 className="text-sm font-semibold text-ink">Month by month</h3>
+        <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">The trend</div>
         <div className="mt-3 h-24 rounded-xl bg-app animate-pulse" />
       </div>
     )
@@ -273,46 +288,48 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
 
   return (
     <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-      <div className="px-5 py-4 border-b border-line">
-        <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">The trend</div>
-        <h3 className="text-base font-bold text-ink mt-0.5">Direct bookings by the month they were made</h3>
-        <p className="text-xs text-muted mt-1 max-w-[70ch] leading-relaxed">
-          A booking counts in the month it came in, whenever the guest actually stays — so a campaign that ran in April is judged on April&rsquo;s bookings, not April&rsquo;s check-ins.
+      <div className="px-6 py-4 border-b border-line">
+        <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">The trend</div>
+        <h3 className="text-base font-bold text-ink tracking-tight mt-1">Direct bookings by the month they were made</h3>
+        <p className="text-xs text-muted mt-1.5 max-w-[74ch] leading-relaxed">
+          A booking counts in the month it came in — so a campaign that ran in April is judged on April&rsquo;s bookings, not April&rsquo;s check-ins.
         </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-app text-[11px] uppercase tracking-wide text-muted">
-            <tr>
-              <th className="text-left px-5 py-2.5 font-semibold">Month</th>
-              <th className="text-left px-3 py-2.5 font-semibold" style={{ width: '34%' }}>Direct bookings</th>
-              <th className="text-right px-3 py-2.5 font-semibold">Bookings</th>
-              <th className="text-right px-3 py-2.5 font-semibold">Share</th>
-              <th className="text-right px-3 py-2.5 font-semibold">Revenue</th>
-              <th className="text-right px-5 py-2.5 font-semibold">Nights</th>
+          <thead>
+            <tr className="bg-[#FAFBFC] text-[10px] uppercase tracking-[0.12em] text-muted">
+              <th className="text-left pl-6 pr-3 py-2.5 font-bold border-b border-line">Month</th>
+              <th className="py-2.5 border-b border-line" style={{ width: '34%' }} />
+              <th className="text-right px-3 py-2.5 font-bold border-b border-line">Direct</th>
+              <th className="text-right px-3 py-2.5 font-bold border-b border-line">Share</th>
+              <th className="text-right px-3 py-2.5 font-bold border-b border-line">Revenue</th>
+              <th className="text-right pr-6 pl-3 py-2.5 font-bold border-b border-line">Nights</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
+          <tbody>
             {months.map(r => {
               const share = r.won > 0 ? r.direct / r.won : 0
               const w = maxDirect > 0 ? (r.direct / maxDirect) * 100 : 0
               const dim = r.partial
+              const peak = !dim && r.direct > 0 && r.direct === maxDirect
               return (
-                <tr key={r.m} className={dim ? 'bg-app/50' : 'hover:bg-brand-50/40 transition-colors'}>
-                  <td className="px-5 py-2.5 whitespace-nowrap">
-                    <span className={'font-semibold ' + (dim ? 'text-muted' : 'text-ink')}>{monthLabel(r.m)}</span>
-                    {dim ? <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-600 font-semibold">not tracked yet</span> : null}
+                <tr key={r.m} className={'border-b border-[#F1F2F5] last:border-b-0 ' + (peak ? 'bg-brand-50/40 ' : '') + (dim ? 'bg-app/50 ' : 'hover:bg-[#FBFBFE] transition-colors')}>
+                  <td className="pl-6 pr-3 py-2.5 whitespace-nowrap">
+                    <span className={'font-bold ' + (dim ? 'text-muted' : 'text-ink')}>{monthLabel(r.m)}</span>
+                    {peak ? <span className="ml-2 text-[9.5px] uppercase tracking-[0.1em] text-brand-600 font-bold">peak</span> : null}
+                    {dim ? <span className="ml-2 text-[9.5px] uppercase tracking-[0.1em] text-amber-600 font-bold">not tracked</span> : null}
                   </td>
-                  <td className="px-3 py-2.5">
-                    <div className="h-2.5 rounded-full bg-brand-100/70 overflow-hidden" title={r.direct + ' direct bookings'}>
+                  <td className="pr-6 py-2.5">
+                    <div className="h-2.5 rounded-full bg-brand-100/80 overflow-hidden">
                       <div className={'h-full rounded-full ' + (dim ? 'bg-neutral-300' : 'bg-brand-600')}
-                        style={{ width: Math.max(r.direct > 0 ? 2 : 0, Math.min(100, w)) + '%' }} />
+                        style={{ width: Math.min(100, w) + '%', minWidth: r.direct > 0 ? 4 : 0 }} />
                     </div>
                   </td>
-                  <td className={'px-3 py-2.5 text-right tabular-nums font-bold ' + (dim ? 'text-muted' : 'text-ink')}>{r.direct || '—'}</td>
-                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (dim ? 'text-muted' : 'text-ink')}>{r.won ? pct1(share) : '—'}</td>
-                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (dim ? 'text-muted' : 'text-ink')}>{r.directRev ? money0(r.directRev) : '—'}</td>
-                  <td className="px-5 py-2.5 text-right tabular-nums text-muted">{r.directNights || '—'}</td>
+                  <td className={'px-3 py-2.5 text-right tabular-nums font-bold ' + (r.direct ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.direct || 0}</td>
+                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (r.won ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.won ? pct1(share) : '—'}</td>
+                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (r.directRev ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.directRev ? moneyC(r.directRev) : '$0'}</td>
+                  <td className={'pr-6 pl-3 py-2.5 text-right tabular-nums ' + (r.directNights ? 'text-muted' : 'text-neutral-300')}>{r.directNights || 0}</td>
                 </tr>
               )
             })}
@@ -320,9 +337,9 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
         </table>
       </div>
       {anyPartial ? (
-        <div className="px-5 py-3 border-t border-line bg-amber-50/50 text-[11px] text-amber-900 leading-relaxed">
-          <strong>&ldquo;Not tracked yet&rdquo;</strong> means we weren&rsquo;t recording bookings that month, so those rows are floors, not totals — treat them as incomplete rather than as a quiet month.
-          {firstSolid ? <> Every month from <strong>{monthLabel(firstSolid.m)}</strong> onward is complete and comparable.</> : null}
+        <div className="px-6 py-3 border-t border-line bg-amber-50/50 text-[11px] text-amber-900 leading-relaxed">
+          <strong>&ldquo;Not tracked&rdquo;</strong> months pre-date our booking records — those counts are floors, not totals.
+          {firstSolid ? <> Everything from <strong>{monthLabel(firstSolid.m)}</strong> on is complete and comparable.</> : null}
         </div>
       ) : null}
     </div>
@@ -485,6 +502,21 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const dirRevShare = allNow.accom > 0 ? dirNow.accom / allNow.accom : 0
   const dirRevSharePrev = allPrev.accom > 0 ? dirPrev.accom / allPrev.accom : 0
   const unmappedKeys = data && data.unmapped ? Object.keys(data.unmapped) : []
+  const spanDays = data && data.range ? data.range.span : 30
+  // One sentence a partner can read without decoding a single tile.
+  const takeaway = (() => {
+    const c = dirPrev.won ? (dirNow.won - dirPrev.won) / dirPrev.won : 0
+    const word = !dirPrev.won ? null : c > 0.005 ? 'up' : c < -0.005 ? 'down' : 'flat'
+    const tone = word === 'down' ? 'text-rose-700' : word === 'up' ? 'text-emerald-700' : 'text-ink'
+    return (
+      <>
+        {word
+          ? <>Direct bookings are <strong className={tone}>{word}{word !== 'flat' ? ' ' + pct1(Math.abs(c)) : ''}</strong> on the previous {spanDays} days, and made up </>
+          : <>Direct bookings made up </>}
+        <strong className="text-ink">{pct1(dirRevShare)}</strong> of all booking revenue.
+      </>
+    )
+  })()
 
   const directChannels: { key: string; label: string; blurb: string; a: Agg }[] = [
     { key: 'be', label: 'Booking engine', blurb: 'Booked through our own engine', a: agg(cur, 'byBucket', 'be') },
@@ -498,11 +530,11 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
       <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Marketing</div>
-            <h1 className="text-xl font-bold text-ink">Direct booking tracker</h1>
-            <p className="text-sm text-muted mt-0.5">
-              Bookings <strong className="text-ink">created</strong> between {fmtDayY(fromD)} and {fmtDayY(toD)} — not stays in that window.
-              {data && data.compare ? <span> Compared with {fmtDay(data.compare.from)}–{fmtDay(data.compare.to)}.</span> : null}
+            <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Stay Hospitality &middot; Marketing</div>
+            <h1 className="text-2xl font-extrabold text-ink tracking-tight mt-0.5">Direct bookings</h1>
+            <p className="text-[13px] text-muted mt-1.5 leading-relaxed max-w-[80ch]">
+              Every booking <strong className="text-ink">made</strong> between {fmtDayY(fromD)} and {fmtDayY(toD)} — counted on the day it came in, whenever the guest actually stays.
+              {data && data.compare ? <span> Measured against {fmtDay(data.compare.from)}&ndash;{fmtDay(data.compare.to)}.</span> : null}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -553,22 +585,24 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
           {/* ── the headline: one hero figure, then how much of the business it is ── */}
           <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
             <div className="p-5 sm:p-6 grid gap-6 lg:gap-10 lg:grid-cols-[minmax(0,300px)_1fr] lg:items-center">
-              <HeroFigure
-                label="Direct bookings"
-                value={String(dirNow.won)}
-                now={dirNow.won}
-                before={dirPrev.won}
-                sub="Made through the booking engine, the website, or straight with us — counted on the day the booking came in."
-              />
+              <div>
+                <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Direct bookings</div>
+                <div className="text-[54px] sm:text-6xl font-extrabold text-ink tracking-[-0.035em] leading-none mt-1.5">{dirNow.won}</div>
+                <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
+                  <Delta now={dirNow.won} before={dirPrev.won} />
+                  <span className="text-[11.5px] text-muted">vs previous {spanDays} days</span>
+                </div>
+                <p className="text-[13px] text-muted mt-3.5 max-w-[34ch] leading-relaxed">{takeaway}</p>
+              </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:border-l lg:border-line lg:pl-10">
                 <Meter label="Share of bookings" pct={dirShare} now={dirShare} before={dirSharePrev}
-                  detail={dirNow.won.toLocaleString() + ' of ' + allNow.won.toLocaleString() + ' booked'} />
+                  detail={dirNow.won.toLocaleString() + ' of ' + allNow.won.toLocaleString()} />
                 <Meter label="Share of revenue" pct={dirRevShare} now={dirRevShare} before={dirRevSharePrev}
-                  detail={money0(dirNow.accom) + ' of ' + money0(allNow.accom)} />
+                  detail={money0(dirNow.accom) + ' of ' + moneyC(allNow.accom)} />
               </div>
             </div>
             {/* every number below is DIRECT only */}
-            <div className="border-t border-line bg-app/60 p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+            <div className="border-t border-line bg-[#FAFBFC] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 divide-line">
               <Stat label="Revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom} />
               <Stat label="Avg booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
                 now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0} />
@@ -595,8 +629,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               the share meters at the top, as the denominator. */}
           <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
             <div className="px-5 py-4 border-b border-line">
-              <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Channels</div>
-              <h3 className="text-base font-bold text-ink mt-0.5">Which direct channel brought them</h3>
+              <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Channels</div>
+              <h3 className="text-base font-bold text-ink tracking-tight mt-1">Which direct channel brought them</h3>
               <p className="text-xs text-muted mt-1">Only the channels marketing drives. Manual and owner bookings sit underneath, kept out of every number above.</p>
             </div>
             <div className="divide-y divide-line">
@@ -639,8 +673,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
           <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
             <div className="px-4 py-3 border-b border-line flex flex-wrap items-center gap-2">
               <div className="mr-2">
-                <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Every one of them</div>
-                <h3 className="text-base font-bold text-ink mt-0.5">Direct bookings, one by one</h3>
+                <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Every one of them</div>
+                <h3 className="text-base font-bold text-ink tracking-tight mt-1">Direct bookings, one by one</h3>
               </div>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -691,7 +725,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                   {filtered.slice(0, limit).map(r => (
                     <tr key={r.id} className="hover:bg-app/60">
                       <td className="px-3 py-2 whitespace-nowrap text-ink">{fmtDay(r.created)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-ink">{r.guest}</td>
+                      <td className="px-3 py-2 whitespace-nowrap font-semibold text-ink">{titleCase(r.guest)}</td>
                       <td className="px-3 py-2 text-muted max-w-[220px] truncate" title={r.property}>{r.property}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <span className={'text-[11px] px-1.5 py-0.5 rounded-md ring-1 ' + (r.family === 'direct' ? 'bg-brand-50 text-brand-700 ring-brand-200' : 'bg-neutral-50 text-neutral-600 ring-neutral-200')}>{r.source}</span>
@@ -700,7 +734,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                       <td className="px-3 py-2 whitespace-nowrap">{r.state === 'canceled' ? <span className="text-[11px] text-muted">—</span> : <span className={'text-[11px] px-1.5 py-0.5 rounded-md ring-1 ' + PAY_CLS[r.pay]}>{PAY_LABEL[r.pay]}</span>}</td>
                       <td className="px-3 py-2 whitespace-nowrap text-muted">{fmtDay(r.checkIn)}{r.lead !== null ? <span className="text-[10px] text-muted/70 ml-1">+{r.lead}d</span> : null}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-muted">{r.nights || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.state === 'canceled' || r.state === 'pending' ? '—' : money2(r.accom)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.state === 'canceled' || r.state === 'pending' ? <span className="text-neutral-300">$0</span> : money0(r.accom)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-muted">{r.balance > 0.01 ? money2(r.balance) : '—'}</td>
                       <td className="px-3 py-2 whitespace-nowrap text-[11px] text-muted font-mono">{r.conf || '—'}</td>
                     </tr>
