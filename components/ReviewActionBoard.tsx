@@ -38,44 +38,45 @@ const KIND_UI: Record<string, string> = {
   maintenance: 'bg-amber-50 text-amber-700 border-amber-200',
 }
 
-function Row({ a, onSet }: { a: Action; onSet: (id: string, status: string) => void }) {
+/** One complaint theme inside a unit's card. */
+function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => void }) {
   const [open, setOpen] = useState(false)
   const busyDone = a.status === 'done' || a.status === 'dismissed'
+  // "Cleanliness — 1201 Brickell" → "Cleanliness". The unit is the card heading; repeating it on
+  // every line is noise.
+  const short = a.title.split(' — ')[0]
   return (
-    <div className={'border-t border-line/70 ' + (busyDone ? 'opacity-60' : '')}>
-      <div className="flex items-start gap-2 py-2">
+    <div className={'border-t border-line/60 ' + (busyDone ? 'opacity-55' : '')}>
+      <div className="flex items-start gap-2 py-1.5">
         <button onClick={() => setOpen(o => !o)} className="pt-0.5 flex-shrink-0">
-          <ChevronRight size={13} className={'text-muted transition-transform ' + (open ? 'rotate-90' : '')} />
+          <ChevronRight size={12} className={'text-muted transition-transform ' + (open ? 'rotate-90' : '')} />
         </button>
-
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            {a.severity === 'urgent' && !busyDone && <AlertTriangle size={12} className="text-rose-600 flex-shrink-0" />}
-            <span className={'text-[13px] font-semibold ' + (busyDone ? 'text-muted line-through' : 'text-ink')}>{a.title}</span>
-            <span className={'text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded border ' + (KIND_UI[a.kind] || 'bg-slate-100 text-muted border-line')}>{a.kind}</span>
+            {a.severity === 'urgent' && !busyDone && <AlertTriangle size={11} className="text-rose-600 flex-shrink-0" />}
+            <span className={'text-[12.5px] font-semibold ' + (busyDone ? 'text-muted line-through' : 'text-ink')}>{short}</span>
+            <span className={'text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded border ' + (KIND_UI[a.kind] || 'bg-slate-100 text-muted border-line')}>{a.kind}</span>
             {a.reopened_count > 0 && (
-              <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-600 text-white inline-flex items-center gap-1"
-                title="This was marked done and guests complained about it again — the fix did not hold">
+              <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-600 text-white inline-flex items-center gap-1"
+                title="Marked done, then guests raised it again — the fix did not hold">
                 <RotateCcw size={9} /> came back ×{a.reopened_count}
               </span>
             )}
           </div>
           <div className="text-[12px] text-muted mt-0.5">{a.action}</div>
-          <div className="text-[11px] text-muted mt-0.5">
+          <div className="text-[10.5px] text-muted mt-0.5">
             {a.mentions} mention{a.mentions === 1 ? '' : 's'}
             {a.worst_rating != null ? ' · worst ' + a.worst_rating + '★' : ''}
-            {a.last_seen ? ' · last ' + a.last_seen : ''}
-            {a.building ? ' · ' + a.building : ''}
+            {a.last_seen ? ' · ' + a.last_seen : ''}
             {a.completed_by ? ' · by ' + a.completed_by : ''}
           </div>
         </div>
-
         <div className="flex items-center gap-1 flex-shrink-0">
-          {!busyDone && (
+          {!busyDone ? (
             <>
               {a.status !== 'doing' && (
                 <button onClick={() => onSet(a.id, 'doing')} title="Mark in progress"
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app">
+                  className="inline-flex items-center text-[11px] font-semibold px-1.5 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app">
                   <Play size={11} />
                 </button>
               )}
@@ -88,8 +89,7 @@ function Row({ a, onSet }: { a: Action; onSet: (id: string, status: string) => v
                 <X size={11} />
               </button>
             </>
-          )}
-          {busyDone && (
+          ) : (
             <button onClick={() => onSet(a.id, 'open')} title="Reopen"
               className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app">
               <RotateCcw size={11} /> Reopen
@@ -97,12 +97,8 @@ function Row({ a, onSet }: { a: Action; onSet: (id: string, status: string) => v
           )}
         </div>
       </div>
-
       {open && (
-        <div className="pl-6 pb-2.5 space-y-1.5">
-          <a href={'/listings/' + a.listing_id} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 hover:text-brand-800">
-            {a.unit || 'Unit'} <ExternalLink size={10} />
-          </a>
+        <div className="pl-5 pb-2 space-y-1">
           {(a.evidence || []).map((e: any, i: number) => (
             <div key={i} className="text-[11.5px] border-l-2 border-rose-200 pl-2">
               <span className="text-ink">{'“'}{e.quote}{'”'}</span>
@@ -114,6 +110,42 @@ function Row({ a, onSet }: { a: Action; onSet: (id: string, status: string) => v
           {a.note && <div className="text-[11.5px] text-muted">Note: {a.note}</div>}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * ONE CARD PER UNIT.
+ *
+ * Jon's call: the team works a unit, not a complaint. Five separate rows for 1201 meant five trips
+ * in the planner's head; one card with five things to check is a single visit. The database still
+ * stores a row per (unit, theme) — that is what makes the reopen rule work — but nobody has to see
+ * it that way.
+ */
+function UnitCard({ unit, rows, onSet, onAll }: { unit: any; rows: Action[]; onSet: (id: string, s: string) => void; onAll: (ids: string[]) => void }) {
+  const live = rows.filter(r => r.status === 'open' || r.status === 'doing')
+  const urgent = live.filter(r => r.severity === 'urgent').length
+  const back = rows.filter(r => r.reopened_count > 0).length
+  return (
+    <div className="rounded-xl border border-line bg-white mb-2.5">
+      <div className="flex items-center gap-2 px-3 py-2 bg-app/40 rounded-t-xl flex-wrap">
+        <a href={'/listings/' + unit.listing_id} className="inline-flex items-center gap-1 text-[13px] font-bold text-ink hover:text-brand-700">
+          {unit.unit || 'Unit'} <ExternalLink size={11} className="text-muted" />
+        </a>
+        {unit.building && <span className="text-[11px] text-muted">{unit.building}</span>}
+        <span className="text-[11px] text-muted">· {live.length} to check</span>
+        {!!urgent && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-600 text-white">{urgent} urgent</span>}
+        {!!back && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">{back} came back</span>}
+        {!!live.length && (
+          <button onClick={() => onAll(live.map(r => r.id))}
+            className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+            <Check size={11} /> All done
+          </button>
+        )}
+      </div>
+      <div className="px-3 pb-1">
+        {rows.map(a => <Item key={a.id} a={a} onSet={onSet} />)}
+      </div>
     </div>
   )
 }
@@ -170,14 +202,38 @@ export function ReviewActionBoard() {
     } catch { load() }
   }
 
+  async function doneAll(ids: string[]) {
+    setRows(rs => rs.map(r => (ids.includes(r.id) ? { ...r, status: 'done' } : r)))
+    try {
+      await Promise.all(ids.map(id => fetch('/api/reviews/actions', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status: 'done' }),
+      })))
+      if (view !== 'all') setTimeout(load, 400)
+    } catch { load() }
+  }
+
+  // Group into one card per unit. Units with an urgent item float up, then the busiest.
+  const groups = (() => {
+    const by: Record<string, { unit: any; rows: Action[] }> = {}
+    for (const r of rows) {
+      const g = by[r.listing_id] = by[r.listing_id] || { unit: { listing_id: r.listing_id, unit: r.unit, building: r.building }, rows: [] }
+      g.rows.push(r)
+    }
+    return Object.values(by).sort((a, b) => {
+      const u = (g: any) => g.rows.filter((r: Action) => r.severity === 'urgent' && (r.status === 'open' || r.status === 'doing')).length
+      return (u(b) - u(a)) || (b.rows.length - a.rows.length)
+    })
+  })()
+
   return (
-    <section className="rounded-xl border border-line bg-white mb-5">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-line/70 flex-wrap">
+    <section className="mb-5">
+      <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-line bg-white mb-3 flex-wrap">
         <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted font-semibold">
           <ClipboardList size={13} /> Actions from feedback
         </span>
         {!!counts.open && <span className="text-[12px] font-semibold text-ink">{counts.open} to do</span>}
-        {!!counts.done && <span className="text-[11.5px] text-muted">{counts.done} done</span>}
+        {!!groups.length && <span className="text-[11.5px] text-muted">across {groups.length} unit{groups.length === 1 ? '' : 's'}</span>}
+        {!!counts.done && <span className="text-[11.5px] text-muted">· {counts.done} done</span>}
 
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
           {VIEWS.map(v => (
@@ -187,29 +243,29 @@ export function ReviewActionBoard() {
           <select value={kind} onChange={e => setKind(e.target.value)} className="text-[11px] border border-line rounded px-1.5 py-0.5 bg-white">
             {KINDS.map(k => <option key={k.k} value={k.k}>{k.l}</option>)}
           </select>
-          <button onClick={generate} disabled={gen} title="Re-scan recent reviews and refresh this list"
+          <button onClick={generate} disabled={gen} title="Re-scan the last 10 days of reviews and refresh this list"
             className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border border-line text-muted hover:text-ink hover:bg-app disabled:opacity-50">
             <RefreshCw size={11} className={gen ? 'animate-spin' : ''} /> {gen ? 'Scanning…' : 'Rebuild'}
           </button>
         </div>
       </div>
 
-      <div className="px-3">
-        {err && <div className="text-[12px] text-rose-700 py-2">{err}</div>}
-        {msg && <div className="text-[12px] text-emerald-700 py-2">{msg}</div>}
-        {needsMigration && (
-          <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 my-2">
-            The actions table is not in the database yet. Run <code className="font-mono">supabase/migrations/022_review_actions.sql</code> in the Supabase SQL editor, then hit Rebuild.
-          </div>
-        )}
-        {loading && <div className="text-[12px] text-muted py-3">Loading…</div>}
-        {!loading && !rows.length && !needsMigration && (
-          <div className="text-[12px] text-muted py-3">
-            {view === 'live' ? 'Nothing outstanding. Hit Rebuild to scan the latest reviews.' : 'Nothing here.'}
-          </div>
-        )}
-        {rows.map(a => <Row key={a.id} a={a} onSet={setStatus} />)}
-      </div>
+      {err && <div className="text-[12px] text-rose-700 px-3 py-2">{err}</div>}
+      {msg && <div className="text-[12px] text-emerald-700 px-3 py-2">{msg}</div>}
+      {needsMigration && (
+        <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+          The actions table is not in the database yet. Run <code className="font-mono">supabase/migrations/022_review_actions.sql</code> in the Supabase SQL editor, then hit Rebuild.
+        </div>
+      )}
+      {loading && <div className="text-[12px] text-muted px-3 py-3">Loading…</div>}
+      {!loading && !groups.length && !needsMigration && (
+        <div className="text-[12px] text-muted px-3 py-3">
+          {view === 'live' ? 'Nothing outstanding from the last 10 days. Hit Rebuild to re-scan.' : 'Nothing here.'}
+        </div>
+      )}
+      {groups.map(g => (
+        <UnitCard key={g.unit.listing_id} unit={g.unit} rows={g.rows} onSet={setStatus} onAll={doneAll} />
+      ))}
     </section>
   )
 }
