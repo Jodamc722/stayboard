@@ -14,6 +14,7 @@ import {
   CalendarClock, ShieldAlert, FileText, Camera, DollarSign, CheckCircle2, Circle, RotateCcw,
 } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
+import { DeleteButton } from '@/components/DeleteControl'
 import {
   STAGES, OUTCOMES, WAITING, CHANNELS, CONDITIONS, money, num, itemsTotal, daysUntil, gatesFor,
   claimTitle, urgencyOf, type Claim, type ClaimItem, type Stage,
@@ -148,9 +149,14 @@ export function ClaimDesk({ id }: Props) {
 
         <div className="space-y-4">
           <Rail claim={claim} items={items} gates={gates} patch={patch} busy={busy} onDelete={async () => {
-            if (!window.confirm('Delete this claim? It is removed from the board but kept in the database.')) return
-            await fetch('/api/claims/' + id, { method: 'DELETE' })
-            router.push('/claims')
+            try {
+              const r = await fetch('/api/claims/' + id, { method: 'DELETE' })
+              const j = await r.json()
+              if (!r.ok || j.ok === false) return j.error || 'Delete failed'
+              // Straight back to the board, where "Recently deleted" can put it back.
+              router.push('/claims')
+              return null
+            } catch (e: any) { return String(e?.message || e) }
           }} />
         </div>
       </div>
@@ -550,7 +556,7 @@ function StepOutcome({ claim, patch, busy }: { claim: Claim; patch: (b: any) => 
 // ── the rail ───────────────────────────────────────────────────────────────
 function Rail({ claim, items, gates, patch, busy, onDelete }: {
   claim: Claim; items: ClaimItem[]; gates: { key: string; ok: boolean }[]
-  patch: (b: any) => Promise<boolean>; busy: boolean; onDelete: () => void
+  patch: (b: any) => Promise<boolean>; busy: boolean; onDelete: () => Promise<string | null>
 }) {
   const done = gates.filter(g => g.ok).length
   const hist = Array.isArray(claim.history) ? claim.history.slice().reverse().slice(0, 12) : []
@@ -606,9 +612,10 @@ function Rail({ claim, items, gates, patch, busy, onDelete }: {
         </div>
       </section>
 
-      <button onClick={onDelete} disabled={busy} className="w-full text-[12px] font-medium px-3 py-2 rounded-lg border border-line bg-white hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 inline-flex items-center justify-center gap-1.5">
-        <Trash2 size={12} /> Delete this claim
-      </button>
+      <div className="flex flex-col items-stretch gap-1">
+        <DeleteButton label="Delete this claim" onDelete={onDelete} className="justify-center" />
+        <span className="text-[11px] text-muted text-center">Recoverable from &ldquo;Recently deleted&rdquo; on the board.</span>
+      </div>
     </>
   )
 }

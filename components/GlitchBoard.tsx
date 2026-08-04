@@ -4,9 +4,10 @@
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders } from 'lucide-react'
+import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2 } from 'lucide-react'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
+import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
 
 type Glitch = {
   id: string; status: string; glitch_type: string | null; category: string | null
@@ -75,6 +76,8 @@ export function GlitchBoard() {
   const [people, setPeople] = useState<{ id: number; name: string; departments: string[] }[]>([])
   const [refundFor, setRefundFor] = useState('')  // glitch id whose refund logger is open
   const [panel, setPanel] = useState<string>('')  // '<id>:edit' | '<id>:push'
+  const [showTrash, setShowTrash] = useState(false)
+  const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -115,9 +118,11 @@ export function GlitchBoard() {
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
-        <button onClick={() => { setLoading(true); load() }} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
+        <button onClick={() => setShowTrash(!showTrash)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><Trash2 size={13} /> Recently deleted</button>
+        <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
       </div>
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
+      {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
       {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
 
       <div className="flex gap-3 overflow-x-auto pb-4 items-start">
@@ -181,7 +186,16 @@ export function GlitchBoard() {
                             <button onClick={() => setPanel(panel === g.id + ':edit' ? '' : g.id + ':edit')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Edit</button>
                             {g.breezeway_task_id && <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-brand-600 hover:underline" title="Open the ADMIN task in Breezeway — edit, assign, modify, check">Admin task</a>}{g.task_report_url && <a href={g.task_report_url} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" title="View the field report (read-only)">Report</a>}
                             {g.breezeway_task_id && <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Check status</button>}
-                            <button onClick={() => { const adminPassword = window.prompt('Admin password required to delete this glitch record (the Breezeway task, if any, stays):'); if (!adminPassword) return; act(g.id, { action: 'delete', adminPassword }) }} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-muted hover:text-rose-700 hover:border-rose-300">Delete</button>
+                            <DeleteButton title="Delete this glitch record. The Breezeway task, if any, stays." onDelete={async () => {
+                              try {
+                                const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'delete' }) })
+                                const j = await r.json()
+                                if (!r.ok || !j.ok) return j.error || 'Delete failed'
+                                setUndo({ trashId: String(j.trashId), label: String(j.label || 'glitch') })
+                                load()
+                                return null
+                              } catch (e: any) { return String(e?.message || e) }
+                            }} />
                           </div>
                           {panel === g.id + ':push' && <PushPanel g={g} people={people} onDone={() => { setPanel(''); load() }} act={act} />}
                           {panel === g.id + ':edit' && <EditGlitch g={g} onDone={() => { setPanel(''); load() }} />}
@@ -201,6 +215,7 @@ export function GlitchBoard() {
           )
         })}
       </div>
+      {undo && <UndoBar item={undo} onUndone={() => { setUndo(null); load() }} onDismiss={() => setUndo(null)} />}
     </div>
   )
 }

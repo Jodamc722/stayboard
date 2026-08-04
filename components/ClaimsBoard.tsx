@@ -9,8 +9,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, AlertTriangle,
+  ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, AlertTriangle, Trash2,
 } from 'lucide-react'
+import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
 import {
   STAGES, money, itemsTotal, num, daysUntil, urgencyOf, gatesFor, claimTitle,
   type Claim, type Stage,
@@ -58,6 +59,19 @@ export function ClaimsBoard() {
   const [q, setQ] = useState('')
   const [channel, setChannel] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
+  const [showTrash, setShowTrash] = useState(false)
+  const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
+
+  const removeClaim = useCallback(async (id: string): Promise<string | null> => {
+    try {
+      const r = await fetch('/api/claims/' + id, { method: 'DELETE' })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) return j.error || 'Delete failed'
+      setUndo({ trashId: String(j.trashId), label: String(j.label || 'claim') })
+      setData(d => d ? { ...d, claims: d.claims.filter(c => c.id !== id) } : d)
+      return null
+    } catch (e: any) { return String(e?.message || e) }
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -134,12 +148,16 @@ export function ClaimsBoard() {
           <option value="all">All channels</option>
           {channels.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button onClick={() => { setLoading(true); load() }} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
+        <button onClick={() => setShowTrash(!showTrash)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
+          <Trash2 size={13} /> Recently deleted
+        </button>
+        <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
           <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
+      {showTrash && <TrashDrawer kind="claim" onRestored={load} onClose={() => setShowTrash(false)} />}
 
       {/* THE ONE THING THAT LOSES MONEY: a claim that ages out unfiled. */}
       {atRisk.length > 0 && (
@@ -190,7 +208,7 @@ export function ClaimsBoard() {
                 </div>
                 <div className="text-[10px] text-muted px-1 mb-2 leading-tight">{s.blurb}</div>
                 <div className="space-y-2">
-                  {lane.map(c => <Card key={c.id} claim={c} />)}
+                  {lane.map(c => <Card key={c.id} claim={c} onDelete={() => removeClaim(c.id)} />)}
                   {lane.length === 0 && <div className="rounded-xl border border-dashed border-line px-3 py-4 text-[11px] text-muted text-center">Empty</div>}
                 </div>
               </div>
@@ -200,6 +218,7 @@ export function ClaimsBoard() {
       )}
 
       {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => router.push('/claims/' + id)} />}
+      {undo && <UndoBar item={undo} onUndone={() => { setUndo(null); load() }} onDismiss={() => setUndo(null)} />}
     </>
   )
 }
@@ -214,7 +233,7 @@ function Tile({ label, value, sub, good }: { label: string; value: string; sub?:
   )
 }
 
-function Card({ claim }: { claim: Claim }) {
+function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<string | null> }) {
   const items = claim.items || []
   const gates = gatesFor(claim, items)
   const done = gates.filter(g => g.ok).length
@@ -222,10 +241,15 @@ function Card({ claim }: { claim: Claim }) {
   const u = urgencyOf(claim)
   const border = u === 'expired' ? 'border-rose-300' : u === 'critical' ? 'border-rose-200' : 'border-line'
   return (
-    <Link href={'/claims/' + claim.id} className={'block rounded-xl border bg-white p-3 hover:shadow-sm transition ' + border}>
+    <Link href={'/claims/' + claim.id} className={'group relative block rounded-xl border bg-white p-3 hover:shadow-sm transition ' + border}>
+      {/* The delete sits on the card but out of the way — it appears on hover and swallows the
+          click so it can never open the claim by accident. */}
+      <span className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition">
+        <DeleteButton variant="icon" title="Delete this claim" onDelete={onDelete} />
+      </span>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-semibold text-ink leading-snug break-words">{claimTitle(claim)}</div>
+          <div className="text-[13px] font-semibold text-ink leading-snug break-words pr-5">{claimTitle(claim)}</div>
         </div>
         <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{amount > 0 ? money(amount) : ''}</span>
       </div>
