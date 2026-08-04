@@ -25,6 +25,18 @@ const LAYOUTS: Layout[] = [
   { key: 'film', label: 'Film', cells: (W, H, g) => { const th = H * 0.68, fh = H - th - g, fw = (W - 3 * g) / 4; const out = [{ x: 0, y: 0, w: W, h: th }]; for (let i = 0; i < 4; i++) out.push({ x: i * (fw + g), y: th + g, w: fw, h: fh }); return out } },
 ]
 
+// Output shape. A hero is stored once but each channel crops it differently, so let the host pick the
+// aspect ratio they're optimizing for. Preview + export + hit-testing all derive their pixel dims here.
+type Ratio = { key: string; label: string; hint: string; w: number; h: number }
+const RATIOS: Ratio[] = [
+  { key: '32', label: 'Wide 3:2', hint: 'Airbnb cover & direct site', w: 3, h: 2 },
+  { key: '43', label: 'Classic 4:3', hint: 'Vrbo / Booking galleries', w: 4, h: 3 },
+  { key: '11', label: 'Square 1:1', hint: 'Social & map/tile thumbnails', w: 1, h: 1 },
+  { key: '45', label: 'Portrait 4:5', hint: 'Instagram / mobile-first', w: 4, h: 5 },
+]
+const PREVIEW_W = 1500   // on-screen base width; height follows the ratio
+const EXPORT_W = 3000    // download/push base width; height follows the ratio
+
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath()
 }
@@ -50,6 +62,7 @@ function hiRes(u: string): string {
 export function HeroCollage({ listingId, name, city, building, pictures, amenities }: { listingId: string; name: string; city: string; building: string; pictures: Pic[]; amenities: string[] }) {
   const [open, setOpen] = useState(false)
   const [layoutKey, setLayoutKey] = useState('single')
+  const [ratioKey, setRatioKey] = useState('32')
   const [slots, setSlots] = useState<string[]>([])            // photo id per cell ('' = empty)
   const [sel, setSel] = useState(0)                           // selected cell index
   const [xf, setXf] = useState<Record<string, XF>>({})        // crop transform per photo id
@@ -78,7 +91,10 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   }, [pictures, uploads])
   const urlOf = useCallback((id: string) => overrideUrl[id] || pool.find(p => p.id === id)?.url || '', [overrideUrl, pool])
   const layout = LAYOUTS.find(l => l.key === layoutKey) || LAYOUTS[0]
-  const cellCount = layout.cells(3000, 2000, GAP).length
+  const ratio = RATIOS.find(r => r.key === ratioKey) || RATIOS[0]
+  const pvW = PREVIEW_W, pvH = Math.round(PREVIEW_W * ratio.h / ratio.w)   // preview px dims
+  const exW = EXPORT_W, exH = Math.round(EXPORT_W * ratio.h / ratio.w)     // export px dims
+  const cellCount = layout.cells(exW, exH, GAP).length
 
   // Load an image (proxy hi-res for synced/remote, direct for uploads) into the cache; re-render on load.
   const ensureImg = useCallback((id: string) => {
@@ -136,15 +152,15 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
     })
   }, [layout, slots, xf, imgFor])
 
-  // Live preview (1500x1000 is sharp on screen; export renders at 3000x2000).
-  useEffect(() => { const c = previewRef.current; if (c) paint(c, 1500, 1000) })
+  // Live preview (sharp on screen; export renders at higher res). Both follow the chosen ratio.
+  useEffect(() => { const c = previewRef.current; if (c) paint(c, pvW, pvH) })
 
   // --- interactions -------------------------------------------------------
   const cellAt = (clientX: number, clientY: number): number => {
     const c = previewRef.current; if (!c) return -1
     const r = c.getBoundingClientRect()
-    const px = ((clientX - r.left) / r.width) * 1500, py = ((clientY - r.top) / r.height) * 1000
-    const cells = layout.cells(1500, 1000, 1500 * (GAP / 3000))
+    const px = ((clientX - r.left) / r.width) * pvW, py = ((clientY - r.top) / r.height) * pvH
+    const cells = layout.cells(pvW, pvH, pvW * (GAP / EXPORT_W))
     for (let i = 0; i < cells.length; i++) { const cc = cells[i]; if (px >= cc.x && px <= cc.x + cc.w && py >= cc.y && py <= cc.y + cc.h) return i }
     return -1
   }
@@ -204,7 +220,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   }
 
   function download() {
-    const c = document.createElement('canvas'); paint(c, 3000, 2000)
+    const c = document.createElement('canvas'); paint(c, exW, exH)
     c.toBlob(b => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${(name || 'hero').replace(/[^a-z0-9]+/gi, '-').slice(0, 40)}.jpg`; a.click(); URL.revokeObjectURL(a.href) }, 'image/jpeg', 0.96)
   }
   async function pushToGuesty() {
@@ -212,7 +228,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
     if (!confirm('Push this hero image to Guesty as a NEW photo on this listing?\n\nIt syncs to ALL connected channels and is added at the END of the set (not the cover).\n\nAirbnb discourages photos with graphics/collages — single-photo heroes are safest there; collages are great for Booking.com, Vrbo and your direct site.')) return
     setPushing(true); setPushMsg(null); setError(null)
     try {
-      const c = document.createElement('canvas'); paint(c, 3000, 2000)
+      const c = document.createElement('canvas'); paint(c, exW, exH)
       const dataUrl: string = await new Promise(res => c.toBlob(b => { if (!b) return res(''); const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.readAsDataURL(b) }, 'image/jpeg', 0.95))
       if (!dataUrl) throw new Error('Could not read the image.')
       const r = await fetch('/api/hero/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dataUrl, caption: name || 'Featured' }) })
@@ -248,11 +264,20 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
             ))}
           </div>
 
+          {/* Aspect-ratio / channel presets */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-1">Shape</span>
+            {RATIOS.map(rr => (
+              <button key={rr.key} onClick={() => setRatioKey(rr.key)} title={rr.hint} className={`text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ${ratioKey === rr.key ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:bg-app'}`}>{rr.label}</button>
+            ))}
+            <span className="text-[11px] text-muted ml-1">{ratio.hint}</span>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Live preview — click a cell to select it, drag to pan */}
             <div className="lg:col-span-2">
               <canvas ref={previewRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
-                className="w-full block rounded-xl border border-line touch-none cursor-move" style={{ aspectRatio: '3 / 2' }} />
+                className="w-full block rounded-xl border border-line touch-none cursor-move" style={{ aspectRatio: `${ratio.w} / ${ratio.h}` }} />
               <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
                 <span className="text-[11px] text-muted">Click a cell to select · drag on it to pan{cellCount > 1 ? ' · drag the thumbnails below to rearrange' : ''}</span>
                 <div className="flex items-center gap-3">
