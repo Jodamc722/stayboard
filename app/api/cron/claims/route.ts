@@ -15,7 +15,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
-import { claimTitle, daysUntil, money, num, itemsTotal, todayET, type Claim } from '@/lib/claims'
+import { getSetting, setSetting } from '@/lib/app-settings'
+import { nextCheckInMap } from '@/lib/claim-turnover'
+import { claimTitle, daysUntil, effectiveDue, money, num, itemsTotal, todayET, type Claim } from '@/lib/claims'
+
+// "Already shouted today", kept in app_settings rather than a column on claims — same reason the
+// turnover clock is computed rather than stored: this feature had to work without a migration.
+// A claim id -> date map, pruned to what is still open so it cannot grow forever.
+const NUDGED_KEY = 'claims_nudged_on'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -38,10 +45,15 @@ async function run(req: NextRequest) {
       .select('*').is('deleted_at', null).in('stage', OPEN_STAGES).limit(500)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
 
-    const claims = (data || []) as Claim[]
+    const raw = (data || []) as Claim[]
+    // The turnover clock, fresh, for the whole batch.
+    const arrivals = await nextCheckInMap(db, raw as any[])
+    const claims: Claim[] = raw.map(c => ({ ...c, next_check_in: arrivals[String(c.id)] || null }))
+    const nudged = await getSetting<Record<string, string>>(NUDGED_KEY, {})
+
     const urgent: { claim: Claim; why: string; rank: number }[] = []
     for (const c of claims) {
-      const due = daysUntil(c.due_on)
+      const due = daysUntil(effectiveDue(c).due)
       const hard = daysUntil(c.deadline_on)
       const arrival = daysUntil(c.next_check_in)
       let why = ''
@@ -55,7 +67,7 @@ async function run(req: NextRequest) {
       else if (due !== null && due <= 2) { why = 'due in ' + due + ' day(s)'; rank = 5 }
       if (!why) continue
       // Already shouted today. An alert that repeats every morning stops being an alert.
-      if (str(c.nudged_on) === today) continue
+      if (str(nudged[String(c.id)]) === today) continue
       urgent.push({ claim: c, why, rank })
     }
     urgent.sort((a, b) => a.rank - b.rank)
@@ -73,22 +85,28 @@ async function run(req: NextRequest) {
     } catch { /* the owner still gets it */ }
 
     let sent = 0
+    const nextNudged: Record<string, string> = {}
+    // Keep only claims that are still open, so the map cannot grow without bound.
+    for (const c of claims) { const p = str(nudged[String(c.id)]); if (p) nextNudged[String(c.id)] = p }
+
     for (const u of urgent.slice(0, 40)) {
       const c = u.claim
       const amount = num(c.amount_sought) || itemsTotal(c.items)
+      const eff = effectiveDue(c)
       const to = Array.from(new Set(admins.concat([str(c.assignee_email).toLowerCase()]).filter(Boolean)))
       if (!to.length) continue
       try {
         await notify(to, {
           kind: 'claim',
           title: 'Claim ' + u.why + ': ' + claimTitle(c),
-          body: (amount > 0 ? money(amount) + ' · ' : '') + String(c.channel || '') + (c.due_on ? ' · due ' + c.due_on : ''),
+          body: (amount > 0 ? money(amount) + ' · ' : '') + String(c.channel || '') + (eff.due ? ' · due ' + eff.due : ''),
           link: '/claims/' + c.id,
         })
         sent++
-        await db.from('claims').update({ nudged_on: today }).eq('id', c.id)
+        nextNudged[String(c.id)] = today
       } catch { /* one bad claim must not stop the round */ }
     }
+    if (sent) { try { await setSetting(NUDGED_KEY, nextNudged, 'cron') } catch { /* worst case it repeats tomorrow */ } }
 
     return NextResponse.json({
       ok: true, ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started,
