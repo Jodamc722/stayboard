@@ -9,7 +9,7 @@
 // fix did not hold. Two reopens on the same theme is the argument for replacing something rather
 // than repairing it again.
 import { useCallback, useEffect, useState } from 'react'
-import { ClipboardList, Check, X, RefreshCw, ChevronRight, ExternalLink, AlertTriangle, Play, RotateCcw } from 'lucide-react'
+import { ClipboardList, Check, X, RefreshCw, ChevronRight, ExternalLink, AlertTriangle, Play, RotateCcw, Send, CalendarDays } from 'lucide-react'
 
 type Action = {
   id: string; listing_id: string; unit: string | null; building: string | null
@@ -114,6 +114,134 @@ function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => 
   )
 }
 
+// How each booking state reads on the day strip. Occupied is the one that must be unmistakable:
+// scheduling a walk into a guest's stay is the mistake this picker exists to prevent.
+const DAY_UI: Record<string, { cls: string; label: string }> = {
+  checkout: { cls: 'border-emerald-400 bg-emerald-50 text-emerald-800', label: 'checkout' },
+  vacant: { cls: 'border-emerald-200 bg-white text-ink', label: 'vacant' },
+  turn: { cls: 'border-amber-300 bg-amber-50 text-amber-800', label: 'turn' },
+  checkin: { cls: 'border-sky-300 bg-sky-50 text-sky-800', label: 'arrives' },
+  occupied: { cls: 'border-rose-200 bg-rose-50 text-rose-700', label: 'guest in' },
+}
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/**
+ * SEND A UNIT'S OUTSTANDING ACTIONS TO BREEZEWAY AS ONE TASK.
+ *
+ * Everything the guests raised on this door becomes a single inspection with a written checklist,
+ * rather than five people each being told one thing. The date strip shows the unit's actual booking
+ * calendar, because the only useful question when scheduling field work is "is anyone in there?" —
+ * checkout days and vacant days are offered first, occupied days are shown but marked.
+ */
+function Dispatch({ unit, rows, onDone }: { unit: any; rows: Action[]; onDone: (ids: string[], taskId: string, date: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [cal, setCal] = useState<any[]>([])
+  const [date, setDate] = useState('')
+  const [dept, setDept] = useState('inspection')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    let dead = false
+    ;(async () => {
+      try {
+        const r = await fetch('/api/listing-calendar?listingId=' + encodeURIComponent(unit.listing_id) + '&days=21', { cache: 'no-store' })
+        const j = await r.json()
+        if (dead || !j.ok) return
+        setCal(j.days || [])
+        setDate(d => d || j.suggested || '')
+      } catch { /* the picker still works, just without booking context */ }
+    })()
+    return () => { dead = true }
+  }, [open, unit.listing_id])
+
+  async function send() {
+    if (!date) { setErr('Pick a date first.'); return }
+    setBusy(true); setErr('')
+    try {
+      // The checklist IS the task. Each line is the job plus the evidence, so whoever opens it in
+      // Breezeway can see why they are being asked without coming back here.
+      const lines = rows.map((a, i) => {
+        const ev = Array.isArray(a.evidence) && a.evidence[0] ? a.evidence[0] : null
+        const meta = [a.mentions + ' guest' + (a.mentions === 1 ? '' : 's'),
+          a.worst_rating != null ? 'worst ' + a.worst_rating + ' star' : '',
+          a.reopened_count > 0 ? 'REPORTED AGAIN AFTER A FIX x' + a.reopened_count : ''].filter(Boolean).join(', ')
+        return (i + 1) + '. ' + a.title.split(' — ')[0].toUpperCase() + ' — ' + a.action + ' (' + meta + ')'
+          + (ev && ev.quote ? '\n   Guest: "' + String(ev.quote).slice(0, 160) + '"' : '')
+      })
+      const description = 'RAISED BY GUESTS ON THIS UNIT — check every line and note what you find:\n\n' + lines.join('\n')
+      const urgent = rows.some(a => a.severity === 'urgent')
+      const r = await fetch('/api/ops-today/add-task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: unit.listing_id,
+          title: 'Guest-feedback inspection — ' + (unit.unit || 'Unit'),
+          department: dept, priority: urgent ? 'high' : 'normal',
+          date, description, auditLink: false,
+        }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not create the task')
+      onDone(rows.map(a => a.id), String(j.taskId || ''), date)
+      setOpen(false)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-brand-300 bg-white text-brand-700 hover:bg-brand-50">
+        <Send size={11} /> Send to Breezeway
+      </button>
+    )
+  }
+
+  return (
+    <div className="w-full mt-2 rounded-lg border border-brand-200 bg-white p-2.5">
+      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted font-semibold">
+          <CalendarDays size={12} /> Pick a day
+        </span>
+        <span className="text-[11px] text-muted">green = unit is free · red = guest in the unit</span>
+        <select value={dept} onChange={e => setDept(e.target.value)} className="ml-auto text-[11px] border border-line rounded px-1.5 py-0.5 bg-white">
+          <option value="inspection">Inspection</option>
+          <option value="housekeeping">Housekeeping</option>
+          <option value="maintenance">Maintenance</option>
+        </select>
+      </div>
+
+      {!cal.length && <div className="text-[11px] text-muted py-1">Loading the unit&apos;s calendar…</div>}
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {cal.map(d => {
+          const ui = DAY_UI[d.status] || DAY_UI.vacant
+          const sel = date === d.date
+          const dt = new Date(d.date + 'T12:00:00')
+          return (
+            <button key={d.date} onClick={() => setDate(d.date)} title={d.guest ? d.status + ' · ' + d.guest : d.status}
+              className={'flex-shrink-0 w-[54px] rounded-lg border px-1 py-1 text-center ' + ui.cls + (sel ? ' ring-2 ring-brand-500' : '')}>
+              <div className="text-[9.5px] uppercase opacity-70">{DOW[dt.getDay()]}</div>
+              <div className="text-[13px] font-bold leading-tight">{dt.getDate()}</div>
+              <div className="text-[8.5px] leading-tight truncate">{ui.label}</div>
+            </button>
+          )
+        })}
+      </div>
+
+      {err && <div className="text-[11px] text-rose-700 mt-1">{err}</div>}
+      <div className="flex items-center gap-2 mt-2">
+        <span className="text-[11px] text-muted">{rows.length} item{rows.length === 1 ? '' : 's'} → one task{date ? ' on ' + date : ''}</span>
+        <button onClick={send} disabled={busy || !date}
+          className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+          <Send size={11} /> {busy ? 'Creating…' : 'Create task'}
+        </button>
+        <button onClick={() => setOpen(false)} className="text-[11px] text-muted hover:text-ink px-1.5 py-1">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * ONE CARD PER UNIT.
  *
@@ -122,7 +250,7 @@ function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => 
  * stores a row per (unit, theme) — that is what makes the reopen rule work — but nobody has to see
  * it that way.
  */
-function UnitCard({ unit, rows, onSet, onAll }: { unit: any; rows: Action[]; onSet: (id: string, s: string) => void; onAll: (ids: string[]) => void }) {
+function UnitCard({ unit, rows, onSet, onAll, onDispatch }: { unit: any; rows: Action[]; onSet: (id: string, s: string) => void; onAll: (ids: string[]) => void; onDispatch: (ids: string[], taskId: string, date: string) => void }) {
   const live = rows.filter(r => r.status === 'open' || r.status === 'doing')
   const urgent = live.filter(r => r.severity === 'urgent').length
   const back = rows.filter(r => r.reopened_count > 0).length
@@ -143,6 +271,12 @@ function UnitCard({ unit, rows, onSet, onAll }: { unit: any; rows: Action[]; onS
           </button>
         )}
       </div>
+      {/* Full width on its own row: the day strip needs the space when it opens. */}
+      {!!live.length && (
+        <div className="px-3 pt-2">
+          <Dispatch unit={unit} rows={live} onDone={onDispatch} />
+        </div>
+      )}
       <div className="px-3 pb-1">
         {rows.map(a => <Item key={a.id} a={a} onSet={onSet} />)}
       </div>
@@ -212,6 +346,19 @@ export function ReviewActionBoard() {
     } catch { load() }
   }
 
+  // Dispatched work is IN PROGRESS, not done — somebody still has to walk the unit. The note keeps
+  // the Breezeway task id and date so this board can answer "was anything actually sent?".
+  async function afterDispatch(ids: string[], taskId: string, date: string) {
+    const note = 'Breezeway task ' + taskId + ' scheduled ' + date
+    setRows(rs => rs.map(r => (ids.includes(r.id) ? { ...r, status: 'doing', note } : r)))
+    setMsg('Sent ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') + ' to Breezeway for ' + date + ' (task ' + taskId + ')')
+    try {
+      await Promise.all(ids.map(id => fetch('/api/reviews/actions', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status: 'doing', note }),
+      })))
+    } catch { load() }
+  }
+
   // Group into one card per unit. Units with an urgent item float up, then the busiest.
   const groups = (() => {
     const by: Record<string, { unit: any; rows: Action[] }> = {}
@@ -264,7 +411,7 @@ export function ReviewActionBoard() {
         </div>
       )}
       {groups.map(g => (
-        <UnitCard key={g.unit.listing_id} unit={g.unit} rows={g.rows} onSet={setStatus} onAll={doneAll} />
+        <UnitCard key={g.unit.listing_id} unit={g.unit} rows={g.rows} onSet={setStatus} onAll={doneAll} onDispatch={afterDispatch} />
       ))}
     </section>
   )
