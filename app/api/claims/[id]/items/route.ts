@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { num } from '@/lib/claims'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -50,6 +51,10 @@ async function listItems(db: any, claimId: string) {
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'claims' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('claims', 'edit')
+  if (!__gate.ok) return __gate.res
   const g = await guard(params.id)
   if (g.err) return g.err
   const db = g.db as any
@@ -69,6 +74,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'claims' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('claims', 'edit')
+  if (!__gate.ok) return __gate.res
   const g = await guard(params.id)
   if (g.err) return g.err
   const db = g.db as any
@@ -90,6 +99,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'claims' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('claims', 'edit')
+  if (!__gate.ok) return __gate.res
   const g = await guard(params.id)
   if (g.err) return g.err
   const db = g.db as any
