@@ -64,6 +64,9 @@ export type Claim = {
   check_out?: string | null
   discovered_on?: string | null
   deadline_on?: string | null
+  due_on?: string | null
+  due_source?: string | null
+  deposit_held?: number | null
   submitted_on?: string | null
   decided_on?: string | null
   paid_on?: string | null
@@ -89,10 +92,93 @@ export type Claim = {
 }
 
 // ── the clock ──────────────────────────────────────────────────────────────
-// Airbnb's window closes 14 days after checkout. We file by day 13 so a claim is never lost to a
-// timezone argument. Dates are handled as plain YYYY-MM-DD strings — no Date parsing of a bare
-// date string, which silently shifts a day in a UTC-behind timezone.
+// TWO DATES, NOT ONE.
+//
+//   deadline_on  the channel's HARD cutoff. Miss it and the claim is worth nothing.
+//   due_on       the date WE intend to file. This is what the board counts down to, because a
+//                board that only shows the hard deadline looks fine right up until it doesn't.
+//
+// The per-channel targets below are not arbitrary:
+//   Airbnb       AirCover / Resolution Center. 14 days from the responsible guest's checkout.
+//                We file by day 13 so a claim is never lost to a timezone argument.
+//   Vrbo         Refundable damage deposit; Vrbo's own help gives the host 14 days after checkout
+//                to file. BUT the platform releases the deposit back to the guest in up to 14 days
+//                — so filing on day 13 can mean filing at money that is already gone. Target 7.
+//   Expedia      Expedia Group (Expedia / Hotels.com / Vrbo are one group) offers card-on-file, an
+//                upfront refundable deposit, or damage protection, and points back at Vrbo's
+//                deposit mechanics. Same shape, same reason to be early. Target 7.
+//   Booking.com  Damage Programme: report within 14 days of checkout. Recovery is capped around
+//                €250 regardless of what you set, so a large claim needs another route.
+//   Direct       No platform, no window — we hold the card. The only clock is how fresh the charge
+//                looks to the bank, so this one moves fastest.
+//
+// Dates are plain YYYY-MM-DD strings throughout — no Date parsing of a bare date string, which
+// silently shifts a day in a UTC-behind timezone.
 export const FILING_WINDOW_DAYS = 13
+
+export type ChannelPolicy = {
+  /** Hard cutoff in days after checkout. null = the channel imposes none (direct bookings). */
+  windowDays: number | null
+  /** Days after checkout by which WE intend to file. Always <= windowDays. */
+  targetDays: number
+  /** Refundable deposit we hold on this channel, if any. */
+  deposit: number | null
+  /** Practical ceiling on what this channel will actually recover, if there is one. */
+  capNote?: string
+  /** Where the claim is actually filed. */
+  route: string
+  note?: string
+}
+
+export const DEFAULT_CHANNEL_POLICY: Record<string, ChannelPolicy> = {
+  'Airbnb': {
+    windowDays: 14, targetDays: 13, deposit: null,
+    route: 'AirCover — Resolution Center',
+    note: 'Call the guest before filing. 14 days from the responsible guest’s checkout.',
+  },
+  'VRBO': {
+    windowDays: 14, targetDays: 7, deposit: 350,
+    route: 'Damage deposit claim',
+    note: 'The deposit is released back to the guest in up to 14 days — claim well before that.',
+  },
+  'Expedia': {
+    windowDays: 14, targetDays: 7, deposit: 350,
+    route: 'Deposit / card on file',
+    note: 'Expedia Group points back to Vrbo’s deposit mechanics. Same release risk.',
+  },
+  'Booking.com': {
+    windowDays: 14, targetDays: 10, deposit: null,
+    capNote: 'Damage Programme recovery is capped around €250 (~$270) whatever you set.',
+    route: 'Damage Programme',
+    note: 'Anything above the cap needs a different route — the card, or the guest directly.',
+  },
+  'Direct': {
+    windowDays: null, targetDays: 3, deposit: 350,
+    route: 'Charge the card on file',
+    note: 'No platform window. Charge while the stay is fresh — an old charge is a disputed charge.',
+  },
+  'Other': {
+    windowDays: 14, targetDays: 10, deposit: null,
+    route: 'Card / guest directly',
+  },
+}
+
+/** Look up a channel, tolerating case and the odd slug. Falls back to 'Other'. */
+export function policyFor(channel: any, overrides?: Record<string, ChannelPolicy> | null): ChannelPolicy {
+  const table = (overrides && typeof overrides === 'object' && Object.keys(overrides).length)
+    ? { ...DEFAULT_CHANNEL_POLICY, ...overrides }
+    : DEFAULT_CHANNEL_POLICY
+  const raw = String(channel || '').trim()
+  const keys = Object.keys(table)
+  for (let i = 0; i < keys.length; i++) if (keys[i].toLowerCase() === raw.toLowerCase()) return table[keys[i]]
+  const s = raw.toLowerCase()
+  if (/airbnb/.test(s)) return table['Airbnb'] || DEFAULT_CHANNEL_POLICY['Airbnb']
+  if (/vrbo|homeaway/.test(s)) return table['VRBO'] || DEFAULT_CHANNEL_POLICY['VRBO']
+  if (/expedia|orbitz|travelocity/.test(s)) return table['Expedia'] || DEFAULT_CHANNEL_POLICY['Expedia']
+  if (/booking/.test(s)) return table['Booking.com'] || DEFAULT_CHANNEL_POLICY['Booking.com']
+  if (/direct|manual|website/.test(s)) return table['Direct'] || DEFAULT_CHANNEL_POLICY['Direct']
+  return table['Other'] || DEFAULT_CHANNEL_POLICY['Other']
+}
 
 export function addDays(ymd: string, days: number): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || ''))
@@ -102,9 +188,29 @@ export function addDays(ymd: string, days: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-export function deadlineFor(checkOut?: string | null): string | null {
-  const s = String(checkOut || '').slice(0, 10)
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? addDays(s, FILING_WINDOW_DAYS) : null
+function ymdOf(v: any): string | null {
+  const s = String(v || '').slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null
+}
+
+/**
+ * The channel's HARD cutoff. Null when the channel imposes none (direct bookings) — that is a
+ * real answer, not a missing one, and the UI says so rather than inventing a date.
+ * We take one day of margin off the published window so a claim is never lost to a timezone.
+ */
+export function deadlineFor(checkOut?: string | null, channel?: any, overrides?: Record<string, ChannelPolicy> | null): string | null {
+  const s = ymdOf(checkOut)
+  if (!s) return null
+  const p = policyFor(channel, overrides)
+  if (p.windowDays === null) return null
+  return addDays(s, Math.max(0, p.windowDays - 1))
+}
+
+/** The date WE intend to file: the channel's target, measured from checkout. */
+export function dueDateFor(checkOut?: string | null, channel?: any, overrides?: Record<string, ChannelPolicy> | null): string | null {
+  const s = ymdOf(checkOut)
+  if (!s) return null
+  return addDays(s, Math.max(0, policyFor(channel, overrides).targetDays))
 }
 
 /** Today in Eastern time — the business runs on ET, and UTC "today" is wrong after 8pm. */
@@ -127,14 +233,39 @@ export function clockRunning(stage: string): boolean {
 }
 
 export type Urgency = 'expired' | 'critical' | 'soon' | 'ok' | 'none'
-export function urgencyOf(claim: { stage?: string; deadline_on?: string | null }): Urgency {
-  if (!clockRunning(String(claim.stage || ''))) return 'none'
-  const d = daysUntil(claim.deadline_on)
+
+function urgencyOfDate(ymd: string | null | undefined, stage: any): Urgency {
+  if (!clockRunning(String(stage || ''))) return 'none'
+  const d = daysUntil(ymd)
   if (d === null) return 'none'
   if (d < 0) return 'expired'
   if (d <= 2) return 'critical'
   if (d <= 5) return 'soon'
   return 'ok'
+}
+
+/**
+ * The board counts down to OUR due date, not the platform's cutoff — a board that only shows the
+ * hard deadline reads as calm until the day it doesn't. Falls back to the hard deadline for claims
+ * created before due dates existed.
+ */
+export function urgencyOf(claim: { stage?: string; due_on?: string | null; deadline_on?: string | null }): Urgency {
+  return urgencyOfDate(claim.due_on || claim.deadline_on, claim.stage)
+}
+
+/** The separate, quieter alarm: how close the channel's hard cutoff is. */
+export function hardUrgencyOf(claim: { stage?: string; deadline_on?: string | null }): Urgency {
+  return urgencyOfDate(claim.deadline_on, claim.stage)
+}
+
+/** True when the hard cutoff deserves its own red line next to the due-date countdown. */
+export function hardDeadlineBiting(claim: { stage?: string; due_on?: string | null; deadline_on?: string | null }): boolean {
+  if (!claim.deadline_on) return false
+  const h = hardUrgencyOf(claim)
+  if (h === 'expired' || h === 'critical') return true
+  // Also shout when the due date has already slipped past the point of comfort.
+  const dueGone = (daysUntil(claim.due_on) ?? 1) < 0
+  return dueGone && (h === 'soon')
 }
 
 // ── money ──────────────────────────────────────────────────────────────────
@@ -188,7 +319,9 @@ export function gatesFor(claim: Claim, items: ClaimItem[]): Gate[] {
     { key: 'called', label: 'Guest was called', ok: !!claim.guest_called,
       detail: 'Airbnb requires the guest to be contacted before the claim is filed.' },
     { key: 'deadline', label: 'Still inside the filing window', ok: d === null ? true : d >= 0,
-      detail: d === null ? 'No checkout date on the booking.' : (d < 0 ? 'The window closed ' + Math.abs(d) + ' day(s) ago.' : d + ' day(s) left.') },
+      detail: d === null
+        ? (claim.check_out ? 'This channel sets no filing window — the only clock is how fresh the charge looks.' : 'No checkout date on the booking.')
+        : (d < 0 ? 'The window closed ' + Math.abs(d) + ' day(s) ago.' : d + ' day(s) left.') },
   ]
 }
 
