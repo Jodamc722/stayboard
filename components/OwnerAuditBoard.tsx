@@ -19,8 +19,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Download,
-  ExternalLink, FileText, LayoutList, Lock, MessageSquare, RefreshCw, Search, Send,
-  Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
+  ExternalLink, FileText, LayoutList, Lock, MessageSquare, RefreshCw, Scissors, Search,
+  Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
 } from 'lucide-react'
 
 type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation'
@@ -32,9 +32,16 @@ type Comment = { author: string; body: string; at: string }
 type SignOff = { by: string; at: string }
 type Rules = {
   lowRateMode: 'relative' | 'absolute'
-  lowRatePct: number; lowRateFloor: number; lowRate: number
+  lowRatePct: number; lowRateFloor: number; lastMinDays: number; lastMinExtra: number; lowRate: number
   passthruLo: number; passthruHi: number
   enabled: Record<FlagType, boolean>
+}
+type PrepItem = {
+  ownerId: string; resCode: string; guest: string; unit: string
+  checkIn: string; checkOut: string; source: string; reservationId: string
+  rental: number; monthNights: number
+  cleaningAmt: number | null; rmAmt: number | null
+  saved: { cleaning: number; rm: number; by: string; at: string } | null
 }
 type Item = {
   key: string; kind: 'reservation' | 'line'; ownerId: string; resCode: string
@@ -42,6 +49,7 @@ type Item = {
   totalNights: number; monthNights: number; splitMonth: boolean
   listingId: string; unit: string; source: string; reservationId: string; resNote: string
   benchRate: number | null; benchLabel: string; benchPct: number | null; benchPrev: number | null
+  mixWeekday: number; mixWeekend: number; leadDays: number | null
   rental: number; commission: number; other: number; net: number; rate: number | null
   lines: Line[]; flags: Flag[]
   status: Status; touched: boolean; note: string; comments: Comment[]
@@ -59,11 +67,12 @@ type Data = {
   month: string; label: string; owners: Owner[]; items: Item[]
   totals: {
     owners: number; statements: number; reservations: number; flagged: number; high: number
-    review: number; action: number; done: number; signedOff: number
+    review: number; action: number; done: number; signedOff: number; prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
   coverage: { ready: boolean; missing: string[] }
   rules: Rules
+  prep: PrepItem[]
 }
 
 const FLAG_LABEL: Record<FlagType, string> = {
@@ -72,7 +81,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
-  low_rate: 'In-month rate far below its building/size average (this + last month), or under the hard floor.',
+  low_rate: 'Revenue far below what this stay’s night mix (midweek vs weekend) normally earns in its building/size cohort, with slack for last-minute bookings — or under the hard floor.',
   orphan_reimb: 'Reimbursement lines with no rental income on the block.',
   refund: 'Any refund-looking line, captured with its amount.',
   zero_rev: '$0 reservations that are not obviously owner stays.',
@@ -128,7 +137,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [pwErr, setPwErr] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
 
-  const [view, setView] = useState<'work' | 'stmt'>('work')
+  const [view, setView] = useState<'work' | 'stmt' | 'prep'>('work')
   const [stmtOwner, setStmtOwner] = useState('')          // '' = overview grid
 
   const [q, setQ] = useState('')
@@ -136,7 +145,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [fFlag, setFFlag] = useState<'' | 'flagged' | FlagType>('')
   const [fOwner, setFOwner] = useState('')
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({})
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // Worklist opens CLEAN: every statement collapsed to its totals row. expandedOwners is the
+  // explicit open/close override; sections auto-open while filters or a search are active.
+  const [expandedOwners, setExpandedOwners] = useState<Record<string, boolean>>({})
+  const [showAllRows, setShowAllRows] = useState<Record<string, boolean>>({})
+  const [prepDrafts, setPrepDrafts] = useState<Record<string, { c: string; r: string }>>({})
+  const [prepBusy, setPrepBusy] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})           // note drafts
   const [cDrafts, setCDrafts] = useState<Record<string, string>>({})         // comment drafts
   const [savingKey, setSavingKey] = useState('')
@@ -286,6 +300,37 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     setSignBusy('')
   }
 
+  const patchPrep = (p: PrepItem, saved: PrepItem['saved']) => {
+    setData(d => {
+      if (!d) return d
+      const prepList = d.prep.map(x => (x.ownerId === p.ownerId && x.resCode === p.resCode) ? { ...x, saved } : x)
+      const prepOpen = prepList.filter(x => (x.cleaningAmt == null || x.rmAmt == null) && !x.saved).length
+      return { ...d, prep: prepList, totals: { ...d.totals, prepOpen } }
+    })
+  }
+
+  const savePrep = async (p: PrepItem, on: boolean) => {
+    if (!data) return
+    const k = p.ownerId + '|' + p.resCode
+    const dr = prepDrafts[k] || { c: '', r: '' }
+    const cleaning = on ? Number(dr.c || (p.cleaningAmt != null ? Math.abs(p.cleaningAmt) : 0)) : 0
+    const rm = on ? Number(dr.r || (p.rmAmt != null ? Math.abs(p.rmAmt) : 0)) : 0
+    if (on && !(cleaning > 0 || rm > 0)) { setError('Enter the Cleaning fee and RM fee amounts first.'); return }
+    if (share && me.trim()) { try { localStorage.setItem('oa_name', me.trim()) } catch { /* private mode */ } }
+    setPrepBusy(k)
+    try {
+      const r = await fetch('/api/owner-audit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'prep', month: data.month, ownerId: p.ownerId, itemKey: 'prep:' + p.resCode, cleaning, rm, on, author: me.trim() || 'reviewer' }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setError(j.error || 'Prep save failed'); setPrepBusy(''); return }
+      patchPrep(p, j.saved || null)
+      if (on) { setPrepDrafts(prev => ({ ...prev, [k]: { c: '', r: '' } })); setFlash('Fee breakout saved.'); setTimeout(() => setFlash(''), 2500) }
+    } catch (e: any) { setError(String(e?.message || e)) }
+    setPrepBusy('')
+  }
+
   const saveRules = async () => {
     if (!rulesDraft) return
     setRulesBusy(true)
@@ -401,6 +446,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.unit || (it.kind === 'line' ? 'Owner-level line items' : '')}
               {it.checkIn && <span> · {dateShort(it.checkIn)} &ndash; {dateShort(it.checkOut)} · {it.monthNights}n{it.splitMonth ? ' in month of ' + it.totalNights + 'n' : ''}</span>}
               {!it.checkIn && it.kind === 'reservation' && it.monthNights > 0 && <span> · ~{it.monthNights}n</span>}
+              {it.leadDays != null && it.leadDays <= (data?.rules.lastMinDays ?? 3) && <span className="text-sky-700"> · last-minute ({it.leadDays}d out)</span>}
               {done && it.touched && it.updatedBy && <span className="text-emerald-700"> · completed by {shortWho(it.updatedBy)}</span>}
             </div>
           </div>
@@ -474,10 +520,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             )}
             {it.benchRate != null && (
               <div className="text-xs text-muted mb-2">
-                Vs {it.benchLabel}: <span className="font-semibold text-ink">{fmt(it.benchRate)}/n</span>
-                <span className="text-[10px]"> (this + last month)</span>
-                {it.benchPrev != null && <span> · last month alone {fmt(it.benchPrev)}/n</span>}
+                Expected for these nights ({it.mixWeekday} midweek · {it.mixWeekend} weekend): <span className="font-semibold text-ink">{fmt(it.benchRate)}/n</span>
+                <span className="text-[10px]"> ({it.benchLabel}, this + last month)</span>
+                {it.benchPrev != null && <span> · last month blended {fmt(it.benchPrev)}/n</span>}
                 {it.rate != null && it.benchPct != null && <span> — this stay ran <span className={'font-semibold ' + (it.benchPct < (data?.rules.lowRatePct ?? 55) ? 'text-rose-600' : 'text-ink')}>{it.benchPct}%</span> of it</span>}
+                {it.leadDays != null && <span> · booked {it.leadDays}d before check-in</span>}
               </div>
             )}
             {it.lines.length > 0 && (
@@ -615,6 +662,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               className={'inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 transition ' + (view === 'stmt' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
               <FileText size={13} /> Statements
             </button>
+            <button onClick={() => setView('prep')}
+              className={'inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 transition ' + (view === 'prep' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+              <Scissors size={13} /> Prep
+              {data && data.totals.prepOpen > 0 && (
+                <span className={'text-[10px] font-bold px-1.5 rounded-full ' + (view === 'prep' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800')}>{data.totals.prepOpen}</span>
+              )}
+            </button>
           </div>
           <select
             value={month}
@@ -690,6 +744,20 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     onChange={e => setRulesDraft(rd => rd ? { ...rd, lowRateFloor: Number(e.target.value) } : rd)}
                     className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                   <div className="text-[10px] text-muted mt-0.5">Always flag under this, any building.</div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Last-minute = booked within (days)</label>
+                  <input type="number" min={0} max={30} step={1} value={rulesDraft.lastMinDays}
+                    onChange={e => setRulesDraft(rd => rd ? { ...rd, lastMinDays: Number(e.target.value) } : rd)}
+                    className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  <div className="text-[10px] text-muted mt-0.5">We cut rates to fill these nights.</div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Last-minute slack (pts)</label>
+                  <input type="number" min={0} max={40} step={5} value={rulesDraft.lastMinExtra}
+                    onChange={e => setRulesDraft(rd => rd ? { ...rd, lastMinExtra: Number(e.target.value) } : rd)}
+                    className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  <div className="text-[10px] text-muted mt-0.5">e.g. 20 → last-minute flags below {Math.max(10, rulesDraft.lowRatePct - rulesDraft.lastMinExtra)}%.</div>
                 </div>
               </>
             ) : (
@@ -912,6 +980,107 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             </>
           )}
 
+          {/* ═══ OWNER PREP — the Expedia fee breakout ═══ */}
+          {view === 'prep' && (() => {
+            const total = data.prep.length
+            const alreadySplit = data.prep.filter(p => p.cleaningAmt != null && p.rmAmt != null).length
+            const prepped = data.prep.filter(p => !(p.cleaningAmt != null && p.rmAmt != null) && p.saved).length
+            const outstanding = total - alreadySplit - prepped
+            return (
+              <>
+                <div className="rounded-2xl border border-line bg-white shadow-soft p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Scissors size={15} className="text-muted" />
+                    <div className="text-sm font-semibold text-ink">Statement prep — Expedia fee breakout</div>
+                  </div>
+                  <p className="text-xs text-muted max-w-3xl">
+                    Expedia-family bookings (Expedia, Hotels.com, Orbitz, Travelocity…) land on the statement with their fees
+                    lump-summed into the nightly income. Before the statement goes out, each one needs its fees broken out into
+                    a <span className="font-semibold text-ink">Cleaning fee</span> and <span className="font-semibold text-ink">RM fees</span>.
+                    Enter the split here to work the list; it saves who did each one and when.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-ink ring-line">{total} Expedia-family</span>
+                    <span className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset ' + (outstanding ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>{outstanding} to break out</span>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{prepped} prepped here</span>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200">{alreadySplit} already split on the statement</span>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+                  <div className="divide-y divide-line">
+                    {data.prep.map(p => {
+                      const k = p.ownerId + '|' + p.resCode
+                      const done = (p.cleaningAmt != null && p.rmAmt != null)
+                      const dr = prepDrafts[k] || { c: '', r: '' }
+                      const busy = prepBusy === k
+                      return (
+                        <div key={k} className={'flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-l-2 ' + (done || p.saved ? 'border-l-emerald-300' : 'border-l-amber-300')}>
+                          <div className="min-w-[200px] flex-1">
+                            <div className="text-sm font-medium text-ink truncate">
+                              {(done || p.saved) && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
+                              {p.guest || '(guest unknown)'} <span className="text-muted font-normal">· {p.resCode}</span>
+                            </div>
+                            <div className="text-[11px] text-muted truncate">
+                              {ownerName[p.ownerId] || p.ownerId}{p.unit ? ' · ' + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n
+                              <span className="ml-1 px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-sky-50 text-sky-700 ring-sky-200 text-[10px] font-semibold">{p.source}</span>
+                            </div>
+                          </div>
+                          <div className="text-right w-24">
+                            <div className="text-sm font-semibold text-ink">{fmt(p.rental)}</div>
+                            <div className="text-[11px] text-muted">rental</div>
+                          </div>
+                          {done ? (
+                            <div className="text-xs text-emerald-700 font-medium">
+                              Split on statement · Cleaning {fmt(Math.abs(p.cleaningAmt || 0))} · RM {fmt(Math.abs(p.rmAmt || 0))}
+                            </div>
+                          ) : p.saved ? (
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs text-emerald-700 font-medium">
+                                Prepped · Cleaning {fmt(p.saved.cleaning)} · RM {fmt(p.saved.rm)}
+                                <span className="text-muted font-normal"> — {shortWho(p.saved.by)}{p.saved.at ? ' · ' + when(p.saved.at) : ''}</span>
+                              </div>
+                              <button onClick={() => savePrep(p, false)} disabled={busy}
+                                className="text-[11px] font-medium px-2 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink disabled:opacity-40">Reopen</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              {p.cleaningAmt != null && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">Cleaning on stmt {fmt(Math.abs(p.cleaningAmt))}</span>}
+                              {p.cleaningAmt == null && (
+                                <input type="number" min={0} step={5} placeholder="Cleaning $" value={dr.c}
+                                  onChange={e => setPrepDrafts(prev => ({ ...prev, [k]: { ...dr, c: e.target.value } }))}
+                                  className="w-24 text-xs border border-line rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                              )}
+                              {p.rmAmt != null && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">RM on stmt {fmt(Math.abs(p.rmAmt))}</span>}
+                              {p.rmAmt == null && (
+                                <input type="number" min={0} step={1} placeholder="RM $" value={dr.r}
+                                  onChange={e => setPrepDrafts(prev => ({ ...prev, [k]: { ...dr, r: e.target.value } }))}
+                                  className="w-20 text-xs border border-line rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                              )}
+                              {share && (
+                                <input value={me} onChange={e => setMe(e.target.value)} placeholder="Your name"
+                                  className="w-24 text-xs border border-line rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                              )}
+                              <button onClick={() => savePrep(p, true)} disabled={busy}
+                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save split'}</button>
+                            </div>
+                          )}
+                          {p.reservationId && (
+                            <a href={gyUrl(p.reservationId)} target="_blank" rel="noopener noreferrer" title="Open in Guesty"
+                              className="p-1 rounded-md hover:bg-app text-muted hover:text-brand-700"><ExternalLink size={13} /></a>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {data.prep.length === 0 && (
+                      <div className="p-8 text-center text-sm text-muted">No Expedia-family reservations on {data.label} statements.</div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )
+          })()}
+
           {/* ═══ WORKLIST ═══ */}
           {view === 'work' && (
             <>
@@ -947,17 +1116,22 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 </div>
               </div>
 
-              {/* owner sections */}
+              {/* owner sections — collapsed to totals by default; expanding shows the flagged
+                  and open rows first, with the full statement one click further */}
               {data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length).map(o => {
                 const items = byOwner[o.ownerId]
-                const isCollapsed = !!collapsed[o.ownerId]
+                const filterActive = !!(q.trim() || fStatus || fFlag || fOwner)
+                const isOpen = expandedOwners[o.ownerId] !== undefined ? expandedOwners[o.ownerId] : filterActive
                 const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
                 const s = stats[o.ownerId] || { notes: 0, comments: 0 }
+                const attention = items.filter(it => it.status !== 'done' || it.flags.some(f => f.severity !== 'info') || it.note || it.comments.length > 0)
+                const showAll = !!showAllRows[o.ownerId] || filterActive
+                const visible = showAll ? items : attention
                 return (
                   <div key={o.ownerId} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-                    <button onClick={() => setCollapsed(prev => ({ ...prev, [o.ownerId]: !isCollapsed }))}
+                    <button onClick={() => setExpandedOwners(prev => ({ ...prev, [o.ownerId]: !isOpen }))}
                       className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-app/60">
-                      {isCollapsed ? <ChevronRight size={15} className="text-muted shrink-0" /> : <ChevronDown size={15} className="text-muted shrink-0" />}
+                      {isOpen ? <ChevronDown size={15} className="text-muted shrink-0" /> : <ChevronRight size={15} className="text-muted shrink-0" />}
                       <span className="font-semibold text-ink text-sm">{o.ownerName}</span>
                       {!o.hasStatement && (
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No statement generated</span>
@@ -967,6 +1141,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                           {o.ties ? 'Ties to statement' : 'Off by ' + fmt(off || 0)}
                         </span>
                       )}
+                      {o.high > 0 && <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.high}>{o.high} high</span>}
+                      {o.reviewFlags > 0 && <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.review}>{o.reviewFlags} flagged</span>}
                       {o.signOff && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">
                           <ShieldCheck size={11} /> Signed off · {shortWho(o.signOff.by)}
@@ -983,12 +1159,23 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         </span>
                       )}
                       <span className="ml-auto text-xs text-muted">
-                        Net {fmt(o.net)}{o.dueToOwner != null ? ' · Statement ' + fmt(o.dueToOwner) : ''} · {o.open ? o.open + ' open' : 'all clear'}
+                        {o.dueToOwner != null ? 'Payout ' + fmt(o.dueToOwner) + ' · ' : ''}Net {fmt(o.net)} · {items.length} row{items.length === 1 ? '' : 's'} · {o.open ? o.open + ' open' : 'all clear'}
                       </span>
                     </button>
-                    {!isCollapsed && (
+                    {isOpen && (
                       <div className="border-t border-line divide-y divide-line">
-                        {items.map(it => renderItem(it))}
+                        {visible.map(it => renderItem(it))}
+                        {visible.length === 0 && (
+                          <div className="px-4 py-3 text-xs text-muted">All {items.length} rows are clean and completed.</div>
+                        )}
+                        {!filterActive && attention.length < items.length && (
+                          <button onClick={() => setShowAllRows(prev => ({ ...prev, [o.ownerId]: !showAllRows[o.ownerId] }))}
+                            className="w-full px-4 py-2 text-left text-[11px] font-medium text-brand-700 hover:bg-app/60">
+                            {showAllRows[o.ownerId]
+                              ? 'Show issues only (' + attention.length + ')'
+                              : 'Show all ' + items.length + ' rows (' + (items.length - attention.length) + ' clean hidden)'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
