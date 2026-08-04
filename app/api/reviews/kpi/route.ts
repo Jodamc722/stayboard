@@ -175,6 +175,11 @@ export async function GET(req: NextRequest) {
   const byMonth: Record<string, Agg> = {}
   const cat: Record<string, { n: number; sum: number }> = {}
   const tagCount: Record<string, number> = {}
+  // DRILL-DOWN DETAIL. A count on its own ("needs maintenance 7") tells nobody where to go. For every
+  // theme and every category we also keep WHICH units it came from and a few of the guests' own words,
+  // so clicking the number lands on the listings that caused it.
+  const tagDetail: Record<string, { byUnit: Record<string, number>; samples: any[] }> = {}
+  const catByUnit: Record<string, Record<string, { n: number; sum: number }>> = {}
   const replyTimes: number[] = []
   let replied = 0
 
@@ -192,8 +197,21 @@ export async function GET(req: NextRequest) {
       const k = c.key === 'check_in' ? 'checkin' : c.key
       const e = cat[k] = cat[k] || { n: 0, sum: 0 }
       e.n++; e.sum += c.rating
+      const cu = catByUnit[k] = catByUnit[k] || {}
+      const cue = cu[lid] = cu[lid] || { n: 0, sum: 0 }
+      cue.n++; cue.sum += c.rating
       // only NEGATIVE experiences are worth counting as themes
-      if (c.rating <= 4) for (const t of c.tags) { const h = humanTag(t); tagCount[h] = (tagCount[h] || 0) + 1 }
+      if (c.rating <= 4) for (const t of c.tags) {
+        const h = humanTag(t)
+        tagCount[h] = (tagCount[h] || 0) + 1
+        const td = tagDetail[h] = tagDetail[h] || { byUnit: {}, samples: [] }
+        td.byUnit[lid] = (td.byUnit[lid] || 0) + 1
+        if (td.samples.length < 6) td.samples.push({
+          listingId: lid, unit: li.name, at: str(r.created_at).slice(0, 10),
+          rating, catRating: c.rating, channel: str(r.channel),
+          comment: (c.comment || str(r.content)).slice(0, 220),
+        })
+      }
     }
   }
   for (const r of prev) {
@@ -224,13 +242,18 @@ export async function GET(req: NextRequest) {
   let cleaners: any[] = []
   if (canSeeCleaners) {
     try {
-      const link: { resId: string; rating: number; unit: string; at: string; comment: string }[] = []
+      const link: { resId: string; rating: number; unit: string; listingId: string; at: string; comment: string }[] = []
       for (const r of cur) {
         const c = categoriesOf(r.raw).find(x => x.key === 'cleanliness')
         if (!c) continue
         const rid = str((r.raw && (r.raw.reservationId || r.raw.reservation_id)) || '')
         if (!rid) continue
-        link.push({ resId: rid, rating: c.rating, unit: (lmap[String(r.listing_id)] || {}).name || 'Unit', at: str(r.created_at).slice(0, 10), comment: c.comment })
+        link.push({
+          resId: rid, rating: c.rating, listingId: String(r.listing_id),
+          unit: (lmap[String(r.listing_id)] || {}).name || 'Unit',
+          at: str(r.created_at).slice(0, 10),
+          comment: (c.comment || str(r.content)).slice(0, 220),
+        })
       }
       const ids = Array.from(new Set(link.map(l => l.resId)))
       const resById: Record<string, any> = {}
@@ -264,7 +287,11 @@ export async function GET(req: NextRequest) {
           }
         }
       }
-      const byPerson: Record<string, { n: number; sum: number; worst: any[] }> = {}
+      // Per person we keep not just the average but the UNIT BREAKDOWN — the coaching conversation is
+      // "you score 4.9 everywhere except 1201, where you're 4.2 across six departures", which needs
+      // the per-unit split, not a single number.
+      type Person = { n: number; sum: number; worst: any[]; units: Record<string, { n: number; sum: number; low: number; last: string }> }
+      const byPerson: Record<string, Person> = {}
       for (const l of link) {
         const res = resById[l.resId]; if (!res) continue
         const d0 = str(res.check_out).slice(0, 10)
@@ -274,19 +301,37 @@ export async function GET(req: NextRequest) {
         if (!t) continue
         const who = (Array.isArray(t.assignees) ? t.assignees : []).map((p: any) => str(p.name)).filter(Boolean)
         for (const person of who) {
-          const e = byPerson[person] = byPerson[person] || { n: 0, sum: 0, worst: [] }
+          const e = byPerson[person] = byPerson[person] || { n: 0, sum: 0, worst: [], units: {} }
           e.n++; e.sum += l.rating
-          if (l.rating <= 4) e.worst.push({ unit: l.unit, at: l.at, rating: l.rating, comment: l.comment })
+          const u = e.units[l.listingId] = e.units[l.listingId] || { n: 0, sum: 0, low: 0, last: '' }
+          u.n++; u.sum += l.rating
+          if (l.rating <= 4) u.low++
+          if (l.at > u.last) u.last = l.at
+          if (l.rating <= 4) e.worst.push({ unit: l.unit, listingId: l.listingId, at: l.at, rating: l.rating, comment: l.comment })
         }
       }
       const cMean = Object.values(byPerson).reduce((s, e) => s + e.sum, 0) / Math.max(1, Object.values(byPerson).reduce((s, e) => s + e.n, 0))
       cleaners = Object.keys(byPerson).map(name => {
         const e = byPerson[name]
+        const avg = round(e.sum / e.n)
+        // Worst units first: that is the order you coach in. `gap` is this person's average on that
+        // unit against their own overall — it separates "this unit is hard" from "this person slipped".
+        const unitRows = Object.keys(e.units).map(lid => {
+          const u = e.units[lid]
+          const uAvg = round(u.sum / u.n)
+          return {
+            listingId: lid, unit: (lmap[lid] || {}).name || 'Unit', building: (lmap[lid] || {}).building || 'Other',
+            turns: u.n, avg: uAvg, low: u.low, last: u.last, gap: round(uAvg - avg),
+          }
+        }).sort((a, b) => a.avg - b.avg)
         return {
-          name, turns: e.n, avg: round(e.sum / e.n),
+          name, turns: e.n, avg,
           score: round((SHRINK * (cMean || 4.7) + e.sum) / (SHRINK + e.n)),
           ranked: e.n >= MIN_TURNS,
-          flagged: e.worst.sort((a, b) => a.rating - b.rating).slice(0, 4),
+          units: unitRows,
+          unitCount: unitRows.length,
+          lowCount: e.worst.length,
+          flagged: e.worst.sort((a, b) => (a.rating - b.rating) || (a.at < b.at ? 1 : -1)).slice(0, 6),
         }
       }).sort((a, b) => a.score - b.score)
     } catch { cleaners = [] }
@@ -334,11 +379,28 @@ export async function GET(req: NextRequest) {
     units: units.filter(u => u.ranked).sort((a, b) => (a.score ?? 9) - (b.score ?? 9)),
     unranked: units.filter(u => !u.ranked).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9)),
     channels: Object.keys(byChannel).map(c => ({ channel: c, ...summarise(byChannel[c], mean) })).sort((a, b) => b.n - a.n),
-    categories: Object.keys(cat).map(k => ({
-      key: k, label: k.charAt(0).toUpperCase() + k.slice(1),
-      avg: round(cat[k].sum / cat[k].n), n: cat[k].n, ops: OPS_CATEGORIES.has(k),
-    })).sort((a, b) => a.avg - b.avg),
-    themes: Object.keys(tagCount).map(t => ({ tag: t, n: tagCount[t] })).sort((a, b) => b.n - a.n).slice(0, 12),
+    categories: Object.keys(cat).map(k => {
+      const uRows = Object.keys(catByUnit[k] || {}).map(lid => {
+        const u = catByUnit[k][lid]
+        return {
+          listingId: lid, unit: (lmap[lid] || {}).name || 'Unknown unit',
+          building: (lmap[lid] || {}).building || 'Other', n: u.n, avg: round(u.sum / u.n),
+        }
+      }).sort((a, b) => a.avg - b.avg)
+      return {
+        key: k, label: k.charAt(0).toUpperCase() + k.slice(1),
+        avg: round(cat[k].sum / cat[k].n), n: cat[k].n, ops: OPS_CATEGORIES.has(k),
+        units: uRows.slice(0, 10), unitCount: uRows.length,
+      }
+    }).sort((a, b) => a.avg - b.avg),
+    themes: Object.keys(tagCount).map(t => {
+      const td = tagDetail[t] || { byUnit: {}, samples: [] }
+      const uRows = Object.keys(td.byUnit).map(lid => ({
+        listingId: lid, unit: (lmap[lid] || {}).name || 'Unknown unit',
+        building: (lmap[lid] || {}).building || 'Other', n: td.byUnit[lid],
+      })).sort((a, b) => b.n - a.n)
+      return { tag: t, n: tagCount[t], units: uRows.slice(0, 10), unitCount: uRows.length, samples: td.samples.slice(0, 4) }
+    }).sort((a, b) => b.n - a.n).slice(0, 12),
     cleaners: canSeeCleaners ? cleaners : null,
     minReviews: MIN_N, minTurns: MIN_TURNS,
   })
