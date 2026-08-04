@@ -74,6 +74,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   const [enhancing, setEnhancing] = useState(false)
   const [focusing, setFocusing] = useState(false)
   const [focusPrompt, setFocusPrompt] = useState('')
+  const [asCover, setAsCover] = useState(false)              // push as the FIRST (cover) photo vs appended
   const [dragOver, setDragOver] = useState(false)
   const [, force] = useState(0)                               // re-render tick when an image finishes loading
 
@@ -240,15 +241,19 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
   }
   async function pushToGuesty() {
     if (!slots.some(Boolean)) { setError('Add at least one photo first.'); return }
-    if (!confirm('Push this hero image to Guesty as a NEW photo on this listing?\n\nIt syncs to ALL connected channels and is added at the END of the set (not the cover).\n\nAirbnb discourages photos with graphics/collages — single-photo heroes are safest there; collages are great for Booking.com, Vrbo and your direct site.')) return
+    const placement = asCover
+      ? 'It becomes the COVER (first) photo — the image guests see first — and pushes the current cover back one.'
+      : 'It is added at the END of the set (not the cover).'
+    const collageWarn = layoutKey === 'single' ? '' : '\n\nAirbnb discourages photos with graphics/collages — a single-photo hero is safest as an Airbnb cover; collages shine on Booking.com, Vrbo and your direct site.'
+    if (!confirm(`Push this hero image to Guesty as a NEW photo on this listing?\n\nIt syncs to ALL connected channels. ${placement}${collageWarn}`)) return
     setPushing(true); setPushMsg(null); setError(null)
     try {
       const c = document.createElement('canvas'); paint(c, exW, exH)
       const dataUrl: string = await new Promise(res => c.toBlob(b => { if (!b) return res(''); const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.readAsDataURL(b) }, 'image/jpeg', 0.95))
       if (!dataUrl) throw new Error('Could not read the image.')
-      const r = await fetch('/api/hero/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dataUrl, caption: name || 'Featured' }) })
+      const r = await fetch('/api/hero/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dataUrl, caption: name || 'Featured', cover: asCover }) })
       const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Push failed')
-      setPushMsg(`Pushed to Guesty — listing now has ${j.count} photos. Syncing to channels.`)
+      setPushMsg(`Pushed to Guesty${asCover ? ' as the cover photo' : ''} — listing now has ${j.count} photos. Syncing to channels.`)
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
@@ -296,6 +301,9 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
                 <span className="text-[11px] text-muted">Click a cell to select · drag on it to pan{cellCount > 1 ? ' · drag the thumbnails below to rearrange' : ''}</span>
                 <div className="flex items-center gap-3">
+                  <label className="inline-flex items-center gap-1.5 text-[12px] text-muted cursor-pointer select-none" title="Insert as the first photo (the cover guests see first) instead of appending to the end">
+                    <input type="checkbox" checked={asCover} onChange={e => setAsCover(e.target.checked)} className="accent-brand-600 w-3.5 h-3.5" /> Set as cover
+                  </label>
                   <button onClick={pushToGuesty} disabled={pushing} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-50">{pushing ? <Sparkles size={13} className="animate-pulse" /> : <UploadCloud size={13} />} {pushing ? 'Pushing…' : 'Push to Guesty'}</button>
                   <button onClick={download} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink hover:text-brand-700"><Download size={13} /> Download</button>
                 </div>
