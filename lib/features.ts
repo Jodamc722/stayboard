@@ -39,6 +39,10 @@ export const FEATURES: Feature[] = [
   { key: 'listings',      label: 'Listings',          path: '/listings' },
   { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize' },
   { key: 'custom-fields', label: 'Custom Fields',     path: '/settings/custom-fields' },
+  // Connected apps (Slack, email). Deliberately LEFT OUT of the ops / cs / data bundles below, so
+  // out of the box only Admin and GM can reach it — "a few people for now". To give it to someone
+  // else, switch them to GM or flip it on for them individually on /users → Edit access.
+  { key: 'integrations', label: 'Integrations',       path: '/integrations' },
 ]
 
 // ---- Workspaces (role presets). pages: 'all' or an explicit list of feature keys. ----
