@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase-server'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { canDelete } from '@/lib/trash'
 import { DEFAULT_CHANNEL_POLICY, type ChannelPolicy } from '@/lib/claims'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -58,6 +59,10 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-full access on 'claims' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('claims', 'full')
+  if (!__gate.ok) return __gate.res
   const who = await canDelete()   // same bar as deleting: this table decides what we can recover
   if (!who.ok) return NextResponse.json({ ok: false, error: who.reason }, { status: 403 })
   try {
