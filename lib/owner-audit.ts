@@ -54,10 +54,13 @@ export type AuditItem = {
   source: string
   reservationId: string          // guesty_reservations.id — powers the "open in Guesty" link
   resNote: string                // Guesty "Reservation Notes" custom field — prior history on the booking
-  benchRate: number | null       // cohort average $/night (this + last month, self excluded)
+  benchRate: number | null       // expected $/night for THIS stay's night mix (cohort, this + last month, self excluded)
   benchLabel: string             // which cohort: "Botanica 2BR average", "portfolio average", …
-  benchPct: number | null        // this stay's rate as % of benchRate
-  benchPrev: number | null       // last month's cohort average alone, when it has enough nights
+  benchPct: number | null        // this stay's rental as % of the expected night-mix revenue
+  benchPrev: number | null       // last month's cohort blended average alone, when it has enough nights
+  mixWeekday: number             // in-month weekday nights (Sun–Thu)
+  mixWeekend: number             // in-month weekend nights (Fri–Sat)
+  leadDays: number | null        // days between booking creation and check-in
   rental: number
   commission: number
   other: number
@@ -76,6 +79,28 @@ export type AuditItem = {
 // The formal per-statement sign-off: stored in owner_audit_reviews under the reserved
 // item_key '__statement__' so no schema change is needed. Present = signed off.
 export type AuditSignOff = { by: string; at: string }
+
+// OWNER PREP — the Expedia fee breakout. Expedia-family bookings (Expedia, Hotels.com,
+// Orbitz, Travelocity…) land on the statement with their fees lump-summed into the nightly
+// income: in June 2026 only 15 of 102 such reservations carried a separate Cleaning-fee
+// line and only 7 an RM line. Statement prep = every one of those reservations gets its
+// fees broken out into Cleaning fee + RM fees before the statement goes to the owner.
+// The saved split lives in owner_audit_reviews under item_key 'prep:<code>' (note = JSON).
+export type PrepItem = {
+  ownerId: string
+  resCode: string
+  guest: string
+  unit: string
+  checkIn: string
+  checkOut: string
+  source: string
+  reservationId: string
+  rental: number                 // in-month rental on the statement
+  monthNights: number
+  cleaningAmt: number | null     // cleaning-fee lines already on the statement (null = none)
+  rmAmt: number | null           // RM lines already on the statement (null = none)
+  saved: { cleaning: number; rm: number; by: string; at: string } | null
+}
 
 export type AuditOwner = {
   ownerId: string
@@ -110,11 +135,20 @@ export type AuditData = {
     flagged: number; high: number
     review: number; action: number; done: number
     signedOff: number
+    prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
   coverage: { ready: boolean; missing: string[] }
   rules: AuditRules
+  prep: PrepItem[]
 }
+
+// Expedia-family sources whose fees arrive lump-summed and need the prep breakout.
+export const EXPEDIA_RE = /expedia|orbitz|travelocity|hotels\.com|hotelscom|\bhotels\b|wotif|ebookers|cheaptickets/i
+const PREP_CLEAN_RE = /clean/i
+const PREP_RM_RE = /revenue management|\brm\b/i
+/** Reserved item_key prefix for prep breakout rows. */
+export const PREP_PREFIX = 'prep:'
 
 /** Reserved item_key for the per-statement sign-off row. */
 export const SIGNOFF_KEY = '__statement__'
@@ -143,11 +177,19 @@ const OWNERISH_RE = /owner/i
 // count, falling back to the whole building, then portfolio same-size, then portfolio), with
 // the reservation's own nights excluded so a night is judged against the OTHER nights around
 // it. A hard floor still catches absurd rates even when a whole cohort is cheap.
+// The comparison is NIGHT-MIX AWARE: cohort averages are computed separately for weekday
+// nights (Sun–Thu) and weekend nights (Fri–Sat) from the per-night AF lines, and each stay
+// is judged against the expected revenue for ITS OWN mix of nights — a midweek booking is
+// compared to the cohort's midweek pricing, never punished for missing the weekend premium.
+// It is also LEAD-TIME AWARE: last-minute bookings (booked within lastMinDays of check-in)
+// get a relaxed bar (lastMinExtra points lower) because rates are cut to fill those nights.
 export type LowRateMode = 'relative' | 'absolute'
 export type AuditRules = {
   lowRateMode: LowRateMode
-  lowRatePct: number                           // relative: flag under this % of the cohort average
+  lowRatePct: number                           // relative: flag under this % of the expected night-mix revenue
   lowRateFloor: number                         // relative: always flag under this $/night
+  lastMinDays: number                          // booked ≤ this many days before check-in = last-minute
+  lastMinExtra: number                         // extra percentage points of slack for last-minute bookings
   lowRate: number                              // absolute mode: flag when in-month $/night falls below this
   passthruLo: number                           // commission/rental band treated as a wash
   passthruHi: number
@@ -155,6 +197,7 @@ export type AuditRules = {
 }
 export const DEFAULT_AUDIT_RULES: AuditRules = {
   lowRateMode: 'relative', lowRatePct: 55, lowRateFloor: 30,
+  lastMinDays: 3, lastMinExtra: 20,
   lowRate: 60, passthruLo: 0.9, passthruHi: 1.1,
   enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true },
 }
@@ -177,6 +220,8 @@ function sanitizeRules(s: any, base: AuditRules): AuditRules {
     lowRateMode: s?.lowRateMode === 'absolute' ? 'absolute' : s?.lowRateMode === 'relative' ? 'relative' : base.lowRateMode,
     lowRatePct: Math.min(95, Math.max(10, num(s?.lowRatePct, base.lowRatePct))),
     lowRateFloor: Math.max(0, num(s?.lowRateFloor, base.lowRateFloor)),
+    lastMinDays: Math.min(30, Math.max(0, Math.round(num(s?.lastMinDays, base.lastMinDays)))),
+    lastMinExtra: Math.min(40, Math.max(0, num(s?.lastMinExtra, base.lastMinExtra))),
     lowRate: Math.max(0, num(s?.lowRate, base.lowRate)),
     passthruLo: Math.min(1, Math.max(0.5, num(s?.passthruLo, base.passthruLo))),
     passthruHi: Math.max(1, Math.min(2, num(s?.passthruHi, base.passthruHi))),
@@ -294,10 +339,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
   type Group = {
     ownerId: string; resCode: string; lineKey: string
     rental: number; commission: number; other: number; paid: number
-    lines: AuditLine[]; afDates: Set<string>; listingIds: Record<string, number>
+    lines: AuditLine[]; afDates: Set<string>; afAmtByDate: Record<string, number>
+    listingIds: Record<string, number>
   }
   const groups: Record<string, Group> = {}
   const owners: Record<string, AuditOwner> = {}
+  // Per-night rental for the whole month, keyed listing|date — the raw material for the
+  // weekday/weekend cohort averages. AF lines are per-night; adjustments on the same night
+  // sum into one figure.
+  const curPerNight: Record<string, number> = {}
 
   const ownerOf = (id: string): AuditOwner => owners[id] || (owners[id] = {
     ownerId: id, ownerName: '', hasStatement: !!stmtByOwner[id],
@@ -322,10 +372,19 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const g = groups[gKey] || (groups[gKey] = {
       ownerId, resCode: res, lineKey,
       rental: 0, commission: 0, other: 0, paid: 0,
-      lines: [], afDates: new Set(), listingIds: {},
+      lines: [], afDates: new Set(), afAmtByDate: {}, listingIds: {},
     })
 
-    if (code === 'AF') { g.rental = money(g.rental + eff); if (r.entry_date) g.afDates.add(String(r.entry_date)) }
+    if (code === 'AF') {
+      g.rental = money(g.rental + eff)
+      const d = String(r.entry_date || '')
+      if (d) {
+        g.afDates.add(d)
+        g.afAmtByDate[d] = money((g.afAmtByDate[d] || 0) + eff)
+        const lid = String(r.listing_id || '')
+        if (lid) curPerNight[lid + '|' + d] = money((curPerNight[lid + '|' + d] || 0) + eff)
+      }
+    }
     else if (code === 'CMS') g.commission = money(g.commission - eff)   // positive = fee taken
     else g.other = money(g.other + eff)
     if (r.listing_id) g.listingIds[String(r.listing_id)] = (g.listingIds[String(r.listing_id)] || 0) + 1
@@ -350,7 +409,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const resByCode: Record<string, any> = {}
   for (let i = 0; i < codes.length; i += 200) {
     const { data } = await sb.from('guesty_reservations')
-      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, custom_fields')
+      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, custom_fields')
       .in('confirmation_code', codes.slice(i, i + 200))
     for (const r of (data || []) as any[]) {
       const c = String(r.confirmation_code || '')
@@ -365,27 +424,22 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // join (two bookings can't occupy the same unit on the same night). Best-effort: a read
   // error here degrades to "no last-month context", never a lost audit.
   const prevMonth = (() => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7) })()
-  const prevByListing: Record<string, { rental: number; nights: number }> = {}
-  {
-    const seenNight = new Set<string>()
-    for (let off = 0; off < 100_000; off += PAGE) {
-      const { data, error } = await sb.from('guesty_owner_ledger')
-        .select('listing_id, entry_date, amount')
-        .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
-        .range(off, off + PAGE - 1)
-      if (error) break
-      const batch = (data || []) as any[]
-      for (const r of batch) {
-        const lid = String(r.listing_id || '')
-        if (!lid) continue
-        const a = prevByListing[lid] || (prevByListing[lid] = { rental: 0, nights: 0 })
-        a.rental = money(a.rental - (Number(r.amount) || 0))    // owner effect: flip the sign
-        const nk = lid + '|' + String(r.entry_date || '')
-        if (!seenNight.has(nk)) { seenNight.add(nk); a.nights++ }
-        listingIds.add(lid)
-      }
-      if (batch.length < PAGE) break
+  const prevPerNight: Record<string, number> = {}               // listing|date -> owner-effect rental
+  for (let off = 0; off < 100_000; off += PAGE) {
+    const { data, error } = await sb.from('guesty_owner_ledger')
+      .select('listing_id, entry_date, amount')
+      .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
+      .range(off, off + PAGE - 1)
+    if (error) break
+    const batch = (data || []) as any[]
+    for (const r of batch) {
+      const lid = String(r.listing_id || '')
+      const d = String(r.entry_date || '')
+      if (!lid || !d) continue
+      prevPerNight[lid + '|' + d] = money((prevPerNight[lid + '|' + d] || 0) - (Number(r.amount) || 0))
+      listingIds.add(lid)
     }
+    if (batch.length < PAGE) break
   }
 
   const [{ data: ownerRows }, { data: listingRows }] = await Promise.all([
@@ -421,8 +475,20 @@ export async function buildAudit(month: string): Promise<AuditData> {
     .eq('month', month)
   // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500.
   const reviews: Record<string, any> = {}
+  const prepSaved: Record<string, { cleaning: number; rm: number; by: string; at: string }> = {}
   if (!revErr) for (const r of (revRows || []) as any[]) {
     const key = String(r.item_key)
+    if (key.startsWith(PREP_PREFIX)) {
+      if (String(r.status) === 'done') {
+        let j: any = null
+        try { j = JSON.parse(String(r.note || '')) } catch { /* unreadable split — treat as unsaved */ }
+        if (j) prepSaved[String(r.owner_id) + '|' + key.slice(PREP_PREFIX.length)] = {
+          cleaning: Number(j.cleaning) || 0, rm: Number(j.rm) || 0,
+          by: String(r.updated_by || ''), at: String(r.updated_at || ''),
+        }
+      }
+      continue
+    }
     if (key === SIGNOFF_KEY) {
       // Sign-off rows are owner-level, not items. status 'done' = signed off; anything else
       // (a cleared sign-off) reads as not signed.
@@ -433,20 +499,20 @@ export async function buildAudit(month: string): Promise<AuditData> {
     reviews[String(r.owner_id) + '|' + key] = r
   }
 
-  // 7. Items + flags — two passes. Pass A computes each group's dates/nights/rate and pools
-  // the rate cohorts (building + bedrooms, this month) that the relative low-rate rule
-  // compares against. Pass B judges each group against the cohorts and builds the items.
+  // 7. Items + flags — two passes. Pass A computes each group's dates/nights/rate; the rate
+  // cohorts are built from the PER-NIGHT AF lines, split into weekday (Sun–Thu) and weekend
+  // (Fri–Sat) nights, so every stay is judged against the expected revenue for ITS OWN mix
+  // of nights rather than a blended average that punishes midweek bookings.
   type Pre = {
     g: Group; res: any; bestListing: string
     checkIn: string; checkOut: string; totalNights: number; monthNights: number
-    splitMonth: boolean; net: number; rate: number | null; inCohort: boolean
+    splitMonth: boolean; net: number; rate: number | null
+    stayDates: string[]; mixWeekday: number; mixWeekend: number
+    leadDays: number | null
   }
   const pres: Pre[] = []
-  const curC: Record<string, { r: number; n: number }> = {}
-  const prevC: Record<string, { r: number; n: number }> = {}
-  const bump = (m: Record<string, { r: number; n: number }>, k: string, r: number, n: number) => {
-    const c = m[k] || (m[k] = { r: 0, n: 0 }); c.r = money(c.r + r); c.n += n
-  }
+
+  const isWeekendNight = (d: string) => { const dow = new Date(d + 'T00:00:00Z').getUTCDay(); return dow === 5 || dow === 6 }
   const cohortKeys = (lid: string): [string, string][] => {
     const b = bldgOf[lid] || ''
     const bd = bedsOf[lid] || 0
@@ -460,6 +526,26 @@ export async function buildAudit(month: string): Promise<AuditData> {
     return out
   }
 
+  type NightC = { wdR: number; wdN: number; weR: number; weN: number }
+  const zeroC = (): NightC => ({ wdR: 0, wdN: 0, weR: 0, weN: 0 })
+  const curNC: Record<string, NightC> = {}
+  const prevNC: Record<string, NightC> = {}
+  const feedNC = (m: Record<string, NightC>, perNight: Record<string, number>) => {
+    for (const key of Object.keys(perNight)) {
+      const amt = perNight[key]
+      if (amt <= 0.5) continue                     // refunded/comped nights are not market rate
+      const cut = key.indexOf('|')
+      const lid = key.slice(0, cut), d = key.slice(cut + 1)
+      const we = isWeekendNight(d)
+      for (const [k] of cohortKeys(lid)) {
+        const c = m[k] || (m[k] = zeroC())
+        if (we) { c.weR = money(c.weR + amt); c.weN++ } else { c.wdR = money(c.wdR + amt); c.wdN++ }
+      }
+    }
+  }
+  feedNC(curNC, curPerNight)
+  feedNC(prevNC, prevPerNight)
+
   for (const g of Object.values(groups)) {
     const res = g.resCode ? resByCode[g.resCode] : null
     const bestListing = Object.keys(g.listingIds).sort((a, b) => g.listingIds[b] - g.listingIds[a])[0]
@@ -468,52 +554,73 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const checkIn = res ? String(res.check_in || '').slice(0, 10) : ''
     const checkOut = res ? String(res.check_out || '').slice(0, 10) : ''
     const totalNights = res ? (Number(res.nights) || 0) : 0
-    // In-month nights from the real dates when we have them; distinct AF dates as the proxy
-    // when we don't (adjustment rows duplicate dates, so the Set already dedupes).
-    const monthNights = (checkIn && checkOut)
-      ? nightsWithin(checkIn, checkOut, win.start, win.endExcl)
-      : g.afDates.size
+    // In-month night DATES from the real dates when we have them; distinct AF dates as the
+    // proxy when we don't (adjustment rows duplicate dates, so the Set already dedupes).
+    let stayDates: string[] = []
+    if (checkIn && checkOut) {
+      const a = checkIn > win.start ? checkIn : win.start
+      const b = checkOut < win.endExcl ? checkOut : win.endExcl
+      if (a < b) {
+        for (let t = new Date(a + 'T00:00:00Z').getTime(), end = new Date(b + 'T00:00:00Z').getTime(), i = 0; t < end && i < 40; t += 86400000, i++) {
+          stayDates.push(new Date(t).toISOString().slice(0, 10))
+        }
+      }
+    } else stayDates = Array.from(g.afDates).sort()
+    const monthNights = stayDates.length
+    const mixWeekend = stayDates.filter(isWeekendNight).length
+    const mixWeekday = monthNights - mixWeekend
     const splitMonth = !!(checkIn && checkOut) && (checkIn < win.start || checkOut > win.endExcl)
     const net = money(g.rental - g.commission + g.other)
     const rate = monthNights > 0 ? money(g.rental / monthNights) : null
 
-    const inCohort = !!g.resCode && g.rental > 0.005 && monthNights > 0 && !!bestListing
-    if (inCohort) for (const [k] of cohortKeys(bestListing)) bump(curC, k, g.rental, monthNights)
-    pres.push({ g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, inCohort })
+    // Lead time: how far ahead was this booked? Last-minute bookings get rate cuts on purpose.
+    const created = res ? String(res.created_at || '').slice(0, 10) : ''
+    const leadDays = (created && checkIn)
+      ? Math.max(0, Math.round((new Date(checkIn + 'T00:00:00Z').getTime() - new Date(created + 'T00:00:00Z').getTime()) / 86400000))
+      : null
+
+    pres.push({ g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, stayDates, mixWeekday, mixWeekend, leadDays })
   }
 
-  // Last month's nights join the same cohorts (they need no leave-one-out — nothing this
-  // month is part of them).
-  for (const lid of Object.keys(prevByListing)) {
-    const a = prevByListing[lid]
-    if (a.rental <= 0 || a.nights <= 0) continue
-    for (const [k] of cohortKeys(lid)) bump(prevC, k, a.rental, a.nights)
-  }
-
-  // Narrowest trustworthy cohort for one group: same building + size, then building, then
-  // portfolio same-size, then portfolio — pooled across this month (minus the group itself)
-  // and last month.
-  const benchOf = (pre: Pre): { rate: number; label: string; prevAvg: number | null } | null => {
-    if (!pre.bestListing) return null
+  // Expected revenue for one stay's night mix, from the narrowest trustworthy cohort:
+  // building + size, then building, then portfolio same-size, then portfolio — this month
+  // (minus the stay's own nights) pooled with last month. A night class with too few nights
+  // (< 6) borrows the cohort's blended average instead of a noisy class average.
+  const benchOf = (pre: Pre): { expected: number; perNight: number; label: string; prevAvg: number | null; wdAvg: number; weAvg: number } | null => {
+    if (!pre.bestListing || !pre.stayDates.length) return null
+    let sWdR = 0, sWdN = 0, sWeR = 0, sWeN = 0
+    for (const d of Object.keys(pre.g.afAmtByDate)) {
+      const amt = pre.g.afAmtByDate[d]
+      if (amt <= 0.5) continue
+      if (isWeekendNight(d)) { sWeR += amt; sWeN++ } else { sWdR += amt; sWdN++ }
+    }
     for (const [k, label] of cohortKeys(pre.bestListing)) {
-      const c = curC[k] || { r: 0, n: 0 }
-      const p = prevC[k] || { r: 0, n: 0 }
-      const selfR = pre.inCohort ? pre.g.rental : 0
-      const selfN = pre.inCohort ? pre.monthNights : 0
-      const n = c.n - selfN + p.n
-      const r = money(c.r - selfR + p.r)
-      if (n >= BENCH_MIN_NIGHTS && r > 0) {
-        return { rate: money(r / n), label, prevAvg: p.n >= 5 && p.r > 0 ? money(p.r / p.n) : null }
+      const c = curNC[k] || zeroC(), p = prevNC[k] || zeroC()
+      const wdN = c.wdN + p.wdN - sWdN, wdR = c.wdR + p.wdR - sWdR
+      const weN = c.weN + p.weN - sWeN, weR = c.weR + p.weR - sWeR
+      const totN = wdN + weN, totR = wdR + weR
+      if (totN < BENCH_MIN_NIGHTS || totR <= 0) continue
+      const blended = totR / totN
+      const wdAvg = wdN >= 6 && wdR > 0 ? wdR / wdN : blended
+      const weAvg = weN >= 6 && weR > 0 ? weR / weN : blended
+      const expected = money(pre.mixWeekday * wdAvg + pre.mixWeekend * weAvg)
+      if (expected <= 0) continue
+      const pN = p.wdN + p.weN, pR = p.wdR + p.weR
+      return {
+        expected, perNight: money(expected / pre.stayDates.length), label,
+        prevAvg: pN >= 5 && pR > 0 ? money(pR / pN) : null,
+        wdAvg: money(wdAvg), weAvg: money(weAvg),
       }
     }
     return null
   }
 
   const items: AuditItem[] = []
+  const prep: PrepItem[] = []
   for (const pre of pres) {
-    const { g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate } = pre
+    const { g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, mixWeekday, mixWeekend, leadDays } = pre
     const bench = g.resCode ? benchOf(pre) : null
-    const benchPct = bench && rate != null && bench.rate > 0 ? Math.round((rate / bench.rate) * 100) : null
+    const benchPct = bench && g.rental > 0.005 && bench.expected > 0 ? Math.round((g.rental / bench.expected) * 100) : null
 
     const flags: AuditFlag[] = []
     const on = rules.enabled
@@ -536,21 +643,29 @@ export async function buildAudit(month: string): Promise<AuditData> {
           detail: ownerish ? 'Owner stay — $0 revenue by design; note any associated costs.' : '$0 revenue and not obviously an owner stay.' })
       }
       // LOW RATE — always on in-month nights only, so split-month stays are never flagged
-      // for looking small on this month's statement.
+      // for looking small on this month's statement. Night-mix aware (midweek stays are
+      // judged against midweek pricing) and lead-time aware (last-minute bookings get a
+      // relaxed bar, because those rates are cut on purpose).
       if (on.low_rate && g.rental > 0.005 && rate != null && monthNights > 0) {
-        const nightsTxt = monthNights + ' in-month night' + (monthNights === 1 ? '' : 's') + (splitMonth ? ' (split-month stay)' : '')
+        const mixTxt = monthNights + ' in-month night' + (monthNights === 1 ? '' : 's')
+          + ' (' + mixWeekday + ' midweek · ' + mixWeekend + ' weekend)'
+          + (splitMonth ? ', split-month stay' : '')
+        const lastMin = leadDays != null && leadDays <= rules.lastMinDays
+        const effPct = lastMin ? Math.max(10, rules.lowRatePct - rules.lastMinExtra) : rules.lowRatePct
         if (rules.lowRateMode === 'absolute') {
           if (rate < rules.lowRate) {
-            flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + nightsTxt + ' — under the $' + rules.lowRate + ' threshold.' })
+            flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRate + ' threshold.' })
           }
         } else if (rate < rules.lowRateFloor) {
-          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + nightsTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' })
-        } else if (bench && benchPct != null && rate < bench.rate * (rules.lowRatePct / 100)) {
+          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' })
+        } else if (bench && benchPct != null && benchPct < effPct) {
           flags.push({
             type: 'low_rate', severity: 'review', amount: rate,
-            detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + nightsTxt + ' is ' + benchPct + '% of the ' + bench.label
-              + ' ($' + bench.rate.toFixed(0) + '/night across this and last month'
-              + (bench.prevAvg != null ? '; last month alone ran $' + bench.prevAvg.toFixed(0) + '/night' : '') + ').',
+            detail: 'Brought in ' + benchPct + '% of the expected revenue for this night mix — $' + rate.toFixed(2) + '/night vs the expected ≈$'
+              + bench.perNight.toFixed(0) + '/night on ' + mixTxt + ', per the ' + bench.label
+              + ' (midweek ≈$' + bench.wdAvg.toFixed(0) + '/n · weekend ≈$' + bench.weAvg.toFixed(0) + '/n, this + last month'
+              + (bench.prevAvg != null ? '; last month blended $' + bench.prevAvg.toFixed(0) + '/n' : '') + ')'
+              + (lastMin ? '. Booked ' + leadDays + 'd before check-in — still short even with the last-minute bar of ' + effPct + '%.' : '.'),
           })
         }
       }
@@ -575,6 +690,26 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const defaultStatus: AuditStatus = worst === 'info' ? 'done' : 'review'
     const comments: AuditComment[] = Array.isArray(saved?.comments) ? saved.comments : []
 
+    // OWNER PREP: Expedia-family reservations need their fees broken out.
+    if (g.resCode && res && EXPEDIA_RE.test(String(res.source || ''))) {
+      const cleanAmt = g.lines.filter(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label)).reduce((a, l) => a + l.amount, 0)
+      const rmAmt = g.lines.filter(l => PREP_RM_RE.test(l.label)).reduce((a, l) => a + l.amount, 0)
+      const hasClean = g.lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
+      const hasRm = g.lines.some(l => PREP_RM_RE.test(l.label))
+      prep.push({
+        ownerId: g.ownerId, resCode: g.resCode,
+        guest: res ? String(res.guest_name || '') : '',
+        unit: unitOf[bestListing] || '',
+        checkIn, checkOut,
+        source: String(res.source || ''),
+        reservationId: res ? String(res.id || '') : '',
+        rental: g.rental, monthNights,
+        cleaningAmt: hasClean ? money(cleanAmt) : null,
+        rmAmt: hasRm ? money(rmAmt) : null,
+        saved: prepSaved[g.ownerId + '|' + g.resCode] || null,
+      })
+    }
+
     items.push({
       key,
       kind: g.resCode ? 'reservation' : 'line',
@@ -587,10 +722,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
       source: res ? String(res.source || '') : '',
       reservationId: res ? String(res.id || '') : '',
       resNote: res ? reservationNoteOf(res.custom_fields) : '',
-      benchRate: bench ? bench.rate : null,
+      benchRate: bench ? bench.perNight : null,
       benchLabel: bench ? bench.label : '',
       benchPct,
       benchPrev: bench ? bench.prevAvg : null,
+      mixWeekday, mixWeekend, leadDays,
       rental: g.rental, commission: g.commission, other: g.other, net,
       rate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
@@ -636,6 +772,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     action: items.filter(i => i.status === 'action').length,
     done: items.filter(i => i.status === 'done').length,
     signedOff: Object.values(owners).filter(o => o.signOff).length,
+    prepOpen: prep.filter(p => (p.cleaningAmt == null || p.rmAmt == null) && !p.saved).length,
     rental: money(Object.values(owners).reduce((a, o) => a + o.rental, 0)),
     commission: money(Object.values(owners).reduce((a, o) => a + o.commission, 0)),
     net: money(Object.values(owners).reduce((a, o) => a + o.net, 0)),
@@ -651,5 +788,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
     totals: t,
     coverage: { ready: covered, missing: covered ? [] : [month] },
     rules,
+    prep: prep.sort((a, b) =>
+      Number(!!a.saved || (a.cleaningAmt != null && a.rmAmt != null)) - Number(!!b.saved || (b.cleaningAmt != null && b.rmAmt != null))
+      || a.ownerId.localeCompare(b.ownerId) || a.checkIn.localeCompare(b.checkIn)),
   }
 }
