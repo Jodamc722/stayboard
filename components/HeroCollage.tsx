@@ -205,7 +205,22 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
     const id = selId; if (!id) return
     setFocusing(true); setError(null)
     try {
-      const r = await fetch('/api/photo-focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: urlOf(id), prompt: focusPrompt }) })
+      const u = urlOf(id)
+      // Remote photos: send the URL (server fetches a small rendition). Uploaded/local photos have a
+      // blob: URL the server can't reach — downscale the loaded image to a data URL and send the bytes.
+      let payload: any
+      if (/^https?:/.test(u)) payload = { url: u, prompt: focusPrompt }
+      else {
+        const im = imgFor(id)
+        if (!im) throw new Error('That photo is still loading — try again in a moment.')
+        const maxW = 1024, sc = Math.min(1, maxW / (im.naturalWidth || maxW))
+        const cw = Math.max(1, Math.round((im.naturalWidth || maxW) * sc)), ch = Math.max(1, Math.round((im.naturalHeight || maxW) * sc))
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch
+        const cx2 = cv.getContext('2d'); if (!cx2) throw new Error('Could not read that image.')
+        cx2.drawImage(im, 0, 0, cw, ch)
+        payload = { imageData: cv.toDataURL('image/jpeg', 0.85), prompt: focusPrompt }
+      }
+      const r = await fetch('/api/photo-focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not focus this photo.')
       setXf(prev => ({ ...prev, [id]: { scale: Number(j.zoom) || 1.4, fx: clamp01(Number(j.cx)), fy: clamp01(Number(j.cy)) } }))
