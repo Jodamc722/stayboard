@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { syncMessages } from '@/lib/guesty'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -25,6 +26,10 @@ function moduleType(raw: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'messages' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('messages', 'edit')
+  if (!__gate.ok) return __gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
