@@ -7,6 +7,7 @@ import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, vendorNameOf } from '@/lib/ops-presets'
 import { isLiveStay, staySpans } from '@/lib/stay-status'
+import { isDepartureCleanName } from '@/lib/breezeway'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -124,10 +125,10 @@ function daysBetween(from: string, to: string): number {
 const NOT_THE_CLEAN = /strip|walk-?through|inspect|unit check/i
 const IS_THE_CLEAN = /departure clean|turnover clean|check-?out clean|move-?out clean|deep clean|limpieza/i
 function isDepartureClean(name: string, dept: string): boolean {
-  const nm = str(name)
-  if (NOT_THE_CLEAN.test(nm)) return false
-  if (IS_THE_CLEAN.test(nm)) return true
-  return /housekeep|clean/i.test(str(dept)) && /clean/i.test(nm)
+  // Same shared rule as the scheduler. The old version matched "deep clean" and fell back to any
+  // housekeeping task containing the word clean, which pulled oven cleans and refresh cleans onto
+  // the departure sheet. A deep clean is real work; it is a work order, not a turnover.
+  return isDepartureCleanName(name)
 }
 // Prep work that happens around a checkout but is not the clean itself.
 const IS_PREP = /strip|walk-?through/i

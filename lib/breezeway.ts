@@ -274,12 +274,35 @@ export async function listPropertyHousekeeping(refId: string, from: string, to: 
 }
 
 // Pick the DEPARTURE clean from a housekeeping task list (falls back to any clean on the date).
+// WHAT IS A DEPARTURE CLEAN? One answer, used by the scheduler, the day sheet and the live lookup.
+//
+// The scheduler is the departure-clean board and nothing else — Jon: "it is extremely important that
+// departure cleans are managed there, with no other tasks, because it creates confusion." The old
+// test was /depart|clean|turn/, which matches ANY housekeeping task with the word clean in it, so
+// "Oven deep cleaning" on 17WEST 505 became a departure clean on the board. So did "Refresh clean",
+// "Re Cleans || Guest Complaint (Occupied)" and "Exterior Walkthrough / Cleaning common areas".
+//
+// Checked against live data: every genuine departure clean in the portfolio is named "Departure
+// Clean Checklist" (sometimes with notes appended). So the rule is that the name must SAY it is the
+// turnover. Anything else a housekeeper does is real work, it just does not belong on this board.
+const SAYS_TURNOVER = /departur|turnover|check-?out clean|move-?out clean|limpieza de salida/i
+const NOT_THE_TURNOVER = /strip|walk-?through|inspect|unit check/i
+
+export function isDepartureCleanName(name: any): boolean {
+  const n = String(name || '')
+  if (!n.trim()) return false
+  if (SAYS_TURNOVER.test(n)) return true          // says departure -> it is one, appended notes are fine
+  return false                                     // everything else stays off the board
+}
+/** Kept separate: strip/walkthrough/inspection are never the clean even if adopted as a fallback. */
+export function isPrepTaskName(name: any): boolean { return NOT_THE_TURNOVER.test(String(name || '')) }
+
 export function pickDepartureClean(tasks: ReturnType<typeof mapBreezewayTask>[], date: string) {
   const onDate = tasks.filter(t => String(t.scheduled_date || '').slice(0, 10) === date)
   // Never treat strip/walkthrough/inspection tasks as the departure clean. If the real
   // departure clean was moved off this date, return null so the board can flag the move.
-  const eligible = onDate.filter(t => !/strip|walkthrough|inspect/i.test(String(t.name || '')))
-  return eligible.find(t => /departure/i.test(String(t.name || '')) && /clean/i.test(String(t.name || '')))
-    || eligible.find(t => /clean|turnover|turn/i.test(String(t.name || '')))
-    || null
+  const eligible = onDate.filter(t => !isPrepTaskName(t.name))
+  // The old second fallback was /clean|turnover|turn/ — that is how an oven clean got adopted as the
+  // departure clean on the day view. There is no loose fallback any more.
+  return eligible.find(t => isDepartureCleanName(t.name)) || null
 }
