@@ -6,6 +6,7 @@
 // route says so plainly and the UI falls back to copy, which always works.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { postSlack } from '@/lib/integrations'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 20
@@ -35,18 +36,15 @@ export async function POST(req: NextRequest) {
   const text = str(b.text).trim()
   if (!text) return NextResponse.json({ ok: false, error: 'Nothing to send' }, { status: 400 })
 
-  const url = process.env.SLACK_WEBHOOK_URL
-  if (!url) return NextResponse.json({
-    ok: false, needsWebhook: true,
-    error: 'Slack is not connected yet — set SLACK_WEBHOOK_URL in Vercel. Copy the message for now.',
-  })
   try {
     const who = str((access.profile || {}).name) || str(access.email) || 'Lighthouse'
-    const r = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text + '\n\n_Shared from Lighthouse by ' + who + '_' }),
+    // Uses whichever Slack the team connected on the Command Center (falls back to the legacy env var).
+    const status = await postSlack(text + '\n\n_Shared from Lighthouse by ' + who + '_')
+    if (status === 'no-webhook') return NextResponse.json({
+      ok: false, needsWebhook: true,
+      error: 'Slack is not connected yet — connect it on the Command Center. Copy the message for now.',
     })
-    if (!r.ok) return NextResponse.json({ ok: false, error: 'Slack rejected it (' + r.status + ')' }, { status: 502 })
+    if (status === 'failed') return NextResponse.json({ ok: false, error: 'Slack rejected it — try reconnecting.' }, { status: 502 })
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 160) }, { status: 500 })
