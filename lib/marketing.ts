@@ -35,6 +35,7 @@ const KNOWN_OTA = [
   'airbnb', 'airbnb2', 'booking.com', 'booking', 'bookingcom', 'expedia',
   'expedia affiliate network', 'hotels.com', 'orbitz', 'travelocity', 'ebookers', 'cheaptickets',
   'vrbo', 'homeaway', 'homeaway ca', 'homeaway cafr', 'homeaway uk',
+  'american express travel', 'amex travel', 'chase travel', 'capital one travel',
   'bluegroundnestpick', 'tripadvisor', 'agoda', 'marriott',
 ]
 
