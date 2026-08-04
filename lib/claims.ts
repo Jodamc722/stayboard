@@ -66,6 +66,9 @@ export type Claim = {
   deadline_on?: string | null
   due_on?: string | null
   due_source?: string | null
+  due_reason?: string | null
+  next_check_in?: string | null
+  nudged_on?: string | null
   deposit_held?: number | null
   submitted_on?: string | null
   decided_on?: string | null
@@ -211,6 +214,39 @@ export function dueDateFor(checkOut?: string | null, channel?: any, overrides?: 
   const s = ymdOf(checkOut)
   if (!s) return null
   return addDays(s, Math.max(0, policyFor(channel, overrides).targetDays))
+}
+
+/**
+ * WHEN THE EVIDENCE DISAPPEARS.
+ *
+ * The channel's window is not the only clock. Once the unit is turned and the next guest walks in,
+ * the damage cannot be photographed, re-inspected or attributed — "the last guest did it" stops
+ * being a fact and becomes a claim. So if somebody is arriving before the channel target, the file
+ * has to be built before they do.
+ *
+ * This deliberately moves OUR due date and never `deadline_on`: Airbnb's published rule is 14 days
+ * from checkout, and inventing a shorter platform cutoff would be misstating someone else's policy.
+ * Returns the date and why it is that date.
+ */
+export function dueWithTurnover(
+  checkOut?: string | null,
+  channel?: any,
+  nextCheckIn?: string | null,
+  overrides?: Record<string, ChannelPolicy> | null,
+): { due: string | null; reason: 'policy' | 'turnover' } {
+  const policyDue = dueDateFor(checkOut, channel, overrides)
+  const arrival = ymdOf(nextCheckIn)
+  if (!policyDue || !arrival) return { due: policyDue, reason: 'policy' }
+  // File the day BEFORE they arrive — on the arrival day itself the room is already being turned.
+  const beforeArrival = addDays(arrival, -1)
+  if (beforeArrival && beforeArrival < policyDue) return { due: beforeArrival, reason: 'turnover' }
+  return { due: policyDue, reason: 'policy' }
+}
+
+/** True while the next guest has not yet arrived — i.e. the evidence is still there to photograph. */
+export function evidenceStillThere(claim: { next_check_in?: string | null }): boolean | null {
+  const d = daysUntil(claim.next_check_in)
+  return d === null ? null : d > 0
 }
 
 /** Today in Eastern time — the business runs on ET, and UTC "today" is wrong after 8pm. */
