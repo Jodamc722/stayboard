@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { featureForPath, pageAllowed, firstEnabled } from './lib/features'
+import { featureForPath, pageAllowed, firstEnabled, levelsForRole, legacyLevels, landingFor, workspaceDef, normWorkspace, type RoleDef } from './lib/features'
 
 type CookieToSet = { name: string; value: string; options: CookieOptions }
 
@@ -8,7 +8,7 @@ const SUPERADMIN = 'jon@stay-hospitality.com'
 
 // Allowlist check via Supabase REST with the service key. FAIL-OPEN: any error, a missing table, or an
 // empty allowlist (no active members yet) returns true so nobody is ever locked out by accident.
-type Member = { allowed: boolean; features: Record<string, any> | null; workspace: string | null; role: string | null }
+type Member = { allowed: boolean; features: Record<string, any> | null; workspace: string | null; role: string | null; access_role: string | null }
 const _memberCache = new Map<string, { at: number; val: Member }>()
 const _MEMBER_TTL = 60_000
 async function getMember(email: string): Promise<Member> {
@@ -21,7 +21,7 @@ async function getMember(email: string): Promise<Member> {
 async function getMemberRaw(email: string): Promise<Member> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_KEY
-  if (!url || !key) return { allowed: true, features: null, workspace: null, role: null }
+  if (!url || !key) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
   try {
     const headers = { apikey: key, Authorization: `Bearer ${key}` }
     // select=* so optional columns (workspace, migration 013) are read when present and absent otherwise.
@@ -34,9 +34,9 @@ async function getMemberRaw(email: string): Promise<Member> {
       body: JSON.stringify({ last_seen_at: new Date().toISOString() }),
       signal: AbortSignal.timeout(2500),
     }).catch(() => {})
-    if (!r.ok) return { allowed: true, features: null, workspace: null, role: null }
+    if (!r.ok) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
     const rows = await r.json().catch(() => null)
-    if (!Array.isArray(rows)) return { allowed: true, features: null, workspace: null, role: null }
+    if (!Array.isArray(rows)) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
     if (rows.length > 0) {
       const row = rows[0] || {}
       return {
@@ -44,14 +44,35 @@ async function getMemberRaw(email: string): Promise<Member> {
         features: (row.features && typeof row.features === 'object') ? row.features : null,
         workspace: typeof row.workspace === 'string' ? row.workspace : null,
         role: typeof row.role === 'string' ? row.role : null,
+        access_role: typeof row.access_role === 'string' ? row.access_role : null,
       }
     }
     // No row for this user. Allow only if the allowlist is still empty (pre-setup); otherwise deny.
     const r2 = await fetch(`${url}/rest/v1/app_users?select=email&status=eq.active&limit=1`, { headers, signal: AbortSignal.timeout(2500) })
-    if (!r2.ok) return { allowed: true, features: null, workspace: null, role: null }
+    if (!r2.ok) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
     const any = await r2.json().catch(() => null)
-    return { allowed: !Array.isArray(any) || any.length === 0, features: null, workspace: null, role: null }
-  } catch { return { allowed: true, features: null, workspace: null, role: null } }
+    return { allowed: !Array.isArray(any) || any.length === 0, features: null, workspace: null, role: null, access_role: null }
+  } catch { return { allowed: true, features: null, workspace: null, role: null, access_role: null } }
+}
+
+
+// ---- app_roles cache (migration 022). Same REST + fail-open pattern as the member cache.
+// null = table missing / error → callers fall back to the legacy workspace gate.
+let _rolesAt = 0
+let _rolesVal: RoleDef[] | null = null
+async function getRolesEdge(): Promise<RoleDef[] | null> {
+  if (Date.now() - _rolesAt < _MEMBER_TTL) return _rolesVal
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_KEY
+  if (!url || !key) return null
+  try {
+    const r = await fetch(`${url}/rest/v1/app_roles?select=*&order=sort.asc`, { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2500) })
+    _rolesAt = Date.now()
+    if (!r.ok) { _rolesVal = null; return null }
+    const rows = await r.json().catch(() => null)
+    _rolesVal = Array.isArray(rows) ? (rows as RoleDef[]) : null
+  } catch { _rolesAt = Date.now(); _rolesVal = null }
+  return _rolesVal
 }
 
 export async function middleware(request: NextRequest) {
@@ -86,23 +107,34 @@ export async function middleware(request: NextRequest) {
   if (user && !isOpenPath) {
     const email = String(user.email || '').toLowerCase()
     if (email && email !== SUPERADMIN) {
-      const { allowed, features, workspace, role } = await getMember(email)
+      const { allowed, features, workspace, role, access_role } = await getMember(email)
       if (!allowed) {
         const url = request.nextUrl.clone()
         url.pathname = '/no-access'
         url.search = ''
         return NextResponse.redirect(url)
       }
-      // Workspace + per-user page access: a page must be in the user's workspace bundle AND not
-      // toggled off for them individually. Admins have the 'admin' workspace (all pages).
-      // Fail-open (no workspace column yet -> gm -> everything). Owner never reaches here.
-      const ws = role === 'admin' ? 'admin' : workspace
+      // Page gate (2026-08-04, roles + levels): the user's DB role assigns off/view/edit/full per
+      // tab — 'off' blocks here. Admins always pass. If app_roles is missing or the user has no
+      // access_role yet, fall back to the LEGACY workspace-bundle gate (fail-open, pre-021).
       const feat = featureForPath(path)
-      if (feat && !pageAllowed(ws, features, feat.key)) {
-        const url = request.nextUrl.clone()
-        url.pathname = firstEnabled(features, ws)
-        url.search = ''
-        return NextResponse.redirect(url)
+      if (feat && role !== 'admin') {
+        const roles = await getRolesEdge()
+        const roleDef = roles && access_role ? roles.find(r => r.key === access_role) || null : null
+        if (roleDef) {
+          const levels = levelsForRole(roleDef, features)
+          if (levels[feat.key] === 'off') {
+            const url = request.nextUrl.clone()
+            url.pathname = landingFor(levels, roleDef.landing)
+            url.search = ''
+            return NextResponse.redirect(url)
+          }
+        } else if (!pageAllowed(workspace, features, feat.key)) {
+          const url = request.nextUrl.clone()
+          url.pathname = firstEnabled(features, workspace)
+          url.search = ''
+          return NextResponse.redirect(url)
+        }
       }
     }
   }
