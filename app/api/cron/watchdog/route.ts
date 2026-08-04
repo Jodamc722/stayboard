@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
+import { postSlack } from '@/lib/integrations'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -30,17 +31,6 @@ function minsSince(iso: any): number | null {
 }
 function human(m: number | null): string { return m == null ? 'never' : m < 90 ? m + ' min' : Math.round(m / 60) + ' h' }
 
-async function postSlack(text: string): Promise<'sent' | 'no-webhook' | 'failed'> {
-  const url = process.env.SLACK_WEBHOOK_URL
-  if (!url) return 'no-webhook'
-  try {
-    const r = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
-    return r.ok ? 'sent' : 'failed'
-  } catch { return 'failed' }
-}
 
 async function run(req: NextRequest) {
   const secret = process.env.CRON_SECRET
