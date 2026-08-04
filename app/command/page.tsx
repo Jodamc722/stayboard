@@ -6,6 +6,7 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { noBreezewayRegex } from '@/lib/ops-presets'
 import { Shell } from '@/components/Shell'
 import { BrainConsole } from '@/components/BrainConsole'
+import { ConnectTools } from '@/components/ConnectTools'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { MissionFeed } from '@/components/MissionFeed'
 import { GeneratePlanButton } from '@/components/OpsPlanUI'
@@ -224,6 +225,7 @@ export default async function CommandCenterPage() {
         </div>
 
         <div className="lg:col-span-1 order-1 lg:order-2 space-y-4 lg:sticky lg:top-4">
+          <ConnectTools />
           <BrainConsole />
 
           <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
