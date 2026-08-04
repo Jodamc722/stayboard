@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, retrieveBreezewayTask, updateBreezewayTask, normalizeTaskStatus, breezewayConfigured } from '@/lib/breezeway'
-import { adminPasswordOk } from '@/lib/shareAuth'
 import { buildIntel } from '@/lib/listingIntel'
+import { canDelete, trashRecord } from '@/lib/trash'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -155,12 +155,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete') {
-      // Deleting anything requires the embedded admin password — no password, no delete.
-      const gate = await adminPasswordOk(str(b.adminPassword))
-      if (!gate.ok) return NextResponse.json({ ok: false, error: 'Admin password required to delete' + (gate.reason ? ' (' + gate.reason + ')' : '') + '.' }, { status: 403 })
-      const { error } = await db.from('glitches').delete().eq('id', id)
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      return NextResponse.json({ ok: true, deleted: true })
+      // WAS: gated on the admin SHARE password — which had never been set, so this button's real
+      // behaviour was "Delete is locked", permanently, discoverable only by pressing it. Now it is
+      // gated on being an admin (you already signed in) and the row is photographed into the
+      // graveyard first, so Restore is a real button. The Breezeway task, if any, is untouched.
+      const who = await canDelete()
+      if (!who.ok) return NextResponse.json({ ok: false, error: who.reason }, { status: 403 })
+      const r = await trashRecord(db, 'glitch', id, who.email)
+      if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+      return NextResponse.json({ ok: true, deleted: true, trashId: r.trashId, label: r.label })
     }
 
     return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
