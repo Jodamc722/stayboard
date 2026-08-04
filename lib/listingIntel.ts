@@ -23,8 +23,9 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 import { isLiveStay } from './stay-status'
+import { THEMES, sentenceAbout, type Theme, type IntelKind } from './review-themes'
 
-export type IntelKind = 'clean' | 'inspection' | 'maintenance'
+export type { IntelKind }
 
 // The app's own envelope. Everything between these markers is ours and is REPLACED on a re-push;
 // anything outside them (manual NOTEs, edits made inside Breezeway) survives untouched. The open
@@ -75,45 +76,9 @@ function minutesOf(hhmm: any, dflt: number): number {
   if (!m) return dflt
   return Number(m[1]) * 60 + Number(m[2])
 }
-// Just the sentence that mentions the thing. A cleaner should not have to read a paragraph.
-function sentenceAbout(text: string, re: RegExp): string {
-  const body = str(text).replace(/\s+/g, ' ').trim()
-  const parts = body.split(/(?<=[.!?])\s+/)
-  const hit = parts.find(p => re.test(p))
-  return (hit || body).trim().slice(0, 180)
-}
-
 // ── COMPLAINT THEMES ────────────────────────────────────────────────────────────────────────────
-// Same clustering the owner report uses, re-cut for the field: each theme says what the person in
-// the unit should DO about it, and who that person is. Word-start boundaries throughout, because
-// "ac" inside "back" produced phantom A/C complaints in the first version of this matcher.
-type Theme = { key: string; label: string; re: RegExp; who: IntelKind[]; action: string }
-const THEMES: Theme[] = [
-  { key: 'cleanliness', label: 'cleanliness', re: /\b(dirty|not clean|unclean|dust|dusty|hair|grimy|filthy|stain|stained|sticky|crumbs)\b/i, who: ['clean', 'inspection'],
-    action: 'Go slower on surfaces, floors, under and behind furniture, and check the linens before you put them on.' },
-  { key: 'smell', label: 'smell or damp', re: /\b(smell|smells|smelly|odou?r|musty|damp|mildew|mold|mould|stinks)\b/i, who: ['clean', 'inspection', 'maintenance'],
-    action: 'Check the drains, bins, fridge, washer gasket and A/C. Air the unit out before you leave.' },
-  { key: 'bathroom', label: 'the bathroom', re: /\b(shower|toilet|water pressure|hot water|drain|grout|sink|bathtub|tub)\b/i, who: ['clean', 'inspection', 'maintenance'],
-    action: 'Scrub grout, glass and drains, then run the shower and the hot water to make sure both work.' },
-  { key: 'kitchen', label: 'the kitchen', re: /\b(kitchen|stove|oven|fridge|refrigerator|microwave|dishwasher|cookware|pans|pots|utensils|dishes|coffee)\b/i, who: ['clean', 'inspection', 'maintenance'],
-    action: 'Empty and wipe the fridge, run the dishwasher empty, and count the cookware and utensils back to a full set.' },
-  { key: 'supplies', label: 'missing supplies', re: /\b(towel|towels|sheet|sheets|linen|linens|amenit|soap|shampoo|toilet paper|paper towel|supplies|restock|no coffee)\b/i, who: ['clean', 'inspection'],
-    action: 'Restock to par: towels, linens, toiletries, paper goods, coffee.' },
-  { key: 'bed', label: 'the beds', re: /\b(mattress|bed was|beds were|uncomfortable bed|sofa ?bed|pull-?out|springs|saggy|sagging|pillows)\b/i, who: ['inspection', 'maintenance'],
-    action: 'Look at the mattress, the sofa bed mechanism and the pillows. Photograph anything worn.' },
-  { key: 'ac', label: 'air conditioning', re: /\b(a\/?c|air con|aircon|air condition\w*|too hot|too warm|too cold|freezing|cooling|thermostat|humid|stuffy)\b/i, who: ['inspection', 'maintenance', 'clean'],
-    action: 'Set the thermostat and confirm it actually cools. Check the filter.' },
-  { key: 'wifi', label: 'Wi-Fi and TV', re: /\b(wi-?fi|internet|router|streaming|netflix|tv|television|remote)\b/i, who: ['inspection', 'maintenance'],
-    action: 'Test the Wi-Fi on your phone and check the TV turns on and signs in.' },
-  { key: 'access', label: 'getting in', re: /\b(check-?in|lockbox|key|keys|code|codes|access|entry|door lock|fob|gate|garage|parking)\b/i, who: ['inspection', 'maintenance'],
-    action: 'Test the door code yourself, plus the building and garage access.' },
-  { key: 'noise', label: 'noise', re: /\b(noise|noisy|loud|thin walls|construction|traffic|barking)\b/i, who: ['inspection'],
-    action: 'Listen for the source: appliances, A/C, doors, neighbours. Note what you hear.' },
-  { key: 'furniture', label: 'tired furniture', re: /\b(furniture|sofa|couch|chair|chairs|table|worn|scuffed|scratched|chipped|dated|shabby)\b/i, who: ['inspection'],
-    action: 'Photograph the worn pieces so they can be priced for the owner.' },
-  { key: 'pests', label: 'pests', re: /\b(bug|bugs|pest|pests|roach|roaches|ants?|insects?|spiders?)\b/i, who: ['clean', 'inspection', 'maintenance'],
-    action: 'Check the kitchen, bathroom and baseboards, and report anything you see the same day.' },
-]
+// The taxonomy now lives in lib/review-themes.ts so the field blocks, the reviews board and the
+// action board cannot drift into disagreeing about what a complaint is. Imported above.
 
 // ── CONTEXT ─────────────────────────────────────────────────────────────────────────────────────
 export type IntelCtx = {
@@ -130,11 +95,15 @@ export type IntelCtx = {
   orders: Record<string, any[]>
   auditLast: Record<string, string>
   benchmark: Record<string, number>
+  // OPEN ACTIONS raised off guest feedback (review_actions). These are the specific "look at THIS"
+  // lines that ride on top of the general job — the whole point of the action board is that the
+  // person in the unit hears about it, not just the office.
+  actions: Record<string, any[]>
 }
 
 const emptyCtx = (date: string): IntelCtx => ({
   ok: false, date, listings: {}, reviews: {}, stays: {}, tasks: {}, glitches: {},
-  inspections: {}, orders: {}, auditLast: {}, benchmark: {},
+  inspections: {}, orders: {}, auditLast: {}, benchmark: {}, actions: {},
 })
 
 // PostgREST caps EVERY request at 1000 rows no matter what .limit() says — the truncation bug that
@@ -246,6 +215,16 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
       ;(ctx.inspections[id] = ctx.inspections[id] || []).push(r)
     }
     if (bench && typeof bench === 'object') ctx.benchmark = bench as Record<string, number>
+
+    // Open actions from guest feedback. Loaded separately and defensively: the table arrives with
+    // migration 022, and a deployment that has not run it yet must still push intel as before.
+    try {
+      const { data: acts } = await db.from('review_actions')
+        .select('listing_id,theme_key,kind,title,action,severity,mentions,worst_rating,evidence,last_seen,reopened_count,status')
+        .in('listing_id', ids).in('status', ['open', 'doing']).limit(500)
+      for (const a of ((acts || []) as any[])) { const k = str(a.listing_id); (ctx.actions[k] = ctx.actions[k] || []).push(a) }
+    } catch { /* table not migrated yet */ }
+
     ctx.ok = Object.keys(ctx.listings).length > 0
   } catch (e) {
     console.error('listingIntel: loadIntel failed', e)
@@ -268,6 +247,37 @@ function themeHits(ctx: IntelCtx, id: string, kind: IntelKind) {
   return out.sort((a, b) => b.n - a.n).slice(0, 3)
 }
 function reviewCount(ctx: IntelCtx, id: string): number { return (ctx.reviews[id] || []).filter(r => str(r.content).trim()).length }
+
+/**
+ * OPEN ACTIONS for this unit, aimed at whoever is holding this task.
+ *
+ * This is the line Jon asked for: not "a guest said the shower was cold" but "CHECK THIS: run the
+ * shower and the hot water — 3 guests, worst 2 stars, still open". A theme is shown to a kind if the
+ * taxonomy says that kind can act on it, so the cleaner is not handed a furniture-replacement job.
+ */
+function openActions(ctx: IntelCtx, id: string, kind: IntelKind): string[] {
+  const rows = (ctx.actions[id] || []).filter(a => {
+    const t = THEMES.find(x => x.key === str(a.theme_key))
+    return t ? t.who.indexOf(kind) >= 0 : str(a.kind) === kind
+  })
+  if (!rows.length) return []
+  rows.sort((a, b) => {
+    const s = (x: any) => (str(x.severity) === 'urgent' ? 0 : 1)
+    return (s(a) - s(b)) || (Number(b.mentions || 0) - Number(a.mentions || 0))
+  })
+  const out: string[] = []
+  for (const a of rows.slice(0, 4)) {
+    const bits: string[] = []
+    if (Number(a.mentions)) bits.push(Number(a.mentions) + ' guest' + (Number(a.mentions) === 1 ? '' : 's'))
+    if (a.worst_rating != null) bits.push('worst ' + a.worst_rating + ' star')
+    if (Number(a.reopened_count) > 0) bits.push('REPORTED AGAIN AFTER WE FIXED IT x' + a.reopened_count)
+    out.push('- ' + str(a.action) + (bits.length ? ' (' + bits.join(', ') + ')' : ''))
+    const ev = Array.isArray(a.evidence) ? a.evidence : []
+    const q = ev.length ? str(ev[0].quote) : ''
+    if (q) out.push('  Guest: "' + q.slice(0, 160) + '"')
+  }
+  return out
+}
 
 /** The worst review at or below 3 stars inside the last 5 — the same test the signal chips use. */
 function badReview(ctx: IntelCtx, id: string) {
@@ -474,7 +484,15 @@ function renderClean(ctx: IntelCtx, id: string): string | null {
     if (Number.isFinite(pets) && pets > 0) lines.push('PETS on the booking that just left (' + pets + ') - hair on soft furnishings, under beds and on the balcony, and check for damage.')
   }
 
-  // 3. WHAT GUESTS KEEP SAYING ABOUT THIS UNIT.
+  // 3a. THE SPECIFIC THINGS RAISED OFF GUEST FEEDBACK AND STILL OPEN. These come first because they
+  // are the difference between "clean the unit" and "clean the unit AND look hard at the shower".
+  const acts = openActions(ctx, id, 'clean')
+  if (acts.length) {
+    lines.push('CHECK THESE ON TOP OF THE NORMAL CLEAN (raised by guests, still open):')
+    for (const a of acts) lines.push(a)
+  }
+
+  // 3b. WHAT GUESTS KEEP SAYING ABOUT THIS UNIT.
   const th = themeHits(ctx, id, 'clean')
   const n = reviewCount(ctx, id)
   if (th.length) {
@@ -521,6 +539,13 @@ function renderInspection(ctx: IntelCtx, id: string, taskName: string): string |
   const weak = weakCategory(ctx, id)
   if (weak) lines.push('WEAK SPOT: ' + weak.label + ' scores ' + weak.avg + ' here vs ' + weak.portfolio + ' across the portfolio. Look hardest at that.')
 
+  // 2b. OPEN ACTIONS OFF GUEST FEEDBACK — the named things to verify on this walk.
+  const acts = openActions(ctx, id, 'inspection')
+  if (acts.length) {
+    lines.push('INSPECT THESE SPECIFICALLY (raised by guests, still open):')
+    for (const a of acts) lines.push(a)
+  }
+
   // 3. WHAT GUESTS KEEP SAYING.
   const th = themeHits(ctx, id, 'inspection')
   if (th.length) {
@@ -560,6 +585,13 @@ function renderMaintenance(ctx: IntelCtx, id: string, taskName: string): string 
   // 1. HAS THIS HAPPENED HERE BEFORE?
   const rep = repeatFaults(ctx, id, taskName)
   if (rep) lines.push('HISTORY: ' + rep)
+
+  // 1b. OPEN ACTIONS OFF GUEST FEEDBACK that maintenance owns on this unit.
+  const acts = openActions(ctx, id, 'maintenance')
+  if (acts.length) {
+    lines.push('RAISED BY GUESTS ON THIS UNIT, STILL OPEN:')
+    for (const a of acts) lines.push(a)
+  }
 
   // 2. THE GUEST'S OWN WORDS, if a guest raised this.
   const th = themeHits(ctx, id, 'maintenance')
