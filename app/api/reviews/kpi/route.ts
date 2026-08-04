@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
     return out
   }
   const [reviewRows, lRes, stayRows] = await Promise.all([
-    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,raw',
+    page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,excluded_from_score,raw',
       q => q.gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false })),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
     // Review RATE needs a denominator: stays that ENDED early enough to have been reviewed. Guests
@@ -151,6 +151,18 @@ export async function GET(req: NextRequest) {
       active: str(l.status).trim().toLowerCase() === 'active',
     }
   }
+  // Can a human actually reply to this review? Mirrors app/api/reviews/route.ts exactly:
+  // an inactive/dead listing, a Waves unit, or a review the channel will not accept a response on
+  // is not "awaiting" anything — counting it just manufactures phantom work.
+  const replyable = (lid: string, r: any) => {
+    if (r && r.excluded_from_score) return false
+    const li = lmap[lid]
+    if (!li) return false                                   // listing not synced -> cannot reply
+    if (!li.active) return false                            // inactive / disabled / archived
+    if (str(li.building).toLowerCase() === 'waves') return false
+    return true
+  }
+
   const inScope = (lid: string) => {
     const li = lmap[lid]
     if (!li) return market === 'all' && building === 'all'
@@ -369,7 +381,11 @@ export async function GET(req: NextRequest) {
       medianReplyHours: replyTimes.length ? round(replyTimes.sort((a, b) => a - b)[Math.floor(replyTimes.length / 2)] / 60, 1) : null,
       // Still waiting excludes reviews the team dismissed ('no reply needed') so this number
       // agrees with the Mission Control tile instead of quietly counting closed-out reviews.
-      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed).length,
+      // AWAITING = work someone can actually do. The feed on /reviews hides reviews that cannot be
+      // replied to (listing gone inactive, or the channel does not accept a host response) and ones
+      // the team has dismissed as "no reply needed". This header used to count all of them, so it
+      // told you to chase 3 reviews while the list below it correctly showed 0. Same rule now.
+      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed && replyable(String(r.listing_id), r)).length,
       staysEnded: stays.length,
       reviewRate: stays.length ? round((overall.n / stays.length) * 100, 1) : null,
       reviewRateNote: 'reviews received in this window against stays that ended in time to be reviewed',
