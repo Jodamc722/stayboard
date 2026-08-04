@@ -3,17 +3,24 @@
 // GET  ?month=YYYY-MM  — the full audit for one statement month (defaults to the newest month
 //                        that has generated statements), plus the month picker feed.
 // POST                 — save review state on one item: status, note, or an appended comment.
+//                        Also: action='signoff' (per-statement sign-off, gated on every row
+//                        being completed), action='stamp' (write the audit note onto the
+//                        reservation's Guesty "Reservation Notes" field), action='rules'
+//                        (edit the flag thresholds — signed-in users only).
 //
 // AUTH: a signed-in Lighthouse user OR the owner-audit share cookie (its own password,
 // share_settings id=4 — see lib/shareAuth). The share link is a WORKING link by design: a VA or
-// accountant marks rows and comments without an app login. They still can't touch anything else
-// in the app — this route only ever reads the mirror and writes owner_audit_reviews.
+// accountant marks rows, comments, and signs off without an app login. They still can't touch
+// anything else in the app — this route only reads the mirror and writes owner_audit_reviews
+// (plus, for 'stamp', one appended line on the booking's notes field, same as Claims).
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
-import { auditMonths, buildAudit, AuditStatus } from '@/lib/owner-audit'
+import { appendReservationNote } from '@/lib/claim-note'
+import { MONTH_LABEL } from '@/lib/owner-statements'
+import { auditMonths, buildAudit, saveAuditRules, AuditStatus, SIGNOFF_KEY } from '@/lib/owner-audit'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -49,11 +56,80 @@ export async function POST(req: NextRequest) {
   if (!who.ok) return NextResponse.json({ ok: false, needsPassword: true, error: 'unauthorized' }, { status: 401 })
 
   const body = await req.json().catch(() => ({}))
+  const action = String(body.action || '')
+
+  // ── RULES — the flag thresholds. Signed-in users only: the share link can work the
+  // audit, but it doesn't get to decide what the audit checks.
+  if (action === 'rules') {
+    if (!who.internal) return NextResponse.json({ ok: false, error: 'Rules can only be changed by a signed-in user.' }, { status: 403 })
+    try {
+      const rules = await saveAuditRules(body.rules || {}, who.email)
+      return NextResponse.json({ ok: true, rules })
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+    }
+  }
+
   const month = String(body.month || '')
   const ownerId = String(body.ownerId || '')
+
+  // ── SIGN-OFF — the per-statement signature. Server-side gate: rebuild the month and
+  // refuse unless every row on this statement is completed, so a signature can never be
+  // stale the moment it is written.
+  if (action === 'signoff') {
+    if (!/^\d{4}-\d{2}$/.test(month) || !ownerId) {
+      return NextResponse.json({ ok: false, error: 'month and ownerId are required' }, { status: 400 })
+    }
+    const on = body.on !== false
+    const author = who.internal ? who.email : ('link · ' + String(body.author || 'reviewer').trim().slice(0, 60))
+    const db = supabaseAdmin()
+    try {
+      if (on) {
+        const audit = await buildAudit(month)
+        const owner = audit.owners.find(o => o.ownerId === ownerId)
+        if (!owner) return NextResponse.json({ ok: false, error: 'owner not on this month' }, { status: 400 })
+        if (owner.open > 0) {
+          return NextResponse.json({ ok: false, error: owner.open + ' row' + (owner.open === 1 ? ' is' : 's are') + ' still open on this statement — complete them before signing off.' }, { status: 409 })
+        }
+      }
+      const now = new Date().toISOString()
+      const { error } = await db.from('owner_audit_reviews').upsert({
+        month, owner_id: ownerId, item_key: SIGNOFF_KEY,
+        status: on ? 'done' : 'review', note: '', comments: [],
+        updated_by: author, updated_at: now,
+      }, { onConflict: 'month,owner_id,item_key' })
+      if (error) throw new Error(error.message)
+      return NextResponse.json({ ok: true, signOff: on ? { by: author, at: now } : null })
+    } catch (e: any) {
+      const msg = String(e?.message || e)
+      const hint = /owner_audit_reviews/.test(msg) && /does not exist|schema cache/.test(msg)
+        ? ' — run migration 024_owner_audit.sql in Supabase first.' : ''
+      return NextResponse.json({ ok: false, error: msg.slice(0, 300) + hint }, { status: 500 })
+    }
+  }
+
   const itemKey = String(body.itemKey || '').slice(0, 160)
   if (!/^\d{4}-\d{2}$/.test(month) || !ownerId || !itemKey) {
     return NextResponse.json({ ok: false, error: 'month, ownerId and itemKey are required' }, { status: 400 })
+  }
+  if (itemKey === SIGNOFF_KEY) {
+    return NextResponse.json({ ok: false, error: 'reserved key' }, { status: 400 })
+  }
+
+  // ── STAMP — write the audit note onto the reservation in Guesty, so the finding lives
+  // on the booking (same field and same safe-merge writer as the Claims board).
+  if (action === 'stamp') {
+    const reservationId = String(body.reservationId || '')
+    const noteText = String(body.note || '').trim().slice(0, 500)
+    if (!reservationId || !noteText) {
+      return NextResponse.json({ ok: false, error: 'reservationId and a note are required' }, { status: 400 })
+    }
+    const author = who.internal ? who.email : ('link · ' + String(body.author || 'reviewer').trim().slice(0, 60))
+    const day = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })
+    const line = 'AUDIT ' + MONTH_LABEL(month) + ': ' + noteText + ' — ' + author + ', ' + day
+    const w = await appendReservationNote(supabaseAdmin(), reservationId, line)
+    if (!w.ok) return NextResponse.json({ ok: false, error: w.error || 'Guesty refused the write' }, { status: 502 })
+    return NextResponse.json({ ok: true, line })
   }
 
   const status = body.status !== undefined ? String(body.status) : undefined
@@ -98,7 +174,7 @@ export async function POST(req: NextRequest) {
     const msg = String(e?.message || e)
     // The one honest special case: migration not run yet.
     const hint = /owner_audit_reviews/.test(msg) && /does not exist|schema cache/.test(msg)
-      ? ' — run migration 023_owner_audit.sql in Supabase first.' : ''
+      ? ' — run migration 024_owner_audit.sql in Supabase first.' : ''
     return NextResponse.json({ ok: false, error: msg.slice(0, 300) + hint }, { status: 500 })
   }
 }
