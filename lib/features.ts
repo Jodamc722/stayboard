@@ -34,6 +34,9 @@ export const FEATURES: Feature[] = [
   { key: 'channels',      label: 'Channels',          path: '/channels' },
   { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports' },
+  // Owner-money page: deliberately in NO ops/cs/data bundle below, so out of the box only Admin
+  // and GM (pages:'all') can open it. Reviewers without a login use /report/owner-audit instead.
+  { key: 'owner-audit',   label: 'Owner Audit',       path: '/owner-audit' },
   { key: 'claims',        label: 'Claims',            path: '/claims' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners' },
   { key: 'labor',         label: 'Labor',             path: '/labor' },
