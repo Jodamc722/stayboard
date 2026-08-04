@@ -31,6 +31,43 @@ function compressImage(file: File, maxPx: number, quality: number): Promise<stri
   })
 }
 
+// Guest initials from their name, e.g. "Jane Miller" -> "JM". Used to auto-fill the per-rule boxes so
+// the guest never has to type "JM" a dozen times.
+function deriveInitials(name: string): string {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return ''
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
+}
+
+// Shell + Detail MUST live at module scope. Defining them inside SalatoVerify (as before) gave them a
+// brand-new function identity on every render, so each keystroke made React remount the entire tree —
+// which blurred whatever input the guest was typing in ("it kicks me out of the box"). Hoisting fixes it.
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen bg-neutral-100 text-neutral-900">
+      <div className="max-w-xl mx-auto px-4 py-6">
+        <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4">
+          <div className="p-5">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</div>
+            <h1 className="text-2xl font-bold text-white mt-1 tracking-tight">Salato check-in</h1>
+            <p className="text-xs text-neutral-400 mt-1.5">Guest verification</p>
+          </div>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-3 py-1.5 border-b border-neutral-100 last:border-0">
+      <span className="text-neutral-500 text-sm">{label}</span><span className="text-sm font-medium text-right">{value}</span>
+    </div>
+  )
+}
+
 export default function SalatoVerify({ params }: { params: { token: string } }) {
   const rid = params.token
   const [data, setData] = useState<Load | null>(null)
@@ -62,21 +99,6 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
     } catch { setErr('Network error — please try again.'); setBusy(false) }
   }
 
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div className="min-h-screen bg-neutral-100 text-neutral-900">
-      <div className="max-w-xl mx-auto px-4 py-6">
-        <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4">
-          <div className="p-5">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</div>
-            <h1 className="text-2xl font-bold text-white mt-1 tracking-tight">Salato check-in</h1>
-            <p className="text-xs text-neutral-400 mt-1.5">Guest verification</p>
-          </div>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-
   if (!data) return <Shell><div className="text-neutral-400 text-sm py-10 text-center">Loading…</div></Shell>
   if (!data.ok) return <Shell><div className="rounded-2xl border border-red-200 bg-red-50 text-red-700 text-sm px-4 py-6 text-center">{data.error || 'This link is not valid.'}</div></Shell>
 
@@ -91,16 +113,13 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   )
 
   const rules = data.rules || []
+  const defaultInitials = deriveInitials(fullName || data.guestName || '')
   const initialedCount = rules.filter(r => !!(ruleInitials[r.id] || '').trim()).length
   const allInitialed = rules.length > 0 && initialedCount === rules.length
   const canSubmit = !!fullName.trim() && allInitialed && !!sig && !!idPhoto && !!selfie && !busy
   const card = 'rounded-2xl border border-neutral-200 bg-white shadow-sm p-5 mb-4'
   const primaryBtn = 'w-full rounded-xl bg-neutral-900 text-white font-semibold py-3.5 hover:bg-neutral-800 transition-colors disabled:opacity-40'
-  const Detail = ({ label, value }: { label: string; value: string }) => (
-    <div className="flex justify-between gap-3 py-1.5 border-b border-neutral-100 last:border-0">
-      <span className="text-neutral-500 text-sm">{label}</span><span className="text-sm font-medium text-right">{value}</span>
-    </div>
-  )
+  const initialAll = () => { const m: Record<string, string> = {}; for (let i = 0; i < rules.length; i++) m[rules[i].id] = defaultInitials; setRuleInitials(m) }
 
   return (
     <Shell>
@@ -121,7 +140,13 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
       {/* House rules (read-only) */}
       <div className={card}>
         <div className="text-base font-bold mb-1">House &amp; building rules</div>
-        <p className="text-xs text-neutral-500 mb-3">Please read each rule and add your initials next to it. Initialing confirms you've read and agree to that rule for the duration of your stay.</p>
+        <p className="text-xs text-neutral-500 mb-3">Please read each rule and initial it. Tap a box to fill your initials{defaultInitials ? ' (' + defaultInitials + ')' : ''} automatically — or type your own.</p>
+        {defaultInitials ? (
+          <button type="button" onClick={initialAll}
+            className="w-full mb-3 rounded-xl border border-neutral-900 bg-neutral-900 text-white text-sm font-semibold py-2.5 hover:bg-neutral-800 transition-colors">
+            Initial all {rules.length} rules ({defaultInitials})
+          </button>
+        ) : null}
         <div className="space-y-2.5">
           {rules.map((r, i) => {
             const val = ruleInitials[r.id] || ''
@@ -134,10 +159,11 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
                 </div>
                 <div className="shrink-0 text-center">
                   <input value={val} aria-label={'Initials for rule ' + (i + 1)} placeholder="INIT"
-                    autoCapitalize="characters" autoComplete="off"
+                    autoCapitalize="characters" autoComplete="off" inputMode="text"
+                    onFocus={() => { if (!(ruleInitials[r.id] || '').trim() && defaultInitials) setRuleInitials(prev => Object.assign({}, prev, { [r.id]: defaultInitials })) }}
                     onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z\s.]/g, '').slice(0, 6); setRuleInitials(prev => Object.assign({}, prev, { [r.id]: v })) }}
-                    className={'w-16 rounded-lg border px-2 py-2 text-xs tracking-widest text-center uppercase ' + (ok ? 'border-emerald-300 text-emerald-800' : 'border-neutral-300')} />
-                  <div className={'text-[9px] mt-0.5 ' + (ok ? 'text-emerald-600 font-semibold' : 'text-neutral-400')}>{ok ? '✓ Initialed' : 'Initial'}</div>
+                    className={'w-16 rounded-lg border px-2 py-2 text-sm tracking-widest text-center uppercase ' + (ok ? 'border-emerald-300 text-emerald-800' : 'border-neutral-300')} />
+                  <div className={'text-[9px] mt-0.5 ' + (ok ? 'text-emerald-600 font-semibold' : 'text-neutral-400')}>{ok ? '✓ Initialed' : 'Tap to initial'}</div>
                 </div>
               </div>
             )
