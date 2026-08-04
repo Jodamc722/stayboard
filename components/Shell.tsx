@@ -63,6 +63,7 @@ const SECTIONS: {
       { to: '/channels', label: 'Channels',     Icon: Share2 },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
       { to: '/reports',  label: 'Owner Reports', Icon: FileText },
+      { to: '/owner-audit', label: 'Owner Audit', Icon: ListChecks },
     ],
   },
   {
