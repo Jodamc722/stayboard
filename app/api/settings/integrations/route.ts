@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { pageAllowed } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getConnections, publicView, slackAppConfigured } from '@/lib/integrations'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,7 +35,10 @@ export async function GET() {
   }
 
   // Presence checks only — the values themselves never leave the server.
-  const slackOn = !!process.env.SLACK_WEBHOOK_URL
+  // Slack may be connected EITHER by the click-to-connect OAuth flow (stored) or by the legacy
+  // env var; publicView() reports both without ever exposing the webhook.
+  const slackView = publicView(await getConnections()).slack
+  const slackOn = slackView.connected
   const emailKey = process.env.RESEND_API_KEY || ''
   const emailFrom = process.env.NOTIFY_FROM_EMAIL || ''
 
@@ -67,21 +71,28 @@ export async function GET() {
         label: 'Slack',
         connected: slackOn,
         summary: slackOn
-          ? 'Alerts post to your Slack channel.'
+          ? (slackView.viaEnv
+              ? 'Connected by environment variable in Vercel.'
+              : `Posting to ${slackView.channel} in ${slackView.teamName}.`)
           : 'Not connected — sync failures and ops alerts are being generated but nobody is being told.',
+        connectedBy: slackView.connectedBy || null,
+        // When a Slack app exists, connecting is a click on the Command Center, not a Vercel edit.
+        connectUrl: slackAppConfigured() ? '/api/integrations/slack/start' : null,
         // What already routes here the moment it is connected. No code change needed.
         uses: [
           'Sync watchdog — tells you when a Guesty feed stops updating',
           'Ops behind-schedule alerts — cleans not started against the 4pm deadline',
           'Share a guest review to the team',
         ],
-        setup: owner ? {
-          envVar: 'SLACK_WEBHOOK_URL',
+        setup: (owner && !slackAppConfigured()) ? {
+          envVar: 'SLACK_CLIENT_ID + SLACK_CLIENT_SECRET',
           steps: [
             'api.slack.com/apps → Create New App → From scratch → pick your workspace',
-            'Incoming Webhooks → toggle on → Add New Webhook to Workspace → choose a channel',
-            'Copy the https://hooks.slack.com/services/... URL',
-            'Vercel → stayboard → Settings → Environment Variables → add SLACK_WEBHOOK_URL → Production → redeploy',
+            'OAuth & Permissions → Redirect URLs → add https://stayboard-three.vercel.app/api/integrations/slack/callback',
+            'OAuth & Permissions → Bot Token Scopes → add incoming-webhook',
+            'Basic Information → App Credentials → copy the Client ID and Client Secret',
+            'Vercel → add SLACK_CLIENT_ID and SLACK_CLIENT_SECRET → Production → redeploy',
+            'Then anyone with access clicks Connect Slack on the Command Center and picks a channel.',
           ],
         } : null,
       },
