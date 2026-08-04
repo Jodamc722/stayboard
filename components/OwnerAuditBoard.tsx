@@ -30,12 +30,18 @@ type Flag = { type: FlagType; severity: Severity; detail: string; amount?: numbe
 type Line = { date: string; label: string; code: string; amount: number }
 type Comment = { author: string; body: string; at: string }
 type SignOff = { by: string; at: string }
-type Rules = { lowRate: number; passthruLo: number; passthruHi: number; enabled: Record<FlagType, boolean> }
+type Rules = {
+  lowRateMode: 'relative' | 'absolute'
+  lowRatePct: number; lowRateFloor: number; lowRate: number
+  passthruLo: number; passthruHi: number
+  enabled: Record<FlagType, boolean>
+}
 type Item = {
   key: string; kind: 'reservation' | 'line'; ownerId: string; resCode: string
   guest: string; checkIn: string; checkOut: string
   totalNights: number; monthNights: number; splitMonth: boolean
   listingId: string; unit: string; source: string; reservationId: string; resNote: string
+  benchRate: number | null; benchLabel: string; benchPct: number | null; benchPrev: number | null
   rental: number; commission: number; other: number; net: number; rate: number | null
   lines: Line[]; flags: Flag[]
   status: Status; touched: boolean; note: string; comments: Comment[]
@@ -66,7 +72,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
-  low_rate: 'Effective nightly rate under the threshold, computed on in-month nights only.',
+  low_rate: 'In-month rate far below its building/size average (this + last month), or under the hard floor.',
   orphan_reimb: 'Reimbursement lines with no rental income on the block.',
   refund: 'Any refund-looking line, captured with its amount.',
   zero_rev: '$0 reservations that are not obviously owner stays.',
@@ -348,14 +354,16 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const exportCsv = () => {
     if (!data) return
     const esc = (v: any) => '"' + String(v ?? '').split('"').join('""') + '"'
-    const head = ['Owner', 'Unit', 'Guest', 'Code', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
+    const head = ['Owner', 'Unit', 'Guest', 'Code', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate', 'Cohort avg', '% of avg', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
     const src = view === 'stmt' && stmtOwner ? data.items.filter(i => i.ownerId === stmtOwner) : filtered
     const lines = src.map(it => {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
       return [
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
         it.checkIn, it.checkOut, it.monthNights,
-        it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2), it.commission.toFixed(2), it.net.toFixed(2),
+        it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2),
+        it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
+        it.commission.toFixed(2), it.net.toFixed(2),
         it.flags.map(f => FLAG_LABEL[f.type]).join('; '), STATUS_LABEL[it.status], it.note,
         it.comments.map(c => c.author + ': ' + c.body).join(' | '), it.resNote.split('\n').join(' / '),
         it.updatedBy || '', o?.signOff ? 'by ' + o.signOff.by + ' ' + o.signOff.at.slice(0, 10) : '',
@@ -396,9 +404,14 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {done && it.touched && it.updatedBy && <span className="text-emerald-700"> · completed by {shortWho(it.updatedBy)}</span>}
             </div>
           </div>
-          <div className="text-right w-24">
+          <div className="text-right w-28" title={it.benchRate != null ? 'Vs ' + it.benchLabel + ': ' + fmt(it.benchRate) + '/n (this + last month)' + (it.benchPrev != null ? ' · last month ' + fmt(it.benchPrev) + '/n' : '') : undefined}>
             <div className="text-sm font-semibold text-ink">{fmt(it.rental)}</div>
-            <div className="text-[11px] text-muted">{it.rate != null ? fmt(it.rate) + '/n' : ''}</div>
+            <div className="text-[11px] text-muted">
+              {it.rate != null ? fmt(it.rate) + '/n' : ''}
+              {it.benchPct != null && (
+                <span className={it.benchPct < (data?.rules.lowRatePct ?? 55) ? ' text-rose-600 font-semibold' : it.benchPct > 130 ? ' text-emerald-600' : ''}> · {it.benchPct}%</span>
+              )}
+            </div>
           </div>
           <div className="flex flex-wrap gap-1 min-w-[90px]">
             {it.flags.filter(f => f.severity !== 'info').map((f, i) => (
@@ -457,6 +470,14 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <span className="text-muted">{f.detail}{f.amount !== undefined ? ' (' + fmt(f.amount) + ')' : ''}</span>
                   </div>
                 ))}
+              </div>
+            )}
+            {it.benchRate != null && (
+              <div className="text-xs text-muted mb-2">
+                Vs {it.benchLabel}: <span className="font-semibold text-ink">{fmt(it.benchRate)}/n</span>
+                <span className="text-[10px]"> (this + last month)</span>
+                {it.benchPrev != null && <span> · last month alone {fmt(it.benchPrev)}/n</span>}
+                {it.rate != null && it.benchPct != null && <span> — this stay ran <span className={'font-semibold ' + (it.benchPct < (data?.rules.lowRatePct ?? 55) ? 'text-rose-600' : 'text-ink')}>{it.benchPct}%</span> of it</span>}
               </div>
             )}
             {it.lines.length > 0 && (
@@ -641,12 +662,45 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           </div>
           <div className="flex flex-wrap items-end gap-4 mb-3">
             <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Low-rate threshold ($/night)</label>
-              <input type="number" min={0} step={5} value={rulesDraft.lowRate}
-                onChange={e => setRulesDraft(rd => rd ? { ...rd, lowRate: Number(e.target.value) } : rd)}
-                className="block mt-0.5 w-28 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-              <div className="text-[10px] text-muted mt-0.5">Computed on in-month nights only.</div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Low-rate check</label>
+              <select value={rulesDraft.lowRateMode}
+                onChange={e => setRulesDraft(rd => rd ? { ...rd, lowRateMode: e.target.value as Rules['lowRateMode'] } : rd)}
+                className="block mt-0.5 text-sm border border-line rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
+                <option value="relative">Vs building average (recommended)</option>
+                <option value="absolute">Flat $/night threshold</option>
+              </select>
+              <div className="text-[10px] text-muted mt-0.5">
+                {rulesDraft.lowRateMode === 'relative'
+                  ? 'Each stay vs its building + size average, this month + last month, in-month nights only.'
+                  : 'Every stay against one flat number, in-month nights only.'}
+              </div>
             </div>
+            {rulesDraft.lowRateMode === 'relative' ? (
+              <>
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Flag under (% of average)</label>
+                  <input type="number" min={10} max={95} step={5} value={rulesDraft.lowRatePct}
+                    onChange={e => setRulesDraft(rd => rd ? { ...rd, lowRatePct: Number(e.target.value) } : rd)}
+                    className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  <div className="text-[10px] text-muted mt-0.5">e.g. 55 = flag below 55% of the average.</div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Hard floor ($/night)</label>
+                  <input type="number" min={0} step={5} value={rulesDraft.lowRateFloor}
+                    onChange={e => setRulesDraft(rd => rd ? { ...rd, lowRateFloor: Number(e.target.value) } : rd)}
+                    className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  <div className="text-[10px] text-muted mt-0.5">Always flag under this, any building.</div>
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Threshold ($/night)</label>
+                <input type="number" min={0} step={5} value={rulesDraft.lowRate}
+                  onChange={e => setRulesDraft(rd => rd ? { ...rd, lowRate: Number(e.target.value) } : rd)}
+                  className="block mt-0.5 w-28 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <div className="text-[10px] text-muted mt-0.5">Computed on in-month nights only.</div>
+              </div>
+            )}
             <div>
               <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Pass-through band (commission ÷ rental)</label>
               <div className="flex items-center gap-1.5 mt-0.5">
