@@ -9,8 +9,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
 import { appendReservationNote } from '@/lib/claim-note'
 import { canDelete, trashRecord } from '@/lib/trash'
-import { claimNoteLine, claimTitle, deadlineFor, dueDateFor, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
+import { claimNoteLine, claimTitle, deadlineFor, dueWithTurnover, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
+import { nextCheckInFor } from '@/lib/claim-turnover'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -24,7 +25,7 @@ const WAITING = ['channel', 'guest', 'escalated']
 
 // Plain text fields the client may set directly.
 const TEXT_FIELDS = ['property', 'unit_no', 'guest_name', 'channel', 'confirmation_code', 'summary', 'notes', 'channel_case_id', 'breezeway_url', 'assignee_email']
-const DATE_FIELDS = ['check_in', 'check_out', 'discovered_on', 'submitted_on', 'decided_on', 'paid_on', 'deadline_on', 'due_on']
+const DATE_FIELDS = ['check_in', 'check_out', 'discovered_on', 'submitted_on', 'decided_on', 'paid_on', 'deadline_on', 'due_on', 'next_check_in']
 const BOOL_FIELDS = ['guest_called', 'police_report', 'payment_verified', 'owner_adjusted']
 const MONEY_FIELDS = ['amount_sought', 'amount_paid', 'deposit_held']
 
@@ -87,13 +88,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const basisMoved = ('check_out' in b && patch.check_out !== before.check_out)
       || ('channel' in b && patch.channel !== before.channel)
 
+    // Who arrives next on this unit. Cached on the claim, refreshed when the basis moves or when
+    // an older claim has never had it worked out.
+    let arrival: string | null = (before as any).next_check_in || null
+    const needArrival = basisMoved || arrival === null
+    if (needArrival && before.listing_id && coNext) {
+      arrival = await nextCheckInFor(db, String(before.listing_id), coNext)
+      patch.next_check_in = arrival
+    }
+
     if (basisMoved && !('deadline_on' in b)) patch.deadline_on = deadlineFor(coNext, chNext, pol)
     if ('due_on' in b) {
       // Clearing the field hands the date back to the policy; setting one pins it.
       patch.due_source = patch.due_on ? 'manual' : 'policy'
-      if (!patch.due_on) patch.due_on = dueDateFor(coNext, chNext, pol)
-    } else if (basisMoved && String(before.due_source || 'policy') !== 'manual') {
-      patch.due_on = dueDateFor(coNext, chNext, pol)
+      if (patch.due_on) {
+        patch.due_reason = 'manual'
+      } else {
+        const d = dueWithTurnover(coNext, chNext, arrival, pol)
+        patch.due_on = d.due; patch.due_reason = d.reason
+      }
+    } else if ((basisMoved || needArrival) && String(before.due_source || 'policy') !== 'manual') {
+      const d = dueWithTurnover(coNext, chNext, arrival, pol)
+      patch.due_on = d.due; patch.due_reason = d.reason
     }
     if ('channel' in b && patch.channel !== before.channel && !('deposit_held' in b)) {
       patch.deposit_held = policyFor(chNext, pol).deposit
@@ -135,6 +151,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (upd.error && /column|schema/i.test(upd.error.message)) {
       // Migration 020 not run yet — save everything else rather than blocking the whole edit.
       delete patch.due_on; delete patch.due_source; delete patch.deposit_held
+      delete patch.due_reason; delete patch.next_check_in
       upd = await db.from('claims').update(patch).eq('id', params.id)
     }
     if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
