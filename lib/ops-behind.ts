@@ -18,6 +18,7 @@ import { getOpsPresets, getSetting, setSetting } from './app-settings'
 import { untrackedRegex } from './ops-presets'
 import { isLiveStay } from './stay-status'
 import { notify } from './notify'
+import { postSlack } from './integrations'
 
 export const GRACE_MIN = 30          // minutes after checkout before "not started" means anything
 const DEFAULT_OUT_MIN = 11 * 60      // 11:00 AM
@@ -183,14 +184,6 @@ async function opsRecipients(): Promise<string[]> {
   return Array.from(out).filter(Boolean)
 }
 
-async function postSlack(text: string): Promise<'sent' | 'no-webhook' | 'failed'> {
-  const url = process.env.SLACK_WEBHOOK_URL
-  if (!url) return 'no-webhook'
-  try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-    return r.ok ? 'sent' : 'failed'
-  } catch { return 'failed' }
-}
 
 /**
  * Tell the ops team, AT MOST ONCE PER CONDITION PER DAY. A repeated nag trains people to ignore it,
