@@ -9,7 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
 import { appendReservationNote } from '@/lib/claim-note'
 import { canDelete, trashRecord } from '@/lib/trash'
-import { claimNoteLine, claimTitle, deadlineFor, dueWithTurnover, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
+import { claimNoteLine, claimTitle, deadlineFor, dueDateFor, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor } from '@/lib/claim-turnover'
 
@@ -25,7 +25,7 @@ const WAITING = ['channel', 'guest', 'escalated']
 
 // Plain text fields the client may set directly.
 const TEXT_FIELDS = ['property', 'unit_no', 'guest_name', 'channel', 'confirmation_code', 'summary', 'notes', 'channel_case_id', 'breezeway_url', 'assignee_email']
-const DATE_FIELDS = ['check_in', 'check_out', 'discovered_on', 'submitted_on', 'decided_on', 'paid_on', 'deadline_on', 'due_on', 'next_check_in']
+const DATE_FIELDS = ['check_in', 'check_out', 'discovered_on', 'submitted_on', 'decided_on', 'paid_on', 'deadline_on', 'due_on']
 const BOOL_FIELDS = ['guest_called', 'police_report', 'payment_verified', 'owner_adjusted']
 const MONEY_FIELDS = ['amount_sought', 'amount_paid', 'deposit_held']
 
@@ -44,11 +44,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const found = await load(db, params.id)
   if (!found) return NextResponse.json({ ok: false, error: 'Claim not found.' }, { status: 404 })
   // Ship the channel's rule with the claim so the desk can explain WHY the dates are what they
-  // are, rather than showing two dates and leaving the reader to guess.
+  // are, rather than showing two dates and leaving the reader to guess. The turnover clock is
+  // read fresh here too — never stored, because bookings move.
   const pol = await getSetting<Record<string, ChannelPolicy>>('claims_channel_policy', {})
+  const arrival = await nextCheckInFor(db, String(found.claim.listing_id || ''), String(found.claim.check_out || ''))
   return NextResponse.json({
     ok: true, today: todayET(),
-    claim: { ...found.claim, items: found.items },
+    claim: { ...found.claim, items: found.items, next_check_in: arrival },
     policy: policyFor(found.claim.channel, pol),
   })
 }
@@ -88,28 +90,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const basisMoved = ('check_out' in b && patch.check_out !== before.check_out)
       || ('channel' in b && patch.channel !== before.channel)
 
-    // Who arrives next on this unit. Cached on the claim, refreshed when the basis moves or when
-    // an older claim has never had it worked out.
-    let arrival: string | null = (before as any).next_check_in || null
-    const needArrival = basisMoved || arrival === null
-    if (needArrival && before.listing_id && coNext) {
-      arrival = await nextCheckInFor(db, String(before.listing_id), coNext)
-      patch.next_check_in = arrival
-    }
-
     if (basisMoved && !('deadline_on' in b)) patch.deadline_on = deadlineFor(coNext, chNext, pol)
     if ('due_on' in b) {
       // Clearing the field hands the date back to the policy; setting one pins it.
       patch.due_source = patch.due_on ? 'manual' : 'policy'
-      if (patch.due_on) {
-        patch.due_reason = 'manual'
-      } else {
-        const d = dueWithTurnover(coNext, chNext, arrival, pol)
-        patch.due_on = d.due; patch.due_reason = d.reason
-      }
-    } else if ((basisMoved || needArrival) && String(before.due_source || 'policy') !== 'manual') {
-      const d = dueWithTurnover(coNext, chNext, arrival, pol)
-      patch.due_on = d.due; patch.due_reason = d.reason
+      if (!patch.due_on) patch.due_on = dueDateFor(coNext, chNext, pol)
+    } else if (basisMoved && String(before.due_source || 'policy') !== 'manual') {
+      patch.due_on = dueDateFor(coNext, chNext, pol)
     }
     if ('channel' in b && patch.channel !== before.channel && !('deposit_held' in b)) {
       patch.deposit_held = policyFor(chNext, pol).deposit
@@ -151,7 +138,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (upd.error && /column|schema/i.test(upd.error.message)) {
       // Migration 020 not run yet — save everything else rather than blocking the whole edit.
       delete patch.due_on; delete patch.due_source; delete patch.deposit_held
-      delete patch.due_reason; delete patch.next_check_in
       upd = await db.from('claims').update(patch).eq('id', params.id)
     }
     if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
@@ -189,7 +175,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     } catch { /* notifications never block the move */ }
 
     const fresh = await load(db, params.id)
-    return NextResponse.json({ ok: true, claim: fresh ? { ...fresh.claim, items: fresh.items } : null, note })
+    const freshArrival = fresh
+      ? await nextCheckInFor(db, String(fresh.claim.listing_id || ''), String(fresh.claim.check_out || ''))
+      : null
+    return NextResponse.json({
+      ok: true,
+      claim: fresh ? { ...fresh.claim, items: fresh.items, next_check_in: freshArrival } : null,
+      policy: policyFor(after.channel, pol),
+      note,
+    })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
