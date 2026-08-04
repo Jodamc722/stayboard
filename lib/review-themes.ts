@@ -47,6 +47,31 @@ export const THEMES: Theme[] = [
 
 export const THEME_BY_KEY: Record<string, Theme> = THEMES.reduce((m, t) => { m[t.key] = t; return m }, {} as Record<string, Theme>)
 
+// ── IS THIS ACTUALLY A COMPLAINT? ───────────────────────────────────────────────────────────────
+// The theme patterns match a WORD, not a feeling. "Check-in was seamless" hits the access theme just
+// as hard as "the check-in code did not work", so matching alone turned five-star praise into work
+// orders. Anything that wants to raise a JOB off a review has to pass this too.
+// A CONTRAST WORD IS A COMPLAINT MARKER. "Lovely place, but the shower ran cold" is a shower job,
+// and the praise in front of it is what makes the naive positive/negative test get it wrong.
+const CONTRAST = /\b(but|however|although|though|unfortunately|except|aside from|other than|only (?:issue|complaint|downside)|downside|drawback)\b/i
+const NEG = /\b(no|not|n't|never|without|lack\w*|missing|broke\w*|broken|dirty|filthy|gross|stain\w*|smell\w*|musty|mold\w*|mould\w*|old|worn|outdated|dated|slow|weak|poor|bad|worst|awful|terrible|horrible|disappoint\w*|issue\w*|problem\w*|complain\w*|uncomfortable|unclean|unusable|difficult|hard time|struggl\w*|confus\w*|wrong|fail\w*|didn|couldn|wouldn|wasn|weren|isn|cold|lukewarm|freezing|stuffy|humid|loud|noisy|cramped|leak\w*|clog\w*|stuck|jam\w*|rust\w*|chip\w*|crack\w*|sticky|grimy|dusty|too (?:hot|cold|small|loud|noisy|warm)|needs?\b|should be|could be better|barely|hardly)\b/i
+const POS = /\b(great|good|perfect|excellent|amazing|wonderful|fantastic|lovely|beautiful|spotless|immaculate|pristine|clean and|easy|seamless|smooth|simple|convenient|comfortable|cozy|loved|love|enjoyed|nice|well[- ]stocked|plenty|helpful|quick|fast|no issues|no problems|highly recommend)\b/i
+
+/**
+ * Does this sentence read like a complaint rather than praise?
+ *
+ * Deliberately conservative in BOTH directions: a sentence with a negative cue counts even if it
+ * also has a positive one ("clean and comfortable but the shower was cold" is still a shower job),
+ * and a sentence that is purely positive is thrown away. A sentence with neither cue is ambiguous,
+ * so it only counts when the review itself was poor — the rating breaks the tie.
+ */
+export function looksNegative(sentence: string, rating: number): boolean {
+  const s = String(sentence == null ? '' : sentence)
+  if (NEG.test(s) || CONTRAST.test(s)) return true
+  if (POS.test(s)) return false
+  return Number.isFinite(rating) && rating <= 3
+}
+
 /** Just the sentence that mentions the thing. Nobody in a unit should have to read a paragraph. */
 export function sentenceAbout(text: string, re: RegExp): string {
   const body = String(text == null ? '' : text).replace(/\s+/g, ' ').trim()
