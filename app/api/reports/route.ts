@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,6 +44,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'reports' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reports', 'edit')
+  if (!__gate.ok) return __gate.res
   if (!(await canEdit())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const id = str(body?.id)
@@ -58,6 +63,10 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-full access on 'reports' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reports', 'full')
+  if (!__gate.ok) return __gate.res
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const id = new URL(req.url).searchParams.get('id') || ''
