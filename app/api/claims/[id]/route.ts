@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
 import { appendReservationNote } from '@/lib/claim-note'
+import { canDelete, trashRecord } from '@/lib/trash'
 import { claimNoteLine, claimTitle, deadlineFor, gatesFor, itemsTotal, num, todayET, type Claim, type ClaimItem } from '@/lib/claims'
 
 export const dynamic = 'force-dynamic'
@@ -142,12 +143,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
+// Delete the claim AND its items — photographed into the graveyard first, so Recently deleted can
+// put the whole thing back. Attachments stay in the bucket, so a restored claim still has its
+// photos and receipts.
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const who = await canDelete()
+  if (!who.ok) return NextResponse.json({ ok: false, error: who.reason }, { status: 403 })
   const db = supabaseAdmin()
-  const { error } = await db.from('claims').update({ deleted_at: new Date().toISOString() }).eq('id', params.id)
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  const r = await trashRecord(db, 'claim', params.id, who.email)
+  if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+  return NextResponse.json({ ok: true, trashId: r.trashId, label: r.label })
 }
