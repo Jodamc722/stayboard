@@ -28,12 +28,20 @@ export function ShareLinksCard() {
   const [mktMsg, setMktMsg] = useState('')
   const [mktErr, setMktErr] = useState('')
   const [mktBusy, setMktBusy] = useState(false)
+  // Owner-audit reviewer link — its own password: the reviewer sees owner-level money, nothing else.
+  const [oaLinks, setOaLinks] = useState<ShareLink[]>([])
+  const [oaSet, setOaSet] = useState(false)
+  const [oaCurrent, setOaCurrent] = useState('')
+  const [oaDraft, setOaDraft] = useState('')
+  const [oaMsg, setOaMsg] = useState('')
+  const [oaErr, setOaErr] = useState('')
+  const [oaBusy, setOaBusy] = useState(false)
 
   useEffect(() => { setOrigin(window.location.origin) }, [])
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || '') } })
+      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || ''); setOaLinks(j.auditLinks || []); setOaSet(!!j.auditSet); setOaCurrent(j.auditPassword || ''); setOaDraft(j.auditPassword || '') } })
       .catch(() => {})
   }, [])
 
@@ -68,6 +76,17 @@ export function ShareLinksCard() {
       setMktSet(true); setMktCurrent(j.marketingPassword || mktDraft.trim()); setMktMsg('Marketing password saved. Send it with the link above.')
     } catch (e: any) { setMktErr(String(e?.message || e)) }
     setMktBusy(false)
+  }
+
+  const saveOa = async () => {
+    setOaBusy(true); setOaErr(''); setOaMsg('')
+    try {
+      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auditPassword: oaDraft.trim() }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setOaErr(j.error || 'Could not save'); setOaBusy(false); return }
+      setOaSet(true); setOaCurrent(j.auditPassword || oaDraft.trim()); setOaMsg('Audit password saved. Send it with the link above.')
+    } catch (e: any) { setOaErr(String(e?.message || e)) }
+    setOaBusy(false)
   }
 
   const copy = (v: string, url: string) => { try { navigator.clipboard.writeText(url); setCopied(v); setTimeout(() => setCopied(''), 1500) } catch {} }
@@ -113,6 +132,25 @@ export function ShareLinksCard() {
         </div>
         {mktMsg && <div className="text-xs text-emerald-700 mt-2">{mktMsg}</div>}
         {mktErr && <div className="text-xs text-red-600 mt-2">{mktErr}</div>}
+      </div>
+      <div className="border-t border-line pt-4 mt-4">
+        <label className="text-xs uppercase tracking-wide text-muted">Owner statement audit &mdash; separate password</label>
+        <p className="text-xs text-muted mt-0.5 mb-2">The monthly statement review board. Reviewers on this link can mark rows and comment but see nothing else in the app. {oaSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
+        <div className="space-y-2 mb-3">
+          {oaLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
+            <div key={l.v} className="flex items-center gap-2 text-sm">
+              <span className="w-44 shrink-0 font-medium text-ink">{l.label}</span>
+              <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
+              <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
+            </div>
+          )})}
+        </div>
+        <div className="flex gap-2 mt-1 max-w-md">
+          <input value={oaDraft} onChange={e => setOaDraft(e.target.value)} placeholder={oaSet ? 'Audit password' : 'Create audit password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <button onClick={saveOa} disabled={oaBusy || oaDraft.trim().length < 4 || oaDraft.trim() === oaCurrent} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{oaBusy ? 'Saving…' : oaSet ? 'Update' : 'Set'}</button>
+        </div>
+        {oaMsg && <div className="text-xs text-emerald-700 mt-2">{oaMsg}</div>}
+        {oaErr && <div className="text-xs text-red-600 mt-2">{oaErr}</div>}
       </div>
       <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>
