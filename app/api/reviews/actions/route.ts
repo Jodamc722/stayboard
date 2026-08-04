@@ -13,13 +13,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf } from '@/lib/geo-areas'
-import { THEMES, THEME_BY_KEY, sentenceAbout } from '@/lib/review-themes'
+import { THEMES, THEME_BY_KEY, sentenceAbout, looksNegative } from '@/lib/review-themes'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const LOOKBACK = 180        // a complaint older than six months is history, not a job
 const LOW_STAR = 3          // at or below this, one mention is enough
+const HAPPY = 4.6           // above this the guest was delighted; their words are not a work order
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -121,12 +122,17 @@ export async function POST(req: NextRequest) {
     const lid = str(r.listing_id)
     if (!lid) continue
     const rating = Number(r.rating)
+    // A delighted guest does not generate work. This single gate is what stops "check-in was
+    // seamless" on a 5-star review from becoming an inspection job.
+    if (Number.isFinite(rating) && rating > HAPPY) continue
     for (const t of THEMES) {
       if (!t.re.test(text)) continue
+      const quote = sentenceAbout(text, t.re)
+      if (!looksNegative(quote, rating)) continue      // matched the word, but it was praise
       const perUnit = bag[lid] = bag[lid] || {}
       const arr = perUnit[t.key] = perUnit[t.key] || []
       arr.push({
-        quote: sentenceAbout(text, t.re),
+        quote,
         at: str(r.created_at).slice(0, 10),
         rating: Number.isFinite(rating) ? rating : 0,
         channel: str(r.channel),
@@ -148,6 +154,7 @@ export async function POST(req: NextRequest) {
 
   const inserts: any[] = []
   const updates: { id: string; patch: any }[] = []
+  const keep = new Set<string>()      // every (unit, theme) that still justifies a job
   let reopened = 0
 
   for (const lid of Object.keys(bag)) {
@@ -161,6 +168,7 @@ export async function POST(req: NextRequest) {
       const bad = worst != null && worst <= LOW_STAR
       // Two mentions, or one inside a genuinely bad review.
       if (hits.length < 2 && !bad) continue
+      keep.add(lid + '|' + key)
 
       const dates = hits.map(h => h.at).filter(Boolean).sort()
       const firstSeen = dates[0] || null
@@ -216,5 +224,17 @@ export async function POST(req: NextRequest) {
     await db.from('review_actions').update(u.patch).eq('id', u.id)
   }
 
-  return NextResponse.json({ ok: true, created, updated: updates.length, reopened, scanned: reviews.length, days })
+  // PRUNE. An open action the reviews no longer justify — the complaint aged out of the window, or
+  // a tightened matcher decided it was never a complaint — is retired. Only untouched OPEN rows go:
+  // anything someone started, finished, dismissed or annotated is that person's record, not ours.
+  let pruned = 0
+  const stale = ((existingRows || []) as any[]).filter(r =>
+    str(r.status) === 'open' && !str(r.note).trim() && !keep.has(str(r.listing_id) + '|' + str(r.theme_key)))
+  for (let i = 0; i < stale.length; i += 100) {
+    const ids = stale.slice(i, i + 100).map(r => str(r.id))
+    const { error } = await db.from('review_actions').delete().in('id', ids)
+    if (!error) pruned += ids.length
+  }
+
+  return NextResponse.json({ ok: true, created, updated: updates.length, reopened, pruned, scanned: reviews.length, days })
 }
