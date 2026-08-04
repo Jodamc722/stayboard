@@ -25,6 +25,7 @@
 // so every figure here is flipped to read as OWNER money — positive = money to the owner.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { getSetting, setSetting } from './app-settings'
 import { MONTH_LABEL, money } from './owner-statements'
 
 export type AuditFlagType =
@@ -52,6 +53,7 @@ export type AuditItem = {
   unit: string
   source: string
   reservationId: string          // guesty_reservations.id — powers the "open in Guesty" link
+  resNote: string                // Guesty "Reservation Notes" custom field — prior history on the booking
   rental: number
   commission: number
   other: number
@@ -67,6 +69,10 @@ export type AuditItem = {
   updatedAt: string | null
 }
 
+// The formal per-statement sign-off: stored in owner_audit_reviews under the reserved
+// item_key '__statement__' so no schema change is needed. Present = signed off.
+export type AuditSignOff = { by: string; at: string }
+
 export type AuditOwner = {
   ownerId: string
   ownerName: string
@@ -80,6 +86,12 @@ export type AuditOwner = {
   ties: boolean
   items: number                  // count; the items themselves live in the flat list
   open: number                   // items still at review/action
+  done: number                   // items completed
+  high: number                   // items carrying a HIGH flag
+  reviewFlags: number            // items carrying a review-severity flag (and no high)
+  notes: number                  // items with an audit note
+  commentCount: number           // total comments across the owner's items
+  signOff: AuditSignOff | null
 }
 
 export type AuditMonthPick = { m: string; label: string; statements: number }
@@ -93,19 +105,83 @@ export type AuditData = {
     owners: number; statements: number; reservations: number
     flagged: number; high: number
     review: number; action: number; done: number
+    signedOff: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
   coverage: { ready: boolean; missing: string[] }
+  rules: AuditRules
+}
+
+/** Reserved item_key for the per-statement sign-off row. */
+export const SIGNOFF_KEY = '__statement__'
+
+// Guesty's "Reservation Notes" custom field — same field lib/claim-note writes.
+const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
+const cfFieldId = (c: any): string => String((c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : '') || c?._id || '')
+export function reservationNoteOf(customFields: any): string {
+  if (!Array.isArray(customFields)) return ''
+  const f = customFields.find((c: any) => cfFieldId(c) === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(String(c?.fieldName || '')))
+  return f && typeof f.value === 'string' ? f.value : ''
 }
 
 const REFUND_RE = /refund/i
 const REIMB_RE = /reimburs|cleaning/i
 const OWNERISH_RE = /owner/i
 
-// Same reservation-level wash rule lib/owner-statements proved out: a reservation whose
-// commission total is ~100% of its rental total is a pass-through, not revenue with a fee on it.
-const PASSTHRU_LO = 0.9
-const PASSTHRU_HI = 1.1
+// ── EDITABLE RULES ────────────────────────────────────────────────────────────
+// The thresholds behind the flags are policy, not physics — $60/night was right for this
+// portfolio in 2026 but it should move when the portfolio does. Stored in app_settings
+// (JSON over TEXT, via lib/app-settings) and merged over these defaults, so a missing or
+// mangled setting can never change what the audit flags — it just falls back.
+export type AuditRules = {
+  lowRate: number                              // flag when in-month $/night falls below this
+  passthruLo: number                           // commission/rental band treated as a wash
+  passthruHi: number
+  enabled: Record<AuditFlagType, boolean>      // per-flag kill switch
+}
+export const DEFAULT_AUDIT_RULES: AuditRules = {
+  lowRate: 60, passthruLo: 0.9, passthruHi: 1.1,
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true },
+}
+export const AUDIT_RULES_KEY = 'owner_audit_rules'
+
+const num = (v: any, fb: number) => { const n = Number(v); return Number.isFinite(n) ? n : fb }
+
+export async function auditRules(): Promise<AuditRules> {
+  const s = await getSetting<any>(AUDIT_RULES_KEY, null)
+  const d = DEFAULT_AUDIT_RULES
+  if (!s || typeof s !== 'object') return { ...d, enabled: { ...d.enabled } }
+  const enabled: Record<AuditFlagType, boolean> = { ...d.enabled }
+  if (s.enabled && typeof s.enabled === 'object') {
+    for (const k of Object.keys(enabled) as AuditFlagType[]) {
+      if (typeof s.enabled[k] === 'boolean') enabled[k] = s.enabled[k]
+    }
+  }
+  return {
+    lowRate: Math.max(0, num(s.lowRate, d.lowRate)),
+    passthruLo: Math.min(1, Math.max(0.5, num(s.passthruLo, d.passthruLo))),
+    passthruHi: Math.max(1, Math.min(2, num(s.passthruHi, d.passthruHi))),
+    enabled,
+  }
+}
+
+export async function saveAuditRules(patch: any, by: string): Promise<AuditRules> {
+  const cur = await auditRules()
+  const next: AuditRules = {
+    lowRate: Math.max(0, num(patch?.lowRate, cur.lowRate)),
+    passthruLo: Math.min(1, Math.max(0.5, num(patch?.passthruLo, cur.passthruLo))),
+    passthruHi: Math.max(1, Math.min(2, num(patch?.passthruHi, cur.passthruHi))),
+    enabled: { ...cur.enabled },
+  }
+  if (patch?.enabled && typeof patch.enabled === 'object') {
+    for (const k of Object.keys(next.enabled) as AuditFlagType[]) {
+      if (typeof patch.enabled[k] === 'boolean') next.enabled[k] = patch.enabled[k]
+    }
+  }
+  const w = await setSetting(AUDIT_RULES_KEY, next, by)
+  if (!w.ok) throw new Error('rules save: ' + (w.error || 'failed'))
+  return next
+}
 
 type LedgerRow = {
   owner_id: string | null
@@ -161,6 +237,7 @@ export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
 export async function buildAudit(month: string): Promise<AuditData> {
   const sb = supabaseAdmin()
   const win = monthWindow(month)
+  const rules = await auditRules()
 
   // 1. The generated statements for this month — the documents being audited.
   const { data: stmtRows, error: stErr } = await sb.from('guesty_owner_statements')
@@ -210,6 +287,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     ownerId: id, ownerName: '', hasStatement: !!stmtByOwner[id],
     dueToOwner: stmtByOwner[id] ? (Number(stmtByOwner[id].due_to_owner ?? 0) || 0) : null,
     rental: 0, commission: 0, other: 0, net: 0, paid: 0, ties: false, items: 0, open: 0,
+    done: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null,
   })
 
   for (const r of rows) {
@@ -256,7 +334,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const resByCode: Record<string, any> = {}
   for (let i = 0; i < codes.length; i += 200) {
     const { data } = await sb.from('guesty_reservations')
-      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id')
+      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, custom_fields')
       .in('confirmation_code', codes.slice(i, i + 200))
     for (const r of (data || []) as any[]) {
       const c = String(r.confirmation_code || '')
@@ -294,7 +372,17 @@ export async function buildAudit(month: string): Promise<AuditData> {
     .eq('month', month)
   // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500.
   const reviews: Record<string, any> = {}
-  if (!revErr) for (const r of (revRows || []) as any[]) reviews[String(r.owner_id) + '|' + String(r.item_key)] = r
+  if (!revErr) for (const r of (revRows || []) as any[]) {
+    const key = String(r.item_key)
+    if (key === SIGNOFF_KEY) {
+      // Sign-off rows are owner-level, not items. status 'done' = signed off; anything else
+      // (a cleared sign-off) reads as not signed.
+      const o = owners[String(r.owner_id)]
+      if (o && String(r.status) === 'done') o.signOff = { by: String(r.updated_by || ''), at: String(r.updated_at || '') }
+      continue
+    }
+    reviews[String(r.owner_id) + '|' + key] = r
+  }
 
   // 7. Items + flags.
   const items: AuditItem[] = []
@@ -316,43 +404,44 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const rate = monthNights > 0 ? money(g.rental / monthNights) : null
 
     const flags: AuditFlag[] = []
+    const on = rules.enabled
     if (g.resCode) {
       const refundAmt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
       const reimbAmt = money(g.lines.filter(l => REIMB_RE.test(l.label) && l.amount > 0).reduce((a, l) => a + l.amount, 0))
-      const isPassthru = g.rental > 1 && g.commission / g.rental >= PASSTHRU_LO && g.commission / g.rental <= PASSTHRU_HI
+      const isPassthru = g.rental > 1 && g.commission / g.rental >= rules.passthruLo && g.commission / g.rental <= rules.passthruHi
 
-      if (g.rental < -0.005) {
+      if (on.negative && g.rental < -0.005) {
         flags.push({ type: 'negative', severity: 'high', amount: g.rental, detail: 'Negative rental income — check for erroneous refund, chargeback or duplicate reversal.' })
       }
-      if (g.lines.some(l => REFUND_RE.test(l.label))) {
+      if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         flags.push({ type: 'refund', severity: 'review', amount: refundAmt, detail: 'Refund on this reservation — verify it was authorized.' })
       }
       if (Math.abs(g.rental) < 0.005 && reimbAmt > 0.005) {
-        flags.push({ type: 'orphan_reimb', severity: 'review', amount: reimbAmt, detail: 'Reimbursement with no rental income on the block — no booking justifies it.' })
-      } else if (Math.abs(g.rental) < 0.005 && !flags.length) {
+        if (on.orphan_reimb) flags.push({ type: 'orphan_reimb', severity: 'review', amount: reimbAmt, detail: 'Reimbursement with no rental income on the block — no booking justifies it.' })
+      } else if (on.zero_rev && Math.abs(g.rental) < 0.005 && !flags.length) {
         const ownerish = OWNERISH_RE.test(String(res?.source || '')) || OWNERISH_RE.test(String(res?.guest_name || ''))
         flags.push({ type: 'zero_rev', severity: ownerish ? 'info' : 'review',
           detail: ownerish ? 'Owner stay — $0 revenue by design; note any associated costs.' : '$0 revenue and not obviously an owner stay.' })
       }
-      if (g.rental > 0.005 && rate != null && rate < 60 && monthNights > 0) {
+      if (on.low_rate && g.rental > 0.005 && rate != null && rate < rules.lowRate && monthNights > 0) {
         if (!splitMonth) {
-          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + monthNights + ' in-month night' + (monthNights === 1 ? '' : 's') + '.' })
+          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + monthNights + ' in-month night' + (monthNights === 1 ? '' : 's') + ' (threshold $' + rules.lowRate + ').' })
         }
         // Split-month with a healthy in-month rate is expected and stays unflagged; a
-        // split-month stay that is STILL under $60 on its in-month nights gets flagged too.
+        // split-month stay that is STILL under the threshold on its in-month nights gets flagged too.
         else {
-          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Split-month stay, but the in-month portion still runs $' + rate.toFixed(2) + '/night over ' + monthNights + ' night' + (monthNights === 1 ? '' : 's') + '.' })
+          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Split-month stay, but the in-month portion still runs $' + rate.toFixed(2) + '/night over ' + monthNights + ' night' + (monthNights === 1 ? '' : 's') + ' (threshold $' + rules.lowRate + ').' })
         }
       }
-      if (isPassthru) {
+      if (on.passthru && isPassthru) {
         flags.push({ type: 'passthru', severity: 'info', detail: 'Commission fully offsets rental (pass-through wash) — owner nets zero on it by design.' })
       }
-      if (!res) {
+      if (on.no_reservation && !res) {
         flags.push({ type: 'no_reservation', severity: 'info', detail: 'Code not found in the reservations mirror — dates and the Guesty link are unavailable.' })
       }
     } else {
       // Grouped non-reservation lines: informational unless they look like refunds.
-      if (g.lines.some(l => REFUND_RE.test(l.label))) {
+      if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         const amt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
         flags.push({ type: 'refund', severity: 'review', amount: amt, detail: 'Refund-looking line outside any reservation — verify.' })
       }
@@ -376,6 +465,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       unit: unitOf[bestListing] || '',
       source: res ? String(res.source || '') : '',
       reservationId: res ? String(res.id || '') : '',
+      resNote: res ? reservationNoteOf(res.custom_fields) : '',
       rental: g.rental, commission: g.commission, other: g.other, net,
       rate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
@@ -399,7 +489,17 @@ export async function buildAudit(month: string): Promise<AuditData> {
     if (!o) continue
     o.items++
     if (it.status !== 'done') o.open++
+    else o.done++
+    if (it.flags.some(f => f.severity === 'high')) o.high++
+    else if (it.flags.some(f => f.severity === 'review')) o.reviewFlags++
+    if (it.note) o.notes++
+    o.commentCount += it.comments.length
   }
+
+  // A statement with open rows again is no longer "signed off" — the signature only stands
+  // while everything under it is completed. (The stored row remains; it re-surfaces if the
+  // rows are completed again, which keeps the who/when honest.)
+  for (const o of Object.values(owners)) if (o.open > 0) o.signOff = null
 
   const t = {
     owners: Object.keys(owners).length,
@@ -410,6 +510,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     review: items.filter(i => i.status === 'review').length,
     action: items.filter(i => i.status === 'action').length,
     done: items.filter(i => i.status === 'done').length,
+    signedOff: Object.values(owners).filter(o => o.signOff).length,
     rental: money(Object.values(owners).reduce((a, o) => a + o.rental, 0)),
     commission: money(Object.values(owners).reduce((a, o) => a + o.commission, 0)),
     net: money(Object.values(owners).reduce((a, o) => a + o.net, 0)),
@@ -424,5 +525,6 @@ export async function buildAudit(month: string): Promise<AuditData> {
     items,
     totals: t,
     coverage: { ready: covered, missing: covered ? [] : [month] },
+    rules,
   }
 }
