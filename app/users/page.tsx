@@ -1,15 +1,9 @@
 // Admin console. Server component: verifies the caller is an admin via getAccess(), then renders
-// the client admin UI — people & access (roles, workspaces, profiles, notifications, activity),
-// review-reply AI voice training, and share links. Non-admins see an "Admins only" notice.
+// the tabbed console (People / Roles / App settings — see components/AdminConsole.tsx).
+// Non-admins see an "Admins only" notice.
 import { Shell } from '@/components/Shell'
 import { getAccess, isSuperadmin } from '@/lib/access'
-import { UsersAdmin } from '@/components/UsersAdmin'
-import { ReviewVoiceAdmin } from '@/components/ReviewVoiceAdmin'
-import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
-import { ParAdmin } from '@/components/ParAdmin'
-import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
-import { ReservationEmailsAdmin } from '@/components/ReservationEmailsAdmin'
-import { ShareLinksCard } from '@/components/ShareLinksCard'
+import { AdminConsole } from '@/components/AdminConsole'
 import { ShieldAlert } from 'lucide-react'
 import { redirect } from 'next/navigation'
 
@@ -22,22 +16,14 @@ export default async function UsersPage() {
     <Shell>
       <div className="mb-5">
         <h1 className="text-2xl font-bold text-ink">Users &amp; admin</h1>
-        <p className="text-sm text-muted mt-1">Teammates, workspaces &amp; page access, profiles, notification preferences — and the review-reply AI&apos;s voice.</p>
+        <p className="text-sm text-muted mt-1">People &amp; roles — who sees which tabs and what they can do there — plus app-wide settings.</p>
       </div>
       {access.role !== 'admin' ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-[13px] text-amber-800 inline-flex items-start gap-2">
           <ShieldAlert size={16} className="mt-0.5 flex-shrink-0" /> This page is for admins only. Ask an admin to manage access.
         </div>
       ) : (
-        <div className="space-y-5">
-          <UsersAdmin myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
-          <OpsPresetsAdmin isOwner={isSuperadmin(access.email)} />
-          <ParAdmin isOwner={isSuperadmin(access.email)} />
-          <ApprovalLimitsAdmin isOwner={isSuperadmin(access.email)} />
-          <ReviewVoiceAdmin />
-          <ReservationEmailsAdmin isOwner={isSuperadmin(access.email)} />
-          <ShareLinksCard />
-        </div>
+        <AdminConsole myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
       )}
     </Shell>
   )
