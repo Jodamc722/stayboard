@@ -46,7 +46,69 @@ export const FEATURES: Feature[] = [
   { key: 'integrations', label: 'Integrations',       path: '/integrations' },
 ]
 
-// ---- Workspaces (role presets). pages: 'all' or an explicit list of feature keys. ----
+// ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
+// off  = hidden + middleware-blocked (like the old toggle-off)
+// view = page loads read-only; mutation APIs reject via requireLevel('edit')
+// edit = day-to-day actions (assign, comment, create, mark done)
+// full = destructive/settings actions on that tab (delete, policies, share passwords)
+export type Level = 'off' | 'view' | 'edit' | 'full'
+export const LEVELS: Level[] = ['off', 'view', 'edit', 'full']
+const LEVEL_RANK: Record<string, number> = { off: 0, view: 1, edit: 2, full: 3 }
+
+export function normLevel(v: any): Level {
+  const s = String(v || '').toLowerCase()
+  return (LEVELS as string[]).includes(s) ? (s as Level) : 'off'
+}
+export function atLeast(have: any, need: Level): boolean {
+  return (LEVEL_RANK[normLevel(have)] ?? 0) >= (LEVEL_RANK[need] ?? 0)
+}
+
+// A role as stored in app_roles. perms maps featureKey -> level, with optional '*' default.
+export type RoleDef = {
+  key: string; label: string; blurb?: string; landing: string
+  perms: Record<string, string>; is_system?: boolean; sort?: number
+}
+
+export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
+  if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
+  const explicit = role.perms[featureKey]
+  if (explicit != null) return normLevel(explicit)
+  const star = role.perms['*']
+  return star != null ? normLevel(star) : 'off'
+}
+
+// Resolve the full level map for a user: role perms, then legacy per-person features[key]===false
+// forces 'off' (kept so pre-roles individual page-offs keep working).
+export function levelsForRole(role: RoleDef | null | undefined, features?: Record<string, any> | null): Record<string, Level> {
+  const out: Record<string, Level> = {}
+  for (const f of FEATURES) {
+    out[f.key] = features && features[f.key] === false ? 'off' : roleLevel(role, f.key)
+  }
+  return out
+}
+
+// Legacy fallback when app_roles is missing or the user has no access_role yet: the old
+// workspace bundle. Allowed pages map to 'full' — that is what page access meant before levels
+// existed (no write gating), so nobody loses ability mid-migration. Fail-open by design.
+export function legacyLevels(ws: any, features?: Record<string, any> | null): Record<string, Level> {
+  const out: Record<string, Level> = {}
+  for (const f of FEATURES) {
+    out[f.key] = pageAllowed(ws, features, f.key) ? 'full' : 'off'
+  }
+  return out
+}
+
+// Landing for a level map: preferred landing if visible, else first visible page, else /no-access.
+export function landingFor(levels: Record<string, Level>, preferred?: string | null): string {
+  if (preferred) {
+    const hit = FEATURES.find(f => f.path === preferred)
+    if (hit && levels[hit.key] !== 'off') return hit.path
+  }
+  for (const f of FEATURES) if (levels[f.key] && levels[f.key] !== 'off') return f.path
+  return '/no-access'
+}
+
+// ---- Workspaces (LEGACY role presets — the fail-open fallback pre-migration-021). ----
 export type Workspace = 'admin' | 'gm' | 'ops' | 'cs' | 'data'
 
 export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb: string; pages: 'all' | string[] }[] = [
