@@ -5,7 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { deadlineFor, todayET, daysUntil, itemsTotal, num, type ClaimItem } from '@/lib/claims'
+import { deadlineFor, dueDateFor, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
+import { getSetting } from '@/lib/app-settings'
+
+const POLICY_KEY = 'claims_channel_policy'
+const loadPolicy = () => getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -37,6 +41,7 @@ export async function GET(req: NextRequest) {
     // the other in front of them and should not have to care which.
     if (search) {
       const today = todayET()
+      const pol = await loadPolicy()
       const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,unit')
       const lmap: Record<string, { name: string; building: string; unit: string }> = {}
       for (const l of (lRows || []) as any[]) {
@@ -62,7 +67,11 @@ export async function GET(req: NextRequest) {
         .map(r => {
           const li = lmap[String(r.listing_id)] || { name: str(r.listing_name) || 'Unit', building: '', unit: '' }
           const checkOut = str(r.check_out).slice(0, 10)
-          const deadline = deadlineFor(checkOut)
+          const ch = channelName(r.source)
+          // Deadline and due date are channel-specific, so the search list already tells you
+          // whether this one is a "file it this week" or a "file it today".
+          const deadline = deadlineFor(checkOut, ch, pol)
+          const due = dueDateFor(checkOut, ch, pol)
           return {
             reservationId: String(r.id),
             listingId: str(r.listing_id),
@@ -73,10 +82,13 @@ export async function GET(req: NextRequest) {
             guestEmail: str(r.guest_email) || null,
             checkIn: str(r.check_in).slice(0, 10),
             checkOut,
-            channel: channelName(r.source),
+            channel: ch,
             confirmationCode: str(r.confirmation_code) || null,
             deadline,
-            daysLeft: daysUntil(deadline, today),
+            due,
+            daysLeft: daysUntil(due || deadline, today),
+            hardDaysLeft: daysUntil(deadline, today),
+            route: policyFor(ch, pol).route,
             guestyUrl: 'https://app.guesty.com/reservations/' + String(r.id) + '/summary',
           }
         })
@@ -149,6 +161,9 @@ export async function POST(req: NextRequest) {
     } catch { /* listing lookup is a nicety, not a blocker */ }
 
     const checkOut = str((r as any).check_out).slice(0, 10)
+    const ch = channelName((r as any).source)
+    const pol = await loadPolicy()
+    const p = policyFor(ch, pol)
     const row: Record<string, any> = {
       stage: 'draft',
       reservation_id: reservationId,
@@ -156,18 +171,28 @@ export async function POST(req: NextRequest) {
       property: property || str((r as any).listing_name) || null,
       unit_no: unitNo || null,
       guest_name: str((r as any).guest_name) || null,
-      channel: channelName((r as any).source),
+      channel: ch,
       confirmation_code: str((r as any).confirmation_code) || null,
       check_in: str((r as any).check_in).slice(0, 10) || null,
       check_out: checkOut || null,
       discovered_on: str(b.discoveredOn).slice(0, 10) || todayET(),
-      deadline_on: deadlineFor(checkOut),
+      deadline_on: deadlineFor(checkOut, ch, pol),
+      due_on: dueDateFor(checkOut, ch, pol),
+      due_source: 'policy',
+      deposit_held: p.deposit,
       guesty_url: 'https://app.guesty.com/reservations/' + reservationId + '/summary',
       created_by: str(user.email) || null,
       assignee_email: str(b.assignee) || str(user.email) || null,
       history: [{ at: new Date().toISOString(), by: str(user.email) || 'team', action: 'created', to: 'draft' }],
     }
-    const { data, error } = await db.from('claims').insert(row).select('id').single()
+    let ins = await db.from('claims').insert(row).select('id').single()
+    if (ins.error && /column|schema/i.test(ins.error.message)) {
+      // Migration 020 (due dates) has not run on this database yet — save the claim rather than
+      // failing in the user's face over a column they cannot add.
+      delete row.due_on; delete row.due_source; delete row.deposit_held
+      ins = await db.from('claims').insert(row).select('id').single()
+    }
+    const { data, error } = ins
     if (error || !data) return NextResponse.json({ ok: false, error: (error && error.message) || 'Could not create the claim.' }, { status: 500 })
     return NextResponse.json({ ok: true, id: String((data as any).id) })
   } catch (e: any) {
