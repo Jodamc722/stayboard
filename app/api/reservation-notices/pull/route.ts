@@ -4,13 +4,17 @@
 // button for when someone wants the desk current right now (a booking that just landed, a building
 // switched on a minute ago).
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess } from '@/lib/access'
+import { getAccess , requireLevel} from '@/lib/access'
 import { pullNotices } from '@/lib/reservation-pull'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'reservation-emails' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('reservation-emails', 'edit')
+  if (!__gate.ok) return __gate.res
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const days = Number(req.nextUrl.searchParams.get('days') || 30)
