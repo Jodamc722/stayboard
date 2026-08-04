@@ -8,6 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { deadlineFor, dueDateFor, dueWithTurnover, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor, nextCheckInMap } from '@/lib/claim-turnover'
+import { requireLevel } from '@/lib/access'
 
 const POLICY_KEY = 'claims_channel_policy'
 const loadPolicy = () => getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
@@ -146,6 +147,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'claims' is rejected here.
+  const __gate = await requireLevel('claims', 'edit')
+  if (!__gate.ok) return __gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
