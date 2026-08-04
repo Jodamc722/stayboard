@@ -33,7 +33,16 @@ function cleanChannel(raw: string): string {
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Other'
 }
 
+// How far back the feed reaches. Defaults to 90 days to MATCH the KPI band above it — those two
+// disagreed by construction while this was 60 and the reputation header was 90, so the page could
+// say "3 awaiting reply" and the list directly below it say "All caught up". Override with ?days=.
+const DEFAULT_DAYS = 90
+const MAX_DAYS = 365
+
 export async function GET(req: Request) {
+  const daysParam = Number(new URL(req.url).searchParams.get('days') || DEFAULT_DAYS)
+  const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : DEFAULT_DAYS, 1), MAX_DAYS)
+  const sinceIso = new Date(Date.now() - days * 86400000).toISOString()
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -45,7 +54,7 @@ export async function GET(req: Request) {
     const { data: rows, error } = await sb
       .from('guesty_reviews')
       .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, excluded_from_score, exclude_reason')
-      .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString())
+      .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
       .limit(2000)
 
@@ -88,7 +97,7 @@ export async function GET(req: Request) {
       const dismissedIds = new Set<string>()
       try {
         const { data: dz } = await sb.from('guesty_reviews').select('id').eq('dismissed', true)
-          .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString())
+          .gte('created_at', sinceIso)
         ;(dz || []).forEach((d: any) => dismissedIds.add(d.id))
       } catch { /* column not present yet */ }
 
