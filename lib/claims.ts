@@ -249,6 +249,26 @@ export function evidenceStillThere(claim: { next_check_in?: string | null }): bo
   return d === null ? null : d > 0
 }
 
+/**
+ * The date this claim is ACTUALLY due, and why.
+ *
+ * `due_on` in the database is the channel target (or a date somebody typed). The turnover is not
+ * stored — it is read fresh, because bookings move — so the effective date is worked out here,
+ * on every read, from the two together. A date somebody typed by hand always wins: the app does
+ * not get to second-guess a human who has said "we are filing this on Thursday".
+ */
+export function effectiveDue(
+  claim: { due_on?: string | null; due_source?: string | null; next_check_in?: string | null },
+): { due: string | null; reason: 'policy' | 'turnover' | 'manual' } {
+  const stored = ymdOf(claim.due_on)
+  if (String(claim.due_source || '') === 'manual') return { due: stored, reason: 'manual' }
+  const arrival = ymdOf(claim.next_check_in)
+  if (!arrival) return { due: stored, reason: 'policy' }
+  const beforeArrival = addDays(arrival, -1)
+  if (!stored) return { due: beforeArrival, reason: 'turnover' }
+  return beforeArrival < stored ? { due: beforeArrival, reason: 'turnover' } : { due: stored, reason: 'policy' }
+}
+
 /** Today in Eastern time — the business runs on ET, and UTC "today" is wrong after 8pm. */
 export function todayET(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
@@ -285,8 +305,8 @@ function urgencyOfDate(ymd: string | null | undefined, stage: any): Urgency {
  * hard deadline reads as calm until the day it doesn't. Falls back to the hard deadline for claims
  * created before due dates existed.
  */
-export function urgencyOf(claim: { stage?: string; due_on?: string | null; deadline_on?: string | null }): Urgency {
-  return urgencyOfDate(claim.due_on || claim.deadline_on, claim.stage)
+export function urgencyOf(claim: { stage?: string; due_on?: string | null; due_source?: string | null; next_check_in?: string | null; deadline_on?: string | null }): Urgency {
+  return urgencyOfDate(effectiveDue(claim).due || claim.deadline_on, claim.stage)
 }
 
 /** The separate, quieter alarm: how close the channel's hard cutoff is. */
