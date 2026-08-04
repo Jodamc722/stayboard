@@ -9,7 +9,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
 import { appendReservationNote } from '@/lib/claim-note'
 import { canDelete, trashRecord } from '@/lib/trash'
-import { claimNoteLine, claimTitle, deadlineFor, gatesFor, itemsTotal, num, todayET, type Claim, type ClaimItem } from '@/lib/claims'
+import { claimNoteLine, claimTitle, deadlineFor, dueDateFor, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
+import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -23,9 +24,9 @@ const WAITING = ['channel', 'guest', 'escalated']
 
 // Plain text fields the client may set directly.
 const TEXT_FIELDS = ['property', 'unit_no', 'guest_name', 'channel', 'confirmation_code', 'summary', 'notes', 'channel_case_id', 'breezeway_url', 'assignee_email']
-const DATE_FIELDS = ['check_in', 'check_out', 'discovered_on', 'submitted_on', 'decided_on', 'paid_on', 'deadline_on']
+const DATE_FIELDS = ['check_in', 'check_out', 'discovered_on', 'submitted_on', 'decided_on', 'paid_on', 'deadline_on', 'due_on']
 const BOOL_FIELDS = ['guest_called', 'police_report', 'payment_verified', 'owner_adjusted']
-const MONEY_FIELDS = ['amount_sought', 'amount_paid']
+const MONEY_FIELDS = ['amount_sought', 'amount_paid', 'deposit_held']
 
 async function load(db: any, id: string): Promise<{ claim: any; items: ClaimItem[] } | null> {
   const { data: claim } = await db.from('claims').select('*').eq('id', id).is('deleted_at', null).maybeSingle()
@@ -41,7 +42,14 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const db = supabaseAdmin()
   const found = await load(db, params.id)
   if (!found) return NextResponse.json({ ok: false, error: 'Claim not found.' }, { status: 404 })
-  return NextResponse.json({ ok: true, today: todayET(), claim: { ...found.claim, items: found.items } })
+  // Ship the channel's rule with the claim so the desk can explain WHY the dates are what they
+  // are, rather than showing two dates and leaving the reader to guess.
+  const pol = await getSetting<Record<string, ChannelPolicy>>('claims_channel_policy', {})
+  return NextResponse.json({
+    ok: true, today: todayET(),
+    claim: { ...found.claim, items: found.items },
+    policy: policyFor(found.claim.channel, pol),
+  })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -65,9 +73,31 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if ('outcome' in b) patch.outcome = OUTCOMES.includes(str(b.outcome)) ? str(b.outcome) : null
     if ('waiting_on' in b) patch.waiting_on = WAITING.includes(str(b.waiting_on)) ? str(b.waiting_on) : null
 
-    // Checkout moved (an extension, a corrected date) -> the filing deadline moves with it. Never
-    // leave a stale deadline on the board: the whole point of the countdown is that it is true.
-    if ('check_out' in b && patch.check_out && !('deadline_on' in b)) patch.deadline_on = deadlineFor(patch.check_out)
+    // ── keeping the two dates honest ─────────────────────────────────────
+    // Checkout moving (an extension, a corrected date) or the channel changing both change what
+    // the platform will accept. Re-derive rather than leave a stale countdown, because the whole
+    // point of the countdown is that it is true.
+    //
+    // A due date somebody TYPED is never overwritten. Once a human has said "we are filing this on
+    // Thursday", the app does not quietly move it on them; `due_source` remembers that forever
+    // until they clear it.
+    const pol = await getSetting<Record<string, ChannelPolicy>>('claims_channel_policy', {})
+    const chNext = 'channel' in b ? String(patch.channel || '') : String(before.channel || '')
+    const coNext = 'check_out' in b ? String(patch.check_out || '') : String(before.check_out || '')
+    const basisMoved = ('check_out' in b && patch.check_out !== before.check_out)
+      || ('channel' in b && patch.channel !== before.channel)
+
+    if (basisMoved && !('deadline_on' in b)) patch.deadline_on = deadlineFor(coNext, chNext, pol)
+    if ('due_on' in b) {
+      // Clearing the field hands the date back to the policy; setting one pins it.
+      patch.due_source = patch.due_on ? 'manual' : 'policy'
+      if (!patch.due_on) patch.due_on = dueDateFor(coNext, chNext, pol)
+    } else if (basisMoved && String(before.due_source || 'policy') !== 'manual') {
+      patch.due_on = dueDateFor(coNext, chNext, pol)
+    }
+    if ('channel' in b && patch.channel !== before.channel && !('deposit_held' in b)) {
+      patch.deposit_held = policyFor(chNext, pol).deposit
+    }
 
     // ── stage move ───────────────────────────────────────────────────────
     const nextStage = STAGES.includes(str(b.stage)) ? str(b.stage) : null
@@ -101,8 +131,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     else hist.push({ at: new Date().toISOString(), by: me, action: 'edit' })
     patch.history = hist
 
-    const { error } = await db.from('claims').update(patch).eq('id', params.id)
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    let upd = await db.from('claims').update(patch).eq('id', params.id)
+    if (upd.error && /column|schema/i.test(upd.error.message)) {
+      // Migration 020 not run yet — save everything else rather than blocking the whole edit.
+      delete patch.due_on; delete patch.due_source; delete patch.deposit_held
+      upd = await db.from('claims').update(patch).eq('id', params.id)
+    }
+    if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
 
     const after: Claim = { ...before, ...patch } as Claim
 
