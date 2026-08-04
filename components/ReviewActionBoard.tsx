@@ -149,7 +149,10 @@ export function ReviewActionBoard() {
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not rebuild')
-      setMsg(j.created + ' new · ' + j.updated + ' updated' + (j.reopened ? ' · ' + j.reopened + ' came back' : '') + ' · from ' + j.scanned + ' reviews')
+      setMsg(j.created + ' new · ' + j.updated + ' updated'
+        + (j.reopened ? ' · ' + j.reopened + ' came back' : '')
+        + (j.pruned ? ' · ' + j.pruned + ' retired' : '')
+        + ' · from ' + j.scanned + ' reviews')
       await load()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setGen(false)
