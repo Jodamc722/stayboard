@@ -61,6 +61,31 @@ export async function marketingCookieValid(cookieVal: string | undefined | null)
   return cookieVal === mktTokenFor(cur)
 }
 
+// OWNER AUDIT password — its own credential for the owner-statement audit share link, separate
+// from both the vendor and marketing passwords on purpose: whoever works the audit (a VA, an
+// accountant) sees owner-level money, NOT the ops boards and NOT the marketing report.
+// Stored as share_settings row id=4, cookie `oa_ok`.
+// FAIL CLOSED: while no audit password is set, the share link stays shut.
+export const OA_COOKIE = 'oa_ok'
+
+export function oaTokenFor(pw: string) { return createHash('sha256').update('stayboard-owner-audit:' + pw).digest('hex') }
+
+export async function currentAuditPassword(): Promise<string> {
+  try {
+    const db = supabaseAdmin()
+    const { data, error } = await db.from('share_settings').select('password').eq('id', 4).maybeSingle()
+    if (error) { console.error('audit_settings read', error.message); return '' }
+    return data && data.password ? String(data.password) : ''
+  } catch (e) { console.error('audit_settings read', e); return '' }
+}
+
+export async function auditCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
+  if (!cookieVal) return false
+  const cur = await currentAuditPassword()
+  if (!cur) return false
+  return cookieVal === oaTokenFor(cur)
+}
+
 export async function adminPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string }> {
   const cur = await currentAdminPassword()
   if (!cur) return { ok: false, reason: 'Delete is locked. Set the admin password in Users \u2192 Share links & security first.' }
