@@ -1,8 +1,10 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { customFieldNameMap } from '@/lib/custom-fields'
+import { STAGE_LABEL, money, daysUntil, clockRunning } from '@/lib/claims'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +44,19 @@ export default async function ReservationDetail({ params }: { params: { id: stri
       .limit(1)
     notice = Array.isArray(data) && data.length ? data[0] : null
   } catch { notice = null }
+
+  // DAMAGE CLAIMS ON THIS STAY. The claim is the reason money moved after the guest left, so it
+  // belongs on the booking rather than only on its own board. Claims are service-role-only (RLS
+  // with no policy), so this reads through the admin client; a failure reads as "no claims".
+  let claims: any[] = []
+  try {
+    const { data } = await supabaseAdmin()
+      .from('claims')
+      .select('id, stage, outcome, amount_sought, amount_paid, deadline_on, submitted_on, channel')
+      .eq('reservation_id', params.id).is('deleted_at', null)
+      .order('created_at', { ascending: false })
+    claims = Array.isArray(data) ? data : []
+  } catch { claims = [] }
 
   const cfMap = await customFieldNameMap()
   const idOf = (cf: any) => String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
@@ -97,6 +112,37 @@ export default async function ReservationDetail({ params }: { params: { id: stri
               No arrival notice on file — this building either doesn&apos;t need one or isn&apos;t switched on in{' '}
               <Link href="/reservation-emails" className="underline">reservation emails</Link>.
             </p>
+          )}
+
+          <h2 className="text-sm font-semibold text-slate-900 mt-6 mb-3">Damage claims</h2>
+          {claims.length === 0 ? (
+            <p className="text-xs text-slate-400">
+              No claim on this stay.{' '}
+              <Link href="/claims" className="underline">Start one</Link> if something was damaged or taken.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {claims.map((c: any) => {
+                const left = clockRunning(String(c.stage)) ? daysUntil(c.deadline_on) : null
+                const late = left !== null && left < 0
+                const tight = left !== null && left >= 0 && left <= 3
+                return (
+                  <Link key={c.id} href={'/claims/' + c.id}
+                    className={'block rounded-xl border px-3 py-2.5 text-sm hover:shadow-sm transition ' + (late ? 'border-rose-300 bg-rose-50' : tight ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white')}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-900">{STAGE_LABEL[String(c.stage)] || c.stage}</span>
+                      <span className="font-bold text-slate-900 tabular-nums">{money(c.amount_sought)}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {c.channel || 'channel'}
+                      {c.outcome ? ' · ' + String(c.outcome) : ''}
+                      {c.amount_paid != null ? ' · ' + money(c.amount_paid) + ' recovered' : ''}
+                      {left !== null && (late ? ' · window closed' : ' · ' + left + 'd to file')}
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
           )}
 
           <h2 className="text-sm font-semibold text-slate-900 mt-6 mb-3">Tracking</h2>
