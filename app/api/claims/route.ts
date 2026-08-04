@@ -5,8 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { deadlineFor, dueDateFor, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
+import { deadlineFor, dueDateFor, dueWithTurnover, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
+import { nextCheckInFor } from '@/lib/claim-turnover'
 
 const POLICY_KEY = 'claims_channel_policy'
 const loadPolicy = () => getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
@@ -164,6 +165,9 @@ export async function POST(req: NextRequest) {
     const ch = channelName((r as any).source)
     const pol = await loadPolicy()
     const p = policyFor(ch, pol)
+    // Who arrives next on this unit — once they do, the damage cannot be photographed.
+    const nextArrival = await nextCheckInFor(db, str((r as any).listing_id), checkOut)
+    const due = dueWithTurnover(checkOut, ch, nextArrival, pol)
     const row: Record<string, any> = {
       stage: 'draft',
       reservation_id: reservationId,
@@ -177,8 +181,10 @@ export async function POST(req: NextRequest) {
       check_out: checkOut || null,
       discovered_on: str(b.discoveredOn).slice(0, 10) || todayET(),
       deadline_on: deadlineFor(checkOut, ch, pol),
-      due_on: dueDateFor(checkOut, ch, pol),
+      due_on: due.due,
       due_source: 'policy',
+      due_reason: due.reason,
+      next_check_in: nextArrival,
       deposit_held: p.deposit,
       guesty_url: 'https://app.guesty.com/reservations/' + reservationId + '/summary',
       created_by: str(user.email) || null,
@@ -190,6 +196,7 @@ export async function POST(req: NextRequest) {
       // Migration 020 (due dates) has not run on this database yet — save the claim rather than
       // failing in the user's face over a column they cannot add.
       delete row.due_on; delete row.due_source; delete row.deposit_held
+      delete row.due_reason; delete row.next_check_in
       ins = await db.from('claims').insert(row).select('id').single()
     }
     const { data, error } = ins
