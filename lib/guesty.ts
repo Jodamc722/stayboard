@@ -525,11 +525,15 @@ function mapReview(v: any) {
 }
 
 // Reviews — paginate /reviews and upsert into the dedicated guesty_reviews table.
-// NEWEST FIRST (sort=-createdAt): without a sort the API's default order let the 50-page (5000-row)
-// cap sit on the OLDEST reviews forever, so once the corpus passed 5000 new reviews never synced.
-// Sorting newest-first means the first pages always carry the latest reviews; upsert is idempotent
-// (onConflict id) and never deletes, so older reviews already in the table are retained. When
-// `since` is given we stop as soon as a page predates it — a cheap incremental refresh.
+//
+// DO NOT add a `sort` param here. Guesty's /reviews endpoint does not accept one and rejects the
+// whole request with 400 VALIDATION_FAILED ('"sort" is not allowed'), which kills the entire review
+// sync silently — the feed just stops updating. (That regression shipped 2026-07-31 and stalled
+// reviews for days.) It is unnecessary anyway: /reviews already returns results sorted DESCENDING
+// BY LAST UPDATE TIME, so page 0 always carries the freshest reviews and the 50-page (5000-row) cap
+// can never strand new ones behind an old backlog — which is exactly what the sort was added for.
+// Upsert is idempotent (onConflict id) and never deletes, so older reviews already stored are kept.
+// When `since` is given we stop as soon as a whole page predates it — a cheap incremental refresh.
 export async function syncReviews(maxPages = 60, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
@@ -537,7 +541,7 @@ export async function syncReviews(maxPages = 60, since: string | null = null): P
   for (let page = 0; page < maxPages; page++) {
     const skip = page * 100
     const data = await api<{ results?: any[]; data?: any[]; reviews?: any[] } | any[]>(
-      `/reviews?limit=100&skip=${skip}&sort=-createdAt`
+      `/reviews?limit=100&skip=${skip}`
     )
     const dd: any = (data as any)?.data ?? data
     const arr: any[] = Array.isArray(dd) ? dd
