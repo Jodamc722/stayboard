@@ -11,6 +11,7 @@ import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
+import { parseListing, normalizeBuilding } from '@/lib/parse-listing'
 import {
   Bucket, Family, State, Pay,
   bucketFor, familyFor, otaGroupFor, isUnmappedSource, stateFor, isWon, payFor,
@@ -29,6 +30,7 @@ type Row = {
   createdTs: string
   guest: string
   property: string
+  building: string
   source: string
   bucket: Bucket
   family: Family
@@ -157,26 +159,75 @@ export async function GET(req: NextRequest) {
       'm_bal:raw->money->>balanceDue',
       'm_full:raw->money->>isFullyPaid',
     ].join(', ')
-    // EVERY reservation created in the window is aggregated — this is the marketing tab, so a
-    // silently dropped page would understate the very number it exists to report. 40 pages =
-    // 40,000 bookings, well past a year of volume; `truncated` says so out loud if it is ever hit.
-    const MAX_PAGES = 40
-    let raw: any[] = []
-    let truncated = false
-    for (let i = 0; i < MAX_PAGES; i++) {
-      const { data, error } = await db
-        .from('guesty_reservations')
-        .select(cols)
-        .gte('created_at', loIso)
-        .lt('created_at', hiIso)
-        .order('created_at', { ascending: false })
-        .range(i * 1000, i * 1000 + 999)
-      if (error) throw new Error(error.message)
-      if (!data || data.length === 0) break
-      raw = raw.concat(data)
-      if (data.length < 1000) break
-      if (i === MAX_PAGES - 1) truncated = true
+    // PAGED IN PARALLEL, BY MONTH. Sequential 1,000-row pages were fine for 30 days (~24 pages
+    // round-tripped one after another) but Year-to-date is ~24,000 rows across the window plus its
+    // comparison period — that ran past this function's 60s ceiling, the request died, and the
+    // board was left showing the PREVIOUS range's numbers under the new chip. Silent wrong data.
+    // Chunking by month and running three chunks in flight turns ~24 serial queries into ~3 waves.
+    const monthStart = (iso: string) => iso.slice(0, 8) + '01'
+    const nextMonth = (ym: string) => {
+      const y = Number(ym.slice(0, 4)); const mo = Number(ym.slice(5, 7))
+      return mo === 12 ? (y + 1) + '-01-01' : y + '-' + String(mo + 1).padStart(2, '0') + '-01'
     }
+    const chunks: { lo: string; hi: string }[] = []
+    {
+      let c = monthStart(prevFrom)
+      const stop = addDaysIso(to, 2)
+      while (c < stop) {
+        const n = nextMonth(c.slice(0, 7))
+        chunks.push({ lo: c < loIso.slice(0, 10) ? loIso : c + 'T00:00:00.000Z', hi: (n < stop ? n : stop) + 'T00:00:00.000Z' })
+        c = n
+      }
+      if (!chunks.length) chunks.push({ lo: loIso, hi: hiIso })
+    }
+
+    const PAGES_PER_CHUNK = 12
+    let truncated = false
+    const pullChunk = async (lo: string, hi: string): Promise<any[]> => {
+      const acc: any[] = []
+      for (let i = 0; i < PAGES_PER_CHUNK; i++) {
+        const { data, error } = await db
+          .from('guesty_reservations')
+          .select(cols)
+          .gte('created_at', lo)
+          .lt('created_at', hi)
+          .order('created_at', { ascending: false })
+          .range(i * 1000, i * 1000 + 999)
+        if (error) throw new Error(error.message)
+        if (!data || data.length === 0) break
+        for (const d of data) acc.push(d)
+        if (data.length < 1000) break
+        if (i === PAGES_PER_CHUNK - 1) truncated = true
+      }
+      return acc
+    }
+
+    const CONCURRENCY = 3
+    let cursor = 0
+    let chunkFailure = ''
+    const collected: any[][] = []
+    const worker = async () => {
+      while (true) {
+        const idx = cursor++
+        if (idx >= chunks.length) return
+        const c = chunks[idx]
+        try { collected.push(await pullChunk(c.lo, c.hi)) }
+        catch (e: any) {
+          // One retry — a timeout here is contention, not a broken query.
+          try { collected.push(await pullChunk(c.lo, c.hi)) }
+          catch (e2: any) { chunkFailure = String(e2 && e2.message ? e2.message : e2) }
+        }
+      }
+    }
+    const workers: Promise<void>[] = []
+    for (let i = 0; i < Math.min(CONCURRENCY, chunks.length); i++) workers.push(worker())
+    await Promise.all(workers)
+    // Never return a partial window as if it were whole — a marketing report that quietly
+    // under-counts is worse than one that says it failed.
+    if (chunkFailure) throw new Error('Could not read the full range: ' + chunkFailure)
+
+    let raw: any[] = []
+    for (const c of collected) raw = raw.concat(c)
 
     const rows: Row[] = []
     const prevRows: Row[] = []
@@ -203,6 +254,7 @@ export async function GET(req: NextRequest) {
         createdTs: str(x.created_at),
         guest: internal ? guestFull : maskName(guestFull),
         property: str(x.listing_name) || '—',
+        building: normalizeBuilding(parseListing(str(x.listing_name)).building || 'Other'),
         source: src,
         bucket,
         family: familyFor(bucket),
@@ -234,6 +286,7 @@ export async function GET(req: NextRequest) {
       const byFamily: Record<string, Agg> = {}
       const byBucket: Record<string, Agg> = {}
       const byOtaGroup: Record<string, Agg> = {}
+      const byBuilding: Record<string, Agg> = {}
       const all = emptyAgg('all', 'All bookings')
       for (const r of list) {
         addTo(all, r)
@@ -248,8 +301,15 @@ export async function GET(req: NextRequest) {
           const o = byOtaGroup[g] || (byOtaGroup[g] = emptyAgg(g, g))
           addTo(o, r)
         }
+        // DIRECT only — this rollup answers "which building is marketing actually moving?",
+        // so an OTA-heavy building must not appear to be gaining traction.
+        if (r.family === 'direct') {
+          const bkey = r.building || 'Other'
+          const bb = byBuilding[bkey] || (byBuilding[bkey] = emptyAgg(bkey, bkey))
+          addTo(bb, r)
+        }
       }
-      return { all, bySource, byFamily, byBucket, byOtaGroup }
+      return { all, bySource, byFamily, byBucket, byOtaGroup, byBuilding }
     }
 
     const cur = roll(rows)
