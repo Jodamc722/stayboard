@@ -34,6 +34,7 @@ export const FEATURES: Feature[] = [
   { key: 'channels',      label: 'Channels',          path: '/channels' },
   { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports' },
+  { key: 'claims',        label: 'Claims',            path: '/claims' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners' },
   { key: 'labor',         label: 'Labor',             path: '/labor' },
   { key: 'listings',      label: 'Listings',          path: '/listings' },
@@ -54,9 +55,9 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
     pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
-    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests'] },
+    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'buildings', 'listings'] },
+    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'buildings', 'listings', 'claims'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
