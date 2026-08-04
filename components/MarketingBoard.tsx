@@ -172,57 +172,69 @@ function Stat({ label, value, sub, now, before, invert }: { label: string; value
   )
 }
 
-// EMPHASIS form, not categorical: direct is the point, everything else is context. One brand hue
-// plus one de-emphasis gray beats three competing colours when only one series is being judged.
-// Pair validated (contrast >= 3:1 both, CVD dE 22.4 protan / 25.3 normal).
+// ONE SERIES: direct bookings created per day. A single series needs no legend — the title names
+// it. Rounded data-ends anchored to the baseline, recessive gridlines, hover on every bar.
 function TrendChart({ trend }: { trend: Trend[] }) {
   const max = useMemo(() => {
     let m = 0
-    for (const t of trend) { const v = t.direct + t.manual + t.ota; if (v > m) m = v }
+    for (const t of trend) if (t.direct > m) m = t.direct
     return m
   }, [trend])
+  const total = useMemo(() => {
+    let n = 0
+    for (const t of trend) n += t.direct
+    return n
+  }, [trend])
   if (!trend.length) return null
-  const W = 960, H = 150, pad = 22
-  const bw = Math.max(1, (W - pad * 2) / trend.length)
-  const y = (v: number) => (max > 0 ? (H - pad) - (v / max) * (H - pad * 2) : H - pad)
-  const gridVals = [0, Math.round(max / 2), max].filter((v, i, a) => a.indexOf(v) === i)
+
+  const W = 960, H = 132, padY = 16, padL = 20, padR = 8
+  const step = (W - padL - padR) / trend.length
+  const bw = Math.max(2, Math.min(22, step - 3))
+  const top = max > 0 ? max : 1
+  const y = (v: number) => (H - padY) - (v / top) * (H - padY * 2)
+  const ticks = max >= 2 ? [0, Math.ceil(max / 2), max] : [0, 1]
+  const uniq = ticks.filter((v, i, a) => a.indexOf(v) === i)
+
   return (
-    <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
-      <div className="flex items-baseline justify-between mb-1">
-        <h3 className="text-sm font-semibold text-ink">Direct bookings created per day</h3>
-        <div className="flex items-center gap-3 text-[11px] text-muted">
-          <span className="inline-flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm bg-brand-600 inline-block" />Direct</span>
-          <span className="inline-flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#8B93A3' }} />Everything else</span>
+    <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+      <div className="px-5 py-4 border-b border-line flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Day by day</div>
+          <h3 className="text-base font-bold text-ink mt-0.5">Direct bookings as they came in</h3>
+        </div>
+        <div className="text-xs text-muted">
+          <strong className="text-ink tabular-nums">{total}</strong> in this window · busiest day <strong className="text-ink tabular-nums">{max}</strong>
         </div>
       </div>
-      <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ height: 160 }} preserveAspectRatio="none">
-        {gridVals.map(v => (
-          <g key={'g' + v}>
-            <line x1={pad} x2={W - pad} y1={y(v)} y2={y(v)} stroke="#E5E7EB" strokeWidth="1" />
-            <text x={2} y={y(v) + 3} fontSize="9" fill="#5B6478">{v}</text>
-          </g>
-        ))}
-        {trend.map((t, i) => {
-          const x = pad + i * bw
-          const w = Math.max(1, bw - 1.5)
-          const total = t.direct + t.manual + t.ota
-          let cursor = H - pad
-          const seg = (v: number, fill: string, key: string) => {
-            if (v <= 0) return null
-            const h = ((v / (max || 1)) * (H - pad * 2))
-            cursor -= h
-            return <rect key={key} x={x} y={cursor} width={w} height={Math.max(1, h)} fill={fill} rx="1" />
-          }
-          return (
-            <g key={t.d}>
-              <title>{fmtDayY(t.d) + ' — ' + t.direct + ' direct of ' + total + ' booking' + (total === 1 ? '' : 's') + ' created'}</title>
-              {seg(t.manual + t.ota, '#8B93A3', 'o')}
-              {seg(t.direct, '#4448D9', 'd')}
+      <div className="px-4 pt-3 pb-1">
+        <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ height: 140 }} preserveAspectRatio="none" role="img" aria-label="Direct bookings created per day">
+          {uniq.map(v => (
+            <g key={'g' + v}>
+              <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="#EEF0F4" strokeWidth="1" />
+              <text x={0} y={y(v) + 3.5} fontSize="9" fill="#9AA1AF">{v}</text>
             </g>
-          )
-        })}
-      </svg>
-      <div className="flex justify-between text-[10px] text-muted mt-1 px-1">
+          ))}
+          {trend.map((t, i) => {
+            const x = padL + i * step + (step - bw) / 2
+            if (t.direct <= 0) {
+              return (
+                <g key={t.d}>
+                  <title>{fmtDayY(t.d) + ' — no direct bookings'}</title>
+                  <rect x={x} y={H - padY - 2} width={bw} height={2} rx="1" fill="#EEF0F4" />
+                </g>
+              )
+            }
+            const h = Math.max(3, (H - padY) - y(t.direct))
+            return (
+              <g key={t.d}>
+                <title>{fmtDayY(t.d) + ' — ' + t.direct + ' direct booking' + (t.direct === 1 ? '' : 's') + (t.directRev ? ', ' + money0(t.directRev) : '')}</title>
+                <rect x={x} y={(H - padY) - h} width={bw} height={h} rx="3" fill="#4448D9" />
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      <div className="flex justify-between text-[11px] text-muted px-5 pb-3">
         <span>{fmtDay(trend[0].d)}</span>
         <span>{fmtDay(trend[trend.length - 1].d)}</span>
       </div>
@@ -439,7 +451,6 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   // must run on every render (React #310 bit this app before).
   const cur = data && data.current ? data.current : undefined
   const prev = data && data.previous ? data.previous : undefined
-  const otaSources = useMemoOtaSources(cur)
 
   // ── password gate ─────────────────────────────────────────────────────────
   if (needsPw) {
@@ -475,13 +486,10 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const dirRevSharePrev = allPrev.accom > 0 ? dirPrev.accom / allPrev.accom : 0
   const unmappedKeys = data && data.unmapped ? Object.keys(data.unmapped) : []
 
-  const bucketRows: { key: string; label: string; a: Agg; strong?: boolean }[] = [
-    { key: 'be', label: BUCKET_LABEL.be, a: agg(cur, 'byBucket', 'be'), strong: true },
-    { key: 'website', label: BUCKET_LABEL.website, a: agg(cur, 'byBucket', 'website'), strong: true },
-    { key: 'direct', label: BUCKET_LABEL.direct, a: agg(cur, 'byBucket', 'direct'), strong: true },
-    { key: 'manual', label: BUCKET_LABEL.manual, a: agg(cur, 'byBucket', 'manual') },
-    { key: 'owner', label: BUCKET_LABEL.owner, a: agg(cur, 'byBucket', 'owner') },
-    { key: 'ota', label: BUCKET_LABEL.ota, a: agg(cur, 'byBucket', 'ota') },
+  const directChannels: { key: string; label: string; blurb: string; a: Agg }[] = [
+    { key: 'be', label: 'Booking engine', blurb: 'Booked through our own engine', a: agg(cur, 'byBucket', 'be') },
+    { key: 'website', label: 'Website', blurb: 'Came in from the site', a: agg(cur, 'byBucket', 'website') },
+    { key: 'direct', label: 'Straight to us', blurb: 'Booked with us with no channel in between', a: agg(cur, 'byBucket', 'direct') },
   ]
 
   return (
@@ -582,105 +590,63 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
 
           <MonthTimeline data={months} />
 
-          {/* source table */}
+          {/* WHICH DIRECT CHANNEL — booking engine vs website vs straight-to-us. No OTA rows: this
+              report is about the bookings marketing produced, and the OTA total only exists inside
+              the share meters at the top, as the denominator. */}
           <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-            <div className="px-4 py-3 border-b border-line">
-              <h3 className="text-sm font-semibold text-ink">Where the bookings came from</h3>
-              <p className="text-xs text-muted mt-0.5">Direct = booking engine + website + direct. Manual and owner stays are kept separate so they never inflate the marketing number.</p>
+            <div className="px-5 py-4 border-b border-line">
+              <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Channels</div>
+              <h3 className="text-base font-bold text-ink mt-0.5">Which direct channel brought them</h3>
+              <p className="text-xs text-muted mt-1">Only the channels marketing drives. Manual and owner bookings sit underneath, kept out of every number above.</p>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-app text-[11px] uppercase tracking-wide text-muted">
-                  <tr>
-                    <th className="text-left px-4 py-2 font-semibold">Source</th>
-                    <th className="text-right px-3 py-2 font-semibold">Booked</th>
-                    <th className="text-right px-3 py-2 font-semibold">Canceled</th>
-                    <th className="text-right px-3 py-2 font-semibold">Inquiries</th>
-                    <th className="text-right px-3 py-2 font-semibold">Nights</th>
-                    <th className="text-right px-3 py-2 font-semibold">Net accom</th>
-                    <th className="text-right px-3 py-2 font-semibold">ADR</th>
-                    <th className="text-right px-3 py-2 font-semibold">Avg booking</th>
-                    <th className="text-right px-3 py-2 font-semibold">Lead</th>
-                    <th className="text-right px-3 py-2 font-semibold">Share</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  <tr className="bg-brand-50/60">
-                    <td className="px-4 py-2 font-semibold text-ink">Direct total</td>
-                    <td className="px-3 py-2 text-right font-bold text-ink tabular-nums">{dirNow.won}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">{dirNow.canceled || '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">{dirNow.pending || '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">{dirNow.nights || '—'}</td>
-                    <td className="px-3 py-2 text-right font-bold text-ink tabular-nums">{money0(dirNow.accom)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">{dirNow.nights ? money0(dirNow.accom / dirNow.nights) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">{dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">{dirNow.leadN ? Math.round(dirNow.leadSum / dirNow.leadN) + 'd' : '—'}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-brand-700 tabular-nums">{pct1(dirShare)}</td>
-                  </tr>
-                  {bucketRows.map(b => (
-                    <tr key={b.key} className={b.a.bookings === 0 ? 'text-muted' : ''}>
-                      <td className={'px-4 py-2 ' + (b.strong ? 'pl-8 text-ink' : 'text-ink font-medium')}>{b.label}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">{b.a.won || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{b.a.canceled || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{b.a.pending || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{b.a.nights || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">{b.a.accom ? money0(b.a.accom) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{b.a.nights ? money0(b.a.accom / b.a.nights) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{b.a.won ? money0(b.a.accom / b.a.won) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{b.a.leadN ? Math.round(b.a.leadSum / b.a.leadN) + 'd' : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{allNow.won ? pct1(b.a.won / allNow.won) : '—'}</td>
-                    </tr>
-                  ))}
-                  {otaSources.map(s => (
-                    <tr key={'ota-' + s.key} className="text-muted">
-                      <td className="px-4 py-1.5 pl-8 text-xs">{s.label}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.won || '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.canceled || '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.pending || '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.nights || '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.accom ? money0(s.a.accom) : '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.nights ? money0(s.a.accom / s.a.nights) : '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.won ? money0(s.a.accom / s.a.won) : '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{s.a.leadN ? Math.round(s.a.leadSum / s.a.leadN) + 'd' : '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-xs">{allNow.won ? pct1(s.a.won / allNow.won) : '—'}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-app font-semibold text-ink">
-                    <td className="px-4 py-2">All sources</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.won}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.canceled}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.pending}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.nights}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{money0(allNow.accom)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.nights ? money0(allNow.accom / allNow.nights) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.won ? money0(allNow.accom / allNow.won) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{allNow.leadN ? Math.round(allNow.leadSum / allNow.leadN) + 'd' : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">100%</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="divide-y divide-line">
+              {directChannels.map(c => {
+                const w = dirNow.won > 0 ? (c.a.won / dirNow.won) * 100 : 0
+                const dead = c.a.won === 0
+                return (
+                  <div key={c.key} className="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-[minmax(0,190px)_1fr_auto] gap-3 sm:gap-5 sm:items-center hover:bg-brand-50/40 transition-colors">
+                    <div>
+                      <div className={'text-sm font-semibold ' + (dead ? 'text-muted' : 'text-ink')}>{c.label}</div>
+                      <div className="text-[11px] text-muted mt-0.5">{c.blurb}</div>
+                    </div>
+                    <div className="h-2.5 rounded-full bg-brand-100/70 overflow-hidden">
+                      <div className="h-full rounded-full bg-brand-600 transition-[width] duration-500" style={{ width: Math.max(c.a.won > 0 ? 2 : 0, Math.min(100, w)) + '%' }} />
+                    </div>
+                    <div className="flex items-baseline gap-5 sm:justify-end tabular-nums">
+                      <div className="text-right">
+                        <div className={'text-lg font-bold leading-none ' + (dead ? 'text-muted' : 'text-ink')}>{c.a.won || '—'}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-muted mt-1">bookings</div>
+                      </div>
+                      <div className="text-right min-w-[86px]">
+                        <div className={'text-lg font-bold leading-none ' + (dead ? 'text-muted' : 'text-ink')}>{c.a.accom ? money0(c.a.accom) : '—'}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-muted mt-1">revenue</div>
+                      </div>
+                      <div className="text-right min-w-[64px] hidden sm:block">
+                        <div className="text-lg font-bold leading-none text-muted">{c.a.nights || '—'}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-muted mt-1">nights</div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
-            <div className="px-4 py-2 border-t border-line text-[11px] text-muted">
-              Manual {manNow.won} · Owner {ownNow.won} · OTA {otaNow.won} booked in this window. Revenue is net accommodation (excludes cleaning, fees and taxes).
+            <div className="px-5 py-2.5 border-t border-line bg-app/60 text-[11px] text-muted">
+              Not counted as marketing: <strong className="text-ink">{manNow.won}</strong> manual (phone, walk-in) and <strong className="text-ink">{ownNow.won}</strong> owner {ownNow.won === 1 ? 'stay' : 'stays'} in this window.
             </div>
           </div>
 
           {/* booking list */}
           <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
             <div className="px-4 py-3 border-b border-line flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-ink mr-1">Every booking made in this window</h3>
+              <div className="mr-2">
+                <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">Every one of them</div>
+                <h3 className="text-base font-bold text-ink mt-0.5">Direct bookings, one by one</h3>
+              </div>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
                 <input value={q} onChange={e => { setQ(e.target.value); setLimit(100) }} placeholder="Search guest, property, source, confirmation…"
                   className="text-xs border border-line rounded-lg pl-8 pr-3 py-1.5 w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
               </div>
-              <select value={familyFilter} onChange={e => setFamilyFilter(e.target.value as any)} className="text-xs border border-line rounded-lg px-2 py-1.5">
-                <option value="direct">Direct only</option>
-                <option value="all">All sources</option>
-                <option value="manual">Manual</option>
-                <option value="owner">Owner</option>
-                <option value="ota">OTA</option>
-              </select>
               <select value={stateFilter} onChange={e => setStateFilter(e.target.value as any)} className="text-xs border border-line rounded-lg px-2 py-1.5">
                 <option value="all">All statuses</option>
                 <option value="booked">Booked</option>
@@ -765,30 +731,6 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
 }
 
 // OTA raw sources, biggest first — so "OTA" is never a black box.
-function useMemoOtaSources(cur: Roll | undefined) {
-  return useMemo(() => {
-    if (!cur) return [] as { key: string; label: string; a: Agg }[]
-    const out: { key: string; label: string; a: Agg }[] = []
-    // Grouped by the company that owns the channel (Orbitz + Hotels.com sit under Expedia Group),
-    // falling back to raw sources on an older API response.
-    const grouped = cur.byOtaGroup
-    if (grouped) {
-      const gk = Object.keys(grouped)
-      for (const k of gk) out.push({ key: k, label: k, a: grouped[k] })
-      out.sort((a, b) => b.a.won - a.a.won || b.a.bookings - a.a.bookings)
-      return out
-    }
-    const keys = Object.keys(cur.bySource)
-    for (const k of keys) {
-      const fam = k === 'be-api' || k === 'website' || k === 'direct' || k === 'manual' || k === 'owner' || k === 'owner-guest'
-      if (fam) continue
-      out.push({ key: k, label: k, a: cur.bySource[k] })
-    }
-    out.sort((a, b) => b.a.won - a.a.won || b.a.bookings - a.a.bookings)
-    return out
-  }, [cur])
-}
-
 function SortTh({ label, k, right, sortKey, sortDir, onSort }: {
   label: string; k: 'created' | 'accom' | 'checkIn' | 'nights'; right?: boolean
   sortKey: string; sortDir: 'asc' | 'desc'; onSort: (k: any, d: 'asc' | 'desc') => void
