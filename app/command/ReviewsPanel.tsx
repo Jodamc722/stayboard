@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban, RefreshCw } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
@@ -80,11 +80,18 @@ export function ReviewsPanel() {
   // LOADS EVERY TIME THE PAGE IS OPENED, and again whenever the tab comes back into view.
   // `cache: 'no-store'` matters: without it the browser can serve its own cached copy of
   // /api/reviews, so a review replied to on another screen keeps showing as unanswered.
+  // A background reload that STARTED before the user's last dismiss/undo click carries stale
+  // dismissed-flags; if it resolves after the click it silently re-hides (or re-shows) the row.
+  // That is exactly the bug hit when clicking Undo at human speed: the visibility-change reload
+  // races the undo, lands last, and the review never returns to the reply list.
+  const mutatedAtRef = useRef(0)
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts || !opts.quiet) setS(prev => ({ ...prev, loading: true }))
     setErr(null)
+    const startedAt = Date.now()
     try {
       const d = await (await fetch('/api/reviews', { cache: 'no-store' })).json()
+      if (startedAt < mutatedAtRef.current) return   // stale: a click happened mid-flight — drop it
       const reviews: Review[] = d.reviews || []
       setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error })
       setLoadedAt(Date.now())
@@ -225,6 +232,7 @@ export function ReviewsPanel() {
   }
 
   async function dismiss(r: Review) {
+    mutatedAtRef.current = Date.now()
     setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     setDismissedLocal(d => ({ ...d, [r.id]: true }))
     try {
@@ -234,12 +242,17 @@ export function ReviewsPanel() {
     finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
   }
   async function undismiss(r: Review) {
+    mutatedAtRef.current = Date.now()
     setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
       const res = await fetch('/api/reviews/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId: r.id, undo: true }) })
       const d = await res.json().catch(() => ({})); if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setDismissedLocal(d => ({ ...d, [r.id]: false }))
       setS(prev => ({ ...prev, reviews: (prev.reviews || []).map(x => x.id === r.id ? { ...x, dismissed: false } : x) }))
+      // Belt and braces: pull server truth AFTER the undo landed, so the row reappears in the
+      // reply queue even if any local state was stale. Clearing the stamp lets this reload win.
+      mutatedAtRef.current = 0
+      load({ quiet: true })
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
   }
