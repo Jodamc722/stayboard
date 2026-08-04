@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ReviewsPanel } from '@/app/command/ReviewsPanel'
 import { ReviewKpis } from '@/components/ReviewKpis'
+import { ReviewActionBoard } from '@/components/ReviewActionBoard'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,6 +28,7 @@ export default async function ReviewsPage() {
       </header>
 
       <ReviewKpis />
+      <ReviewActionBoard />
 
       <div className="grid grid-cols-1">
         <ReviewsPanel />
