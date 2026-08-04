@@ -293,6 +293,61 @@ export function ReviewKpis() {
               ))}
             </Fold>
           )}
+
+          {/* DID THE INSPECTION WORK? An inspection "held" if no guest left a 3-or-below in the 45
+              days after it. Held rate is the only number here that says whether walking units is
+              actually buying anything. */}
+          {!!(d?.inspectors || []).length && (
+            <Fold title="Inspectors"
+              summary={(d.inspectors.filter((i: any) => i.ranked).length) + ' with ' + d.minInspections + '+ walks'
+                + (d.inspectorHoldRate != null ? ' · ' + d.inspectorHoldRate + '% held portfolio-wide' : '')}>
+              <div className="text-[11px] text-muted mb-1">
+                {'“'}Held{'”'} = no review at or below 3 stars in the {d.inspectionWindow} days after the walk.
+              </div>
+              {(d.inspectors || []).map((ins: any) => (
+                <Drill key={ins.name} canOpen={!!(ins.misses || []).length || ins.covered > 0}
+                  head={() => (<>
+                    <span className="flex-1 text-ink truncate">
+                      {ins.name} <span className="text-muted">· {ins.inspections} walk{ins.inspections === 1 ? '' : 's'}</span>
+                    </span>
+                    {ins.rubberStamp && (
+                      <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-600 text-white flex-shrink-0"
+                        title={'Scores an average of ' + ins.avgGiven + '/5 but guests then score those units ' + ins.guestAfter + ' — units are passing that should not'}>
+                        rubber stamp
+                      </span>
+                    )}
+                    {!ins.ranked && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-muted flex-shrink-0">too few</span>}
+                    {ins.lift != null && (
+                      <span className={'w-11 text-right text-[11px] font-semibold tabular-nums flex-shrink-0 ' + (ins.lift > 0.05 ? 'text-emerald-600' : ins.lift < -0.05 ? 'text-rose-700' : 'text-muted')}>
+                        {ins.lift > 0 ? '+' : ''}{ins.lift}
+                      </span>
+                    )}
+                    <span className={'w-12 text-right font-bold tabular-nums flex-shrink-0 ' + (ins.holdRate == null ? 'text-muted' : ins.holdRate >= 90 ? 'text-emerald-600' : ins.holdRate >= 75 ? 'text-ink' : 'text-rose-700')}>
+                      {ins.holdRate == null ? '—' : ins.holdRate + '%'}
+                    </span>
+                  </>)}>
+                  <div className="text-[12px] text-ink py-0.5">
+                    {ins.held} held · {ins.missed} missed
+                    <span className="text-muted"> · judged on {ins.covered} of {ins.inspections} walks (the rest have no guest verdict yet)</span>
+                  </div>
+                  <div className="text-[12px] text-muted py-0.5">
+                    {ins.avgGiven != null ? 'Scores units ' + ins.avgGiven + '/5 on average' : 'No scores recorded'}
+                    {ins.guestAfter != null ? ' · guests then score those units ' + ins.guestAfter : ''}
+                    {ins.followUps ? ' · ' + ins.followUps + ' follow-up' + (ins.followUps === 1 ? '' : 's') + ' raised' : ''}
+                  </div>
+                  {!!(ins.misses || []).length && <Sub>Got through the inspection anyway</Sub>}
+                  {(ins.misses || []).map((m: any, i: number) => (
+                    <div key={i} className="text-[11.5px] border-l-2 border-rose-200 pl-2 py-0.5">
+                      <span className="text-ink">{'“'}{m.comment}{'”'}</span>
+                      <div className="text-[10.5px] text-muted">
+                        {m.unit} · walked {m.inspected}{m.given != null ? ' (passed ' + m.given + '/5)' : ''} → {m.rating}★ review {m.at}
+                      </div>
+                    </div>
+                  ))}
+                </Drill>
+              ))}
+            </Fold>
+          )}
         </div>
       )}
     </section>
