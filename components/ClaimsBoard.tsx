@@ -13,15 +13,17 @@ import {
 } from 'lucide-react'
 import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
 import {
-  STAGES, money, itemsTotal, num, daysUntil, urgencyOf, gatesFor, claimTitle,
+  STAGES, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
   type Claim, type Stage,
 } from '@/lib/claims'
+import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
 
 type Board = { ok: boolean; today: string; claims: Claim[]; totals: { open: number; sought: number; recovered: number }; error?: string }
 type Match = {
   reservationId: string; listingId: string; unitLabel: string; property: string; unitNo: string
   guestName: string; guestEmail: string | null; checkIn: string; checkOut: string; channel: string
-  confirmationCode: string | null; deadline: string | null; daysLeft: number | null
+  confirmationCode: string | null; deadline: string | null; due: string | null
+  daysLeft: number | null; hardDaysLeft: number | null; route: string | null
   guestyUrl: string; existingClaimId: string | null
 }
 
@@ -33,20 +35,34 @@ const URGENCY_CLASS: Record<string, string> = {
   none: 'bg-app text-muted border-line',
 }
 
+// The card counts down to OUR due date. The channel's hard cutoff only speaks up when it is
+// actually close — otherwise it is noise on every card for two weeks.
 function DeadlineChip({ claim }: { claim: Claim }) {
   const u = urgencyOf(claim)
-  const d = daysUntil(claim.deadline_on)
+  const target = claim.due_on || claim.deadline_on
+  const d = daysUntil(target)
   if (u === 'none') {
-    if (!claim.deadline_on) return null
-    return <span className="text-[10px] text-muted">filed · window closed {claim.deadline_on}</span>
+    if (!target) return null
+    return <span className="text-[10px] text-muted">filed</span>
   }
   const text = d === null ? 'no date'
-    : d < 0 ? 'EXPIRED ' + Math.abs(d) + 'd ago'
-    : d === 0 ? 'LAST DAY'
-    : d + 'd left'
+    : d < 0 ? 'DUE ' + Math.abs(d) + 'd ago'
+    : d === 0 ? 'DUE TODAY'
+    : 'due in ' + d + 'd'
   return (
     <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ' + URGENCY_CLASS[u]}>
       <CalendarClock size={10} />{text}
+      {claim.due_source === 'manual' && <span className="opacity-60">·set</span>}
+    </span>
+  )
+}
+
+function HardChip({ claim }: { claim: Claim }) {
+  if (!hardDeadlineBiting(claim)) return null
+  const h = daysUntil(claim.deadline_on)
+  return (
+    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-rose-600 text-white border-rose-600">
+      {h !== null && h < 0 ? 'WINDOW CLOSED' : 'window closes in ' + h + 'd'}
     </span>
   )
 }
@@ -60,6 +76,7 @@ export function ClaimsBoard() {
   const [channel, setChannel] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
+  const [showPolicy, setShowPolicy] = useState(false)
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
 
   const removeClaim = useCallback(async (id: string): Promise<string | null> => {
@@ -148,7 +165,10 @@ export function ClaimsBoard() {
           <option value="all">All channels</option>
           {channels.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button onClick={() => setShowTrash(!showTrash)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
+        <button onClick={() => setShowPolicy(!showPolicy)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
+          <CalendarClock size={13} /> Filing policy
+        </button>
+        <button onClick={() => setShowTrash(!showTrash)} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
           <Trash2 size={13} /> Recently deleted
         </button>
         <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
@@ -157,6 +177,7 @@ export function ClaimsBoard() {
       </div>
 
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
+      {showPolicy && <ClaimPolicyPanel onClose={() => setShowPolicy(false)} onSaved={load} />}
       {showTrash && <TrashDrawer kind="claim" onRestored={load} onClose={() => setShowTrash(false)} />}
 
       {/* THE ONE THING THAT LOSES MONEY: a claim that ages out unfiled. */}
@@ -255,6 +276,7 @@ function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<strin
       </div>
       <div className="mt-2 flex items-center gap-1.5 flex-wrap">
         <DeadlineChip claim={claim} />
+        <HardChip claim={claim} />
         {claim.channel && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded border border-line text-muted">{claim.channel}</span>}
         {claim.waiting_on && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-sky-200 bg-sky-50 text-sky-800">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</span>}
         {claim.outcome && (
@@ -355,8 +377,8 @@ function NewClaimModal({ onClose, onCreated }: { onClose: () => void; onCreated:
                       <div className="text-[12px] text-muted">{m.checkIn} to {m.checkOut}</div>
                       <div className={'text-[12px] mt-0.5 ' + tone}>
                         {d === null ? 'No checkout date on this booking'
-                          : d < 0 ? 'Filing window closed ' + Math.abs(d) + ' day(s) ago (' + m.deadline + ')'
-                          : 'File by ' + m.deadline + ' — ' + d + ' day(s) left'}
+                          : d < 0 ? 'Due ' + Math.abs(d) + ' day(s) ago' + (m.deadline ? ' · window ' + m.deadline : '')
+                          : 'Due ' + (m.due || m.deadline) + ' — ' + d + ' day(s)' + (m.route ? ' · ' + m.route : '')}
                       </div>
                     </div>
                     <div className="shrink-0 flex flex-col items-end gap-1">
@@ -382,7 +404,7 @@ function NewClaimModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           {!matches && (
             <div className="mt-4 rounded-xl border border-line bg-app/50 p-3 text-[12px] text-muted flex items-start gap-2">
               <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-              <span>Airbnb closes the window 14 days after checkout. Whatever you pick, the claim is stamped with a file-by date and the board counts it down.</span>
+              <span>Every channel has its own clock &mdash; Airbnb and Vrbo close 14 days after checkout, direct bookings have no window at all because we hold the card. Whatever you pick, the claim is stamped with a due date and a hard cutoff, and the board counts down to the due date.</span>
             </div>
           )}
         </div>

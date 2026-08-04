@@ -17,7 +17,7 @@ import CommentThread from '@/components/CommentThread'
 import { DeleteButton } from '@/components/DeleteControl'
 import {
   STAGES, OUTCOMES, WAITING, CHANNELS, CONDITIONS, money, num, itemsTotal, daysUntil, gatesFor,
-  claimTitle, urgencyOf, type Claim, type ClaimItem, type Stage,
+  claimTitle, urgencyOf, hardUrgencyOf, type Claim, type ClaimItem, type ChannelPolicy, type Stage,
 } from '@/lib/claims'
 
 type Props = { id: string }
@@ -44,6 +44,7 @@ async function toB64(file: File): Promise<string> {
 export function ClaimDesk({ id }: Props) {
   const router = useRouter()
   const [claim, setClaim] = useState<Claim | null>(null)
+  const [policy, setPolicy] = useState<ChannelPolicy | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -56,6 +57,7 @@ export function ClaimDesk({ id }: Props) {
       const j = await r.json()
       if (!r.ok || j.ok === false) { setErr(j.error || 'Could not load this claim.'); return }
       setClaim(j.claim)
+      if (j.policy) setPolicy(j.policy)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [id])
   useEffect(() => { load() }, [load])
@@ -68,6 +70,7 @@ export function ClaimDesk({ id }: Props) {
       if (r.status === 409 && Array.isArray(j.gates)) { setBlocked(j.gates); return false }
       if (!r.ok || j.ok === false) { setErr(j.error || 'Save failed.'); return false }
       if (j.claim) setClaim(j.claim)
+      if (j.policy) setPolicy(j.policy)
       if (j.note && j.note.ok === false) setErr('Saved, but the reservation note did not go to Guesty: ' + (j.note.error || 'unknown'))
       else if (j.note && j.note.ok === true && !opts?.silent) { setFlash('Note written onto the reservation in Guesty.'); setTimeout(() => setFlash(''), 4000) }
       return true
@@ -81,8 +84,11 @@ export function ClaimDesk({ id }: Props) {
   const gates = gatesFor(claim, items)
   const failing = gates.filter(g => !g.ok)
   const total = num(claim.amount_sought) || itemsTotal(items)
-  const d = daysUntil(claim.deadline_on)
+  const dueTarget = claim.due_on || claim.deadline_on
+  const d = daysUntil(dueTarget)
+  const hardD = daysUntil(claim.deadline_on)
   const u = urgencyOf(claim)
+  const hardU = hardUrgencyOf(claim)
   const stageIndex = STAGES.findIndex(s => s.key === claim.stage)
 
   return (
@@ -106,17 +112,30 @@ export function ClaimDesk({ id }: Props) {
         </div>
       </header>
 
-      {/* THE CLOCK. Loudest thing on the page while it still matters. */}
+      {/* THE CLOCK. Two dates: the one we set ourselves, and the one the channel enforces. */}
       {u !== 'none' && (
-        <div className={'rounded-2xl border p-3 mb-4 flex items-center gap-2 ' + (u === 'expired' || u === 'critical' ? 'border-rose-300 bg-rose-50 text-rose-900' : u === 'soon' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800')}>
-          <CalendarClock size={16} />
-          <span className="font-semibold text-sm">
-            {d === null ? 'No checkout date, so no filing deadline could be worked out.'
-              : d < 0 ? 'The filing window closed on ' + claim.deadline_on + ' — ' + Math.abs(d) + ' day(s) ago.'
-              : d === 0 ? 'Last day to file: ' + claim.deadline_on + '.'
-              : 'File by ' + claim.deadline_on + ' — ' + d + ' day(s) left.'}
-          </span>
-          <span className="text-[11px] opacity-80 ml-auto">Channels close damage claims 14 days after checkout.</span>
+        <div className={'rounded-2xl border p-3 mb-4 ' + (u === 'expired' || u === 'critical' ? 'border-rose-300 bg-rose-50 text-rose-900' : u === 'soon' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800')}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <CalendarClock size={16} />
+            <span className="font-semibold text-sm">
+              {d === null ? 'No due date set on this claim.'
+                : d < 0 ? 'Due ' + dueTarget + ' — ' + Math.abs(d) + ' day(s) overdue.'
+                : d === 0 ? 'Due today (' + dueTarget + ').'
+                : 'Due ' + dueTarget + ' — ' + d + ' day(s).'}
+            </span>
+            {claim.due_source === 'manual' && <span className="text-[11px] px-1.5 py-0.5 rounded border border-current/30 opacity-80">set by hand</span>}
+            {policy && <span className="text-[11px] opacity-80 ml-auto">{claim.channel}: {policy.route}</span>}
+          </div>
+          <div className="text-[12px] mt-1 opacity-90">
+            {claim.deadline_on
+              ? <>
+                  Hard cutoff <span className="font-semibold">{claim.deadline_on}</span>
+                  {hardD !== null && (hardD < 0 ? ' — the window has closed.' : ' — ' + hardD + ' day(s) of runway behind the due date.')}
+                </>
+              : <>This channel sets no filing window &mdash; we hold the card, so the only clock is how fresh the charge looks to the bank.</>}
+            {policy?.note && <span className="block mt-0.5">{policy.note}</span>}
+            {policy?.capNote && <span className="block mt-0.5 font-medium">{policy.capNote}</span>}
+          </div>
         </div>
       )}
 
@@ -134,7 +153,7 @@ export function ClaimDesk({ id }: Props) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 space-y-4">
-          <StepStay claim={claim} patch={patch} busy={busy} />
+          <StepStay claim={claim} policy={policy} patch={patch} busy={busy} />
           <StepItems claimId={id} items={items} onItems={(next: ClaimItem[]) => setClaim(c => c ? { ...c, items: next } : c)} setErr={setErr} />
           <StepWriteUp claim={claim} items={items} patch={patch} busy={busy} />
           <StepFile claim={claim} gates={gates} failing={failing} blocked={blocked} patch={patch} busy={busy} />
@@ -165,10 +184,12 @@ export function ClaimDesk({ id }: Props) {
 }
 
 // ── step 1: the stay ───────────────────────────────────────────────────────
-function StepStay({ claim, patch, busy }: { claim: Claim; patch: (b: any) => Promise<boolean>; busy: boolean }) {
+function StepStay({ claim, policy, patch, busy }: { claim: Claim; policy: ChannelPolicy | null; patch: (b: any) => Promise<boolean>; busy: boolean }) {
   const [discovered, setDiscovered] = useState(claim.discovered_on || '')
   const [channel, setChannel] = useState(claim.channel || '')
+  const [due, setDue] = useState(claim.due_on || '')
   useEffect(() => { setDiscovered(claim.discovered_on || ''); setChannel(claim.channel || '') }, [claim.discovered_on, claim.channel])
+  useEffect(() => { setDue(claim.due_on || '') }, [claim.due_on])
   return (
     <section className="rounded-2xl border border-line bg-white p-4">
       <StepHead n={1} title="The stay" done={!!claim.reservation_id} />
@@ -196,6 +217,35 @@ function StepStay({ claim, patch, busy }: { claim: Claim; patch: (b: any) => Pro
           </select>
         </label>
       </div>
+      {/* THE DUE DATE. Set from the channel's target, overridable, and once overridden the app
+          never quietly moves it again — that is the whole difference between a due date and a
+          suggestion. Clearing the field hands it back to the policy. */}
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <label className="block">
+          <span className="text-[11px] uppercase tracking-wide text-muted">File by (our due date)</span>
+          <input type="date" value={due} onChange={e => setDue(e.target.value)} onBlur={() => { if (due !== (claim.due_on || '')) patch({ due_on: due }) }}
+            className="mt-1 w-full text-sm border border-line rounded-lg px-2 py-1.5 bg-white" />
+          <span className="text-[11px] text-muted">
+            {claim.due_source === 'manual'
+              ? <>Set by hand &mdash; the app will not move it. <button onClick={() => { setDue(''); patch({ due_on: '' }) }} className="text-brand-600 font-semibold hover:underline">Back to the {claim.channel} default</button></>
+              : policy ? 'From the ' + (claim.channel || 'channel') + ' target: checkout + ' + policy.targetDays + ' days.' : 'From the channel target.'}
+          </span>
+        </label>
+        <div>
+          <span className="text-[11px] uppercase tracking-wide text-muted">Channel window</span>
+          <div className="mt-1 text-sm text-ink border border-line rounded-lg px-2 py-1.5 bg-app/40">
+            {policy
+              ? (policy.windowDays === null
+                  ? 'No platform window'
+                  : policy.windowDays + ' days after checkout')
+              : '—'}
+          </div>
+          <span className="text-[11px] text-muted">
+            {claim.deposit_held ? money(claim.deposit_held) + ' deposit held on this channel.' : 'No deposit held on this channel.'}
+          </span>
+        </div>
+      </div>
+
       <p className="text-[11px] text-muted mt-2">Guest, unit, dates and confirmation code come off the booking and are not editable here — if one is wrong, the claim is on the wrong stay.</p>
     </section>
   )
@@ -572,8 +622,10 @@ function Rail({ claim, items, gates, patch, busy, onDelete }: {
           <RailRow label="Items" value={String(items.length)} />
           <RailRow label="Sought" value={money(num(claim.amount_sought) || itemsTotal(items))} />
           <RailRow label="Paid" value={claim.amount_paid == null ? '—' : money(claim.amount_paid)} />
+          <RailRow label="Deposit held" value={claim.deposit_held ? money(claim.deposit_held) : '—'} />
           <RailRow label="Discovered" value={claim.discovered_on || '—'} />
-          <RailRow label="File by" value={claim.deadline_on || '—'} />
+          <RailRow label="Due" value={(claim.due_on || '—') + (claim.due_source === 'manual' ? ' (set)' : '')} />
+          <RailRow label="Hard cutoff" value={claim.deadline_on || 'none'} />
           <RailRow label="Submitted" value={claim.submitted_on || '—'} />
           <RailRow label="Decided" value={claim.decided_on || '—'} />
           <RailRow label="Owner" value={claim.assignee_email || '—'} />
