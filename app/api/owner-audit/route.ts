@@ -20,7 +20,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
 import { appendReservationNote } from '@/lib/claim-note'
 import { MONTH_LABEL } from '@/lib/owner-statements'
-import { auditMonths, buildAudit, saveAuditRules, AuditStatus, SIGNOFF_KEY } from '@/lib/owner-audit'
+import { auditMonths, buildAudit, saveAuditRules, AuditStatus, SIGNOFF_KEY, PREP_PREFIX } from '@/lib/owner-audit'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -112,7 +112,42 @@ export async function POST(req: NextRequest) {
   if (!/^\d{4}-\d{2}$/.test(month) || !ownerId || !itemKey) {
     return NextResponse.json({ ok: false, error: 'month, ownerId and itemKey are required' }, { status: 400 })
   }
-  if (itemKey === SIGNOFF_KEY) {
+
+  // ── PREP — the Expedia fee breakout. Saves the Cleaning / RM split for one reservation
+  // (item_key 'prep:<code>', note = JSON) so statement prep can be worked and tracked here.
+  if (action === 'prep') {
+    if (!itemKey.startsWith(PREP_PREFIX)) return NextResponse.json({ ok: false, error: 'prep itemKey must start with prep:' }, { status: 400 })
+    const author = who.internal ? who.email : ('link · ' + String(body.author || 'reviewer').trim().slice(0, 60))
+    const db = supabaseAdmin()
+    const now = new Date().toISOString()
+    try {
+      if (body.on === false) {
+        const { error } = await db.from('owner_audit_reviews')
+          .upsert({ month, owner_id: ownerId, item_key: itemKey, status: 'review', note: '', comments: [], updated_by: author, updated_at: now }, { onConflict: 'month,owner_id,item_key' })
+        if (error) throw new Error(error.message)
+        return NextResponse.json({ ok: true, saved: null })
+      }
+      const cleaning = Math.round(Math.max(0, Number(body.cleaning) || 0) * 100) / 100
+      const rm = Math.round(Math.max(0, Number(body.rm) || 0) * 100) / 100
+      if (cleaning <= 0 && rm <= 0) {
+        return NextResponse.json({ ok: false, error: 'Enter the Cleaning fee and RM fee amounts (at least one must be above zero).' }, { status: 400 })
+      }
+      const { error } = await db.from('owner_audit_reviews').upsert({
+        month, owner_id: ownerId, item_key: itemKey,
+        status: 'done', note: JSON.stringify({ cleaning, rm }), comments: [],
+        updated_by: author, updated_at: now,
+      }, { onConflict: 'month,owner_id,item_key' })
+      if (error) throw new Error(error.message)
+      return NextResponse.json({ ok: true, saved: { cleaning, rm, by: author, at: now } })
+    } catch (e: any) {
+      const msg = String(e?.message || e)
+      const hint = /owner_audit_reviews/.test(msg) && /does not exist|schema cache/.test(msg)
+        ? ' — run migration 024_owner_audit.sql in Supabase first.' : ''
+      return NextResponse.json({ ok: false, error: msg.slice(0, 300) + hint }, { status: 500 })
+    }
+  }
+
+  if (itemKey === SIGNOFF_KEY || itemKey.startsWith(PREP_PREFIX)) {
     return NextResponse.json({ ok: false, error: 'reserved key' }, { status: 400 })
   }
 
