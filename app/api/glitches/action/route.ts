@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, retrieveBreezewayTask, updateBreezewayTask, normalizeTaskStatus, breezewayConfigured } from '@/lib/breezeway'
 import { buildIntel } from '@/lib/listingIntel'
 import { canDelete, trashRecord } from '@/lib/trash'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -22,6 +23,10 @@ function deptFor(category: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Roles+levels write gate (2026-08-04): below-edit access on 'glitches' is rejected here,
+  // whatever the UI shows. requireLevel also covers the signed-out 401.
+  const __gate = await requireLevel('glitches', 'edit')
+  if (!__gate.ok) return __gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
