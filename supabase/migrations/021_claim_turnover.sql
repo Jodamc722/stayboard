@@ -1,28 +1,22 @@
--- WHEN THE EVIDENCE DISAPPEARS.
+-- 021 — SUPERSEDED. DO NOT RUN. Nothing in the app needs it.
 --
--- A claim's real deadline is not only what the channel will accept. It is when the proof stops
--- existing. Once the unit is cleaned and the next guest walks in, the damage is gone: you cannot
--- photograph it, you cannot re-inspect it, and "the previous guest did it" becomes a sentence
--- rather than a fact.
+-- This was going to add `next_check_in`, `due_reason` and `nudged_on` to `claims` for the turnover
+-- clock and the daily nudge. It never ran: on 2026-08-04 the Supabase dashboard stopped rendering
+-- inside the automated browser (blank body, no editor, no console output) while status.supabase.com
+-- reported every system operational — so migrations could not be applied at all that session.
 --
--- So every claim now records the next arrival on that unit. This does NOT touch `deadline_on` —
--- Airbnb's published rule is 14 days from checkout full stop, and inventing a shorter platform
--- cutoff would be stating someone else's policy wrongly. It pulls OUR due date forward instead,
--- which is the honest version: the platform may still accept it next week, but we want the file
--- built while the room is still the way the guest left it.
+-- Rather than leave a shipped feature waiting on a door nobody could open, the feature was rewritten
+-- to need no schema change, and the rewrite turned out to be the better design:
 --
--- Run via Supabase SQL editor on project: ugbtsppfsgkkrdyyuxxg (Ops App)
+--   next_check_in  COMPUTED ON READ (lib/claim-turnover.ts). Bookings move — a guest cancels, an
+--                  owner blocks the unit, a same-day booking appears the morning after checkout. A
+--                  column written once at claim-creation would be quietly wrong by then, and wrong
+--                  in the direction that costs money. One indexed query per board load, never stale.
+--   due_reason     DERIVED (lib/claims.ts → effectiveDue). `claims.due_on` holds the channel target;
+--                  the turnover is applied on top at read time; a manual due date still wins.
+--   nudged_on      app_settings key `claims_nudged_on`, a claim id -> date map pruned to open claims.
+--
+-- Kept as a file only so the numbering stays honest and nobody wonders what 021 was.
+-- If you run it anyway it is harmless — the columns will simply sit unused.
 
--- The next check-in on this listing after the claimed stay's checkout, if there is one.
-alter table claims add column if not exists next_check_in date;
--- Why the due date is what it is: 'policy' | 'turnover' | 'manual'.
--- 'turnover' means the next arrival pulled it in front of the channel target.
-alter table claims add column if not exists due_reason text;
-
-update claims set due_reason = coalesce(due_reason, due_source, 'policy') where due_reason is null;
-
--- Nudges read "what is due, not yet filed, not yet nudged today", so index that shape.
-alter table claims add column if not exists nudged_on date;
-create index if not exists idx_claims_nudge on claims(due_on) where deleted_at is null and stage in ('draft','review','ready');
-
-notify pgrst, 'reload schema';
+select 'migration 021 is superseded; nothing to do' as note;
