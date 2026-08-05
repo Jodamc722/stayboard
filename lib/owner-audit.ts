@@ -61,6 +61,7 @@ export type AuditItem = {
   mixWeekday: number             // in-month weekday nights (Sun–Thu)
   mixWeekend: number             // in-month weekend nights (Fri–Sat)
   leadDays: number | null        // days between booking creation and check-in
+  stayTag: 'owner' | 'ff' | null // owner stay / friends & family — discounts are by design
   rental: number
   commission: number
   other: number
@@ -81,13 +82,18 @@ export type AuditItem = {
 export type AuditSignOff = { by: string; at: string }
 
 // OWNER PREP — the Expedia fee breakout. Expedia-family bookings (Expedia, Hotels.com,
-// Orbitz, Travelocity…) land on the statement with their fees lump-summed into the nightly
-// income: in June 2026 only 15 of 102 such reservations carried a separate Cleaning-fee
-// line and only 7 an RM line. Statement prep = every one of those reservations gets its
-// fees broken out into Cleaning fee + RM fees before the statement goes to the owner.
-// The saved split lives in owner_audit_reviews under item_key 'prep:<code>' (note = JSON).
+// Orbitz, Travelocity…) land with their fees lump-summed into the nightly income: in June
+// 2026 only 15 of 102 such reservations carried a separate Cleaning-fee line and only 7 an
+// RM line. Statement prep = every one gets its fees broken out into Cleaning fee + RM fees
+// ON THE RESERVATION IN GUESTY. The app TRACKS the work (deep link to edit, mark done —
+// no amounts entered here). The list is pulled from the month's RESERVATIONS, not from
+// what happens to already sit on a statement. Done-marks live in owner_audit_reviews under
+// item_key 'prep:<code>' with owner_id '-' (owner attribution can change as statements
+// generate, the reservation code doesn't).
+export const PREP_OWNER = '-'
 export type PrepItem = {
-  ownerId: string
+  ownerId: string                // owning statement's owner id when known, '' otherwise
+  ownerName: string
   resCode: string
   guest: string
   unit: string
@@ -95,11 +101,19 @@ export type PrepItem = {
   checkOut: string
   source: string
   reservationId: string
-  rental: number                 // in-month rental on the statement
+  onStatement: boolean           // ledger activity for this code exists this month
+  rental: number                 // in-month rental on the statement (0 when not on one yet)
   monthNights: number
   cleaningAmt: number | null     // cleaning-fee lines already on the statement (null = none)
   rmAmt: number | null           // RM lines already on the statement (null = none)
-  saved: { cleaning: number; rm: number; by: string; at: string } | null
+  // What the GUEST FOLIO (raw.money.invoiceItems) already shows — the split is normally done
+  // there, as separate "Cleaning fee" and "Revenue Fee" items with the lump zeroed out.
+  folioClean: number | null      // cleaning-fee folio items (null = folio unavailable)
+  folioRm: number | null         // revenue-fee folio items
+  folioLump: number | null       // "Additional Fees & Room Fees" lump still on the folio
+  splitDone: boolean             // folio carries both Cleaning + Revenue items — already broken out
+  noFees: boolean                // folio has no fee lump and no fee items — nothing to split
+  saved: { by: string; at: string } | null
 }
 
 export type AuditOwner = {
@@ -165,6 +179,9 @@ export function reservationNoteOf(customFields: any): string {
 const REFUND_RE = /refund/i
 const REIMB_RE = /reimburs|cleaning/i
 const OWNERISH_RE = /owner/i
+// Friends & family markers — matched against Guesty tags, source and guest name. These stays
+// are discounted on purpose, so they get TAGGED and their low-rate reads as informational.
+const FF_RE = /friends?\s*(&|and)\s*family|\bf\s*&\s*f\b|\bfnf\b|\bff\b|friends?[-_ ]?family|family[-_ ]?friends?|\bcomp(ed|limentary)?\b/i
 
 // ── EDITABLE RULES ────────────────────────────────────────────────────────────
 // The thresholds behind the flags are policy, not physics. Stored in app_settings (JSON over
@@ -276,7 +293,11 @@ function nightsWithin(checkIn: string, checkOut: string, start: string, endExcl:
   return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000)
 }
 
-/** Months that have generated statements, newest first — the picker feed. */
+/**
+ * Months for the picker, newest first: every month with generated statements PLUS the
+ * current and previous calendar months even when their statements don't exist yet — the
+ * PREP work (Expedia fee breakout) starts from reservations before statements generate.
+ */
 export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
   const sb = supabaseAdmin()
   const { data, error } = await sb.from('guesty_owner_statements')
@@ -290,8 +311,25 @@ export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
     const m = String(r.period_month || '')
     if (m) counts[m] = (counts[m] || 0) + 1
   }
+  const now = new Date()
+  const cur = now.toISOString().slice(0, 7)
+  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
+  if (counts[cur] === undefined) counts[cur] = 0
+  if (counts[prev] === undefined) counts[prev] = 0
   return Object.keys(counts).sort().reverse().slice(0, limit)
     .map(m => ({ m, label: MONTH_LABEL(m), statements: counts[m] }))
+}
+
+/**
+ * The month the team is actually working: the previous calendar month (month-end review
+ * happens after the month closes) — unless newer statements already exist.
+ */
+export function defaultAuditMonth(months: AuditMonthPick[]): string {
+  const now = new Date()
+  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
+  const withStmts = months.filter(x => x.statements > 0).map(x => x.m).sort().reverse()[0] || ''
+  const pick = withStmts > prev ? withStmts : prev
+  return months.some(x => x.m === pick) ? pick : (months[0]?.m || '')
 }
 
 /** Build the whole audit for one statement month. */
@@ -409,13 +447,47 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const resByCode: Record<string, any> = {}
   for (let i = 0; i < codes.length; i += 200) {
     const { data } = await sb.from('guesty_reservations')
-      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, custom_fields')
+      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, custom_fields, tags:raw->tags")
       .in('confirmation_code', codes.slice(i, i + 200))
     for (const r of (data || []) as any[]) {
       const c = String(r.confirmation_code || '')
       // Prefer a confirmed/completed booking if the code somehow appears twice.
       if (!resByCode[c] || String(r.status || '') === 'confirmed') resByCode[c] = r
       if (r.listing_id) listingIds.add(String(r.listing_id))
+    }
+  }
+
+  // 5a-bis. Every Expedia-family reservation touching the statement month — the PREP list
+  // comes from RESERVATIONS, so bookings show up to be worked even before (or without) a
+  // generated statement carrying them.
+  const expRes: any[] = []
+  {
+    const { data } = await sb.from('guesty_reservations')
+      .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id')
+      .gt('check_out', win.start).lt('check_in', win.endExcl)
+      .not('status', 'in', '(canceled,cancelled,inquiry,declined,expired)')
+      .or('source.ilike.%expedia%,source.ilike.%orbitz%,source.ilike.%travelocity%,source.ilike.%hotels%,source.ilike.%wotif%,source.ilike.%ebookers%,source.ilike.%cheaptickets%')
+      .limit(1000)
+    for (const r of (data || []) as any[]) {
+      if (!EXPEDIA_RE.test(String(r.source || ''))) continue
+      expRes.push(r)
+      if (r.listing_id) listingIds.add(String(r.listing_id))
+    }
+  }
+
+  // Guest-folio invoice items for those reservations — the fee split is normally done HERE
+  // ("Cleaning fee" + "Revenue Fee" items, lump zeroed), and it does not surface in the
+  // owner ledger. Fetched only for the Expedia set (~100 rows), never portfolio-wide.
+  const folioByRes: Record<string, any[]> = {}
+  {
+    const ids = expRes.map(r => String(r.id || '')).filter(Boolean)
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await sb.from('guesty_reservations')
+        .select('id, inv:raw->money->invoiceItems')
+        .in('id', ids.slice(i, i + 100))
+      for (const r of (data || []) as any[]) {
+        folioByRes[String(r.id)] = Array.isArray((r as any).inv) ? (r as any).inv : []
+      }
     }
   }
 
@@ -475,17 +547,14 @@ export async function buildAudit(month: string): Promise<AuditData> {
     .eq('month', month)
   // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500.
   const reviews: Record<string, any> = {}
-  const prepSaved: Record<string, { cleaning: number; rm: number; by: string; at: string }> = {}
+  const prepSaved: Record<string, { by: string; at: string }> = {}
   if (!revErr) for (const r of (revRows || []) as any[]) {
     const key = String(r.item_key)
     if (key.startsWith(PREP_PREFIX)) {
       if (String(r.status) === 'done') {
-        let j: any = null
-        try { j = JSON.parse(String(r.note || '')) } catch { /* unreadable split — treat as unsaved */ }
-        if (j) prepSaved[String(r.owner_id) + '|' + key.slice(PREP_PREFIX.length)] = {
-          cleaning: Number(j.cleaning) || 0, rm: Number(j.rm) || 0,
-          by: String(r.updated_by || ''), at: String(r.updated_at || ''),
-        }
+        // Keyed by CODE only — prep rows are stored under owner '-' (older rows may carry a
+        // real owner id; the code is what identifies the reservation either way).
+        prepSaved[key.slice(PREP_PREFIX.length)] = { by: String(r.updated_by || ''), at: String(r.updated_at || '') }
       }
       continue
     }
@@ -622,6 +691,16 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const bench = g.resCode ? benchOf(pre) : null
     const benchPct = bench && g.rental > 0.005 && bench.expected > 0 ? Math.round((g.rental / bench.expected) * 100) : null
 
+    // Owner stays and friends & family: tagged from Guesty tags, source and guest name.
+    // Their discounts are by design — they stay visible but never read as pricing errors.
+    const tagBlob = (res && Array.isArray((res as any).tags) ? (res as any).tags.map((t: any) => String(t)).join(' ') : '')
+    const srcStr = res ? String(res.source || '') : ''
+    const guestStr = res ? String(res.guest_name || '') : ''
+    const stayTag: 'owner' | 'ff' | null = !g.resCode ? null
+      : (FF_RE.test(tagBlob) || FF_RE.test(guestStr)) ? 'ff'
+        : (OWNERISH_RE.test(srcStr) || OWNERISH_RE.test(tagBlob) || OWNERISH_RE.test(guestStr)) ? 'owner'
+          : null
+
     const flags: AuditFlag[] = []
     const on = rules.enabled
     if (g.resCode) {
@@ -638,9 +717,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (Math.abs(g.rental) < 0.005 && reimbAmt > 0.005) {
         if (on.orphan_reimb) flags.push({ type: 'orphan_reimb', severity: 'review', amount: reimbAmt, detail: 'Reimbursement with no rental income on the block — no booking justifies it.' })
       } else if (on.zero_rev && Math.abs(g.rental) < 0.005 && !flags.length) {
-        const ownerish = OWNERISH_RE.test(String(res?.source || '')) || OWNERISH_RE.test(String(res?.guest_name || ''))
-        flags.push({ type: 'zero_rev', severity: ownerish ? 'info' : 'review',
-          detail: ownerish ? 'Owner stay — $0 revenue by design; note any associated costs.' : '$0 revenue and not obviously an owner stay.' })
+        flags.push({ type: 'zero_rev', severity: stayTag ? 'info' : 'review',
+          detail: stayTag === 'ff' ? 'Friends & family stay — $0 revenue by design; note any associated costs.'
+            : stayTag === 'owner' ? 'Owner stay — $0 revenue by design; note any associated costs.'
+              : '$0 revenue and not obviously an owner or friends & family stay.' })
       }
       // LOW RATE — always on in-month nights only, so split-month stays are never flagged
       // for looking small on this month's statement. Night-mix aware (midweek stays are
@@ -652,20 +732,25 @@ export async function buildAudit(month: string): Promise<AuditData> {
           + (splitMonth ? ', split-month stay' : '')
         const lastMin = leadDays != null && leadDays <= rules.lastMinDays
         const effPct = lastMin ? Math.max(10, rules.lowRatePct - rules.lastMinExtra) : rules.lowRatePct
+        // Owner / F&F stays are discounted on purpose: the low rate stays VISIBLE but reads
+        // as informational, never as a pricing error to chase.
+        const lrSev: AuditSeverity = stayTag ? 'info' : 'review'
+        const lrTagNote = stayTag === 'ff' ? ' Friends & family stay — discounted by design.'
+          : stayTag === 'owner' ? ' Owner stay — discounted by design.' : ''
         if (rules.lowRateMode === 'absolute') {
           if (rate < rules.lowRate) {
-            flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRate + ' threshold.' })
+            flags.push({ type: 'low_rate', severity: lrSev, amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRate + ' threshold.' + lrTagNote })
           }
         } else if (rate < rules.lowRateFloor) {
-          flags.push({ type: 'low_rate', severity: 'review', amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' })
+          flags.push({ type: 'low_rate', severity: lrSev, amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' + lrTagNote })
         } else if (bench && benchPct != null && benchPct < effPct) {
           flags.push({
-            type: 'low_rate', severity: 'review', amount: rate,
+            type: 'low_rate', severity: lrSev, amount: rate,
             detail: 'Brought in ' + benchPct + '% of the expected revenue for this night mix — $' + rate.toFixed(2) + '/night vs the expected ≈$'
               + bench.perNight.toFixed(0) + '/night on ' + mixTxt + ', per the ' + bench.label
               + ' (midweek ≈$' + bench.wdAvg.toFixed(0) + '/n · weekend ≈$' + bench.weAvg.toFixed(0) + '/n, this + last month'
               + (bench.prevAvg != null ? '; last month blended $' + bench.prevAvg.toFixed(0) + '/n' : '') + ')'
-              + (lastMin ? '. Booked ' + leadDays + 'd before check-in — still short even with the last-minute bar of ' + effPct + '%.' : '.'),
+              + (lastMin ? '. Booked ' + leadDays + 'd before check-in — still short even with the last-minute bar of ' + effPct + '%.' : '.') + lrTagNote,
           })
         }
       }
@@ -690,26 +775,6 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const defaultStatus: AuditStatus = worst === 'info' ? 'done' : 'review'
     const comments: AuditComment[] = Array.isArray(saved?.comments) ? saved.comments : []
 
-    // OWNER PREP: Expedia-family reservations need their fees broken out.
-    if (g.resCode && res && EXPEDIA_RE.test(String(res.source || ''))) {
-      const cleanAmt = g.lines.filter(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label)).reduce((a, l) => a + l.amount, 0)
-      const rmAmt = g.lines.filter(l => PREP_RM_RE.test(l.label)).reduce((a, l) => a + l.amount, 0)
-      const hasClean = g.lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
-      const hasRm = g.lines.some(l => PREP_RM_RE.test(l.label))
-      prep.push({
-        ownerId: g.ownerId, resCode: g.resCode,
-        guest: res ? String(res.guest_name || '') : '',
-        unit: unitOf[bestListing] || '',
-        checkIn, checkOut,
-        source: String(res.source || ''),
-        reservationId: res ? String(res.id || '') : '',
-        rental: g.rental, monthNights,
-        cleaningAmt: hasClean ? money(cleanAmt) : null,
-        rmAmt: hasRm ? money(rmAmt) : null,
-        saved: prepSaved[g.ownerId + '|' + g.resCode] || null,
-      })
-    }
-
     items.push({
       key,
       kind: g.resCode ? 'reservation' : 'line',
@@ -726,7 +791,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       benchLabel: bench ? bench.label : '',
       benchPct,
       benchPrev: bench ? bench.prevAvg : null,
-      mixWeekday, mixWeekend, leadDays,
+      mixWeekday, mixWeekend, leadDays, stayTag,
       rental: g.rental, commission: g.commission, other: g.other, net,
       rate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
@@ -762,6 +827,53 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // rows are completed again, which keeps the who/when honest.)
   for (const o of Object.values(owners)) if (o.open > 0) o.signOff = null
 
+  // PREP assembly — one entry per Expedia-family reservation touching the month, enriched
+  // with whatever its statement (if any) already shows for cleaning/RM lines.
+  const codeGroup: Record<string, Group> = {}
+  for (const g of Object.values(groups)) if (g.resCode && !codeGroup[g.resCode]) codeGroup[g.resCode] = g
+  const invTitle = (x: any) => String(x?.title || x?.name || '')
+  const invAmt = (x: any) => Number(x?.amount) || 0
+  const FOLIO_RM_RE = /revenue|\brm\b/i
+  const FOLIO_LUMP_RE = /additional fees|room fees/i
+  for (const r of expRes) {
+    const code = String(r.confirmation_code || '')
+    if (!code) continue
+    const g = codeGroup[code]
+    const lines = g ? g.lines : []
+    const hasClean = lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
+    const hasRm = lines.some(l => PREP_RM_RE.test(l.label))
+    const ci = String(r.check_in || '').slice(0, 10)
+    const co = String(r.check_out || '').slice(0, 10)
+
+    const inv = folioByRes[String(r.id || '')] || []
+    const fClean = money(inv.filter(x => PREP_CLEAN_RE.test(invTitle(x))).reduce((a, x) => a + invAmt(x), 0))
+    const fRm = money(inv.filter(x => !PREP_CLEAN_RE.test(invTitle(x)) && FOLIO_RM_RE.test(invTitle(x))).reduce((a, x) => a + invAmt(x), 0))
+    const fLump = money(inv.filter(x => FOLIO_LUMP_RE.test(invTitle(x))).reduce((a, x) => a + invAmt(x), 0))
+    const splitDone = inv.length > 0 && fClean > 0.5 && fRm > 0.5
+    const noFees = inv.length > 0 && !splitDone && fClean <= 0.5 && fRm <= 0.5 && fLump <= 0.5
+
+    prep.push({
+      ownerId: g ? g.ownerId : '',
+      ownerName: g ? (owners[g.ownerId]?.ownerName || '') : '',
+      resCode: code,
+      guest: String(r.guest_name || ''),
+      unit: unitOf[String(r.listing_id || '')] || '',
+      checkIn: ci, checkOut: co,
+      source: String(r.source || ''),
+      reservationId: String(r.id || ''),
+      onStatement: !!g,
+      rental: g ? g.rental : 0,
+      monthNights: (ci && co) ? nightsWithin(ci, co, win.start, win.endExcl) : 0,
+      cleaningAmt: g && hasClean ? money(lines.filter(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label)).reduce((a, l) => a + l.amount, 0)) : null,
+      rmAmt: g && hasRm ? money(lines.filter(l => PREP_RM_RE.test(l.label)).reduce((a, l) => a + l.amount, 0)) : null,
+      folioClean: inv.length ? fClean : null,
+      folioRm: inv.length ? fRm : null,
+      folioLump: inv.length ? fLump : null,
+      splitDone, noFees,
+      saved: prepSaved[code] || null,
+    })
+  }
+
   const t = {
     owners: Object.keys(owners).length,
     statements: stmts.length,
@@ -772,7 +884,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     action: items.filter(i => i.status === 'action').length,
     done: items.filter(i => i.status === 'done').length,
     signedOff: Object.values(owners).filter(o => o.signOff).length,
-    prepOpen: prep.filter(p => (p.cleaningAmt == null || p.rmAmt == null) && !p.saved).length,
+    prepOpen: prep.filter(p => !prepResolved(p)).length,
     rental: money(Object.values(owners).reduce((a, o) => a + o.rental, 0)),
     commission: money(Object.values(owners).reduce((a, o) => a + o.commission, 0)),
     net: money(Object.values(owners).reduce((a, o) => a + o.net, 0)),
@@ -789,7 +901,12 @@ export async function buildAudit(month: string): Promise<AuditData> {
     coverage: { ready: covered, missing: covered ? [] : [month] },
     rules,
     prep: prep.sort((a, b) =>
-      Number(!!a.saved || (a.cleaningAmt != null && a.rmAmt != null)) - Number(!!b.saved || (b.cleaningAmt != null && b.rmAmt != null))
-      || a.ownerId.localeCompare(b.ownerId) || a.checkIn.localeCompare(b.checkIn)),
+      Number(prepResolved(a)) - Number(prepResolved(b))
+      || a.ownerName.localeCompare(b.ownerName) || a.checkIn.localeCompare(b.checkIn)),
   }
+}
+
+/** A prep item is resolved when the split is visible somewhere, or a human marked it done. */
+export function prepResolved(p: PrepItem): boolean {
+  return p.splitDone || p.noFees || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
 }
