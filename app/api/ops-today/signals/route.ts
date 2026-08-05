@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
     const calTo = addDays(today, 14)
     const db = supabaseAdmin()
 
-    const [tasksR, revR, resR, audR, actR] = await Promise.all([
+    const [tasksR, revR, resR, audR, actR, lstR] = await Promise.all([
       db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department,report_url')
         .in('reference_property_id', ids).gte('scheduled_date', historyFrom).limit(8000),
@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
       // should show them on the unit the cleaner is already standing in. Fail-open if absent.
       db.from('review_actions').select('listing_id,title,action,kind,severity,status')
         .in('listing_id', ids).in('status', ['open', 'doing']).limit(1000),
+      // amenities decide whether the unit HAS a central A/C filter to change at all
+      db.from('guesty_listings').select('id,amenities').in('id', ids).limit(200),
     ])
     const tasks = (tasksR.data || []) as any[]
     const reviews = (revR.data || []) as any[]
@@ -76,6 +78,15 @@ export async function GET(req: NextRequest) {
       if (!/complete/i.test(str(a.status))) continue
       const k = str(a.listing_id), when = str(a.created_at).slice(0, 10)
       if (k && when && (!auditLast[k] || when > auditLast[k])) auditLast[k] = when
+    }
+
+    // Central-AC detection from Guesty amenities. Unknown (no amenities synced) fails OPEN — the
+    // care panel shows the filter row rather than silently hiding a real filter that needs changing.
+    const amen: Record<string, { known: boolean; central: boolean }> = {}
+    for (const l of (((lstR as any).data || []) as any[])) {
+      const a = l.amenities
+      const list = Array.isArray(a) ? a.map((x: any) => str(x)).join(' | ').toLowerCase() : str(a).toLowerCase()
+      amen[str(l.id)] = { known: list.length > 0, central: /central\s*(air|a\/?c)/.test(list) }
     }
 
     // group by listing
@@ -120,6 +131,7 @@ export async function GET(req: NextRequest) {
       const doneTasks = mine.filter(t => t.finished_at || isDone(str(t.status).toLowerCase()))
       const upkeep: any[] = []     // OVERDUE with evidence -> earns a chip on the unit header
       const unknown: any[] = []     // no record at all -> shown inside the panel, never as a chip
+      const lastByKey: Record<string, any> = {}
       for (const rule of UPKEEP) {
         let last: string | null = null
         for (const t of doneTasks) {
@@ -129,12 +141,32 @@ export async function GET(req: NextRequest) {
         }
         if (rule.key === 'audit' && auditLast[id] && (!last || auditLast[id] > last)) last = auditLast[id]
         const months = last ? monthsBetween(last, today) : null
-        const row = { key: rule.key, label: rule.label, short: rule.short, template: rule.template, lastAt: last, monthsAgo: months === null ? null : Math.round(months * 10) / 10, every: rule.every, neverSeen: months === null }
+        const row = { key: rule.key, label: rule.label, short: rule.short, template: rule.template, lastAt: last, monthsAgo: months === null ? null : Math.round(months * 10) / 10, every: rule.every, neverSeen: months === null, due: months !== null && months >= rule.every }
+        lastByKey[rule.key] = row
         // "No record" is not evidence of neglect - it usually means the job was never logged in
         // Breezeway. Those go in the panel so a GM can still act, but they do NOT shout on the board.
         if (months === null) unknown.push(row)
         else if (months >= rule.every) upkeep.push(row)
       }
+
+      // CARE — Jon's fixed list, 2026-08-05: the ONLY recurring facts the unit card offers. Last PM,
+      // last lock-battery change, last A/C filter change (central AC only), last inspection. From
+      // these dates the team decides what to do; everything else is noise.
+      const ac = amen[id] || { known: false, central: false }
+      let lastInspection: string | null = null
+      for (const t of doneTasks) {
+        if (!/inspection|walkthrough|unit check|audit/i.test(str(t.name))) continue
+        const when = str(t.finished_at || t.scheduled_date).slice(0, 10)
+        if (when && (!lastInspection || when > lastInspection)) lastInspection = when
+      }
+      if (auditLast[id] && (!lastInspection || auditLast[id] > lastInspection)) lastInspection = auditLast[id]
+      const inspMonths = lastInspection ? monthsBetween(lastInspection, today) : null
+      const care: any[] = [
+        lastByKey.pm,
+        lastByKey.batteries,
+        ...((ac.central || !ac.known) ? [lastByKey.acfilter] : []),
+        { key: 'inspection', label: 'Inspection', short: 'Inspection', template: 'inspection', lastAt: lastInspection, monthsAgo: inspMonths === null ? null : Math.round(inspMonths * 10) / 10, every: 3, neverSeen: inspMonths === null, due: inspMonths !== null && inspMonths >= 3 },
+      ].filter(Boolean)
 
       // 14-DAY OCCUPANCY — which days the unit is empty, and where the checkouts land
       const stays = resByListing[id] || []
@@ -156,7 +188,7 @@ export async function GET(req: NextRequest) {
       // open feedback-fix jobs on this unit (from the review-actions board)
       const fx = (((actR as any).data || []) as any[]).filter(a => String(a.listing_id) === id)
       const feedback = fx.length ? { count: fx.length, urgent: fx.some(a => String(a.severity) === 'urgent'), top: String((fx.find(a => String(a.severity) === 'urgent') || fx[0]).title || '').slice(0, 80) } : null
-      signals[id] = { pending, review, upkeep, unknown, days, nextFree, nextCheckout, feedback }
+      signals[id] = { pending, review, upkeep, unknown, care, centralAc: ac.central, days, nextFree, nextCheckout, feedback }
 
       // discovery: what other recurring work exists that we are NOT tracking yet
       for (const t of doneTasks) {
