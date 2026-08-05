@@ -116,6 +116,7 @@ export type PrepItem = {
   splitDone: boolean             // folio carries both Cleaning + Revenue items — already broken out
   noFees: boolean                // folio has NO fee lump and NO fee items — fees never set up (warning)
   saved: { by: string; at: string } | null
+  note: string                   // free-form prep note, always visible
 }
 
 export type AuditOwner = {
@@ -137,6 +138,7 @@ export type AuditOwner = {
   notes: number                  // items with an audit note
   commentCount: number           // total comments across the owner's items
   signOff: AuditSignOff | null
+  stmtNote: string               // statement-level note (stored on the __statement__ row)
 }
 
 export type AuditMonthPick = { m: string; label: string; statements: number }
@@ -188,6 +190,7 @@ export type ResolutionClaim = {
   summary: string
   onStatement: boolean           // a resolution ledger line exists for this code this month
   stmtAmount: number | null      // what that ledger line(s) put on the statement
+  note: string                   // free-form review note (stored under item_key resl:<id>)
 }
 export type ResolutionLine = {
   ownerId: string
@@ -427,7 +430,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     ownerId: id, ownerName: '', hasStatement: !!stmtByOwner[id],
     dueToOwner: stmtByOwner[id] ? (Number(stmtByOwner[id].due_to_owner ?? 0) || 0) : null,
     rental: 0, commission: 0, other: 0, net: 0, paid: 0, ties: false, items: 0, open: 0,
-    done: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null,
+    done: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null, stmtNote: '',
   })
 
   for (const r of rows) {
@@ -590,21 +593,30 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500.
   const reviews: Record<string, any> = {}
   const prepSaved: Record<string, { by: string; at: string }> = {}
+  const prepNote: Record<string, string> = {}
+  const reslNote: Record<string, string> = {}
   if (!revErr) for (const r of (revRows || []) as any[]) {
     const key = String(r.item_key)
     if (key.startsWith(PREP_PREFIX)) {
-      if (String(r.status) === 'done') {
-        // Keyed by CODE only — prep rows are stored under owner '-' (older rows may carry a
-        // real owner id; the code is what identifies the reservation either way).
-        prepSaved[key.slice(PREP_PREFIX.length)] = { by: String(r.updated_by || ''), at: String(r.updated_at || '') }
-      }
+      // Keyed by CODE only — prep rows are stored under owner '-' (older rows may carry a
+      // real owner id; the code is what identifies the reservation either way).
+      const code = key.slice(PREP_PREFIX.length)
+      if (String(r.status) === 'done') prepSaved[code] = { by: String(r.updated_by || ''), at: String(r.updated_at || '') }
+      if (r.note) prepNote[code] = String(r.note)
+      continue
+    }
+    if (key.startsWith('resl:')) {
+      if (r.note) reslNote[key.slice(5)] = String(r.note)
       continue
     }
     if (key === SIGNOFF_KEY) {
       // Sign-off rows are owner-level, not items. status 'done' = signed off; anything else
-      // (a cleared sign-off) reads as not signed.
+      // (a cleared sign-off) reads as not signed. The note rides along either way.
       const o = owners[String(r.owner_id)]
-      if (o && String(r.status) === 'done') o.signOff = { by: String(r.updated_by || ''), at: String(r.updated_at || '') }
+      if (o) {
+        if (String(r.status) === 'done') o.signOff = { by: String(r.updated_by || ''), at: String(r.updated_at || '') }
+        if (r.note) o.stmtNote = String(r.note)
+      }
       continue
     }
     reviews[String(r.owner_id) + '|' + key] = r
@@ -938,6 +950,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       folioLump: inv.length ? fLump : null,
       splitDone, noFees,
       saved: prepSaved[code] || null,
+      note: prepNote[code] || '',
     })
   }
 
@@ -980,6 +993,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
             summary: String(c.summary || ''),
             onStatement: !!code && stmtResByCode[code] !== undefined,
             stmtAmount: code && stmtResByCode[code] !== undefined ? stmtResByCode[code] : null,
+            note: reslNote[String(c.id || '')] || '',
           }
         })
         .sort((a, b) => Number(!!b.paidOn) - Number(!!a.paidOn) === 0
