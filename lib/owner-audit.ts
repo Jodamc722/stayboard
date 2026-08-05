@@ -62,6 +62,7 @@ export type AuditItem = {
   mixWeekend: number             // in-month weekend nights (Fri–Sat)
   leadDays: number | null        // days between booking creation and check-in
   stayTag: 'owner' | 'ff' | null // owner stay / friends & family — discounts are by design
+  canceled: boolean              // reservation is canceled — partial payout/cancel fee expected
   rental: number
   commission: number
   other: number
@@ -778,6 +779,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
       : (FF_RE.test(tagBlob) || FF_RE.test(guestStr)) ? 'ff'
         : (OWNERISH_RE.test(srcStr) || OWNERISH_RE.test(tagBlob) || OWNERISH_RE.test(guestStr)) ? 'owner'
           : null
+    // Canceled reservations still leave money on the statement (cancellation fees, partial
+    // payouts) — their "nightly rate" is meaningless, so they get TAGGED and never flag.
+    const canceled = !!res && /cancel/i.test(String(res.status || ''))
 
     const flags: AuditFlag[] = []
     const on = rules.enabled
@@ -795,10 +799,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (Math.abs(g.rental) < 0.005 && reimbAmt > 0.005) {
         if (on.orphan_reimb) flags.push({ type: 'orphan_reimb', severity: 'review', amount: reimbAmt, detail: 'Reimbursement with no rental income on the block — no booking justifies it.' })
       } else if (on.zero_rev && Math.abs(g.rental) < 0.005 && !flags.length) {
-        flags.push({ type: 'zero_rev', severity: stayTag ? 'info' : 'review',
-          detail: stayTag === 'ff' ? 'Friends & family stay — $0 revenue by design; note any associated costs.'
-            : stayTag === 'owner' ? 'Owner stay — $0 revenue by design; note any associated costs.'
-              : '$0 revenue and not obviously an owner or friends & family stay.' })
+        flags.push({ type: 'zero_rev', severity: (stayTag || canceled) ? 'info' : 'review',
+          detail: canceled ? 'Canceled reservation — $0 net is expected.'
+            : stayTag === 'ff' ? 'Friends & family stay — $0 revenue by design; note any associated costs.'
+              : stayTag === 'owner' ? 'Owner stay — $0 revenue by design; note any associated costs.'
+                : '$0 revenue and not obviously an owner, friends & family, or canceled stay.' })
       }
       // LOW RATE — judged on the WHOLE-RESERVATION average (total value / total nights, the
       // folio's nightly rate), NEVER on in-month ledger math: the statement only carries
@@ -813,9 +818,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
         const effPct = lastMin ? Math.max(10, rules.lowRatePct - rules.lastMinExtra) : rules.lowRatePct
         // Owner / F&F stays are discounted on purpose: the low rate stays VISIBLE but reads
         // as informational, never as a pricing error to chase.
-        const lrSev: AuditSeverity = stayTag ? 'info' : 'review'
-        const lrTagNote = stayTag === 'ff' ? ' Friends & family stay — discounted by design.'
-          : stayTag === 'owner' ? ' Owner stay — discounted by design.' : ''
+        const lrSev: AuditSeverity = (stayTag || canceled) ? 'info' : 'review'
+        const lrTagNote = canceled ? ' Canceled reservation — cancellation fee / partial payout, a low nightly figure is expected.'
+          : stayTag === 'ff' ? ' Friends & family stay — discounted by design.'
+            : stayTag === 'owner' ? ' Owner stay — discounted by design.' : ''
         if (rules.lowRateMode === 'absolute') {
           if (avgRate < rules.lowRate) {
             flags.push({ type: 'low_rate', severity: lrSev, amount: avgRate, detail: 'Whole-stay average $' + avgRate.toFixed(2) + '/night on a ' + stayTxt + ' — under the $' + rules.lowRate + ' threshold.' + lrTagNote })
@@ -870,7 +876,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       benchLabel: bench ? bench.label : '',
       benchPct,
       benchPrev: bench ? bench.prevAvg : null,
-      mixWeekday, mixWeekend, leadDays, stayTag,
+      mixWeekday, mixWeekend, leadDays, stayTag, canceled,
       rental: g.rental, commission: g.commission, other: g.other, net,
       rate, avgRate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
