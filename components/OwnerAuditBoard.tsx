@@ -109,7 +109,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   refund: 'Any refund-looking line, captured with its amount.',
   zero_rev: '$0 reservations that are not obviously owner stays.',
   passthru: 'Commission fully offsets rental — a wash by design (informational).',
-  no_reservation: 'Ledger code not found in the reservations mirror (informational).',
+  no_reservation: 'Statement line items whose reservation code has no matching booking (informational).',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
@@ -180,7 +180,7 @@ const SourceChip = ({ source }: { source: string }) => {
 }
 
 // What "Ties / Off by" actually means — owner statements are ACCOUNTING-level documents.
-const TIE_HELP = 'Ties = this month’s recognized ledger lines (rental − commission + other) add up to the statement’s Due-to-owner, or to the amount actually paid out. “Off by” = ledger minus statement. A gap is NOT automatically an error: carried-forward balances, owner charges, reimbursements and payout timing all land in the statement’s accounting — treat it as a pointer to reconcile, not a verdict.'
+const TIE_HELP = 'Ties = adding up every line item on this statement (rental − commission + other charges) lands exactly on the statement’s Due-to-owner, or on the amount actually paid out. The $ figure = line items minus payout. A gap is NOT automatically an error: carried-forward balances, owner charges, reimbursements and payout timing all live in the statement’s accounting — treat it as a pointer to reconcile, not a verdict.'
 
 function worstOf(it: Item): Severity | null {
   if (it.flags.some(f => f.severity === 'high')) return 'high'
@@ -827,7 +827,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       )}
       {data && !data.coverage.ready && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2 flex items-center gap-2">
-          <AlertTriangle size={14} /> The ledger mirror has not fully swept {data.label} yet — these rows may be incomplete until the sync finishes.
+          <AlertTriangle size={14} /> The statement line items for {data.label} are still syncing from Guesty — rows may be incomplete until the sync finishes.
         </div>
       )}
 
@@ -1056,7 +1056,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <div>
                     {curOwner.hasStatement && (
                       <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (curOwner.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
-                        {curOwner.ties ? 'Ties to statement' : 'Ledger vs stmt: ' + fmt(Math.round((curOwner.net - (curOwner.dueToOwner || 0)) * 100) / 100)}
+                        {curOwner.ties ? 'Ties to statement' : 'Line items − payout: ' + fmt(Math.round((curOwner.net - (curOwner.dueToOwner || 0)) * 100) / 100)}
                       </span>
                     )}
                   </div>
@@ -1082,7 +1082,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 if (mine.length === 0) {
                   return (
                     <div className="rounded-2xl border border-line bg-white shadow-soft p-6 text-sm text-muted text-center">
-                      No ledger activity on this statement for {data.label}.
+                      No statement line items for {data.label}.
                     </div>
                   )
                 }
@@ -1467,7 +1467,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                       )}
                       {o.hasStatement && (
                         <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
-                          {o.ties ? 'Ties to statement' : 'Ledger vs stmt: ' + fmt(off || 0)}
+                          {o.ties ? 'Ties to statement' : 'Line items − payout: ' + fmt(off || 0)}
                         </span>
                       )}
                       {o.high > 0 && <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.high}>{o.high} high</span>}
@@ -1513,7 +1513,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
               {filtered.length === 0 && (
                 <div className="rounded-2xl border border-line bg-white shadow-soft p-8 text-center text-sm text-muted">
-                  Nothing matches these filters{data.items.length === 0 ? ' — no ledger activity found for ' + data.label : ''}.
+                  Nothing matches these filters{data.items.length === 0 ? ' — no statement line items found for ' + data.label : ''}.
                 </div>
               )}
             </>
