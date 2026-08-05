@@ -152,24 +152,60 @@ async function gather(variant: BriefVariant) {
 
 // ---------------------------------------------------------------- render
 const S = {
-  body: 'margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827',
-  wrap: 'max-width:660px;margin:0 auto;padding:24px 16px',
-  card: 'background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 22px;margin-bottom:14px',
-  h1: 'font-size:20px;font-weight:700;margin:0 0 4px',
-  sub: 'font-size:13px;color:#6b7280;margin:0 0 14px',
-  h2: 'font-size:14px;font-weight:700;margin:0 0 10px',
-  strip: 'background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 16px;margin-bottom:14px;font-size:13px;text-align:center;line-height:1.9',
-  td: 'padding:6px 8px;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top',
-  th: 'padding:0 8px 6px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;text-align:left',
+  // Email-safe design system: one accent (indigo), status colors reserved (red=act, amber=watch,
+  // green=good, blue=identity) and never color-alone — every pill carries its word. Inline styles
+  // only; tables for layout (Gmail ignores grid/flex).
+  body: 'margin:0;padding:0;background:#eef0f3;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220',
+  wrap: 'max-width:680px;margin:0 auto;padding:20px 14px',
+  // Header band — the letterhead.
+  bandOuter: 'background:#0b1220;border-radius:14px 14px 0 0;padding:20px 24px 16px',
+  bandBrand: 'font-size:11px;font-weight:700;letter-spacing:.22em;color:#a5b4fc;margin:0 0 6px',
+  bandTitle: 'font-size:21px;font-weight:700;color:#ffffff;margin:0',
+  bandSub: 'font-size:12px;color:#94a3b8;margin:6px 0 0',
+  tilesOuter: 'background:#ffffff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 14px 14px;padding:6px 10px 14px;margin-bottom:14px',
+  tileLabel: 'font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;padding:10px 8px 0;text-align:center',
+  tileValue: 'font-size:22px;font-weight:600;color:#0b1220;padding:2px 8px 0;text-align:center',
+  tileNote: 'font-size:10px;color:#9ca3af;padding:0 8px;text-align:center',
+  card: 'background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden',
+  cardHead: 'padding:12px 20px 10px;border-bottom:1px solid #f3f4f6',
+  cardBody: 'padding:6px 20px 14px',
+  h2: 'font-size:13px;font-weight:700;margin:0;color:#0b1220',
+  h2n: 'font-weight:400;color:#9ca3af',
+  td: 'padding:8px 8px;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top;line-height:1.5',
+  th: 'padding:8px 8px 4px;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;text-align:left;font-weight:600',
   red: 'color:#b91c1c;font-weight:600', green: 'color:#047857;font-weight:600', amber: 'color:#b45309;font-weight:600',
-  pill: 'display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:1px 6px;border-radius:6px;vertical-align:middle',
-  foot: 'font-size:11px;color:#9ca3af;margin-top:6px',
+  muted: 'color:#6b7280',
+  pill: 'display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:1px 7px;border-radius:999px;vertical-align:middle',
+  foot: 'font-size:11px;color:#9ca3af;margin:14px 4px 0;text-align:center',
 }
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
 const pillRed = (t: string) => `<span style="${S.pill};background:#fee2e2;color:#b91c1c">${t}</span>`
 const pillAmber = (t: string) => `<span style="${S.pill};background:#fef3c7;color:#b45309">${t}</span>`
 const pillBlue = (t: string) => `<span style="${S.pill};background:#e0e7ff;color:#4338ca">${t}</span>`
 const stars = (n: number) => n >= 4.75 ? '★★★★★' : n >= 4 ? '★★★★' : n >= 3 ? '★★★' : n >= 2 ? '★★' : '★'
+
+// Stat-tile row, table-based for email clients. tone colors the VALUE only when it needs attention.
+type Tile = { label: string; value: string; note?: string; tone?: 'red' | 'amber' | 'green' }
+function tileRow(tiles: Tile[]): string {
+  const toneCss = (t?: string) => t === 'red' ? ';color:#b91c1c' : t === 'amber' ? ';color:#b45309' : t === 'green' ? ';color:#047857' : ''
+  return `<table width="100%" cellspacing="0" cellpadding="0"><tr>` +
+    tiles.map(t => `<td style="width:${Math.round(100 / tiles.length)}%">
+      <div style="${S.tileLabel}">${t.label}</div>
+      <div style="${S.tileValue}${toneCss(t.tone)}">${t.value}</div>
+      ${t.note ? `<div style="${S.tileNote}">${t.note}</div>` : ''}
+    </td>`).join('') + `</tr></table>`
+}
+
+// A section card: thin accent bar on the header, count de-emphasised next to the title.
+function card(title: string, count: number | null, inner: string, accent = '#6366f1'): string {
+  return `<div style="${S.card}">
+    <div style="${S.cardHead};border-left:3px solid ${accent}">
+      <p style="${S.h2}">${title}${count != null ? ` <span style="${S.h2n}">· ${count}</span>` : ''}</p>
+    </div>
+    <div style="${S.cardBody}">${inner}</div>
+  </div>`
+}
+const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:8px 0 2px">${t}</p>`
 
 export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const d = await gather(variant)
@@ -178,7 +214,14 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
 
   const arrivals: any[] = sheet.arrivals || []
-  const ownerStays: any[] = sheet.ownerStays || []
+  // The daysheet's ownerStays bucket mixes three signals of very different quality:
+  //   'owner booking'      — Guesty source says owner. TRUE owner stay.
+  //   'manual / block'     — a manually entered booking. NOT an owner (this mislabelled a regular
+  //                          guest as an owner in the first test send — never again).
+  //   'name matches owner' — guest name fuzzy-matches the unit owner's. A hint, not a fact.
+  // The brief shows verified owner bookings as OWNER, shows name-matches as "possible owner —
+  // verify", and drops manual blocks from this section entirely.
+  const ownerStays: any[] = (sheet.ownerStays || []).filter((o: any) => str(o.ownerFlag) !== 'manual / block')
   const vacants: any[] = sheet.vacants || []
   const glitches: any[] = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)))
   const highExceptions: any[] = (sheet.exceptions || []).filter((e: any) => e.severity === 'high').slice(0, 6)
@@ -209,7 +252,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const arrivalsRows = arrivals.slice(0, 20).map((a: any) => `
     <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? `<br><span style="color:#6b7280">${esc(str(a.checkInTime))}</span>` : ''}</td>
     <td style="${S.td}">${esc(str(a.guest))}${a.nights ? ` · ${a.nights}n` : ''}
-      ${a.ownerFlag ? ' ' + pillBlue('OWNER') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber('BIG $') : ''}</td></tr>`).join('')
+      ${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber('BIG $') : ''}</td></tr>`).join('')
 
   const cleansRows = d.cleans.map(c => `
     <tr><td style="${S.td}">${esc(c.unit)}${c.sameDayArrival ? ` <span style="${S.red}">← arrival today</span>` : ''}</td>
@@ -239,9 +282,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <tr><td style="${S.td}"><b>${esc(i.unit)}</b><br><span style="color:#6b7280">guest feedback: ${esc(i.why)}</span></td>
     <td style="${S.td}">${esc(i.action)}</td></tr>`).join('')
 
-  const ownerRows = ownerStays.slice(0, 8).map((o: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(o.unit))}</b> ${pillBlue('OWNER')}</td>
-    <td style="${S.td}">${esc(str(o.owner || o.guest))} · until ${esc(str(o.checkOut).slice(5))} — white-glove standard, no shortcuts on this unit.</td></tr>`).join('')
+  const ownerRows = ownerStays.slice(0, 8).map((o: any) => {
+    const verified = str(o.ownerFlag) === 'owner booking'
+    return `
+    <tr><td style="${S.td}"><b>${esc(str(o.unit))}</b> ${verified ? pillBlue('OWNER') : pillAmber('POSSIBLE OWNER')}</td>
+    <td style="${S.td}">${esc(str(o.owner || o.guest))} · until ${esc(str(o.checkOut).slice(5))}${verified ? ' — white-glove standard, no shortcuts on this unit.' : ' — guest name matches the unit owner; verify before treating as an owner stay.'}</td></tr>`
+  }).join('')
 
   const rep = d.rep
   const repLine = rep.n
@@ -249,40 +295,49 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       (rep.owed ? ` · <span style="${S.red}">${rep.owed} awaiting a reply</span>` : ' · all replied')
     : 'No reviews in the last 30 days.'
 
-  const section = (title: string, inner: string) => `<div style="${S.card}"><p style="${S.h2}">${title}</p>${inner}</div>`
   const table = (heads: string[], rows: string) =>
     `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
 
+  const tiles: Tile[] = [
+    { label: 'Arrivals', value: String(arrivals.length) },
+    { label: 'Cleans', value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} same-day` : undefined, tone: sameDay.length ? 'amber' : undefined },
+    { label: 'Unassigned', value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
+    { label: 'Occupied', value: `${occupiedTonight}/${d.activeCount}`, note: 'tonight' },
+    { label: 'Guest issues', value: String(glitches.length), tone: glitches.length ? 'amber' : 'green' },
+    { label: 'New reviews', value: String(d.newReviews.length), note: lowNew.length ? `${lowNew.length} low` : undefined, tone: lowNew.length ? 'red' : undefined },
+  ]
+
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
-  <div style="${S.card}">
-    <p style="${S.h1}">Stay Hospitality — Morning Ops Brief</p>
-    <p style="${S.sub}">${dateNice} · ${label} · ${d.activeCount} active units</p>
-    <div style="${S.strip}">
-      <b>${arrivals.length}</b> arrivals &nbsp;|&nbsp; <b>${d.cleans.length}</b> departure cleans${sameDay.length ? ` (<span style="${S.red}">${sameDay.length} same-day</span>)` : ''} &nbsp;|&nbsp; ${unassigned.length ? `<span style="${S.red}"><b>${unassigned.length}</b> unassigned</span>` : 'all assigned'} &nbsp;|&nbsp; <b>${occupiedTonight}/${d.activeCount}</b> occupied tonight &nbsp;|&nbsp; <b>${glitches.length}</b> open guest issue${glitches.length === 1 ? '' : 's'}${d.newReviews.length ? ` &nbsp;|&nbsp; <b>${d.newReviews.length}</b> new review${d.newReviews.length === 1 ? '' : 's'}${lowNew.length ? ` (<span style="${S.red}">${lowNew.length} low</span>)` : ''}` : ''}
-    </div>
+  <div style="${S.bandOuter}">
+    <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="${S.bandTitle}">Morning Ops Brief — ${label}</p>
+    <p style="${S.bandSub}">${dateNice} · ${d.activeCount} active units · data as of send time</p>
   </div>
+  <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
 
-  ${priorities.length ? section('Top priorities — in order', `<p style="font-size:13px;margin:0;line-height:1.9">${priorities.slice(0, 10).join('<br>')}</p>`) : section('Top priorities', '<p style="font-size:13px;color:#047857;margin:0;font-weight:600">Nothing on fire. Work the list below and keep the 4pm deadline in sight.</p>')}
+  ${priorities.length
+    ? card('Top priorities — in order', priorities.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:2">${priorities.slice(0, 10).join('<br>')}</p>`, '#dc2626')
+    : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
 
-  ${arrivals.length ? section(`Arrivals today (${arrivals.length})`, table(['Unit', 'Guest'], arrivalsRows) + (arrivals.length > 20 ? `<p style="${S.foot}">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
+  ${arrivals.length ? card('Arrivals today', arrivals.length, table(['Unit', 'Guest'], arrivalsRows) + (arrivals.length > 20 ? `<p style="${S.foot};text-align:left">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
 
-  ${ownerStays.length ? section(`Owner stays in-house (${ownerStays.length})`, table(['Unit', 'Owner'], ownerRows)) : ''}
+  ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, table(['Unit', 'Owner'], ownerRows), '#4338ca') : ''}
 
-  ${section(`Departure cleans — who's on each door (${d.cleans.length})`, d.cleans.length ? table(['Unit', 'Cleaner', 'Status'], cleansRows) : '<p style="font-size:13px;color:#6b7280;margin:0">No departure cleans today.</p>')}
+  ${card("Departure cleans — who's on each door", d.cleans.length, d.cleans.length ? table(['Unit', 'Cleaner', 'Status'], cleansRows) : emptyLine('No departure cleans today.'))}
 
-  ${glitches.length ? section(`Open guest issues (${glitches.length})`, table(['Unit', 'Issue'], glitchRows)) : ''}
+  ${glitches.length ? card('Open guest issues', glitches.length, table(['Unit', 'Issue'], glitchRows), '#d97706') : ''}
 
-  ${d.newReviews.length ? section(`New reviews since yesterday (${d.newReviews.length})`, table(['Unit', 'Score'], newRevRows)) : ''}
+  ${d.newReviews.length ? card('New reviews since yesterday', d.newReviews.length, table(['Unit', 'Score'], newRevRows), lowNew.length ? '#dc2626' : '#059669') : ''}
 
-  ${d.bigArrivals.length ? section('Big reservations — next 3 days', table(['Unit', 'Stay'], bigRows)) : ''}
+  ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, table(['Unit', 'Stay'], bigRows), '#d97706') : ''}
 
-  ${section('Vacant units', `<p style="font-size:13px;margin:0;line-height:1.7">${vacantLine}</p>`)}
+  ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
 
-  ${d.inspect.length ? section('Units to inspect — recent guest feedback', table(['Unit · why', 'What to do'], inspectRows)) : ''}
+  ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
 
-  ${section('Reputation — last 30 days', `<p style="font-size:13px;margin:0">${repLine}</p>`)}
+  ${card('Reputation — last 30 days', null, `<p style="font-size:13px;margin:8px 0 2px">${repLine}</p>`)}
 
-  <p style="${S.foot}">Sent automatically by Lighthouse every morning. Data as of send time — the boards have the live picture.</p>
+  <p style="${S.foot}">Sent automatically by Lighthouse every morning · the boards have the live picture.</p>
   </div></body></html>`
 
   return {
@@ -348,19 +403,23 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   const tomRows = tomorrowArrivals.map(t => `
     <tr><td style="${S.td}"><b>${esc(t.unit)}</b></td><td style="${S.td}">arrival tomorrow${t.nights ? ` · ${t.nights} nights` : ''}</td></tr>`).join('')
 
-  const sec = (title: string, inner: string) => `<div style="${S.card}"><p style="${S.h2}">${title}</p>${inner}</div>`
   const tbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
 
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
-  <div style="${S.card}">
-    <p style="${S.h1}">Stay Hospitality — ${def.label} Housekeeping</p>
-    <p style="${S.sub}">${dateNice}</p>
-    <div style="${S.strip}"><b>${checkouts.length}</b> checkout${checkouts.length === 1 ? '' : 's'} to clean today &nbsp;|&nbsp; <b>${arrivals.length}</b> arrival${arrivals.length === 1 ? '' : 's'} today &nbsp;|&nbsp; <b>${tomorrowArrivals.length}</b> arriving tomorrow</div>
+  <div style="${S.bandOuter}">
+    <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="${S.bandTitle}">${def.label} — Housekeeping</p>
+    <p style="${S.bandSub}">${dateNice}</p>
   </div>
-  ${sec("Today's checkouts — please clean", checkouts.length ? tbl(coRows) : '<p style="font-size:13px;color:#6b7280;margin:0">No checkouts today.</p>')}
-  ${arrivals.length ? sec("Today's arrivals — must be guest-ready", tbl(arrRows)) : ''}
-  ${tomorrowArrivals.length ? sec('Tomorrow — heads-up', tbl(tomRows)) : ''}
-  <p style="${S.foot}">Sent automatically each morning by Stay Hospitality. Questions: reply to this email.</p>
+  <div style="${S.tilesOuter}">${tileRow([
+    { label: 'Checkouts to clean', value: String(checkouts.length), tone: checkouts.length ? 'amber' : 'green' },
+    { label: 'Arrivals today', value: String(arrivals.length) },
+    { label: 'Arriving tomorrow', value: String(tomorrowArrivals.length) },
+  ])}</div>
+  ${card("Today's checkouts — please clean", checkouts.length, checkouts.length ? tbl(coRows) : emptyLine('No checkouts today.'), '#d97706')}
+  ${arrivals.length ? card("Today's arrivals — must be guest-ready", arrivals.length, tbl(arrRows), '#dc2626') : ''}
+  ${tomorrowArrivals.length ? card('Tomorrow — heads-up', tomorrowArrivals.length, tbl(tomRows)) : ''}
+  <p style="${S.foot}">Sent automatically each morning by Stay Hospitality · questions: reply to this email.</p>
   </div></body></html>`
 
   return { subject, html, counts: { checkouts: checkouts.length, arrivals: arrivals.length } }
