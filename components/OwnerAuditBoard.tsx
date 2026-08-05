@@ -37,12 +37,15 @@ type Rules = {
   enabled: Record<FlagType, boolean>
 }
 type PrepItem = {
-  ownerId: string; resCode: string; guest: string; unit: string
+  ownerId: string; ownerName: string; resCode: string; guest: string; unit: string
   checkIn: string; checkOut: string; source: string; reservationId: string
-  rental: number; monthNights: number
+  onStatement: boolean; rental: number; monthNights: number
   cleaningAmt: number | null; rmAmt: number | null
-  saved: { cleaning: number; rm: number; by: string; at: string } | null
+  folioClean: number | null; folioRm: number | null; folioLump: number | null
+  splitDone: boolean; noFees: boolean
+  saved: { by: string; at: string } | null
 }
+const prepResolved = (p: PrepItem) => p.splitDone || p.noFees || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
 type Item = {
   key: string; kind: 'reservation' | 'line'; ownerId: string; resCode: string
   guest: string; checkIn: string; checkOut: string
@@ -50,6 +53,7 @@ type Item = {
   listingId: string; unit: string; source: string; reservationId: string; resNote: string
   benchRate: number | null; benchLabel: string; benchPct: number | null; benchPrev: number | null
   mixWeekday: number; mixWeekend: number; leadDays: number | null
+  stayTag: 'owner' | 'ff' | null
   rental: number; commission: number; other: number; net: number; rate: number | null
   lines: Line[]; flags: Flag[]
   status: Status; touched: boolean; note: string; comments: Comment[]
@@ -117,6 +121,45 @@ const when = (iso: string | null) => iso ? new Date(iso).toLocaleString('en-US',
 const shortWho = (s: string | null) => (s || '').replace(/^link · /, '').split('@')[0]
 const gyUrl = (id: string) => 'https://app.guesty.com/reservations/' + id + '/summary'
 
+// Booking-source display: friendly labels + a tone per channel family.
+const sourceLabel = (s: string): string => {
+  const v = s.toLowerCase()
+  if (!v) return ''
+  if (v.includes('airbnb')) return 'Airbnb'
+  if (v.includes('booking')) return 'Booking.com'
+  if (v === 'be-api' || v.includes('bookingengine')) return 'Direct'
+  if (v.includes('expedia')) return 'Expedia'
+  if (v.includes('hotels')) return 'Hotels.com'
+  if (v.includes('orbitz')) return 'Orbitz'
+  if (v.includes('travelocity')) return 'Travelocity'
+  if (v.includes('vrbo') || v.includes('homeaway')) return 'Vrbo'
+  if (v.includes('owner')) return 'Owner'
+  if (v.includes('manual')) return 'Manual'
+  return s
+}
+const SOURCE_CLS: Record<string, string> = {
+  Airbnb: 'bg-rose-50 text-rose-700 ring-rose-200',
+  'Booking.com': 'bg-blue-50 text-blue-700 ring-blue-200',
+  Direct: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  Expedia: 'bg-sky-50 text-sky-700 ring-sky-200',
+  'Hotels.com': 'bg-sky-50 text-sky-700 ring-sky-200',
+  Orbitz: 'bg-sky-50 text-sky-700 ring-sky-200',
+  Travelocity: 'bg-sky-50 text-sky-700 ring-sky-200',
+  Vrbo: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+  Owner: 'bg-neutral-100 text-neutral-600 ring-neutral-200',
+  Manual: 'bg-neutral-100 text-neutral-600 ring-neutral-200',
+}
+const SourceChip = ({ source }: { source: string }) => {
+  const label = sourceLabel(source)
+  if (!label) return null
+  return (
+    <span title={source !== label ? source : undefined}
+      className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + (SOURCE_CLS[label] || 'bg-neutral-100 text-neutral-600 ring-neutral-200')}>
+      {label}
+    </span>
+  )
+}
+
 function worstOf(it: Item): Severity | null {
   if (it.flags.some(f => f.severity === 'high')) return 'high'
   if (it.flags.some(f => f.severity === 'review')) return 'review'
@@ -149,7 +192,6 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   // explicit open/close override; sections auto-open while filters or a search are active.
   const [expandedOwners, setExpandedOwners] = useState<Record<string, boolean>>({})
   const [showAllRows, setShowAllRows] = useState<Record<string, boolean>>({})
-  const [prepDrafts, setPrepDrafts] = useState<Record<string, { c: string; r: string }>>({})
   const [prepBusy, setPrepBusy] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})           // note drafts
   const [cDrafts, setCDrafts] = useState<Record<string, string>>({})         // comment drafts
@@ -303,30 +345,25 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const patchPrep = (p: PrepItem, saved: PrepItem['saved']) => {
     setData(d => {
       if (!d) return d
-      const prepList = d.prep.map(x => (x.ownerId === p.ownerId && x.resCode === p.resCode) ? { ...x, saved } : x)
-      const prepOpen = prepList.filter(x => (x.cleaningAmt == null || x.rmAmt == null) && !x.saved).length
+      const prepList = d.prep.map(x => x.resCode === p.resCode ? { ...x, saved } : x)
+      const prepOpen = prepList.filter(x => !prepResolved(x)).length
       return { ...d, prep: prepList, totals: { ...d.totals, prepOpen } }
     })
   }
 
+  // Mark one reservation's fee breakout done (the split itself is entered in Guesty).
   const savePrep = async (p: PrepItem, on: boolean) => {
     if (!data) return
-    const k = p.ownerId + '|' + p.resCode
-    const dr = prepDrafts[k] || { c: '', r: '' }
-    const cleaning = on ? Number(dr.c || (p.cleaningAmt != null ? Math.abs(p.cleaningAmt) : 0)) : 0
-    const rm = on ? Number(dr.r || (p.rmAmt != null ? Math.abs(p.rmAmt) : 0)) : 0
-    if (on && !(cleaning > 0 || rm > 0)) { setError('Enter the Cleaning fee and RM fee amounts first.'); return }
     if (share && me.trim()) { try { localStorage.setItem('oa_name', me.trim()) } catch { /* private mode */ } }
-    setPrepBusy(k)
+    setPrepBusy(p.resCode)
     try {
       const r = await fetch('/api/owner-audit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'prep', month: data.month, ownerId: p.ownerId, itemKey: 'prep:' + p.resCode, cleaning, rm, on, author: me.trim() || 'reviewer' }),
+        body: JSON.stringify({ action: 'prep', month: data.month, ownerId: '-', itemKey: 'prep:' + p.resCode, on, author: me.trim() || 'reviewer' }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) { setError(j.error || 'Prep save failed'); setPrepBusy(''); return }
       patchPrep(p, j.saved || null)
-      if (on) { setPrepDrafts(prev => ({ ...prev, [k]: { c: '', r: '' } })); setFlash('Fee breakout saved.'); setTimeout(() => setFlash(''), 2500) }
     } catch (e: any) { setError(String(e?.message || e)) }
     setPrepBusy('')
   }
@@ -399,12 +436,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const exportCsv = () => {
     if (!data) return
     const esc = (v: any) => '"' + String(v ?? '').split('"').join('""') + '"'
-    const head = ['Owner', 'Unit', 'Guest', 'Code', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate', 'Cohort avg', '% of avg', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
+    const head = ['Owner', 'Unit', 'Guest', 'Code', 'Source', 'Stay type', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate', 'Cohort avg', '% of avg', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
     const src = view === 'stmt' && stmtOwner ? data.items.filter(i => i.ownerId === stmtOwner) : filtered
     const lines = src.map(it => {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
       return [
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
+        sourceLabel(it.source), it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
         it.checkIn, it.checkOut, it.monthNights,
         it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2),
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
@@ -437,10 +475,15 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           <div className="min-w-[180px] flex-1">
-            <div className="text-sm font-medium text-ink truncate">
-              {done && it.touched && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
-              {it.kind === 'reservation' ? (it.guest || '(guest unknown)') : it.guest}
-              {it.resCode && <span className="text-muted font-normal"> · {it.resCode}</span>}
+            <div className="text-sm font-medium text-ink truncate flex items-center gap-1.5 flex-wrap">
+              <span className="truncate">
+                {done && it.touched && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
+                {it.kind === 'reservation' ? (it.guest || '(guest unknown)') : it.guest}
+                {it.resCode && <span className="text-muted font-normal"> · {it.resCode}</span>}
+              </span>
+              {it.kind === 'reservation' && <SourceChip source={it.source} />}
+              {it.stayTag === 'owner' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Owner stay</span>}
+              {it.stayTag === 'ff' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Friends &amp; family</span>}
             </div>
             <div className="text-[11px] text-muted truncate">
               {it.unit || (it.kind === 'line' ? 'Owner-level line items' : '')}
@@ -983,9 +1026,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ OWNER PREP — the Expedia fee breakout ═══ */}
           {view === 'prep' && (() => {
             const total = data.prep.length
-            const alreadySplit = data.prep.filter(p => p.cleaningAmt != null && p.rmAmt != null).length
-            const prepped = data.prep.filter(p => !(p.cleaningAmt != null && p.rmAmt != null) && p.saved).length
-            const outstanding = total - alreadySplit - prepped
+            const split = data.prep.filter(p => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null)).length
+            const noFees = data.prep.filter(p => !p.splitDone && !(p.cleaningAmt != null && p.rmAmt != null) && p.noFees).length
+            const marked = data.prep.filter(p => !p.splitDone && !p.noFees && !(p.cleaningAmt != null && p.rmAmt != null) && p.saved).length
+            const outstanding = total - split - noFees - marked
             return (
               <>
                 <div className="rounded-2xl border border-line bg-white shadow-soft p-4">
@@ -994,78 +1038,82 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <div className="text-sm font-semibold text-ink">Statement prep — Expedia fee breakout</div>
                   </div>
                   <p className="text-xs text-muted max-w-3xl">
-                    Expedia-family bookings (Expedia, Hotels.com, Orbitz, Travelocity…) land on the statement with their fees
-                    lump-summed into the nightly income. Before the statement goes out, each one needs its fees broken out into
-                    a <span className="font-semibold text-ink">Cleaning fee</span> and <span className="font-semibold text-ink">RM fees</span>.
-                    Enter the split here to work the list; it saves who did each one and when.
+                    Every Expedia-family booking (Expedia, Hotels.com, Orbitz, Travelocity…) touching {data.label}, pulled from
+                    reservations — not just what&rsquo;s on a statement. The split is entered <span className="font-semibold text-ink">on the
+                    reservation in Guesty</span> (Cleaning fee + Revenue fee on the guest folio); rows where the folio already
+                    shows the split clear automatically. For the rest: open the reservation, break out the fees, then mark it done.
                   </p>
                   <div className="flex flex-wrap gap-2 mt-3">
                     <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-ink ring-line">{total} Expedia-family</span>
                     <span className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset ' + (outstanding ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>{outstanding} to break out</span>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{prepped} prepped here</span>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200">{alreadySplit} already split on the statement</span>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{split} split already</span>
+                    {marked > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{marked} marked done</span>}
+                    {noFees > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200">{noFees} no fees</span>}
                   </div>
                 </div>
 
                 <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
                   <div className="divide-y divide-line">
                     {data.prep.map(p => {
-                      const k = p.ownerId + '|' + p.resCode
-                      const done = (p.cleaningAmt != null && p.rmAmt != null)
-                      const dr = prepDrafts[k] || { c: '', r: '' }
-                      const busy = prepBusy === k
+                      const resolved = prepResolved(p)
+                      const busy = prepBusy === p.resCode
                       return (
-                        <div key={k} className={'flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-l-2 ' + (done || p.saved ? 'border-l-emerald-300' : 'border-l-amber-300')}>
+                        <div key={p.resCode} className={'flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-l-2 ' + (resolved ? 'border-l-emerald-300' : 'border-l-amber-300')}>
                           <div className="min-w-[200px] flex-1">
                             <div className="text-sm font-medium text-ink truncate">
-                              {(done || p.saved) && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
+                              {resolved && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
                               {p.guest || '(guest unknown)'} <span className="text-muted font-normal">· {p.resCode}</span>
                             </div>
                             <div className="text-[11px] text-muted truncate">
-                              {ownerName[p.ownerId] || p.ownerId}{p.unit ? ' · ' + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n
-                              <span className="ml-1 px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-sky-50 text-sky-700 ring-sky-200 text-[10px] font-semibold">{p.source}</span>
+                              {(p.ownerName || ownerName[p.ownerId] || (p.onStatement ? p.ownerId : 'not on a statement yet'))}{p.unit ? ' · ' + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n in month
+                              <span className="ml-1"><SourceChip source={p.source} /></span>
                             </div>
                           </div>
                           <div className="text-right w-24">
-                            <div className="text-sm font-semibold text-ink">{fmt(p.rental)}</div>
-                            <div className="text-[11px] text-muted">rental</div>
+                            <div className="text-sm font-semibold text-ink">{p.onStatement ? fmt(p.rental) : '—'}</div>
+                            <div className="text-[11px] text-muted">{p.onStatement ? 'rental' : 'no stmt yet'}</div>
                           </div>
-                          {done ? (
+                          {p.splitDone ? (
                             <div className="text-xs text-emerald-700 font-medium">
-                              Split on statement · Cleaning {fmt(Math.abs(p.cleaningAmt || 0))} · RM {fmt(Math.abs(p.rmAmt || 0))}
+                              Split on reservation · Cleaning {fmt(Math.abs(p.folioClean || 0))} · Revenue {fmt(Math.abs(p.folioRm || 0))}
                             </div>
+                          ) : (p.cleaningAmt != null && p.rmAmt != null) ? (
+                            <div className="text-xs text-emerald-700 font-medium">
+                              Split on statement · Cleaning {fmt(Math.abs(p.cleaningAmt))} · RM {fmt(Math.abs(p.rmAmt))}
+                            </div>
+                          ) : p.noFees ? (
+                            <div className="text-xs text-muted">No fee lump on the folio — nothing to split</div>
                           ) : p.saved ? (
                             <div className="flex items-center gap-2">
                               <div className="text-xs text-emerald-700 font-medium">
-                                Prepped · Cleaning {fmt(p.saved.cleaning)} · RM {fmt(p.saved.rm)}
-                                <span className="text-muted font-normal"> — {shortWho(p.saved.by)}{p.saved.at ? ' · ' + when(p.saved.at) : ''}</span>
+                                Marked broken out<span className="text-muted font-normal"> — {shortWho(p.saved.by)}{p.saved.at ? ' · ' + when(p.saved.at) : ''}</span>
                               </div>
                               <button onClick={() => savePrep(p, false)} disabled={busy}
                                 className="text-[11px] font-medium px-2 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink disabled:opacity-40">Reopen</button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-1.5">
-                              {p.cleaningAmt != null && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">Cleaning on stmt {fmt(Math.abs(p.cleaningAmt))}</span>}
-                              {p.cleaningAmt == null && (
-                                <input type="number" min={0} step={5} placeholder="Cleaning $" value={dr.c}
-                                  onChange={e => setPrepDrafts(prev => ({ ...prev, [k]: { ...dr, c: e.target.value } }))}
-                                  className="w-24 text-xs border border-line rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                              {p.folioLump != null && p.folioLump > 0.5 && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">Lump {fmt(p.folioLump)} on folio</span>
                               )}
-                              {p.rmAmt != null && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">RM on stmt {fmt(Math.abs(p.rmAmt))}</span>}
-                              {p.rmAmt == null && (
-                                <input type="number" min={0} step={1} placeholder="RM $" value={dr.r}
-                                  onChange={e => setPrepDrafts(prev => ({ ...prev, [k]: { ...dr, r: e.target.value } }))}
-                                  className="w-20 text-xs border border-line rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                              {p.folioLump == null && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200" title="The reservation's folio isn't in the mirror yet — verify in Guesty">folio unknown</span>
+                              )}
+                              {p.reservationId && (
+                                <a href={gyUrl(p.reservationId)} target="_blank" rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white text-brand-700 hover:bg-app">
+                                  <ExternalLink size={12} /> Edit in Guesty
+                                </a>
                               )}
                               {share && (
                                 <input value={me} onChange={e => setMe(e.target.value)} placeholder="Your name"
                                   className="w-24 text-xs border border-line rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                               )}
                               <button onClick={() => savePrep(p, true)} disabled={busy}
-                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save split'}</button>
+                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Mark broken out'}</button>
                             </div>
                           )}
-                          {p.reservationId && (
+                          {resolved && p.reservationId && (
                             <a href={gyUrl(p.reservationId)} target="_blank" rel="noopener noreferrer" title="Open in Guesty"
                               className="p-1 rounded-md hover:bg-app text-muted hover:text-brand-700"><ExternalLink size={13} /></a>
                           )}
@@ -1073,7 +1121,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                       )
                     })}
                     {data.prep.length === 0 && (
-                      <div className="p-8 text-center text-sm text-muted">No Expedia-family reservations on {data.label} statements.</div>
+                      <div className="p-8 text-center text-sm text-muted">No Expedia-family reservations touch {data.label}.</div>
                     )}
                   </div>
                 </div>
