@@ -16,31 +16,48 @@ const LISTS: { key: 'miami' | 'broward' | 'full'; label: string; blurb: string }
 
 export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
   const [cfg, setCfg] = useState<Cfg>({})
+  // The boxes hold RAW TEXT while you type. The old version re-parsed and filtered on every
+  // keystroke, so "jon" (no @ yet) was wiped mid-word and nothing could ever be entered.
+  // Parsing to clean address lists happens once, at Save.
+  const [raw, setRaw] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
+  const rawFromCfg = (c: Cfg): Record<string, string> => ({
+    miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '),
+    v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
+  })
   const load = useCallback(async () => {
     try {
       const r = await fetch('/api/settings/ops-brief', { cache: 'no-store' })
       const j = await r.json()
-      if (r.ok) { setCfg(j.config || {}); setSaved(JSON.stringify(j.config || {})) }
+      if (r.ok) {
+        const c = j.config || {}
+        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true }))
+      }
     } catch { /* card stays editable with defaults */ }
   }, [])
   useEffect(() => { load() }, [load])
 
-  const dirty = JSON.stringify(cfg) !== saved
-  const listStr = (k: 'miami' | 'broward' | 'full') => (cfg[k] || []).join(', ')
-  const setList = (k: 'miami' | 'broward' | 'full', v: string) =>
-    setCfg(c => ({ ...c, [k]: v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x)) }))
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true }) !== saved
+  const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
     setBusy('save'); setMsg(null)
     try {
-      const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: cfg }) })
+      const config: Cfg = {
+        ...cfg,
+        miami: parse(raw.miami || ''), broward: parse(raw.broward || ''), full: parse(raw.full || ''),
+        vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
+      }
+      const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
-      setSaved(JSON.stringify(cfg))
-      setMsg({ tone: 'ok', text: 'Saved.' })
+      const c = j.config || config
+      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true }))
+      const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length
+        + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
+      setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
@@ -86,7 +103,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
             <div key={l.key} className="rounded-xl border border-line p-3">
               <div className="text-[12px] font-bold text-ink">{l.label}</div>
               <div className="text-[11px] text-muted mb-1.5">{l.blurb}</div>
-              <textarea rows={2} disabled={!isOwner} value={listStr(l.key)} onChange={e => setList(l.key, e.target.value)}
+              <textarea rows={2} disabled={!isOwner} value={raw[l.key] ?? ''} onChange={e => setRaw(x => ({ ...x, [l.key]: e.target.value }))}
                 placeholder="emails, comma separated"
                 className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
             </div>
@@ -103,8 +120,8 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
                   <a href={`/api/cron/ops-brief?preview=${k}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview</a>
                 </div>
                 <textarea rows={2} disabled={!isOwner}
-                  value={((cfg.vendors || {})[k] || []).join(', ')}
-                  onChange={e => setCfg(c => ({ ...c, vendors: { ...(c.vendors || {}), [k]: e.target.value.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x)) } }))}
+                  value={raw['v_' + k] ?? ''}
+                  onChange={e => setRaw(x => ({ ...x, ['v_' + k]: e.target.value }))}
                   placeholder="vendor emails, comma separated"
                   className="w-full mt-1.5 text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
               </div>
