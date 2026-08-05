@@ -20,7 +20,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
 import { appendReservationNote } from '@/lib/claim-note'
 import { MONTH_LABEL } from '@/lib/owner-statements'
-import { auditMonths, buildAudit, saveAuditRules, AuditStatus, SIGNOFF_KEY, PREP_PREFIX } from '@/lib/owner-audit'
+import { auditMonths, buildAudit, defaultAuditMonth, saveAuditRules, AuditStatus, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   try {
     const months = await auditMonths()
     const wanted = new URL(req.url).searchParams.get('month') || ''
-    const month = /^\d{4}-\d{2}$/.test(wanted) ? wanted : (months[0]?.m || '')
+    const month = /^\d{4}-\d{2}$/.test(wanted) ? wanted : defaultAuditMonth(months)
     if (!month) return NextResponse.json({ ok: true, internal: who.internal, months, data: null })
     const data = await buildAudit(month)
     return NextResponse.json({ ok: true, internal: who.internal, months, data })
@@ -113,32 +113,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'month, ownerId and itemKey are required' }, { status: 400 })
   }
 
-  // ── PREP — the Expedia fee breakout. Saves the Cleaning / RM split for one reservation
-  // (item_key 'prep:<code>', note = JSON) so statement prep can be worked and tracked here.
+  // ── PREP — the Expedia fee breakout TRACKER. The split itself is entered on the
+  // reservation in Guesty; this just records "broken out, by whom, when" for the month's
+  // prep worklist (item_key 'prep:<code>', stored under owner '-' so the mark survives
+  // owner attribution changing when statements generate).
   if (action === 'prep') {
     if (!itemKey.startsWith(PREP_PREFIX)) return NextResponse.json({ ok: false, error: 'prep itemKey must start with prep:' }, { status: 400 })
     const author = who.internal ? who.email : ('link · ' + String(body.author || 'reviewer').trim().slice(0, 60))
     const db = supabaseAdmin()
     const now = new Date().toISOString()
+    const on = body.on !== false
     try {
-      if (body.on === false) {
-        const { error } = await db.from('owner_audit_reviews')
-          .upsert({ month, owner_id: ownerId, item_key: itemKey, status: 'review', note: '', comments: [], updated_by: author, updated_at: now }, { onConflict: 'month,owner_id,item_key' })
-        if (error) throw new Error(error.message)
-        return NextResponse.json({ ok: true, saved: null })
-      }
-      const cleaning = Math.round(Math.max(0, Number(body.cleaning) || 0) * 100) / 100
-      const rm = Math.round(Math.max(0, Number(body.rm) || 0) * 100) / 100
-      if (cleaning <= 0 && rm <= 0) {
-        return NextResponse.json({ ok: false, error: 'Enter the Cleaning fee and RM fee amounts (at least one must be above zero).' }, { status: 400 })
-      }
       const { error } = await db.from('owner_audit_reviews').upsert({
-        month, owner_id: ownerId, item_key: itemKey,
-        status: 'done', note: JSON.stringify({ cleaning, rm }), comments: [],
+        month, owner_id: PREP_OWNER, item_key: itemKey,
+        status: on ? 'done' : 'review', note: '', comments: [],
         updated_by: author, updated_at: now,
       }, { onConflict: 'month,owner_id,item_key' })
       if (error) throw new Error(error.message)
-      return NextResponse.json({ ok: true, saved: { cleaning, rm, by: author, at: now } })
+      return NextResponse.json({ ok: true, saved: on ? { by: author, at: now } : null })
     } catch (e: any) {
       const msg = String(e?.message || e)
       const hint = /owner_audit_reviews/.test(msg) && /does not exist|schema cache/.test(msg)
