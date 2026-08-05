@@ -128,6 +128,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'month, ownerId and itemKey are required' }, { status: 400 })
   }
 
+  // ── NOTE — a free-form note on ANY audited thing: statement (__statement__), prep row
+  // (prep:<code>), resolution (resl:<id>) or reservation. Only the note changes; whatever
+  // status/sign-off/comments the row already carries is preserved.
+  if (action === 'note') {
+    const noteText = String(body.note ?? '').slice(0, 2000)
+    const author = who.internal ? who.email : ('link · ' + String(body.author || 'reviewer').trim().slice(0, 60))
+    const db = supabaseAdmin()
+    try {
+      const { data: existing, error: readErr } = await db.from('owner_audit_reviews')
+        .select('status, comments')
+        .eq('month', month).eq('owner_id', ownerId).eq('item_key', itemKey)
+        .maybeSingle()
+      if (readErr) throw new Error(readErr.message)
+      const { error } = await db.from('owner_audit_reviews').upsert({
+        month, owner_id: ownerId, item_key: itemKey,
+        status: existing?.status || 'review',
+        note: noteText,
+        comments: Array.isArray(existing?.comments) ? existing!.comments : [],
+        updated_by: author, updated_at: new Date().toISOString(),
+      }, { onConflict: 'month,owner_id,item_key' })
+      if (error) throw new Error(error.message)
+      return NextResponse.json({ ok: true, note: noteText })
+    } catch (e: any) {
+      const msg = String(e?.message || e)
+      const hint = /owner_audit_reviews/.test(msg) && /does not exist|schema cache/.test(msg)
+        ? ' — run migration 024_owner_audit.sql in Supabase first.' : ''
+      return NextResponse.json({ ok: false, error: msg.slice(0, 300) + hint }, { status: 500 })
+    }
+  }
+
   // ── PREP — the Expedia fee breakout TRACKER. The split itself is entered on the
   // reservation in Guesty; this just records "broken out, by whom, when" for the month's
   // prep worklist (item_key 'prep:<code>', stored under owner '-' so the mark survives
