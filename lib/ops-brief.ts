@@ -242,17 +242,22 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const subject = `${label} Ops Brief ${dateNice}: ${subjParts.join(' · ')}`
 
   // ---- TOP PRIORITIES — the whole point. What breaks the day if ignored, in order. ----
+  // One line per priority: WHAT in bold, WHY short, HOW muted. Digestible beats complete —
+  // the boards carry the detail; this list carries the order.
+  const prio = (tone: 'red' | 'amber', unit: string, what: string, how?: string) =>
+    `<tr><td style="padding:5px 0;font-size:13px;line-height:1.55;border-top:1px solid #f8f9fa">` +
+    `<span style="${tone === 'red' ? S.red : S.amber}">●</span>&nbsp; <b>${esc(unit)}</b> <span style="color:#374151">— ${what}</span>` +
+    (how ? `<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${esc(how).slice(0, 96)}</span>` : '') + `</td></tr>`
   const priorities: string[] = []
-  for (const c of sameDay) priorities.push(`<span style="${S.red}">●</span> <b>${esc(c.unit)}</b> — same-day turn: guest checks in today and the clean is ${c.state === 'running' ? 'still in progress' : '<b>not started</b>'}.`)
-  for (const c of unassigned) priorities.push(`<span style="${S.red}">●</span> <b>${esc(c.unit)}</b> — departure clean has <b>nobody assigned</b>.`)
-  for (const a of walkIns.slice(0, 4)) priorities.push(`<span style="${S.amber}">●</span> <b>${esc(str(a.unit))}</b> — walk-in: booked ${a.bookedToday ? 'today' : 'after last sync'}, arriving today (${esc(str(a.guest))}). Make sure the unit is ready.`)
-  for (const e of highExceptions) priorities.push(`<span style="${S.amber}">●</span> <b>${esc(str(e.unit))}</b> — ${esc(str(e.detail))} <i>${esc(str(e.action))}</i>`)
-  for (const g of glitches.slice(0, 3)) priorities.push(`<span style="${S.amber}">●</span> <b>${esc(str(g.unit))}</b> — open guest issue: ${esc(str(g.overview))}`)
+  for (const c of sameDay) priorities.push(prio('red', c.unit, `same-day turn, clean ${c.state === 'running' ? 'in progress' : '<b>not started</b>'}`))
+  for (const c of unassigned) priorities.push(prio('red', c.unit, 'clean has <b>no one assigned</b>'))
+  for (const a of walkIns.slice(0, 4)) priorities.push(prio('amber', str(a.unit), `walk-in arriving today (${esc(str(a.guest).split(' ')[0])})`, 'Booked last minute — confirm the unit is guest-ready.'))
+  for (const e of highExceptions) priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
+  for (const g of glitches.slice(0, 3)) priorities.push(prio('amber', str(g.unit), `open guest issue`, str(g.overview)))
 
   const arrivalsRows = arrivals.slice(0, 20).map((a: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? `<br><span style="color:#6b7280">${esc(str(a.checkInTime))}</span>` : ''}</td>
-    <td style="${S.td}">${esc(str(a.guest))}${a.nights ? ` · ${a.nights}n` : ''}
-      ${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber('BIG $') : ''}</td></tr>`).join('')
+    <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? ` <span style="${S.muted};font-size:12px">· ${esc(str(a.checkInTime))}</span>` : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber('BIG $') : ''}</td></tr>`).join('')
 
   const cleansRows = d.cleans.map(c => `
     <tr><td style="${S.td}">${esc(c.unit)}${c.sameDayArrival ? ` <span style="${S.red}">← arrival today</span>` : ''}</td>
@@ -264,12 +269,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <td style="${S.td}"><span style="${r.rating <= 3 ? S.red : S.green}">${stars(r.rating)} ${r.rating}</span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
 
   const bigRows = d.bigArrivals.map(b => `
-    <tr><td style="${S.td}"><b>${esc(b.unit)}</b>${b.today ? ' ' + pillRed('TODAY') : ''}</td>
-    <td style="${S.td}">${esc(b.guest)} · ${b.when}${b.nights ? ` · ${b.nights}n` : ''} · <b>$${b.total.toLocaleString()}</b></td></tr>`).join('')
+    <tr><td style="${S.td}"><b>${esc(b.unit)}</b>${b.today ? ' ' + pillRed('TODAY') : ''} <span style="${S.muted};font-size:12px">· ${esc(b.guest)} · ${b.when}${b.nights ? ` · ${b.nights}n` : ''}</span></td>
+    <td style="${S.td};text-align:right"><b>$${b.total.toLocaleString()}</b></td></tr>`).join('')
 
   const glitchRows = glitches.slice(0, 10).map((g: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(g.unit))}</b><br><span style="color:#6b7280">since ${esc(str(g.at))}</span></td>
-    <td style="${S.td}">${esc(str(g.overview))}</td></tr>`).join('')
+    <tr><td style="${S.td};white-space:nowrap"><b>${esc(str(g.unit))}</b> <span style="${S.muted};font-size:12px">· ${esc(str(g.at).slice(5))}</span></td>
+    <td style="${S.td}"><span style="${S.muted}">${esc(str(g.overview))}</span></td></tr>`).join('')
 
   const vacSoon = vacants.filter((v: any) => v.arrivingSoon)
   const vacIdle = vacants.filter((v: any) => !v.nextArrival)
@@ -285,8 +290,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const ownerRows = ownerStays.slice(0, 8).map((o: any) => {
     const verified = str(o.ownerFlag) === 'owner booking'
     return `
-    <tr><td style="${S.td}"><b>${esc(str(o.unit))}</b> ${verified ? pillBlue('OWNER') : pillAmber('POSSIBLE OWNER')}</td>
-    <td style="${S.td}">${esc(str(o.owner || o.guest))} · until ${esc(str(o.checkOut).slice(5))}${verified ? ' — white-glove standard, no shortcuts on this unit.' : ' — guest name matches the unit owner; verify before treating as an owner stay.'}</td></tr>`
+    <tr><td style="${S.td}"><b>${esc(str(o.unit))}</b> ${verified ? pillBlue('OWNER') : pillAmber('OWNER?')} <span style="${S.muted};font-size:12px">· ${esc(str(o.owner || o.guest))} · until ${esc(str(o.checkOut).slice(5))}</span></td>
+    <td style="${S.td};text-align:right"><span style="${S.muted};font-size:12px">${verified ? 'white-glove — no shortcuts' : 'verify before treating as owner'}</span></td></tr>`
   }).join('')
 
   const rep = d.rep
@@ -307,34 +312,33 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     { label: 'New reviews', value: String(d.newReviews.length), note: lowNew.length ? `${lowNew.length} low` : undefined, tone: lowNew.length ? 'red' : undefined },
   ]
 
+  const eyebrow = (t: string) => `<p style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#9ca3af;margin:18px 8px 8px;text-transform:uppercase">${t}</p>`
+  const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
+
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
     <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
     <p style="${S.bandTitle}">Morning Ops Brief — ${label}</p>
-    <p style="${S.bandSub}">${dateNice} · ${d.activeCount} active units · data as of send time</p>
+    <p style="${S.bandSub}">${dateNice} · ${d.activeCount} active units</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
 
+  ${eyebrow('Act now')}
   ${priorities.length
-    ? card('Top priorities — in order', priorities.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:2">${priorities.slice(0, 10).join('<br>')}</p>`, '#dc2626')
+    ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
-
-  ${arrivals.length ? card('Arrivals today', arrivals.length, table(['Unit', 'Guest'], arrivalsRows) + (arrivals.length > 20 ? `<p style="${S.foot};text-align:left">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
-
-  ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, table(['Unit', 'Owner'], ownerRows), '#4338ca') : ''}
-
   ${card("Departure cleans — who's on each door", d.cleans.length, d.cleans.length ? table(['Unit', 'Cleaner', 'Status'], cleansRows) : emptyLine('No departure cleans today.'))}
 
-  ${glitches.length ? card('Open guest issues', glitches.length, table(['Unit', 'Issue'], glitchRows), '#d97706') : ''}
+  ${eyebrow('Today')}
+  ${arrivals.length ? card('Arrivals', arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
+  ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, bare(ownerRows), '#4338ca') : ''}
+  ${glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
+  ${eyebrow('Good to know')}
   ${d.newReviews.length ? card('New reviews since yesterday', d.newReviews.length, table(['Unit', 'Score'], newRevRows), lowNew.length ? '#dc2626' : '#059669') : ''}
-
-  ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, table(['Unit', 'Stay'], bigRows), '#d97706') : ''}
-
+  ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
-
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
-
   ${card('Reputation — last 30 days', null, `<p style="font-size:13px;margin:8px 0 2px">${repLine}</p>`)}
 
   <p style="${S.foot}">Sent automatically by Lighthouse every morning · the boards have the live picture.</p>
