@@ -4,7 +4,7 @@
 // unit, not four separate lists. Departure cleans are tracked against the 4pm check-in deadline.
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, ListChecks, X, ClipboardCheck, MessageSquare, Search, MapPin } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, X, ClipboardCheck, MessageSquare, Search, MapPin, Wrench } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
 import RowMenu, { type RowAction } from '@/components/RowMenu'
 import { clusterAreas } from '@/lib/geo-areas'
@@ -96,7 +96,6 @@ export function TodayInOps() {
   const [err, setErr] = useState('')
   const [market, setMarket] = useState('all')
   const [showDone, setShowDone] = useState(false)
-  const [addFor, setAddFor] = useState('')
   const [itemsFor, setItemsFor] = useState('')
   // two independent filter axes: WHAT kind of job, and WHERE it stands
   const [jf, setJf] = useState('all')
@@ -124,6 +123,11 @@ export function TodayInOps() {
   const [taskOrder, setTaskOrder] = useState<Record<string, string[]>>({})
   const [addVacant, setAddVacant] = useState('')
   const [dateSel, setDateSel] = useState('')  // '' = today
+  // HIGH-LEVEL FIRST (2026-08-05 revamp): every unit is ONE quiet line until it needs a human or
+  // you click it. Problem units open themselves; the rest stay collapsed. undefined = automatic.
+  const [openUnits, setOpenUnits] = useState<Record<string, boolean>>({})
+  // Per-unit health score from the portfolio model — prevention lives on the ops side too.
+  const [health, setHealth] = useState<Record<string, any>>({})
 
   const load = useCallback(async () => {
     try {
@@ -138,6 +142,8 @@ export function TodayInOps() {
   useEffect(() => { load() }, [load])
   // roster for assigning — fetched once, filtered per task department
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  // health scores once per visit (server caches 5 min) — fail-open, the board works without them
+  useEffect(() => { fetch('/api/listing-health?ops=1', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.ok) setHealth(j.scores || {}) }).catch(() => {}) }, [])
   useEffect(() => {
     fetch('/api/ops-today/glitches', { cache: 'no-store' }).then(r => r.json()).then(setGl).catch(() => {})
     fetch('/api/glitches?fields=stage', { cache: 'no-store' }).then(r => r.json()).then(j => {
@@ -267,8 +273,38 @@ export function TodayInOps() {
     }
   }
   const behind = d.late > 0 || d.atRisk > 0
-  const renderUnit = (u: Unit) => (
-          <div key={u.listingId} style={{ borderLeftWidth: 4 }} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300 border-l-rose-500' : u.atRisk ? 'border-amber-300 border-l-amber-400' : u.sameDayTurn && !u.allDone ? 'border-line border-l-rose-400' : u.allDone ? 'border-line border-l-emerald-300' : 'border-line border-l-slate-200')}>
+  // HIGH-LEVEL FIRST. A unit that needs a human OPENS ITSELF (late, at-risk, same-day not done,
+  // unassigned, or a live guest issue); everything else is one calm line until clicked. Filtering
+  // or searching expands the matches — a chip that hides its rows reads as broken.
+  const autoOpen = (u: Unit) => u.late || u.atRisk || (u.sameDayTurn && !u.allDone) || u.unassigned || (glByUnit[u.unit] || []).length > 0
+  const isOpen = (u: Unit) => openUnits[u.listingId] !== undefined ? openUnits[u.listingId] : ((filtering || !!needle) ? true : autoOpen(u))
+  const accent = (u: Unit) => u.late ? 'border-rose-300 border-l-rose-500' : u.atRisk ? 'border-amber-300 border-l-amber-400' : u.sameDayTurn && !u.allDone ? 'border-line border-l-rose-400' : u.allDone ? 'border-line border-l-emerald-300' : 'border-line border-l-slate-200'
+  const careDue = (u: Unit) => { const s = sig[u.listingId]; return !!s && ((s.care || []).some((c: any) => c.due) || (s.pending || []).length > 0) }
+  const renderUnit = (u: Unit) => {
+    const s = sig[u.listingId]
+    const gls = glByUnit[u.unit] || []
+    const total = (u.fullTasks || u.tasks).length
+    const doneN = (u.fullTasks || u.tasks).filter(t => t.done).length
+    if (!isOpen(u)) return (
+      <div key={u.listingId} style={{ borderLeftWidth: 4 }} className={'rounded-2xl border bg-white overflow-hidden ' + accent(u)}>
+        <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: true }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-app/40 transition">
+          <span className="font-bold text-[14px] text-ink leading-none">{u.unit}</span>
+          <span className="text-[11px] text-muted hidden sm:inline">{u.market}{u.city ? ' · ' + u.city : ''}</span>
+          {u.sameDayTurn && !u.allDone && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Same-day</span>}
+          {u.unassigned && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 shrink-0">Unassigned</span>}
+          {gls.length > 0 && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">{gls.length} guest issue{gls.length === 1 ? '' : 's'}</span>}
+          {s && s.review && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 shrink-0">{s.review.rating}{'★'} review</span>}
+          {s && s.feedback && s.feedback.count > 0 && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-300 shrink-0">{s.feedback.count} fix</span>}
+          <span className="ml-auto" />
+          <HealthBadge h={health[u.listingId]} />
+          <span className={'text-[12px] font-semibold tabular-nums shrink-0 ' + (u.allDone ? 'text-emerald-700' : 'text-muted')}>{u.allDone ? 'All done' : doneN + '/' + total}</span>
+          <span className="w-14 h-1.5 rounded-full bg-app overflow-hidden hidden sm:block shrink-0"><span className={'block h-full ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: (total ? Math.round((doneN / total) * 100) : 0) + '%' }} /></span>
+          <ChevronDown size={14} className="text-muted shrink-0" />
+        </button>
+      </div>
+    )
+    return (
+          <div key={u.listingId} style={{ borderLeftWidth: 4 }} className={'rounded-2xl border bg-white overflow-hidden ' + accent(u)}>
             {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE. */}
             <div className={'px-4 pt-2.5 pb-2 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-app/60')}>
               <div className="flex items-center gap-2 flex-wrap">
@@ -298,9 +334,17 @@ export function TodayInOps() {
                 )}
                 <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
                 <span className="ml-auto flex items-center gap-2">
-                  <span className={'text-xs font-semibold tabular-nums ' + (u.allDone ? 'text-emerald-700' : u.late ? 'text-rose-700' : 'text-muted')}>{u.allDone ? 'All done' : (u.fullTasks || u.tasks).filter(t => t.done).length + '/' + (u.fullTasks || u.tasks).length}</span>
-                  <button onClick={() => setItemsFor(itemsFor === u.listingId ? '' : u.listingId)} className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1 ' + (itemsFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>{itemsFor === u.listingId ? <><X size={12} /> Hide items</> : <><ListChecks size={12} /> Open items</>}</button>
-                  <button onClick={() => setAddFor(addFor === u.listingId ? '' : u.listingId)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1"><Plus size={12} /> Add task</button>
+                  <HealthBadge h={health[u.listingId]} />
+                  <span className={'text-xs font-semibold tabular-nums ' + (u.allDone ? 'text-emerald-700' : u.late ? 'text-rose-700' : 'text-muted')}>{u.allDone ? 'All done' : doneN + '/' + total}</span>
+                  {/* ONE button where four used to fight for attention. The care panel holds the
+                      unit's record (last PM, batteries, A/C filter, inspection), open work, and the
+                      scheduler — the team looks at the facts and decides what to do. */}
+                  <button onClick={() => { setActSeed(null); setActFor(actFor === u.listingId ? '' : u.listingId) }}
+                    title="The unit's care record — last PM, lock batteries, A/C filter, inspection — plus anything still open. Decide and schedule from here."
+                    className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1.5 ' + (actFor === u.listingId ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:bg-app')}>
+                    <Wrench size={12} /> Care{careDue(u) && actFor !== u.listingId ? <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> : null}
+                  </button>
+                  <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: false }))} title="Collapse to one line" className="text-muted hover:text-ink p-1"><ChevronUp size={14} /></button>
                 </span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap mt-1 text-[11px] text-muted">
@@ -341,11 +385,11 @@ export function TodayInOps() {
                 </div>
               ))}
             </div>
-            {actFor === u.listingId && <SignalPanel s={sig[u.listingId]} seed={actSeed} listingId={u.listingId} unit={u.unit} today={data.today} people={people} onClose={() => setActFor('')} onDone={() => { setActFor(''); load() }} />}
-            {addFor === u.listingId && <AddTask listingId={u.listingId} unit={u.unit} date={data.today} onDone={() => { setAddFor(''); load() }} />}
+            {actFor === u.listingId && <SignalPanel s={sig[u.listingId]} health={health[u.listingId]} seed={actSeed} listingId={u.listingId} unit={u.unit} today={data.today} people={people} onClose={() => setActFor('')} onDone={() => { setActFor(''); load() }} onOpenItems={() => { setActFor(''); setItemsFor(u.listingId) }} />}
             {itemsFor === u.listingId && <UnitItems listingId={u.listingId} unit={u.unit} people={people} onDone={load} onClose={() => setItemsFor('')} />}
           </div>
-  )
+    )
+  }
 
 
   // apply the saved manual order to a unit's tasks (falls back to the API order)
@@ -626,7 +670,31 @@ export function TodayInOps() {
             <div className="space-y-3">{(a.units as Unit[]).map(u => renderUnit(u))}</div>
           </div>
         ))}
-        {groupBy !== 'area' && units.map(u => renderUnit(u))}
+        {/* THE ONLY RED SECTION. Units that need a human sit together at the top, expanded; the
+            rest wait in one calm block of one-line rows. Filters/search flatten back to one list. */}
+        {groupBy !== 'area' && (() => {
+          if (filtering || needle) return units.map(u => renderUnit(u))
+          const needs = units.filter(u => autoOpen(u) && !u.allDone)
+          const rest = units.filter(u => !(autoOpen(u) && !u.allDone))
+          if (!needs.length || !rest.length) return units.map(u => renderUnit(u))
+          return (
+            <>
+              <div className="flex items-center gap-2 px-1">
+                <AlertTriangle size={13} className="text-rose-600" />
+                <span className="text-[13px] font-bold text-rose-700">Needs attention</span>
+                <span className="text-[11px] font-semibold text-muted">{needs.length} unit{needs.length === 1 ? '' : 's'} {'—'} late, same-day, unassigned or guest issue</span>
+                <span className="flex-1 h-px bg-rose-200" />
+              </div>
+              {needs.map(u => renderUnit(u))}
+              <div className="flex items-center gap-2 px-1 pt-2">
+                <span className="text-[13px] font-bold text-ink">On track</span>
+                <span className="text-[11px] font-semibold text-muted">{rest.length} unit{rest.length === 1 ? '' : 's'} {'·'} click a row for detail</span>
+                <span className="flex-1 h-px bg-line" />
+              </div>
+              {rest.map(u => renderUnit(u))}
+            </>
+          )
+        })()}
       </div>
 
       {/* ANNUAL AUDITS DUE — built 07-23, lost in a later redesign, remounted 07-31. Lazy: it only
@@ -782,7 +850,6 @@ function SignalChips({ s, onAct }: { s: any; onAct: (seed: any) => void }) {
   if (!s) return null
   const pending = (s.pending || []).length
   const rev = s.review
-  const up = s.upkeep || []
   return (
     <>
       {pending > 0 && (
@@ -797,30 +864,38 @@ function SignalChips({ s, onAct }: { s: any; onAct: (seed: any) => void }) {
       {rev && (
         <button onClick={() => onAct({ key: 'review', template: 'feedback', title: 'Guest-feedback inspection', reason: rev.rating + '\u2605 review ' + (rev.at || '') + (rev.excerpt ? ' \u2014 \u201c' + String(rev.excerpt).slice(0, 120) + '\u201d' : '') })} title={'Recent review ' + rev.rating + '\u2605' + (rev.at ? ' on ' + rev.at : '') + ' - inspect before the next guest'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 hover:bg-rose-100">Review inspection {'\u00b7'} {rev.rating}{'\u2605'}</button>
       )}
-      {up.map((x: any) => (
-        <button key={x.key} onClick={() => onAct({ key: x.key, template: x.template, title: x.label, reason: x.neverSeen ? 'No record of this being done in the last 2 years' : 'Last done ' + x.lastAt + ' (' + x.monthsAgo + ' months ago, due every ' + x.every + ')' })} title={x.neverSeen ? 'No completed ' + x.short + ' task found in the last 2 years' : 'Last ' + x.short + ': ' + x.lastAt + ' - ' + x.monthsAgo + ' months ago, cadence is every ' + x.every + ' months'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200">{x.short}{x.neverSeen ? ' \u00b7 never' : ' \u00b7 ' + Math.round(x.monthsAgo) + 'mo'}</button>
-      ))}
+      {/* Upkeep chips are GONE from the header (they were the noise). The dates live in the unit's
+          Care panel now \u2014 one place, four facts, the team decides. */}
     </>
   )
 }
 
-// The decide-and-schedule panel: what the board found, the open work behind it, and a 14-day
-// strip showing which days the unit is EMPTY so the task lands on a day someone can actually work.
-function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone }: { s: any; seed: any; listingId: string; unit: string; today: string; people: Person[]; onClose: () => void; onDone: () => void }) {
+// THE CARE PANEL — one place to decide about a unit. The health score, the four care facts Jon
+// fixed on 2026-08-05 (last PM, last lock-battery change, last A/C filter change if the unit has
+// central air, last inspection), anything still open, and the scheduler. From these facts the team
+// decides what to do — the old sprawl of add-task buttons is gone on purpose.
+function SignalPanel({ s, health, seed, listingId, unit, today, people, onClose, onDone, onOpenItems }: { s: any; health?: any; seed: any; listingId: string; unit: string; today: string; people: Person[]; onClose: () => void; onDone: () => void; onOpenItems?: () => void }) {
+  const sg = s || {}   // signals still loading -> the panel opens anyway, scheduler works, facts fill in
+  // A care row click switches the template LOCALLY; the header chips still seed from outside.
+  const [localSeed, setLocalSeed] = useState<any>(seed)
+  useEffect(() => { setLocalSeed(seed) }, [seed])
+  const eff = localSeed
   const [date, setDate] = useState(today)
   const [who, setWho] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const tpl = TEMPLATES.filter(t => t.key === (seed && seed.template))[0] || null
+  const tpl = TEMPLATES.filter(t => t.key === (eff && eff.template))[0] || null
   const [title, setTitle] = useState(tpl ? tpl.title : '')
-  const [desc, setDesc] = useState(tpl ? tpl.base + (seed && seed.reason ? '\n\nWhy: ' + seed.reason : '') : '')
+  const [desc, setDesc] = useState(tpl ? tpl.base + (eff && eff.reason ? '\n\nWhy: ' + eff.reason : '') : '')
+  const [dept, setDept] = useState(tpl ? tpl.department : 'maintenance')
   useEffect(() => {
-    const t2 = TEMPLATES.filter(t => t.key === (seed && seed.template))[0] || null
-    setTitle(t2 ? t2.title : ''); setDesc(t2 ? t2.base + (seed && seed.reason ? '\n\nWhy: ' + seed.reason : '') : ''); setMsg(''); setErr('')
-  }, [seed])
-  if (!s) return null
-  const days = s.days || []
+    const t2 = TEMPLATES.filter(t => t.key === (eff && eff.template))[0] || null
+    setTitle(t2 ? t2.title : ''); setDesc(t2 ? t2.base + (eff && eff.reason ? '\n\nWhy: ' + eff.reason : '') : ''); setDept(t2 ? t2.department : 'maintenance'); setMsg(''); setErr('')
+  }, [eff])
+  const days = sg.days || []
+  const care = sg.care || []
+  const seedFor = (x: any) => ({ key: x.key, template: x.template, title: x.label, reason: x.neverSeen ? 'No record in Breezeway in the last 2 years' : 'Last done ' + x.lastAt + ' (' + Math.round(x.monthsAgo) + ' months ago)' })
   const dow = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })
   const dnum = (d: string) => new Date(d + 'T12:00:00').getDate()
   const create = async () => {
@@ -830,7 +905,7 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
       const person = people.filter(p => p.name === who)[0]
       const r = await fetch('/api/ops-today/add-task', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, title: title.trim(), department: tpl ? tpl.department : 'maintenance', priority: tpl ? tpl.priority : 'normal', description: desc, date, assigneeIds: person ? [person.id] : [] })
+        body: JSON.stringify({ listingId, title: title.trim(), department: dept || 'maintenance', priority: tpl ? tpl.priority : 'normal', description: desc, date, assigneeIds: person ? [person.id] : [] })
       })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Could not create the task'); setBusy(false); return }
@@ -842,15 +917,46 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
   return (
     <div className="px-4 py-3 bg-app border-t border-line">
       <div className="flex items-center gap-2 mb-2">
-        <div className="text-xs uppercase tracking-wide text-muted">What the board found on {unit}</div>
+        <Wrench size={13} className="text-muted" />
+        <div className="text-xs uppercase tracking-wide font-semibold text-ink">Unit care {'—'} {unit}</div>
+        {health && !health.unrated && health.score != null && <HealthBadge h={health} />}
         <button onClick={onClose} className="ml-auto text-xs text-muted hover:text-ink">Close</button>
       </div>
 
-      {(s.pending || []).length > 0 && (
+      {/* PREVENTION LINE — the point of the score on the ops side: if guests keep reporting the
+          same thing, fixing today's symptom is not enough. Say it where work gets scheduled. */}
+      {health && (health.recurring || []).length > 0 && (
+        <div className="mb-2 text-[12px] text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2.5 py-1.5">
+          <span className="font-semibold">Keeps coming back:</span> {(health.recurring || []).join(', ')} {'—'} schedule the fix for the CAUSE, not just today&apos;s symptom.
+        </div>
+      )}
+      {health && !(health.recurring || []).length && health.topIssue && (
+        <div className="mb-2 text-[11px] text-muted">Most-mentioned guest theme on this unit: {health.topIssue}</div>
+      )}
+
+      {/* THE FOUR FACTS. Last PM, lock batteries, A/C filter (central-air units only), inspection.
+          A date and an age each — the team looks and decides. "No record" means never logged. */}
+      {care.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 mb-2">
+          {care.map((x: any) => (
+            <div key={x.key} className={'rounded-lg border bg-white px-2.5 py-2 ' + (x.due ? 'border-amber-300' : 'border-line')}>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted flex items-center gap-1">{x.short}{x.due && <span className="text-[8.5px] font-bold px-1 py-px rounded bg-amber-500 text-white">DUE</span>}</div>
+              <div className="text-[13px] font-bold text-ink mt-0.5">{x.neverSeen ? 'No record' : fmtShort(x.lastAt)}</div>
+              <div className="text-[10px] text-muted">{x.neverSeen ? 'nothing logged in 2 yrs' : Math.round(x.monthsAgo) + ' months ago'}</div>
+              <button onClick={() => setLocalSeed(eff && eff.key === x.key ? null : seedFor(x))}
+                className={'mt-1 text-[11px] font-semibold px-2 py-0.5 rounded border ' + (eff && eff.key === x.key ? 'bg-ink text-white border-ink' : 'bg-white border-line hover:bg-app text-ink')}>
+                {eff && eff.key === x.key ? 'Selected ✓' : 'Schedule'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(sg.pending || []).length > 0 && (
         <div className="mb-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 mb-1">Still open from the last 60 days</div>
           <div className="space-y-1">
-            {(s.pending || []).slice(0, 6).map((t: any) => (
+            {(sg.pending || []).slice(0, 6).map((t: any) => (
               <div key={t.id} className="flex items-center gap-2 bg-white border border-amber-200 rounded-md px-2 py-1 text-[12px]">
                 <span className="text-ink truncate">{t.name}</span>
                 <span className="text-muted whitespace-nowrap">{t.date} {'\u00b7'} {t.daysOld}d old</span>
@@ -864,26 +970,17 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
 
       <UnitInspections unit={unit} />
 
-      {s.review && (
+      {sg.review && (
         <div className="mb-2 text-[12px] bg-white border border-rose-200 rounded-md px-2 py-1.5">
-          <span className="font-semibold text-rose-700">{s.review.rating}{'\u2605'}</span>
-          <span className="text-muted"> {'\u00b7'} {s.review.at}{s.review.guest ? ' \u00b7 ' + s.review.guest : ''}{s.review.channel ? ' \u00b7 ' + s.review.channel : ''}</span>
-          {s.review.excerpt && <div className="text-ink mt-0.5">{'\u201c'}{s.review.excerpt}{'\u201d'}</div>}
-          <ReviewActions unit={unit} rev={s.review} />
+          <span className="font-semibold text-rose-700">{sg.review.rating}{'\u2605'}</span>
+          <span className="text-muted"> {'\u00b7'} {sg.review.at}{sg.review.guest ? ' \u00b7 ' + sg.review.guest : ''}{sg.review.channel ? ' \u00b7 ' + sg.review.channel : ''}</span>
+          {sg.review.excerpt && <div className="text-ink mt-0.5">{'\u201c'}{sg.review.excerpt}{'\u201d'}</div>}
+          <ReviewActions unit={unit} rev={sg.review} />
         </div>
       )}
 
-      <div className="flex gap-1.5 flex-wrap mb-2 items-center">
-        {(s.upkeep || []).map((x: any) => (
-          <span key={x.key} className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-line text-muted">{x.short}: <span className="text-ink font-medium">{x.lastAt + ' (' + x.monthsAgo + 'mo)'}</span></span>
-        ))}
-        {(s.unknown || []).length > 0 && (
-          <span className="text-[11px] text-muted">Never logged in Breezeway: {(s.unknown || []).map((x: any) => x.short).join(', ')}</span>
-        )}
-      </div>
-
       <div className="rounded-lg border border-line bg-white p-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Pick a day {'\u00b7'} green = unit empty, amber = guest in-house{s.nextCheckout ? ', next checkout ' + s.nextCheckout : ''}</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Pick a day {'\u00b7'} green = unit empty, amber = guest in-house{sg.nextCheckout ? ', next checkout ' + sg.nextCheckout : ''}</div>
         <div className="flex gap-1 overflow-x-auto pb-1">
           {days.map((d: any) => (
             <button key={d.date} onClick={() => setDate(d.date)} title={d.date + (d.occupied ? ' \u2014 guest in-house' : ' \u2014 unit empty') + (d.checkout ? ' \u00b7 checkout' : '') + (d.checkin ? ' \u00b7 check-in' : '')}
@@ -896,6 +993,9 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
         </div>
         <div className="flex gap-2 flex-wrap items-center mt-2">
           <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs doing?" className="flex-1 min-w-[200px] text-sm border border-line rounded-lg px-3 py-2 bg-white" />
+          <select value={dept} onChange={e => setDept(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-2 bg-white" title="Which team the task goes to in Breezeway">
+            {DEPTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
           <input list="ppl-all" value={who} onChange={e => setWho(e.target.value.trim().replace(/\s*\([^)]*\)\s*$/, ''))} placeholder="Assign to\u2026" className="text-sm border border-line rounded-lg px-3 py-2 bg-white w-[170px]" />
           <button onClick={create} disabled={busy || !title.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating\u2026' : 'Create for ' + date.slice(5)}</button>
         </div>
@@ -903,8 +1003,24 @@ function SignalPanel({ s, seed, listingId, unit, today, people, onClose, onDone 
         {msg && <div className="text-xs text-emerald-700 mt-2">{msg}</div>}
         {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
       </div>
+      {onOpenItems && (
+        <div className="mt-2">
+          <button onClick={onOpenItems} className="text-[11px] font-semibold text-brand-700 hover:underline">Everything still open on this unit {'→'}</button>
+        </div>
+      )}
     </div>
   )
+}
+
+// Unit health, band-coloured, tiny. Green fades back; amber and red are the ones to read.
+function HealthBadge({ h }: { h: any }) {
+  if (!h || h.unrated || h.score == null) return null
+  const bad = h.band === 'critical' || h.band === 'risk'
+  const cls = bad ? 'bg-rose-50 text-rose-700 border-rose-300' : h.band === 'watch' ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  const tip = 'Unit health ' + h.score + '/100 (' + h.band + ')'
+    + ((h.recurring || []).length ? ' · recurring guest complaints: ' + (h.recurring || []).join(', ') : (h.topIssue ? ' · top guest theme: ' + h.topIssue : ''))
+    + ' — low scores with repeat complaints are the units to fix at the cause.'
+  return <span title={tip} className={'text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded border shrink-0 ' + cls}>{h.score}</span>
 }
 
 function fmtShort(iso: string | null) { if (!iso) return '\u2014'; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
