@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
     const calTo = addDays(today, 14)
     const db = supabaseAdmin()
 
-    const [tasksR, revR, resR, audR] = await Promise.all([
+    const [tasksR, revR, resR, audR, actR] = await Promise.all([
       db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department,report_url')
         .in('reference_property_id', ids).gte('scheduled_date', historyFrom).limit(8000),
@@ -60,6 +60,10 @@ export async function GET(req: NextRequest) {
         .in('listing_id', ids)
         .lt('check_in', calTo).gte('check_out', today).limit(3000),
       db.from('property_audits').select('listing_id,status,created_at').in('listing_id', ids).limit(3000),
+      // FEEDBACK FIX JOBS (review_actions): open items generated from guest complaints — the board
+      // should show them on the unit the cleaner is already standing in. Fail-open if absent.
+      db.from('review_actions').select('listing_id,title,action,kind,severity,status')
+        .in('listing_id', ids).in('status', ['open', 'doing']).limit(1000),
     ])
     const tasks = (tasksR.data || []) as any[]
     const reviews = (revR.data || []) as any[]
@@ -149,7 +153,10 @@ export async function GET(req: NextRequest) {
       const nextFree = (days.filter(d => d.free)[0] || {}).date || null
       const nextCheckout = (days.filter(d => d.checkout)[0] || {}).date || null
 
-      signals[id] = { pending, review, upkeep, unknown, days, nextFree, nextCheckout }
+      // open feedback-fix jobs on this unit (from the review-actions board)
+      const fx = (((actR as any).data || []) as any[]).filter(a => String(a.listing_id) === id)
+      const feedback = fx.length ? { count: fx.length, urgent: fx.some(a => String(a.severity) === 'urgent'), top: String((fx.find(a => String(a.severity) === 'urgent') || fx[0]).title || '').slice(0, 80) } : null
+      signals[id] = { pending, review, upkeep, unknown, days, nextFree, nextCheckout, feedback }
 
       // discovery: what other recurring work exists that we are NOT tracking yet
       for (const t of doneTasks) {
