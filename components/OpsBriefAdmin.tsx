@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[] }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] } }
 
 const LISTS: { key: 'miami' | 'broward' | 'full'; label: string; blurb: string }[] = [
   { key: 'miami', label: 'Miami brief', blurb: 'Miami-market cleans & priorities only' },
@@ -91,6 +91,25 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
                 className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
             </div>
           ))}
+        </div>
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Vendor briefs — external cleaning companies (their buildings only: checkouts, arrivals, tomorrow. No internal data.)</div>
+          <div className="grid sm:grid-cols-3 gap-3">
+            {([['botanica','Botanica'],['pt','Park Towers'],['north','Capri · Lucerne · Amrit']] as ['botanica'|'pt'|'north', string][]).map(([k, label]) => (
+              <div key={k} className="rounded-xl border border-line p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-ink">{label}</span>
+                  <a href={`/api/cron/ops-brief?preview=${k}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview</a>
+                </div>
+                <textarea rows={2} disabled={!isOwner}
+                  value={((cfg.vendors || {})[k] || []).join(', ')}
+                  onChange={e => setCfg(c => ({ ...c, vendors: { ...(c.vendors || {}), [k]: e.target.value.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x)) } }))}
+                  placeholder="vendor emails, comma separated"
+                  className="w-full mt-1.5 text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
