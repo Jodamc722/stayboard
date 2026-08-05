@@ -70,6 +70,7 @@ type Item = {
   mixWeekday: number; mixWeekend: number; leadDays: number | null
   stayTag: 'owner' | 'ff' | null
   canceled: boolean
+  statusTag: 'canceled' | 'inquiry' | 'declined' | 'expired' | null
   rental: number; commission: number; other: number; net: number
   rate: number | null; avgRate: number | null
   lines: Line[]; flags: Flag[]
@@ -508,7 +509,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
       return [
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
-        sourceLabel(it.source), it.canceled ? 'Canceled' : it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
+        sourceLabel(it.source), it.statusTag ? it.statusTag.charAt(0).toUpperCase() + it.statusTag.slice(1) : it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
         it.checkIn, it.checkOut, it.monthNights,
         it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2), it.avgRate == null ? '' : it.avgRate.toFixed(2),
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
@@ -550,7 +551,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.kind === 'reservation' && <SourceChip source={it.source} />}
               {it.stayTag === 'owner' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Owner stay</span>}
               {it.stayTag === 'ff' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Friends &amp; family</span>}
-              {it.canceled && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300 line-through decoration-neutral-400">Canceled</span>}
+              {it.statusTag === 'canceled' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300 line-through decoration-neutral-400">Canceled</span>}
+              {it.statusTag === 'inquiry' && <span title="Never a confirmed booking — worth checking why it carries statement line items" className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200">Inquiry</span>}
+              {it.statusTag === 'declined' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300">Declined</span>}
+              {it.statusTag === 'expired' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300">Expired</span>}
             </div>
             <div className="text-[11px] text-muted truncate">
               {it.unit || (it.kind === 'line' ? 'Owner-level line items' : '')}
@@ -1233,8 +1237,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                               {p.guest || '(guest unknown)'} <span className="text-muted font-normal">· {p.resCode}</span>
                             </div>
                             <div className="text-[11px] text-muted truncate">
-                              {(p.ownerName || ownerName[p.ownerId] || (p.onStatement ? p.ownerId : 'not on a statement yet'))}{p.unit ? ' · ' + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n in month
+                              {(p.ownerName || ownerName[p.ownerId] || (p.onStatement ? p.ownerId : ''))}{p.unit ? (p.ownerName || p.onStatement ? ' · ' : '') + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n in month
                               <span className="ml-1"><SourceChip source={p.source} /></span>
+                              {!p.onStatement && (
+                                <span title="This booking has no line items on any owner statement for this month yet" className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">Not on statement</span>
+                              )}
                             </div>
                           </div>
                           <div className="text-right w-24">
