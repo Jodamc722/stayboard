@@ -179,6 +179,9 @@ const SourceChip = ({ source }: { source: string }) => {
   )
 }
 
+// What "Ties / Off by" actually means — owner statements are ACCOUNTING-level documents.
+const TIE_HELP = 'Ties = this month’s recognized ledger lines (rental − commission + other) add up to the statement’s Due-to-owner, or to the amount actually paid out. “Off by” = ledger minus statement. A gap is NOT automatically an error: carried-forward balances, owner charges, reimbursements and payout timing all land in the statement’s accounting — treat it as a pointer to reconcile, not a verdict.'
+
 function worstOf(it: Item): Severity | null {
   if (it.flags.some(f => f.severity === 'high')) return 'high'
   if (it.flags.some(f => f.severity === 'review')) return 'review'
@@ -984,7 +987,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         <td className="px-3 py-2.5">
                           {!o.hasStatement
                             ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No stmt</span>
-                            : <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>{o.ties ? 'Ties' : 'Off ' + fmt(off || 0)}</span>}
+                            : <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>{o.ties ? 'Ties' : 'Off ' + fmt(off || 0)}</span>}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
                           {o.high > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset mr-1 ' + FLAG_CLS.high}>{o.high} high</span>}
@@ -1052,8 +1055,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   {curOwner.paid !== 0 && <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Paid out</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.paid)}</div></div>}
                   <div>
                     {curOwner.hasStatement && (
-                      <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (curOwner.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
-                        {curOwner.ties ? 'Ties to statement' : 'Off by ' + fmt(Math.round((curOwner.net - (curOwner.dueToOwner || 0)) * 100) / 100)}
+                      <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (curOwner.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
+                        {curOwner.ties ? 'Ties to statement' : 'Ledger vs stmt: ' + fmt(Math.round((curOwner.net - (curOwner.dueToOwner || 0)) * 100) / 100)}
                       </span>
                     )}
                   </div>
@@ -1463,8 +1466,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No statement generated</span>
                       )}
                       {o.hasStatement && (
-                        <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
-                          {o.ties ? 'Ties to statement' : 'Off by ' + fmt(off || 0)}
+                        <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
+                          {o.ties ? 'Ties to statement' : 'Ledger vs stmt: ' + fmt(off || 0)}
                         </span>
                       )}
                       {o.high > 0 && <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.high}>{o.high} high</span>}
