@@ -66,7 +66,9 @@ export type AuditItem = {
   commission: number
   other: number
   net: number
-  rate: number | null            // rental / monthNights, null when nights are unknown
+  rate: number | null            // in-month rental / in-month nights (what the statement shows)
+  avgRate: number | null         // THE JUDGED RATE: whole-reservation accommodation value / total
+                                 // nights (folio-based, immune to partially-posted ledgers)
   lines: AuditLine[]
   flags: AuditFlag[]
   status: AuditStatus
@@ -112,7 +114,7 @@ export type PrepItem = {
   folioRm: number | null         // revenue-fee folio items
   folioLump: number | null       // "Additional Fees & Room Fees" lump still on the folio
   splitDone: boolean             // folio carries both Cleaning + Revenue items — already broken out
-  noFees: boolean                // folio has no fee lump and no fee items — nothing to split
+  noFees: boolean                // folio has NO fee lump and NO fee items — fees never set up (warning)
   saved: { by: string; at: string } | null
 }
 
@@ -447,7 +449,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const resByCode: Record<string, any> = {}
   for (let i = 0; i < codes.length; i += 200) {
     const { data } = await sb.from('guesty_reservations')
-      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, custom_fields, tags:raw->tags")
+      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, money_total, custom_fields, tags:raw->tags, fare:raw->money->>fareAccommodation")
       .in('confirmation_code', codes.slice(i, i + 200))
     for (const r of (data || []) as any[]) {
       const c = String(r.confirmation_code || '')
@@ -576,7 +578,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
     g: Group; res: any; bestListing: string
     checkIn: string; checkOut: string; totalNights: number; monthNights: number
     splitMonth: boolean; net: number; rate: number | null
-    stayDates: string[]; mixWeekday: number; mixWeekend: number
+    avgRate: number | null       // whole-reservation value / total nights (the judged rate)
+    stayDates: string[]          // in-month night dates (ledger leave-one-out basis)
+    mixWeekday: number; mixWeekend: number   // FULL-STAY night mix when dates known
     leadDays: number | null
   }
   const pres: Pre[] = []
@@ -636,11 +640,31 @@ export async function buildAudit(month: string): Promise<AuditData> {
       }
     } else stayDates = Array.from(g.afDates).sort()
     const monthNights = stayDates.length
-    const mixWeekend = stayDates.filter(isWeekendNight).length
-    const mixWeekday = monthNights - mixWeekend
+
+    // Night mix over the WHOLE stay (the judged rate is whole-stay), falling back to the
+    // in-month dates when the reservation is unmatched.
+    let mixDates: string[] = stayDates
+    if (checkIn && checkOut && checkIn < checkOut) {
+      mixDates = []
+      for (let t = new Date(checkIn + 'T00:00:00Z').getTime(), end = new Date(checkOut + 'T00:00:00Z').getTime(), i = 0; t < end && i < 60; t += 86400000, i++) {
+        mixDates.push(new Date(t).toISOString().slice(0, 10))
+      }
+    }
+    const mixWeekend = mixDates.filter(isWeekendNight).length
+    const mixWeekday = mixDates.length - mixWeekend
     const splitMonth = !!(checkIn && checkOut) && (checkIn < win.start || checkOut > win.endExcl)
     const net = money(g.rental - g.commission + g.other)
     const rate = monthNights > 0 ? money(g.rental / monthNights) : null
+
+    // THE JUDGED RATE — total reservation value / total nights (Jon's rule: the statement
+    // only carries in-month nights, and a partially-posted ledger makes in-month math lie,
+    // e.g. a "$9/night" that never happened). Accommodation fare first (fees excluded),
+    // host payout as fallback, in-month math only when the reservation is unmatched.
+    const fare = res ? Number((res as any).fare) || 0 : 0
+    const payout = res ? Number((res as any).money_total) || 0 : 0
+    const avgRate = (totalNights > 0 && fare > 0.5) ? money(fare / totalNights)
+      : (totalNights > 0 && payout > 0.5) ? money(payout / totalNights)
+        : rate
 
     // Lead time: how far ahead was this booked? Last-minute bookings get rate cuts on purpose.
     const created = res ? String(res.created_at || '').slice(0, 10) : ''
@@ -648,7 +672,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       ? Math.max(0, Math.round((new Date(checkIn + 'T00:00:00Z').getTime() - new Date(created + 'T00:00:00Z').getTime()) / 86400000))
       : null
 
-    pres.push({ g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, stayDates, mixWeekday, mixWeekend, leadDays })
+    pres.push({ g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, avgRate, stayDates, mixWeekday, mixWeekend, leadDays })
   }
 
   // Expected revenue for one stay's night mix, from the narrowest trustworthy cohort:
@@ -672,11 +696,13 @@ export async function buildAudit(month: string): Promise<AuditData> {
       const blended = totR / totN
       const wdAvg = wdN >= 6 && wdR > 0 ? wdR / wdN : blended
       const weAvg = weN >= 6 && weR > 0 ? weR / weN : blended
+      const mixN = pre.mixWeekday + pre.mixWeekend
+      if (mixN <= 0) continue
       const expected = money(pre.mixWeekday * wdAvg + pre.mixWeekend * weAvg)
       if (expected <= 0) continue
       const pN = p.wdN + p.weN, pR = p.wdR + p.weR
       return {
-        expected, perNight: money(expected / pre.stayDates.length), label,
+        expected, perNight: money(expected / mixN), label,
         prevAvg: pN >= 5 && pR > 0 ? money(pR / pN) : null,
         wdAvg: money(wdAvg), weAvg: money(weAvg),
       }
@@ -687,9 +713,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const items: AuditItem[] = []
   const prep: PrepItem[] = []
   for (const pre of pres) {
-    const { g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, mixWeekday, mixWeekend, leadDays } = pre
+    const { g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, avgRate, mixWeekday, mixWeekend, leadDays } = pre
     const bench = g.resCode ? benchOf(pre) : null
-    const benchPct = bench && g.rental > 0.005 && bench.expected > 0 ? Math.round((g.rental / bench.expected) * 100) : null
+    const benchPct = bench && avgRate != null && avgRate > 0 && bench.perNight > 0 ? Math.round((avgRate / bench.perNight) * 100) : null
 
     // Owner stays and friends & family: tagged from Guesty tags, source and guest name.
     // Their discounts are by design — they stay visible but never read as pricing errors.
@@ -722,14 +748,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
             : stayTag === 'owner' ? 'Owner stay — $0 revenue by design; note any associated costs.'
               : '$0 revenue and not obviously an owner or friends & family stay.' })
       }
-      // LOW RATE — always on in-month nights only, so split-month stays are never flagged
-      // for looking small on this month's statement. Night-mix aware (midweek stays are
-      // judged against midweek pricing) and lead-time aware (last-minute bookings get a
-      // relaxed bar, because those rates are cut on purpose).
-      if (on.low_rate && g.rental > 0.005 && rate != null && monthNights > 0) {
-        const mixTxt = monthNights + ' in-month night' + (monthNights === 1 ? '' : 's')
+      // LOW RATE — judged on the WHOLE-RESERVATION average (total value / total nights, the
+      // folio's nightly rate), NEVER on in-month ledger math: the statement only carries
+      // in-month nights, and a partially-posted ledger yields impossible rates ("$9/night").
+      // Night-mix aware (midweek stays vs midweek pricing) and lead-time aware (last-minute
+      // bookings get a relaxed bar, because those rates are cut on purpose).
+      if (on.low_rate && g.rental > 0.005 && avgRate != null && avgRate > 0) {
+        const stayTxt = (totalNights > 0 ? totalNights + '-night stay' : monthNights + ' night' + (monthNights === 1 ? '' : 's'))
           + ' (' + mixWeekday + ' midweek · ' + mixWeekend + ' weekend)'
-          + (splitMonth ? ', split-month stay' : '')
+          + (splitMonth ? ', ' + monthNights + 'n on this statement' : '')
         const lastMin = leadDays != null && leadDays <= rules.lastMinDays
         const effPct = lastMin ? Math.max(10, rules.lowRatePct - rules.lastMinExtra) : rules.lowRatePct
         // Owner / F&F stays are discounted on purpose: the low rate stays VISIBLE but reads
@@ -738,16 +765,16 @@ export async function buildAudit(month: string): Promise<AuditData> {
         const lrTagNote = stayTag === 'ff' ? ' Friends & family stay — discounted by design.'
           : stayTag === 'owner' ? ' Owner stay — discounted by design.' : ''
         if (rules.lowRateMode === 'absolute') {
-          if (rate < rules.lowRate) {
-            flags.push({ type: 'low_rate', severity: lrSev, amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRate + ' threshold.' + lrTagNote })
+          if (avgRate < rules.lowRate) {
+            flags.push({ type: 'low_rate', severity: lrSev, amount: avgRate, detail: 'Whole-stay average $' + avgRate.toFixed(2) + '/night on a ' + stayTxt + ' — under the $' + rules.lowRate + ' threshold.' + lrTagNote })
           }
-        } else if (rate < rules.lowRateFloor) {
-          flags.push({ type: 'low_rate', severity: lrSev, amount: rate, detail: 'Effective rate $' + rate.toFixed(2) + '/night on ' + mixTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' + lrTagNote })
+        } else if (avgRate < rules.lowRateFloor) {
+          flags.push({ type: 'low_rate', severity: lrSev, amount: avgRate, detail: 'Whole-stay average $' + avgRate.toFixed(2) + '/night on a ' + stayTxt + ' — under the $' + rules.lowRateFloor + ' hard floor.' + lrTagNote })
         } else if (bench && benchPct != null && benchPct < effPct) {
           flags.push({
-            type: 'low_rate', severity: lrSev, amount: rate,
-            detail: 'Brought in ' + benchPct + '% of the expected revenue for this night mix — $' + rate.toFixed(2) + '/night vs the expected ≈$'
-              + bench.perNight.toFixed(0) + '/night on ' + mixTxt + ', per the ' + bench.label
+            type: 'low_rate', severity: lrSev, amount: avgRate,
+            detail: 'Whole-stay average $' + avgRate.toFixed(2) + '/night is ' + benchPct + '% of the expected ≈$'
+              + bench.perNight.toFixed(0) + '/night for a ' + stayTxt + ', per the ' + bench.label
               + ' (midweek ≈$' + bench.wdAvg.toFixed(0) + '/n · weekend ≈$' + bench.weAvg.toFixed(0) + '/n, this + last month'
               + (bench.prevAvg != null ? '; last month blended $' + bench.prevAvg.toFixed(0) + '/n' : '') + ')'
               + (lastMin ? '. Booked ' + leadDays + 'd before check-in — still short even with the last-minute bar of ' + effPct + '%.' : '.') + lrTagNote,
@@ -793,7 +820,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       benchPrev: bench ? bench.prevAvg : null,
       mixWeekday, mixWeekend, leadDays, stayTag,
       rental: g.rental, commission: g.commission, other: g.other, net,
-      rate,
+      rate, avgRate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
       flags,
       status: saved ? (String(saved.status) as AuditStatus) : defaultStatus,
@@ -906,7 +933,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
   }
 }
 
-/** A prep item is resolved when the split is visible somewhere, or a human marked it done. */
+/**
+ * A prep item is resolved when the split is visible somewhere, or a human marked it done.
+ * A folio with NO fees at all is NOT resolved — on an Expedia-family booking that means the
+ * fees were never set up, which is its own warning to fix.
+ */
 export function prepResolved(p: PrepItem): boolean {
-  return p.splitDone || p.noFees || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
+  return p.splitDone || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
 }

@@ -275,7 +275,32 @@ function sinceFilter(iso: string): string {
   return `&filters=${encodeURIComponent(JSON.stringify(f))}`
 }
 
-const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount money source customFields confirmationCode createdAt note')
+const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount money source customFields confirmationCode createdAt note tags')
+
+/**
+ * Targeted re-pull: refresh specific reservations from Guesty RIGHT NOW (folio edits, fee
+ * breakouts, tag changes) instead of waiting for the incremental cron to notice them. Used
+ * by the owner-audit Prep tab's "Re-check Guesty" so a folio edit maps straight back to
+ * the app.
+ */
+export async function pullReservationsByIds(ids: string[]): Promise<number> {
+  const clean = Array.from(new Set(ids.map(x => String(x || '')).filter(Boolean))).slice(0, 200)
+  if (!clean.length) return 0
+  const sb = supabaseAdmin()
+  let total = 0
+  for (let i = 0; i < clean.length; i += 50) {
+    const chunk = clean.slice(i, i + 50)
+    const filter = `&filters=${encodeURIComponent(JSON.stringify([{ field: '_id', operator: '$in', value: chunk }]))}`
+    const data = await api<{ results: any[] }>(`/reservations?limit=100&skip=0&fields=${FIELDS}${filter}`)
+    const rows = (data.results || []).map(mapReservation)
+    if (rows.length) {
+      const { error } = await sb.from('guesty_reservations').upsert(rows, { onConflict: 'id' })
+      if (error) throw new Error(`upsert reservations: ${error.message}`)
+      total += rows.length
+    }
+  }
+  return total
+}
 
 export async function syncReservations(maxPages = 40, since: string | null = null): Promise<number> {
   const sb = supabaseAdmin()
