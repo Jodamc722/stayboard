@@ -48,6 +48,17 @@ type PrepItem = {
 // No fees on an Expedia folio = fees never set up — that's a WARNING, not a resolved row.
 const prepResolved = (p: PrepItem) => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
 type PrepFilter = '' | 'open' | 'nofees' | 'split' | 'marked'
+type ResolutionClaim = {
+  id: string; guest: string; property: string; unit: string
+  resCode: string; reservationId: string; stage: string
+  amountSought: number | null; amountPaid: number | null
+  decidedOn: string; paidOn: string; summary: string
+  onStatement: boolean; stmtAmount: number | null
+}
+type ResolutionLine = {
+  ownerId: string; ownerName: string; resCode: string
+  label: string; date: string; amount: number; hasClaim: boolean
+}
 type Item = {
   key: string; kind: 'reservation' | 'line'; ownerId: string; resCode: string
   guest: string; checkIn: string; checkOut: string
@@ -80,6 +91,7 @@ type Data = {
   coverage: { ready: boolean; missing: string[] }
   rules: Rules
   prep: PrepItem[]
+  resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
 }
 
 const FLAG_LABEL: Record<FlagType, string> = {
@@ -1243,6 +1255,94 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     )}
                   </div>
                 </div>
+
+                {/* ── AIRBNB RESOLUTIONS — every Resolution Center case for the month,
+                    reconciled against what actually landed on the statements ── */}
+                {(() => {
+                  const rc = data.resolutions.claims
+                  const orphans = data.resolutions.lines.filter(l => !l.hasClaim)
+                  const pending = rc.filter(c => !c.paidOn && !c.decidedOn)
+                  const decided = rc.filter(c => c.decidedOn && !c.paidOn)
+                  const paid = rc.filter(c => !!c.paidOn)
+                  const collected = paid.reduce((a, c) => a + (c.amountPaid || 0), 0)
+                  const missing = rc.filter(c => (c.paidOn || c.decidedOn) && !c.onStatement)
+                  const stageChip = (c: ResolutionClaim) => c.paidOn
+                    ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">Paid {dateShort(c.paidOn)}</span>
+                    : c.decidedOn
+                      ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-sky-50 text-sky-700 ring-sky-200">Decided {dateShort(c.decidedOn)}</span>
+                      : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">Pending with Airbnb</span>
+                  return (
+                    <>
+                      <div className="rounded-2xl border border-line bg-white shadow-soft p-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <ShieldAlert size={15} className="text-muted" />
+                          <div className="text-sm font-semibold text-ink">Airbnb resolutions — {data.label}</div>
+                          <a href="/claims" className="ml-auto text-xs font-medium text-brand-700 hover:underline">Open the claims board →</a>
+                        </div>
+                        <p className="text-xs text-muted max-w-3xl">
+                          Every Airbnb Resolution Center case decided or paid this month (plus anything still pending while this
+                          month is being prepped), pulled from the claims board and reconciled against the statements: a paid
+                          resolution that hasn&rsquo;t landed on the owner&rsquo;s statement is money the owner hasn&rsquo;t seen.
+                        </p>
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-ink ring-line">{rc.length} resolution{rc.length === 1 ? '' : 's'}</span>
+                          {pending.length > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">{pending.length} pending</span>}
+                          {decided.length > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-sky-50 text-sky-700 ring-sky-200">{decided.length} decided</span>}
+                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{paid.length} paid · {fmt0(collected)}</span>
+                          {missing.length > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200">⚠ {missing.length} not on a statement</span>}
+                        </div>
+                      </div>
+
+                      {(rc.length > 0 || orphans.length > 0) && (
+                        <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+                          <div className="divide-y divide-line">
+                            {rc.map(c => (
+                              <div key={c.id} className={'flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 border-l-2 ' + ((c.paidOn || c.decidedOn) && !c.onStatement ? 'border-l-rose-400' : c.onStatement ? 'border-l-emerald-300' : 'border-l-amber-300')}>
+                                <div className="min-w-[200px] flex-1">
+                                  <div className="text-sm font-medium text-ink truncate">
+                                    {c.guest || '(guest unknown)'} {c.resCode && <span className="text-muted font-normal">· {c.resCode}</span>}
+                                  </div>
+                                  <div className="text-[11px] text-muted truncate">
+                                    {[c.property, c.unit].filter(Boolean).join(' ')}{c.summary ? ' · ' + c.summary : ''}
+                                  </div>
+                                </div>
+                                <div className="text-right w-32">
+                                  <div className="text-sm font-semibold text-ink">{c.amountPaid != null ? fmt(c.amountPaid) : c.amountSought != null ? fmt(c.amountSought) : '—'}</div>
+                                  <div className="text-[11px] text-muted">{c.amountPaid != null ? 'paid' : 'sought'}{c.amountPaid != null && c.amountSought != null && c.amountSought !== c.amountPaid ? ' of ' + fmt0(c.amountSought) : ''}</div>
+                                </div>
+                                {stageChip(c)}
+                                {(c.paidOn || c.decidedOn) && (
+                                  c.onStatement
+                                    ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">On statement{c.stmtAmount != null ? ' ' + fmt(c.stmtAmount) : ''}</span>
+                                    : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200" title="No resolution line found on this month's statements for this reservation — add it in Guesty so the owner sees the money">⚠ Not on a statement</span>
+                                )}
+                                {c.reservationId && (
+                                  <a href={gyUrl(c.reservationId)} target="_blank" rel="noopener noreferrer" title="Open in Guesty"
+                                    className="p-1 rounded-md hover:bg-app text-muted hover:text-brand-700"><ExternalLink size={13} /></a>
+                                )}
+                              </div>
+                            ))}
+                            {orphans.map((l, i) => (
+                              <div key={'o' + i} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 border-l-2 border-l-neutral-200 bg-app/30">
+                                <div className="min-w-[200px] flex-1">
+                                  <div className="text-sm text-ink truncate">{l.label}</div>
+                                  <div className="text-[11px] text-muted truncate">{l.ownerName}{l.resCode ? ' · ' + l.resCode : ''} · {dateShort(l.date)}</div>
+                                </div>
+                                <div className={'text-sm font-semibold ' + (l.amount < 0 ? 'text-rose-700' : 'text-ink')}>{fmt(l.amount)}</div>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200" title="A resolution-looking line on a statement with no matching record on the claims board">on statement · no claim record</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {rc.length === 0 && orphans.length === 0 && (
+                        <div className="rounded-2xl border border-line bg-white shadow-soft p-6 text-center text-sm text-muted">
+                          No Airbnb resolutions found for {data.label}.
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </>
             )
           })()}
