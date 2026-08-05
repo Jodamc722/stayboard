@@ -739,7 +739,7 @@ function AuditsDue({ market }: { market: string }) {
       </button>
       {open && (
         <div className="border-t border-line">
-          {!data && <div className="px-4 py-4 text-sm text-muted">Checking audit history\u2026</div>}
+          {!data && <div className="px-4 py-4 text-sm text-muted">Checking audit history&hellip;</div>}
           {data && rows.length === 0 && <div className="px-4 py-4 text-sm text-muted">Every unit{market === 'all' ? '' : ' in ' + market} has been audited within the last year. Nice.</div>}
           <div className="divide-y divide-line">
             {rows.map((x: any) => (
@@ -942,7 +942,7 @@ function SignalPanel({ s, health, seed, listingId, unit, today, people, onClose,
             <div key={x.key} className={'rounded-lg border bg-white px-2.5 py-2 ' + (x.due ? 'border-amber-300' : 'border-line')}>
               <div className="text-[10px] font-semibold uppercase tracking-wide text-muted flex items-center gap-1">{x.short}{x.due && <span className="text-[8.5px] font-bold px-1 py-px rounded bg-amber-500 text-white">DUE</span>}</div>
               <div className="text-[13px] font-bold text-ink mt-0.5">{x.neverSeen ? 'No record' : fmtShort(x.lastAt)}</div>
-              <div className="text-[10px] text-muted">{x.neverSeen ? 'nothing logged in 2 yrs' : Math.round(x.monthsAgo) + ' months ago'}</div>
+              <div className="text-[10px] text-muted">{x.neverSeen ? 'nothing logged in 2 yrs' : (Math.round(x.monthsAgo) <= 1 ? '1 month ago' : Math.round(x.monthsAgo) + ' months ago')}</div>
               <button onClick={() => setLocalSeed(eff && eff.key === x.key ? null : seedFor(x))}
                 className={'mt-1 text-[11px] font-semibold px-2 py-0.5 rounded border ' + (eff && eff.key === x.key ? 'bg-ink text-white border-ink' : 'bg-white border-line hover:bg-app text-ink')}>
                 {eff && eff.key === x.key ? 'Selected ✓' : 'Schedule'}
@@ -996,7 +996,7 @@ function SignalPanel({ s, health, seed, listingId, unit, today, people, onClose,
           <select value={dept} onChange={e => setDept(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-2 bg-white" title="Which team the task goes to in Breezeway">
             {DEPTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
-          <input list="ppl-all" value={who} onChange={e => setWho(e.target.value.trim().replace(/\s*\([^)]*\)\s*$/, ''))} placeholder="Assign to\u2026" className="text-sm border border-line rounded-lg px-3 py-2 bg-white w-[170px]" />
+          <input list="ppl-all" value={who} onChange={e => setWho(e.target.value.trim().replace(/\s*\([^)]*\)\s*$/, ''))} placeholder="Assign to…" className="text-sm border border-line rounded-lg px-3 py-2 bg-white w-[170px]" />
           <button onClick={create} disabled={busy || !title.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating\u2026' : 'Create for ' + date.slice(5)}</button>
         </div>
         {desc && <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={4} className="w-full mt-2 text-xs border border-line rounded-lg px-3 py-2 bg-white font-mono text-muted" />}
