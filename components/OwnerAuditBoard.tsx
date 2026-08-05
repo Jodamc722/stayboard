@@ -23,7 +23,7 @@ import {
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
 } from 'lucide-react'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off'
 type Severity = 'high' | 'review' | 'info'
 type Status = 'review' | 'action' | 'done'
 type Flag = { type: FlagType; severity: Severity; detail: string; amount?: number }
@@ -34,6 +34,7 @@ type Rules = {
   lowRateMode: 'relative' | 'absolute'
   lowRatePct: number; lowRateFloor: number; lastMinDays: number; lastMinExtra: number; lowRate: number
   passthruLo: number; passthruHi: number
+  commTolerance: number
   enabled: Record<FlagType, boolean>
 }
 type PrepItem = {
@@ -102,6 +103,7 @@ type Data = {
 const FLAG_LABEL: Record<FlagType, string> = {
   negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphan reimb',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
+  commission_off: 'Commission off',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
@@ -111,6 +113,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   zero_rev: '$0 reservations that are not obviously owner stays.',
   passthru: 'Commission fully offsets rental — a wash by design (informational).',
   no_reservation: 'Statement line items whose reservation code has no matching booking (informational).',
+  commission_off: 'Commission % on this reservation strays from the owner’s usual rate — most often a canceled booking whose whole cancellation fee was taken as commission.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
@@ -929,6 +932,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   className="w-20 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
               </div>
               <div className="text-[10px] text-muted mt-0.5">Ratio treated as a wash (informational flag).</div>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Commission tolerance (pts)</label>
+              <input type="number" min={1} max={30} step={1} value={rulesDraft.commTolerance}
+                onChange={e => setRulesDraft(rd => rd ? { ...rd, commTolerance: Number(e.target.value) } : rd)}
+                className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              <div className="text-[10px] text-muted mt-0.5">Flag when a reservation’s commission % strays this far from the owner’s usual rate.</div>
             </div>
           </div>
           <div className="grid sm:grid-cols-2 gap-1.5 max-w-2xl">
