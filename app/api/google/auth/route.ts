@@ -18,7 +18,9 @@ export async function GET(req: NextRequest) {
     + '?client_id=' + encodeURIComponent(clientId)
     + '&redirect_uri=' + encodeURIComponent(redirect)
     + '&response_type=code'
-    + '&scope=' + encodeURIComponent('https://www.googleapis.com/auth/drive.file')
+    // drive.file (Send-to-Drive, least-privilege) + gmail.send (the Morning Ops Brief).
+    // gmail.send can ONLY send as the connected mailbox — it cannot read any mail.
+    + '&scope=' + encodeURIComponent('https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send')
     + '&access_type=offline'
     + '&prompt=consent'
   return NextResponse.redirect(url)
