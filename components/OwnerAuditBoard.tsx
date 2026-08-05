@@ -210,6 +210,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [fStatus, setFStatus] = useState<'' | Status>('')
   const [fFlag, setFFlag] = useState<'' | 'flagged' | FlagType>('')
   const [fOwner, setFOwner] = useState('')
+  const [fSource, setFSource] = useState('')                                 // channel filter (label)
+  const [fTag, setFTag] = useState<'' | 'canceled' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'ff'>('')
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({})
   // Worklist opens CLEAN: every statement collapsed to its totals row. expandedOwners is the
   // explicit open/close override; sections auto-open while filters or a search are active.
@@ -477,13 +479,29 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (fStatus && it.status !== fStatus) return false
       if (fFlag === 'flagged' && !it.flags.some(f => f.severity !== 'info')) return false
       if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
+      if (fSource && sourceLabel(it.source) !== fSource) return false
+      if (fTag === 'owner' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
+      else if (fTag) { if (it.statusTag !== fTag) return false }
       if (needle) {
         const hay = (it.guest + ' ' + it.resCode + ' ' + it.unit + ' ' + (ownerName[it.ownerId] || '') + ' ' + it.note).toLowerCase()
         if (hay.indexOf(needle) < 0) return false
       }
       return true
     })
-  }, [data, q, fStatus, fFlag, fOwner, ownerName])
+  }, [data, q, fStatus, fFlag, fOwner, fSource, fTag, ownerName])
+
+  // Tag + channel counts for the filter chips.
+  const tagCounts = useMemo(() => {
+    const t: Record<string, number> = {}
+    const src: Record<string, number> = {}
+    for (const it of (data?.items || [])) {
+      if (it.statusTag) t[it.statusTag] = (t[it.statusTag] || 0) + 1
+      if (it.stayTag) t[it.stayTag] = (t[it.stayTag] || 0) + 1
+      const s = sourceLabel(it.source)
+      if (s) src[s] = (src[s] || 0) + 1
+    }
+    return { t, src }
+  }, [data])
 
   const byOwner = useMemo(() => {
     const m: Record<string, Item[]> = {}
@@ -1420,7 +1438,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ WORKLIST ═══ */}
           {view === 'work' && (
             <>
-              {/* filters */}
+              {/* filters — row 1: work state (statuses + flags) */}
               <div className="flex flex-wrap items-center gap-2">
                 {(['review', 'action', 'done'] as Status[]).map(s => (
                   <button key={s} onClick={() => setFStatus(fStatus === s ? '' : s)}
@@ -1439,7 +1457,26 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     {FLAG_LABEL[f]} {flagCounts[f]}
                   </button>
                 ))}
+              </div>
+
+              {/* filters — row 2: what the booking IS (tags + channel), plus owner + search */}
+              <div className="flex flex-wrap items-center gap-2">
+                {([['canceled', 'Canceled'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['ff', 'Friends & family']] as [typeof fTag, string][])
+                  .filter(([k]) => tagCounts.t[k as string])
+                  .map(([k, label]) => (
+                    <button key={k} onClick={() => setFTag(fTag === k ? '' : k)}
+                      className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset transition '
+                        + (k === 'owner' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
+                        + (fTag === k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
+                      {label} {tagCounts.t[k as string]}
+                    </button>
+                  ))}
                 <span className="ml-auto" />
+                <select value={fSource} onChange={e => setFSource(e.target.value)}
+                  className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 max-w-[170px]">
+                  <option value="">All channels</option>
+                  {Object.keys(tagCounts.src).sort().map(s => <option key={s} value={s}>{s} ({tagCounts.src[s]})</option>)}
+                </select>
                 <select value={fOwner} onChange={e => setFOwner(e.target.value)}
                   className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 max-w-[220px]">
                   <option value="">All owners</option>
@@ -1450,13 +1487,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, code…"
                     className="text-xs border border-line rounded-lg pl-7 pr-2.5 py-1.5 w-48 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 </div>
+                {(fStatus || fFlag || fTag || fSource || fOwner || q) && (
+                  <button onClick={() => { setFStatus(''); setFFlag(''); setFTag(''); setFSource(''); setFOwner(''); setQ('') }}
+                    className="text-[11px] font-medium text-muted hover:text-ink underline">Clear all</button>
+                )}
               </div>
 
               {/* owner sections — collapsed to totals by default; expanding shows the flagged
                   and open rows first, with the full statement one click further */}
               {data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length).map(o => {
                 const items = byOwner[o.ownerId]
-                const filterActive = !!(q.trim() || fStatus || fFlag || fOwner)
+                const filterActive = !!(q.trim() || fStatus || fFlag || fOwner || fSource || fTag)
                 const isOpen = expandedOwners[o.ownerId] !== undefined ? expandedOwners[o.ownerId] : filterActive
                 const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
                 const s = stats[o.ownerId] || { notes: 0, comments: 0 }
