@@ -65,9 +65,15 @@ export async function sendGmail(opts: {
     })
     if (r.ok) return { ok: true }
     const body = await r.text().catch(() => '')
-    if (r.status === 403 || /insufficient|scope/i.test(body)) {
+    // Two very different 403s: scope missing on the TOKEN vs Gmail API disabled on the PROJECT.
+    // Never collapse them — the fix for each is different and misdiagnosis costs a day.
+    if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
       return { ok: false, error: 'The Google connection has no Gmail permission — reconnect Google (it will ask for "Send email on your behalf").' }
     }
-    return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 200)}` }
+    if (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(body)) {
+      const m = body.match(/https:\/\/console\.developers\.google\.com[^"\\\s]*/)
+      return { ok: false, error: 'The Gmail API is not enabled on the Google Cloud project — enable it' + (m ? ' at ' + m[0] : ' (APIs & Services → Library → Gmail API → Enable)') + ', wait a minute, then retry.' }
+    }
+    return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 300)}` }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
