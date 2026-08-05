@@ -19,6 +19,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
 import { appendReservationNote } from '@/lib/claim-note'
+import { pullReservationsByIds } from '@/lib/guesty'
 import { MONTH_LABEL } from '@/lib/owner-statements'
 import { auditMonths, buildAudit, defaultAuditMonth, saveAuditRules, AuditStatus, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
 
@@ -67,6 +68,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, rules })
     } catch (e: any) {
       return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+    }
+  }
+
+  // ── PREP RE-CHECK — pull the given reservations fresh from Guesty so folio edits (fee
+  // breakouts done on the reservation) map back into the app immediately, instead of
+  // waiting for the incremental sync to notice them.
+  if (action === 'prep-recheck') {
+    const ids = Array.isArray(body.reservationIds) ? body.reservationIds.map((x: any) => String(x || '')).filter(Boolean).slice(0, 120) : []
+    if (!ids.length) return NextResponse.json({ ok: false, error: 'reservationIds required' }, { status: 400 })
+    try {
+      const pulled = await pullReservationsByIds(ids)
+      return NextResponse.json({ ok: true, pulled })
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 })
     }
   }
 
