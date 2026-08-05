@@ -44,6 +44,7 @@ type PrepItem = {
   folioClean: number | null; folioRm: number | null; folioLump: number | null
   splitDone: boolean; noFees: boolean
   saved: { by: string; at: string } | null
+  note: string
 }
 // No fees on an Expedia folio = fees never set up — that's a WARNING, not a resolved row.
 const prepResolved = (p: PrepItem) => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
@@ -54,6 +55,7 @@ type ResolutionClaim = {
   amountSought: number | null; amountPaid: number | null
   decidedOn: string; paidOn: string; summary: string
   onStatement: boolean; stmtAmount: number | null
+  note: string
 }
 type ResolutionLine = {
   ownerId: string; ownerName: string; resCode: string
@@ -79,6 +81,7 @@ type Owner = {
   ties: boolean; items: number; open: number; done: number
   high: number; reviewFlags: number; notes: number; commentCount: number
   signOff: SignOff | null
+  stmtNote: string
 }
 type MonthPick = { m: string; label: string; statements: number }
 type Data = {
@@ -211,6 +214,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [prepBusy, setPrepBusy] = useState('')
   const [fPrep, setFPrep] = useState<PrepFilter>('')
   const [recheckBusy, setRecheckBusy] = useState(false)
+  const [eNotes, setENotes] = useState<Record<string, string>>({})     // entity note drafts (statement / prep / resolution)
   const [drafts, setDrafts] = useState<Record<string, string>>({})           // note drafts
   const [cDrafts, setCDrafts] = useState<Record<string, string>>({})         // comment drafts
   const [savingKey, setSavingKey] = useState('')
@@ -384,6 +388,25 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       patchPrep(p, j.saved || null)
     } catch (e: any) { setError(String(e?.message || e)) }
     setPrepBusy('')
+  }
+
+  // A note on ANYTHING — statement, prep row, resolution. Saves only the note; whatever
+  // status or sign-off the row carries is preserved server-side.
+  const saveEntityNote = async (ownerId: string, itemKey: string, current: string, apply: (v: string) => void) => {
+    if (!data) return
+    const k = ownerId + '|' + itemKey
+    const v = eNotes[k]
+    if (v === undefined || v === current) return
+    if (share && me.trim()) { try { localStorage.setItem('oa_name', me.trim()) } catch { /* private mode */ } }
+    try {
+      const r = await fetch('/api/owner-audit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'note', month: data.month, ownerId, itemKey, note: v, author: me.trim() || 'reviewer' }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setError(j.error || 'Note save failed'); return }
+      apply(j.note)
+    } catch (e: any) { setError(String(e?.message || e)) }
   }
 
   // Pull the outstanding prep reservations fresh from Guesty, then rebuild the month —
@@ -967,9 +990,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                           {o.high === 0 && o.reviewFlags === 0 && <span className="text-[10px] text-muted">clean</span>}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-[11px] text-muted">
+                          {o.stmtNote && <span title={o.stmtNote} className="inline-flex items-center mr-2 px-1 rounded bg-amber-50 ring-1 ring-inset ring-amber-200"><StickyNote size={11} className="text-amber-600" /></span>}
                           {s.notes > 0 && <span className="inline-flex items-center gap-0.5 mr-2"><StickyNote size={11} className="text-amber-600" /> {s.notes}</span>}
                           {s.comments > 0 && <span className="inline-flex items-center gap-0.5"><MessageSquare size={11} className="text-brand-600" /> {s.comments}</span>}
-                          {s.notes === 0 && s.comments === 0 && <span>—</span>}
+                          {!o.stmtNote && s.notes === 0 && s.comments === 0 && <span>—</span>}
                         </td>
                         <td className="px-3 py-2.5">
                           <div className="flex items-center gap-1.5">
@@ -1031,6 +1055,18 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                       </span>
                     )}
                   </div>
+                </div>
+                {/* statement-level note — always visible, saves on blur */}
+                <div className="mt-3 flex items-center gap-1.5 max-w-3xl">
+                  <StickyNote size={13} className="text-amber-600 shrink-0" />
+                  <input
+                    value={eNotes[curOwner.ownerId + '|__statement__'] !== undefined ? eNotes[curOwner.ownerId + '|__statement__'] : curOwner.stmtNote}
+                    onChange={e => setENotes(prev => ({ ...prev, [curOwner.ownerId + '|__statement__']: e.target.value }))}
+                    onBlur={() => saveEntityNote(curOwner.ownerId, '__statement__', curOwner.stmtNote, v => setData(d => d ? { ...d, owners: d.owners.map(o => o.ownerId === curOwner.ownerId ? { ...o, stmtNote: v } : o) } : d))}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    placeholder="Statement note — anything the next reviewer of this statement should know…"
+                    className="flex-1 text-xs border border-amber-200 bg-amber-50/60 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  />
                 </div>
               </div>
 
@@ -1245,6 +1281,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                             <a href={gyUrl(p.reservationId)} target="_blank" rel="noopener noreferrer" title="Open in Guesty"
                               className="p-1 rounded-md hover:bg-app text-muted hover:text-brand-700"><ExternalLink size={13} /></a>
                           )}
+                          <div className="w-full flex items-center gap-1.5 pl-1">
+                            <StickyNote size={11} className={'shrink-0 ' + (p.note ? 'text-amber-600' : 'text-neutral-300')} />
+                            <input
+                              value={eNotes['-|prep:' + p.resCode] !== undefined ? eNotes['-|prep:' + p.resCode] : p.note}
+                              onChange={e => setENotes(prev => ({ ...prev, ['-|prep:' + p.resCode]: e.target.value }))}
+                              onBlur={() => saveEntityNote('-', 'prep:' + p.resCode, p.note, v => setData(d => d ? { ...d, prep: d.prep.map(x => x.resCode === p.resCode ? { ...x, note: v } : x) } : d))}
+                              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                              placeholder="Note…"
+                              className="flex-1 max-w-xl text-[11px] border border-line rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-amber-200"
+                            />
+                          </div>
                         </div>
                       )
                     })}
@@ -1320,6 +1367,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                                   <a href={gyUrl(c.reservationId)} target="_blank" rel="noopener noreferrer" title="Open in Guesty"
                                     className="p-1 rounded-md hover:bg-app text-muted hover:text-brand-700"><ExternalLink size={13} /></a>
                                 )}
+                                <div className="w-full flex items-center gap-1.5 pl-1">
+                                  <StickyNote size={11} className={'shrink-0 ' + (c.note ? 'text-amber-600' : 'text-neutral-300')} />
+                                  <input
+                                    value={eNotes['-|resl:' + c.id] !== undefined ? eNotes['-|resl:' + c.id] : c.note}
+                                    onChange={e => setENotes(prev => ({ ...prev, ['-|resl:' + c.id]: e.target.value }))}
+                                    onBlur={() => saveEntityNote('-', 'resl:' + c.id, c.note, v => setData(d => d ? { ...d, resolutions: { ...d.resolutions, claims: d.resolutions.claims.map(x => x.id === c.id ? { ...x, note: v } : x) } } : d))}
+                                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                    placeholder="Note…"
+                                    className="flex-1 max-w-xl text-[11px] border border-line rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-amber-200"
+                                  />
+                                </div>
                               </div>
                             ))}
                             {orphans.map((l, i) => (
