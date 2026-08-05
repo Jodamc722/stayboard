@@ -157,6 +157,7 @@ export type AuditData = {
   coverage: { ready: boolean; missing: string[] }
   rules: AuditRules
   prep: PrepItem[]
+  resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
 }
 
 // Expedia-family sources whose fees arrive lump-summed and need the prep breakout.
@@ -165,6 +166,38 @@ const PREP_CLEAN_RE = /clean/i
 const PREP_RM_RE = /revenue management|\brm\b/i
 /** Reserved item_key prefix for prep breakout rows. */
 export const PREP_PREFIX = 'prep:'
+
+// ── AIRBNB RESOLUTIONS (prep review) ─────────────────────────────────────────
+// Statement prep also reconciles Airbnb Resolution Center money: every resolution decided or
+// paid in the month must land on the right owner's statement. Claims come from the /claims
+// board; the cross-check is whether a resolution-looking ledger line exists on the same
+// reservation code this month.
+export const RESOLUTION_RE = /resolution|aircover|damage protection|guest damage/i
+export type ResolutionClaim = {
+  id: string
+  guest: string
+  property: string
+  unit: string
+  resCode: string
+  reservationId: string
+  stage: string                  // submitted | decided | settle | closed | …
+  amountSought: number | null
+  amountPaid: number | null
+  decidedOn: string
+  paidOn: string
+  summary: string
+  onStatement: boolean           // a resolution ledger line exists for this code this month
+  stmtAmount: number | null      // what that ledger line(s) put on the statement
+}
+export type ResolutionLine = {
+  ownerId: string
+  ownerName: string
+  resCode: string                // '' when the line isn't attached to a reservation
+  label: string
+  date: string
+  amount: number                 // owner effect
+  hasClaim: boolean              // a claims-board record matches this code
+}
 
 /** Reserved item_key for the per-statement sign-off row. */
 export const SIGNOFF_KEY = '__statement__'
@@ -384,6 +417,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   }
   const groups: Record<string, Group> = {}
   const owners: Record<string, AuditOwner> = {}
+  const resLedger: ResolutionLine[] = []
   // Per-night rental for the whole month, keyed listing|date — the raw material for the
   // weekday/weekend cohort averages. AF lines are per-night; adjustments on the same night
   // sum into one figure.
@@ -429,6 +463,12 @@ export async function buildAudit(month: string): Promise<AuditData> {
     else g.other = money(g.other + eff)
     if (r.listing_id) g.listingIds[String(r.listing_id)] = (g.listingIds[String(r.listing_id)] || 0) + 1
     g.lines.push({ date: String(r.entry_date || ''), label, code, amount: eff })
+
+    // Resolution-looking money on the statement — the reconciliation target for the
+    // Airbnb Resolutions review on the Prep tab.
+    if (RESOLUTION_RE.test(label)) {
+      resLedger.push({ ownerId, ownerName: '', resCode: res, label, date: String(r.entry_date || ''), amount: eff, hasClaim: false })
+    }
 
     if (code === 'AF') o.rental = money(o.rental + eff)
     else if (code === 'CMS') o.commission = money(o.commission - eff)
@@ -901,6 +941,55 @@ export async function buildAudit(month: string): Promise<AuditData> {
     })
   }
 
+  // AIRBNB RESOLUTIONS — every Resolution Center case decided or paid in this month (plus,
+  // for the month currently being prepped, everything still pending with Airbnb), each
+  // reconciled against resolution-looking ledger lines. Best-effort: a missing claims
+  // table degrades to the ledger lines alone.
+  for (const l of resLedger) l.ownerName = owners[l.ownerId]?.ownerName || ownerName[l.ownerId] || ''
+  const stmtResByCode: Record<string, number> = {}
+  for (const l of resLedger) if (l.resCode) stmtResByCode[l.resCode] = money((stmtResByCode[l.resCode] || 0) + l.amount)
+  let resolutionClaims: ResolutionClaim[] = []
+  try {
+    const nowD = new Date()
+    const prevCal = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
+    const isPrepMonth = month >= prevCal
+    const { data: clRows, error: clErr } = await sb.from('claims')
+      .select('id, guest_name, property, unit_no, channel, confirmation_code, reservation_id, stage, amount_sought, amount_paid, decided_on, paid_on, summary')
+      .is('deleted_at', null)
+      .ilike('channel', '%airbnb%')
+      .limit(500)
+    if (!clErr) {
+      const inMonth = (d: any) => String(d || '').slice(0, 7) === month
+      resolutionClaims = ((clRows || []) as any[])
+        .filter(c => inMonth(c.paid_on) || inMonth(c.decided_on)
+          || (isPrepMonth && ['submitted', 'decided', 'settle'].includes(String(c.stage || ''))))
+        .map(c => {
+          const code = String(c.confirmation_code || '')
+          return {
+            id: String(c.id || ''),
+            guest: String(c.guest_name || ''),
+            property: String(c.property || ''),
+            unit: String(c.unit_no || ''),
+            resCode: code,
+            reservationId: String(c.reservation_id || ''),
+            stage: String(c.stage || ''),
+            amountSought: c.amount_sought == null ? null : Number(c.amount_sought) || 0,
+            amountPaid: c.amount_paid == null ? null : Number(c.amount_paid) || 0,
+            decidedOn: String(c.decided_on || '').slice(0, 10),
+            paidOn: String(c.paid_on || '').slice(0, 10),
+            summary: String(c.summary || ''),
+            onStatement: !!code && stmtResByCode[code] !== undefined,
+            stmtAmount: code && stmtResByCode[code] !== undefined ? stmtResByCode[code] : null,
+          }
+        })
+        .sort((a, b) => Number(!!b.paidOn) - Number(!!a.paidOn) === 0
+          ? a.guest.localeCompare(b.guest)
+          : Number(!!a.paidOn || !!a.decidedOn) - Number(!!b.paidOn || !!b.decidedOn))
+      const claimCodes = new Set(resolutionClaims.map(c => c.resCode).filter(Boolean))
+      for (const l of resLedger) l.hasClaim = !!l.resCode && claimCodes.has(l.resCode)
+    }
+  } catch { /* claims board unavailable — show ledger lines only */ }
+
   const t = {
     owners: Object.keys(owners).length,
     statements: stmts.length,
@@ -930,6 +1019,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     prep: prep.sort((a, b) =>
       Number(prepResolved(a)) - Number(prepResolved(b))
       || a.ownerName.localeCompare(b.ownerName) || a.checkIn.localeCompare(b.checkIn)),
+    resolutions: { claims: resolutionClaims, lines: resLedger },
   }
 }
 
