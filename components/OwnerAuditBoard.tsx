@@ -45,7 +45,9 @@ type PrepItem = {
   splitDone: boolean; noFees: boolean
   saved: { by: string; at: string } | null
 }
-const prepResolved = (p: PrepItem) => p.splitDone || p.noFees || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
+// No fees on an Expedia folio = fees never set up — that's a WARNING, not a resolved row.
+const prepResolved = (p: PrepItem) => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
+type PrepFilter = '' | 'open' | 'nofees' | 'split' | 'marked'
 type Item = {
   key: string; kind: 'reservation' | 'line'; ownerId: string; resCode: string
   guest: string; checkIn: string; checkOut: string
@@ -54,7 +56,8 @@ type Item = {
   benchRate: number | null; benchLabel: string; benchPct: number | null; benchPrev: number | null
   mixWeekday: number; mixWeekend: number; leadDays: number | null
   stayTag: 'owner' | 'ff' | null
-  rental: number; commission: number; other: number; net: number; rate: number | null
+  rental: number; commission: number; other: number; net: number
+  rate: number | null; avgRate: number | null
   lines: Line[]; flags: Flag[]
   status: Status; touched: boolean; note: string; comments: Comment[]
   updatedBy: string | null; updatedAt: string | null
@@ -192,7 +195,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   // explicit open/close override; sections auto-open while filters or a search are active.
   const [expandedOwners, setExpandedOwners] = useState<Record<string, boolean>>({})
   const [showAllRows, setShowAllRows] = useState<Record<string, boolean>>({})
+  const [expandedUnits, setExpandedUnits] = useState<Record<string, boolean>>({})
   const [prepBusy, setPrepBusy] = useState('')
+  const [fPrep, setFPrep] = useState<PrepFilter>('')
+  const [recheckBusy, setRecheckBusy] = useState(false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})           // note drafts
   const [cDrafts, setCDrafts] = useState<Record<string, string>>({})         // comment drafts
   const [savingKey, setSavingKey] = useState('')
@@ -368,6 +374,27 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     setPrepBusy('')
   }
 
+  // Pull the outstanding prep reservations fresh from Guesty, then rebuild the month —
+  // fee breakouts done on the reservation map straight back into the app.
+  const recheckGuesty = async () => {
+    if (!data) return
+    const ids = data.prep.filter(p => !prepResolved(p)).map(p => p.reservationId).filter(Boolean)
+    if (!ids.length) { setFlash('Nothing outstanding to re-check.'); setTimeout(() => setFlash(''), 2500); return }
+    setRecheckBusy(true)
+    try {
+      const r = await fetch('/api/owner-audit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'prep-recheck', reservationIds: ids }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setError(j.error || 'Re-check failed'); setRecheckBusy(false); return }
+      setFlash('Pulled ' + j.pulled + ' reservation' + (j.pulled === 1 ? '' : 's') + ' fresh from Guesty.')
+      setTimeout(() => setFlash(''), 3000)
+      await load(month)
+    } catch (e: any) { setError(String(e?.message || e)) }
+    setRecheckBusy(false)
+  }
+
   const saveRules = async () => {
     if (!rulesDraft) return
     setRulesBusy(true)
@@ -436,7 +463,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const exportCsv = () => {
     if (!data) return
     const esc = (v: any) => '"' + String(v ?? '').split('"').join('""') + '"'
-    const head = ['Owner', 'Unit', 'Guest', 'Code', 'Source', 'Stay type', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate', 'Cohort avg', '% of avg', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
+    const head = ['Owner', 'Unit', 'Guest', 'Code', 'Source', 'Stay type', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate (month)', 'Avg rate (stay)', 'Expected/n', '% of expected', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
     const src = view === 'stmt' && stmtOwner ? data.items.filter(i => i.ownerId === stmtOwner) : filtered
     const lines = src.map(it => {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
@@ -444,7 +471,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
         sourceLabel(it.source), it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
         it.checkIn, it.checkOut, it.monthNights,
-        it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2),
+        it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2), it.avgRate == null ? '' : it.avgRate.toFixed(2),
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
         it.commission.toFixed(2), it.net.toFixed(2),
         it.flags.map(f => FLAG_LABEL[f.type]).join('; '), STATUS_LABEL[it.status], it.note,
@@ -496,7 +523,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           <div className="text-right w-28" title={it.benchRate != null ? 'Vs ' + it.benchLabel + ': ' + fmt(it.benchRate) + '/n (this + last month)' + (it.benchPrev != null ? ' · last month ' + fmt(it.benchPrev) + '/n' : '') : undefined}>
             <div className="text-sm font-semibold text-ink">{fmt(it.rental)}</div>
             <div className="text-[11px] text-muted">
-              {it.rate != null ? fmt(it.rate) + '/n' : ''}
+              {it.avgRate != null ? fmt(it.avgRate) + '/n avg' : it.rate != null ? fmt(it.rate) + '/n' : ''}
               {it.benchPct != null && (
                 <span className={it.benchPct < (data?.rules.lowRatePct ?? 55) ? ' text-rose-600 font-semibold' : it.benchPct > 130 ? ' text-emerald-600' : ''}> · {it.benchPct}%</span>
               )}
@@ -534,18 +561,34 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           </div>
         </div>
 
-        {/* the note travels with the collapsed row — findings should never hide behind a click */}
-        {!open && it.note && (
-          <div className="px-4 pb-2 pl-11 -mt-1">
-            <div className="inline-flex items-start gap-1.5 max-w-full text-[11px] text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-200 rounded-lg px-2 py-1">
-              <StickyNote size={11} className="mt-0.5 shrink-0 text-amber-600" />
-              <span className="truncate">{it.note}</span>
-            </div>
-          </div>
-        )}
-        {!open && !it.note && it.comments.length > 0 && (
-          <div className="px-4 pb-2 pl-11 -mt-1 text-[11px] text-muted truncate">
-            <span className="font-semibold text-ink">{shortWho(it.comments[it.comments.length - 1].author)}:</span> {it.comments[it.comments.length - 1].body}
+        {/* notes and comments live ON the row, visible at all times — findings and the
+            conversation about them never hide behind a click */}
+        {!open && (it.note || it.comments.length > 0) && (
+          <div className="px-4 pb-2.5 pl-11 -mt-1 space-y-1">
+            {it.note && (
+              <div className="flex items-start gap-1.5 max-w-2xl text-[11px] text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-200 rounded-lg px-2 py-1">
+                <StickyNote size={11} className="mt-0.5 shrink-0 text-amber-600" />
+                <span className="whitespace-pre-wrap">{it.note}</span>
+              </div>
+            )}
+            {it.comments.length > 4 && (
+              <button onClick={() => setOpenItems(prev => ({ ...prev, [k]: true }))}
+                className="text-[10px] font-medium text-brand-700 hover:underline">
+                Show {it.comments.length - 4} earlier comment{it.comments.length - 4 === 1 ? '' : 's'}…
+              </button>
+            )}
+            {it.comments.slice(-4).map((c, i) => (
+              <div key={i} className="text-[11px] max-w-2xl flex items-start gap-1.5">
+                <MessageSquare size={11} className="mt-0.5 shrink-0 text-brand-500" />
+                <span>
+                  <span className="font-semibold text-ink">{shortWho(c.author)}</span>
+                  <span className="text-muted"> · {new Date(c.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                  <span className="text-ink"> — {c.body}</span>
+                </span>
+              </div>
+            ))}
+            <button onClick={() => setOpenItems(prev => ({ ...prev, [k]: true }))}
+              className="text-[10px] font-medium text-muted hover:text-brand-700">+ Add note / comment</button>
           </div>
         )}
 
@@ -563,10 +606,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             )}
             {it.benchRate != null && (
               <div className="text-xs text-muted mb-2">
-                Expected for these nights ({it.mixWeekday} midweek · {it.mixWeekend} weekend): <span className="font-semibold text-ink">{fmt(it.benchRate)}/n</span>
+                Expected for this stay ({it.mixWeekday} midweek · {it.mixWeekend} weekend): <span className="font-semibold text-ink">{fmt(it.benchRate)}/n</span>
                 <span className="text-[10px]"> ({it.benchLabel}, this + last month)</span>
                 {it.benchPrev != null && <span> · last month blended {fmt(it.benchPrev)}/n</span>}
-                {it.rate != null && it.benchPct != null && <span> — this stay ran <span className={'font-semibold ' + (it.benchPct < (data?.rules.lowRatePct ?? 55) ? 'text-rose-600' : 'text-ink')}>{it.benchPct}%</span> of it</span>}
+                {it.avgRate != null && it.benchPct != null && <span> — whole-stay avg <span className={'font-semibold ' + (it.benchPct < (data?.rules.lowRatePct ?? 55) ? 'text-rose-600' : 'text-ink')}>{fmt(it.avgRate)}/n ({it.benchPct}%)</span></span>}
                 {it.leadDays != null && <span> · booked {it.leadDays}d before check-in</span>}
               </div>
             )}
@@ -979,14 +1022,65 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-                <div className="divide-y divide-line">
-                  {data.items.filter(i => i.ownerId === curOwner.ownerId).map(it => renderItem(it))}
-                  {data.items.filter(i => i.ownerId === curOwner.ownerId).length === 0 && (
-                    <div className="p-6 text-sm text-muted text-center">No ledger activity on this statement for {data.label}.</div>
-                  )}
-                </div>
-              </div>
+              {/* UNIT SUMMARY — the statement rolls up per unit; reservation detail only opens
+                  when a unit is clicked. High level first, detail on demand. */}
+              {(() => {
+                const mine = data.items.filter(i => i.ownerId === curOwner.ownerId)
+                if (mine.length === 0) {
+                  return (
+                    <div className="rounded-2xl border border-line bg-white shadow-soft p-6 text-sm text-muted text-center">
+                      No ledger activity on this statement for {data.label}.
+                    </div>
+                  )
+                }
+                const byUnit: Record<string, Item[]> = {}
+                for (const it of mine) {
+                  const u = it.unit || (it.kind === 'line' ? 'Owner-level items' : '(no unit)')
+                  ;(byUnit[u] = byUnit[u] || []).push(it)
+                }
+                const units = Object.keys(byUnit).sort((a, b) => a.localeCompare(b))
+                return (
+                  <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden divide-y divide-line">
+                    {units.map(u => {
+                      const rows = byUnit[u]
+                      const nights = rows.reduce((a, r) => a + r.monthNights, 0)
+                      const rental = rows.reduce((a, r) => a + r.rental, 0)
+                      const commission = rows.reduce((a, r) => a + r.commission, 0)
+                      const netU = rows.reduce((a, r) => a + r.net, 0)
+                      const resCount = rows.filter(r => r.kind === 'reservation').length
+                      const flagged = rows.filter(r => r.flags.some(f => f.severity !== 'info')).length
+                      const openN = rows.filter(r => r.status !== 'done').length
+                      const notesN = rows.filter(r => r.note || r.comments.length).length
+                      const uk = curOwner.ownerId + '|' + u
+                      const openU = !!expandedUnits[uk]
+                      return (
+                        <div key={uk}>
+                          <button onClick={() => setExpandedUnits(prev => ({ ...prev, [uk]: !openU }))}
+                            className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left hover:bg-app/60">
+                            {openU ? <ChevronDown size={14} className="text-muted shrink-0" /> : <ChevronRight size={14} className="text-muted shrink-0" />}
+                            <span className="text-sm font-semibold text-ink min-w-[140px]">{u}</span>
+                            <span className="text-[11px] text-muted">{resCount} res · {nights}n</span>
+                            {flagged > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.review}>{flagged} flagged</span>}
+                            {openN > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">{openN} open</span>}
+                            {notesN > 0 && <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-brand-700 bg-brand-50 ring-1 ring-inset ring-brand-200 px-1.5 py-0.5 rounded-full"><MessageSquare size={10} /> {notesN}</span>}
+                            <span className="ml-auto flex items-center gap-4 text-right">
+                              <span><span className="text-[10px] uppercase tracking-wide text-muted block">Rental</span><span className="text-sm font-semibold text-ink">{fmt0(rental)}</span></span>
+                              <span><span className="text-[10px] uppercase tracking-wide text-muted block">Avg/n</span><span className="text-sm font-semibold text-ink">{nights > 0 ? fmt0(rental / nights) : '—'}</span></span>
+                              <span><span className="text-[10px] uppercase tracking-wide text-muted block">Comm.</span><span className="text-sm font-semibold text-ink">{fmt0(commission)}</span></span>
+                              <span><span className="text-[10px] uppercase tracking-wide text-muted block">Net</span><span className={'text-sm font-semibold ' + (netU < 0 ? 'text-rose-700' : 'text-ink')}>{fmt0(netU)}</span></span>
+                            </span>
+                          </button>
+                          {openU && (
+                            <div className="border-t border-line divide-y divide-line bg-app/20">
+                              {rows.map(it => renderItem(it))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
 
               {/* sign-off */}
               <div className={'rounded-2xl border p-4 shadow-soft ' + (curOwner.signOff ? 'border-emerald-200 bg-emerald-50' : 'border-line bg-white')}>
@@ -1025,11 +1119,27 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
           {/* ═══ OWNER PREP — the Expedia fee breakout ═══ */}
           {view === 'prep' && (() => {
+            const isSplit = (p: PrepItem) => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null)
             const total = data.prep.length
-            const split = data.prep.filter(p => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null)).length
-            const noFees = data.prep.filter(p => !p.splitDone && !(p.cleaningAmt != null && p.rmAmt != null) && p.noFees).length
-            const marked = data.prep.filter(p => !p.splitDone && !p.noFees && !(p.cleaningAmt != null && p.rmAmt != null) && p.saved).length
-            const outstanding = total - split - noFees - marked
+            const split = data.prep.filter(isSplit).length
+            const marked = data.prep.filter(p => !isSplit(p) && p.saved).length
+            const noFees = data.prep.filter(p => !prepResolved(p) && p.noFees).length
+            const outstanding = data.prep.filter(p => !prepResolved(p) && !p.noFees).length
+            const chip = (key: PrepFilter, label: string, cls: string) => (
+              <button onClick={() => setFPrep(fPrep === key ? '' : key)}
+                className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + cls + (fPrep === key ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
+                {label}
+              </button>
+            )
+            const list = data.prep.filter(p => {
+              switch (fPrep) {
+                case 'open': return !prepResolved(p) && !p.noFees
+                case 'nofees': return !prepResolved(p) && p.noFees
+                case 'split': return isSplit(p)
+                case 'marked': return !isSplit(p) && !!p.saved
+                default: return true
+              }
+            })
             return (
               <>
                 <div className="rounded-2xl border border-line bg-white shadow-soft p-4">
@@ -1043,22 +1153,27 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     reservation in Guesty</span> (Cleaning fee + Revenue fee on the guest folio); rows where the folio already
                     shows the split clear automatically. For the rest: open the reservation, break out the fees, then mark it done.
                   </p>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-ink ring-line">{total} Expedia-family</span>
-                    <span className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset ' + (outstanding ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>{outstanding} to break out</span>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{split} split already</span>
-                    {marked > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{marked} marked done</span>}
-                    {noFees > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200">{noFees} no fees</span>}
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    {chip('', total + ' Expedia-family', 'bg-white text-ink ring-line')}
+                    {chip('open', outstanding + ' to break out', outstanding ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
+                    {chip('nofees', noFees + ' fees not set up', noFees ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200')}
+                    {chip('split', split + ' split already', 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
+                    {marked > 0 && chip('marked', marked + ' marked done', 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
+                    <button onClick={recheckGuesty} disabled={recheckBusy}
+                      title="Pull the outstanding reservations fresh from Guesty so folio edits show up now"
+                      className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white text-brand-700 hover:bg-app disabled:opacity-40">
+                      <RefreshCw size={12} className={recheckBusy ? 'animate-spin' : ''} /> {recheckBusy ? 'Re-checking…' : 'Re-check Guesty'}
+                    </button>
                   </div>
                 </div>
 
                 <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
                   <div className="divide-y divide-line">
-                    {data.prep.map(p => {
+                    {list.map(p => {
                       const resolved = prepResolved(p)
                       const busy = prepBusy === p.resCode
                       return (
-                        <div key={p.resCode} className={'flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-l-2 ' + (resolved ? 'border-l-emerald-300' : 'border-l-amber-300')}>
+                        <div key={p.resCode} className={'flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-l-2 ' + (resolved ? 'border-l-emerald-300' : p.noFees ? 'border-l-rose-400' : 'border-l-amber-300')}>
                           <div className="min-w-[200px] flex-1">
                             <div className="text-sm font-medium text-ink truncate">
                               {resolved && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
@@ -1081,8 +1196,6 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                             <div className="text-xs text-emerald-700 font-medium">
                               Split on statement · Cleaning {fmt(Math.abs(p.cleaningAmt))} · RM {fmt(Math.abs(p.rmAmt))}
                             </div>
-                          ) : p.noFees ? (
-                            <div className="text-xs text-muted">No fee lump on the folio — nothing to split</div>
                           ) : p.saved ? (
                             <div className="flex items-center gap-2">
                               <div className="text-xs text-emerald-700 font-medium">
@@ -1093,10 +1206,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                             </div>
                           ) : (
                             <div className="flex items-center gap-1.5">
-                              {p.folioLump != null && p.folioLump > 0.5 && (
+                              {p.noFees && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200" title="Expedia-family booking with NO fees on the folio at all — the fees were never set up on this reservation">⚠ Fees not set up</span>
+                              )}
+                              {!p.noFees && p.folioLump != null && p.folioLump > 0.5 && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">Lump {fmt(p.folioLump)} on folio</span>
                               )}
-                              {p.folioLump == null && (
+                              {!p.noFees && p.folioLump == null && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-200" title="The reservation's folio isn't in the mirror yet — verify in Guesty">folio unknown</span>
                               )}
                               {p.reservationId && (
@@ -1120,8 +1236,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         </div>
                       )
                     })}
-                    {data.prep.length === 0 && (
-                      <div className="p-8 text-center text-sm text-muted">No Expedia-family reservations touch {data.label}.</div>
+                    {list.length === 0 && (
+                      <div className="p-8 text-center text-sm text-muted">
+                        {data.prep.length === 0 ? 'No Expedia-family reservations touch ' + data.label + '.' : 'Nothing matches this filter.'}
+                      </div>
                     )}
                   </div>
                 </div>
