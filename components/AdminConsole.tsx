@@ -10,6 +10,7 @@ import { Users, ShieldCheck, Sliders, ChevronDown, ChevronRight } from 'lucide-r
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
 import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
+import { OpsBriefAdmin } from '@/components/OpsBriefAdmin'
 import { ParAdmin } from '@/components/ParAdmin'
 import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
 import { ReviewVoiceAdmin } from '@/components/ReviewVoiceAdmin'
@@ -51,6 +52,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
       {tab === 'settings' && (
         <div className="space-y-3">
           <Fold title="Today-in-Ops presets" defaultOpen><OpsPresetsAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Morning Ops Brief" defaultOpen><OpsBriefAdmin isOwner={isOwner} /></Fold>
           <Fold title="PAR levels (restock)"><ParAdmin isOwner={isOwner} /></Fold>
           <Fold title="Approval limits"><ApprovalLimitsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Review-reply AI voice"><ReviewVoiceAdmin /></Fold>
