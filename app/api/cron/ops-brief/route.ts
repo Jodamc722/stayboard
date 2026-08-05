@@ -11,14 +11,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'
-import { buildOpsBrief, type BriefVariant } from '@/lib/ops-brief'
+import { buildOpsBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
 import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export const OPS_BRIEF_KEY = 'ops_brief'
-type BriefCfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[] }
+type BriefCfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; vendors?: Partial<Record<VendorGroup, string[]>> }
 
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
 
@@ -44,6 +44,11 @@ export async function GET(req: NextRequest) {
   const preview = sp.get('preview')
   if (preview) {
     if (!me) return NextResponse.json({ error: 'sign in to preview' }, { status: 401 })
+    const vg = VENDOR_GROUPS.find(g => g.key === preview.toLowerCase())
+    if (vg) {
+      const vb = await buildVendorBrief(vg.key)
+      return new NextResponse(vb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+    }
     const v = (['Miami', 'Broward', 'full'] as BriefVariant[]).find(x => x.toLowerCase() === preview.toLowerCase()) || 'full'
     const b = await buildOpsBrief(v)
     return new NextResponse(b.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
@@ -77,6 +82,14 @@ export async function GET(req: NextRequest) {
     const b = await buildOpsBrief(v)
     const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
     out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+  }
+  // Vendor briefs — external companies, so each group only ever sees its own buildings.
+  for (const g of VENDOR_GROUPS) {
+    const to = ((cfg.vendors || {})[g.key] || []).filter(Boolean)
+    if (!to.length) { out.push({ variant: 'vendor:' + g.key, skipped: 'no recipients' }); continue }
+    const b = await buildVendorBrief(g.key)
+    const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
+    out.push({ variant: 'vendor:' + g.key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
   }
   return NextResponse.json({ ok: out.every(o => o.sent || o.skipped), from: fromEmail, results: out })
 }
