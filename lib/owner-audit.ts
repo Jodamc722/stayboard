@@ -30,7 +30,7 @@ import { MONTH_LABEL, money } from './owner-statements'
 
 export type AuditFlagType =
   | 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev'
-  | 'passthru' | 'no_reservation'
+  | 'passthru' | 'no_reservation' | 'commission_off'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
@@ -250,13 +250,15 @@ export type AuditRules = {
   lowRate: number                              // absolute mode: flag when in-month $/night falls below this
   passthruLo: number                           // commission/rental band treated as a wash
   passthruHi: number
+  commTolerance: number                        // flag when commission % strays this many points from the owner's usual rate
   enabled: Record<AuditFlagType, boolean>      // per-flag kill switch
 }
 export const DEFAULT_AUDIT_RULES: AuditRules = {
   lowRateMode: 'relative', lowRatePct: 55, lowRateFloor: 30,
   lastMinDays: 3, lastMinExtra: 20,
   lowRate: 60, passthruLo: 0.9, passthruHi: 1.1,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true },
+  commTolerance: 5,
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -282,6 +284,7 @@ function sanitizeRules(s: any, base: AuditRules): AuditRules {
     lowRate: Math.max(0, num(s?.lowRate, base.lowRate)),
     passthruLo: Math.min(1, Math.max(0.5, num(s?.passthruLo, base.passthruLo))),
     passthruHi: Math.max(1, Math.min(2, num(s?.passthruHi, base.passthruHi))),
+    commTolerance: Math.min(30, Math.max(1, num(s?.commTolerance, base.commTolerance))),
     enabled,
   }
 }
@@ -764,6 +767,28 @@ export async function buildAudit(month: string): Promise<AuditData> {
     return null
   }
 
+  // THE OWNER'S USUAL COMMISSION RATE — the median commission % across their clean, live
+  // bookings this month. Guesty prorates commission with rental perfectly on normal stays
+  // (July 2026: zero deviation >5pts across 1,159 live bookings), so any reservation that
+  // strays from the owner's own median is a posting error — in practice, canceled bookings
+  // where the FULL cancellation fee was taken as commission and the owner got none of it.
+  // Median (not mean) so one bad row can't move the yardstick; pass-through owners whose
+  // rate is legitimately ~100% get a ~100% median and their rows read as normal.
+  const commSamples: Record<string, number[]> = {}
+  for (const pre of pres) {
+    if (!pre.g.resCode || !pre.res) continue
+    if (/cancel/i.test(String(pre.res.status || ''))) continue
+    if (pre.g.rental <= 0.5 || pre.g.commission <= 0.5) continue
+    ;(commSamples[pre.g.ownerId] = commSamples[pre.g.ownerId] || []).push((pre.g.commission / pre.g.rental) * 100)
+  }
+  const ownerCommMed: Record<string, number> = {}
+  for (const oid of Object.keys(commSamples)) {
+    const arr = commSamples[oid]
+    if (arr.length < 3) continue // too few clean bookings to know the owner's usual rate
+    const s = arr.slice().sort((a, b) => a - b)
+    ownerCommMed[oid] = s[Math.floor(s.length / 2)]
+  }
+
   const items: AuditItem[] = []
   const prep: PrepItem[] = []
   for (const pre of pres) {
@@ -851,7 +876,35 @@ export async function buildAudit(month: string): Promise<AuditData> {
           })
         }
       }
-      if (on.passthru && isPassthru) {
+      // COMMISSION OFF — this reservation's commission % vs the owner's own usual rate.
+      // Normal stays track the owner's rate to the point (proration included), so a gap
+      // bigger than the tolerance is a money error, most often a canceled booking whose
+      // whole cancellation fee went to commission. Canceled does NOT soften this one —
+      // wrong money is wrong money.
+      if (on.commission_off) {
+        const usual = ownerCommMed[g.ownerId]
+        if (g.commission > 0.5 && g.rental <= 0.5) {
+          flags.push({
+            type: 'commission_off', severity: 'review', amount: g.commission,
+            detail: 'Commission of $' + g.commission.toFixed(2) + ' charged with no room revenue on this statement — nothing to take a commission on.'
+              + (canceled ? ' Canceled booking: check whether this commission should be reversed.' : ''),
+          })
+        } else if (usual != null && g.commission > 0.5 && g.rental > 0.5) {
+          const commPct = (g.commission / g.rental) * 100
+          if (Math.abs(commPct - usual) > rules.commTolerance) {
+            const swallowed = commPct >= 90
+            flags.push({
+              type: 'commission_off', severity: swallowed ? 'high' : 'review', amount: g.commission,
+              detail: 'Commission $' + g.commission.toFixed(2) + ' is ' + Math.round(commPct) + '% of room revenue — this owner’s usual rate is ~' + Math.round(usual) + '%.'
+                + (swallowed ? ' The commission swallows essentially all of the revenue.' : '')
+                + (canceled ? ' Canceled booking: the cancellation fee appears to have been taken ' + (swallowed ? 'entirely' : 'largely') + ' as commission — check whether the owner should get their ' + Math.round(usual) + '% share treatment instead.'
+                  : commPct > usual ? ' The owner was charged more than their usual rate — verify.' : ' The owner was charged less than their usual rate — verify.'),
+            })
+          }
+        }
+      }
+      // A pass-through wash is only "by design" when it is NOT a commission anomaly.
+      if (on.passthru && isPassthru && !flags.some(f => f.type === 'commission_off')) {
         flags.push({ type: 'passthru', severity: 'info', detail: 'Commission fully offsets rental (pass-through wash) — owner nets zero on it by design.' })
       }
       if (on.no_reservation && !res) {
