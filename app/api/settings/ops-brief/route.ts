@@ -25,6 +25,7 @@ export async function GET() {
       enabled: s.enabled === true,
       fromEmail: typeof s.fromEmail === 'string' && s.fromEmail ? s.fromEmail : DEFAULTS.fromEmail,
       miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full),
+      vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
     },
   })
 }
@@ -39,6 +40,7 @@ export async function PUT(req: NextRequest) {
     enabled: c.enabled === true,
     fromEmail: typeof c.fromEmail === 'string' && /@/.test(c.fromEmail) ? c.fromEmail.trim().toLowerCase() : DEFAULTS.fromEmail,
     miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full),
+    vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
   }
   const res = await setSetting(KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })
