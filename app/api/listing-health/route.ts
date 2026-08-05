@@ -261,6 +261,15 @@ export async function GET(req: Request) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const full: any = await computeHealth()
+    // OPS — what Today in Ops needs: one small score per listing, keyed by id, so the board can
+    // paint a health badge on every unit without shipping the multi-hundred-KB full payload.
+    if (/[?&]ops=1/.test(String(req.url || ''))) {
+      const scores: Record<string, any> = {}
+      for (const l of (full.listings || [])) {
+        scores[String(l.id)] = { score: l.score, band: l.band, unrated: !!l.unrated, recurring: (l.recurring || []).slice(0, 3), topIssue: l.topIssue || null }
+      }
+      return NextResponse.json({ ok: true, scores })
+    }
     // SLIM — what the KPI home page needs. The full payload carries every listing with its per-channel
     // breakdown and issue list (hundreds of KB); the home page only shows the weakest units and the
     // highest-value fixes, so shipping the rest over the wire on every home load is pure waste.
