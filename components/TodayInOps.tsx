@@ -192,6 +192,9 @@ export function TodayInOps() {
   const inMkt = (m: any, m2: any) => market === 'all' || m === market || m2 === market
   const byMkt = srcUnits.filter(u => inMkt(u.market, u.market2))
   const glRows = ((gl && gl.glitches) || []).filter((g: any) => inMkt(g.market, g.market2))
+  // Per-unit glitch lookup so the card itself shows the guest issue — not just the top-strip count.
+  const glByUnit: Record<string, any[]> = {}
+  for (const g of glRows) { const k = String(g.unit || ''); if (k) (glByUnit[k] = glByUnit[k] || []).push(g) }
   const vacAll: Vacant[] = Array.isArray(data.vacants) ? data.vacants : []
   const vacants = vacAll.filter(x => inMkt(x.market, x.market2))
   // THE "NOT STARTED" BAND — server-computed so the board and the ops alert agree, then narrowed
@@ -265,11 +268,11 @@ export function TodayInOps() {
   }
   const behind = d.late > 0 || d.atRisk > 0
   const renderUnit = (u: Unit) => (
-          <div key={u.listingId} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300' : u.atRisk ? 'border-amber-300' : 'border-line')}>
+          <div key={u.listingId} style={{ borderLeftWidth: 4 }} className={'rounded-2xl border bg-white overflow-hidden ' + (u.late ? 'border-rose-300 border-l-rose-500' : u.atRisk ? 'border-amber-300 border-l-amber-400' : u.sameDayTurn && !u.allDone ? 'border-line border-l-rose-400' : u.allDone ? 'border-line border-l-emerald-300' : 'border-line border-l-slate-200')}>
             {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE. */}
-            <div className="px-4 pt-2.5 pb-2 border-b border-line bg-app/60">
+            <div className={'px-4 pt-2.5 pb-2 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-app/60')}>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-bold text-[15px] text-ink leading-none">{u.unit}</span>
+                <span className="font-bold text-[16px] text-ink leading-none">{u.unit}</span>
                 {u.sameDayTurn && <span title="A guest checks in here today — this clean cannot slip" className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white">Same-day turn</span>}
                 {(() => {
                   const LS = data.longStayNights || 10
@@ -287,6 +290,12 @@ export function TodayInOps() {
                 {u.qc.map((q, i) => (
                   <span key={i} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">QC: {q.issue}</span>
                 ))}
+                {(glByUnit[u.unit] || []).length > 0 && (
+                  <button onClick={() => setPanel('glitches')} title={(glByUnit[u.unit] || []).map((g: any) => g.name || g.issue || 'guest issue').join(' \u00b7 ')}
+                    className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white hover:bg-rose-700">
+                    {(glByUnit[u.unit] || []).length} guest issue{(glByUnit[u.unit] || []).length === 1 ? '' : 's'}
+                  </button>
+                )}
                 <SignalChips s={sig[u.listingId]} onAct={(seed: any) => { setActSeed(seed); setActFor(actFor === u.listingId && actSeed && seed && actSeed.key === seed.key ? '' : u.listingId) }} />
                 <span className="ml-auto flex items-center gap-2">
                   <span className={'text-xs font-semibold tabular-nums ' + (u.allDone ? 'text-emerald-700' : u.late ? 'text-rose-700' : 'text-muted')}>{u.allDone ? 'All done' : (u.fullTasks || u.tasks).filter(t => t.done).length + '/' + (u.fullTasks || u.tasks).length}</span>
@@ -444,20 +453,30 @@ export function TodayInOps() {
         </span>
       </div>
 
-      {/* STATUS STRIP — everything you READ, one card: cleans progress | glitches | vacant */}
+      {/* STATUS STRIP — the numbers you READ, big enough to read from across the room.
+          Tone rule: red only when something needs a human NOW; amber for watch; green when clear. */}
       <div className={'rounded-2xl border mb-3 overflow-hidden bg-white ' + (d.late > 0 ? 'border-rose-300' : d.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
         <div className="grid md:grid-cols-[1fr_auto_auto] divide-y md:divide-y-0 md:divide-x divide-line">
-          <div className="px-4 py-3 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Clock size={14} className={d.late > 0 ? 'text-rose-700' : d.atRisk > 0 ? 'text-amber-700' : 'text-muted'} />
-              <span className="font-semibold text-ink text-sm">Departure cleans</span>
-              <span className="text-sm font-bold text-ink tabular-nums">{d.done}/{d.cleans}</span>
-              <span className="text-[12px] text-muted">due {d.dueBy}{data.isToday === false ? ' \u00b7 planning ' + fmtDay(data.today) : d.passed ? ' \u00b7 ' + fmtLeft(d.minsLeft) + ' past' : ' \u00b7 ' + fmtLeft(d.minsLeft) + ' left'}</span>
-              {behind && <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded ' + (d.late > 0 ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}>{d.late > 0 ? d.late + ' LATE' : d.atRisk + ' at risk'}</span>}
-              {(d.missed > 0 || (d.untracked || 0) > 0) && <span className="ml-auto text-[11px] text-muted" title={(d.missed > 0 ? d.missed + ' finished after 4pm today. ' : '') + ((d.untracked || 0) > 0 ? 'Excludes ' + d.untracked + ' vendor-cleaned units (Botanica) \u2014 the vendor does not close tasks in Breezeway, so they cannot be tracked against 4pm.' : '')}>{d.missed > 0 ? d.missed + ' after 4pm' : ''}{(d.untracked || 0) > 0 ? (d.missed > 0 ? ' \u00b7 ' : '') + d.untracked + ' vendor-cleaned' : ''}</span>}
+          <div className="px-4 py-2.5 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap text-[12px] text-muted">
+              <Clock size={13} className={d.late > 0 ? 'text-rose-700' : d.atRisk > 0 ? 'text-amber-700' : 'text-muted'} />
+              <span className="font-semibold text-ink">Departure cleans</span>
+              <span>due {d.dueBy}{data.isToday === false ? ' \u00b7 planning ' + fmtDay(data.today) : d.passed ? ' \u00b7 ' + fmtLeft(d.minsLeft) + ' past' : ' \u00b7 ' + fmtLeft(d.minsLeft) + ' left'}</span>
+              {(d.missed > 0 || (d.untracked || 0) > 0) && <span className="ml-auto" title={(d.missed > 0 ? d.missed + ' finished after 4pm today. ' : '') + ((d.untracked || 0) > 0 ? 'Excludes ' + d.untracked + ' vendor-cleaned units (Botanica) \u2014 the vendor does not close tasks in Breezeway, so they cannot be tracked against 4pm.' : '')}>{d.missed > 0 ? d.missed + ' after 4pm' : ''}{(d.untracked || 0) > 0 ? (d.missed > 0 ? ' \u00b7 ' : '') + d.untracked + ' vendor-cleaned' : ''}</span>}
             </div>
-            <div className="mt-2 h-1.5 rounded-full bg-app overflow-hidden">
-              <div className={'h-full ' + (d.late > 0 ? 'bg-rose-500' : 'bg-emerald-500')} style={{ width: (d.cleans ? Math.round((d.done / d.cleans) * 100) : 0) + '%' }} />
+            <div className="flex items-end gap-5 flex-wrap mt-1.5">
+              <span className="leading-none"><span className="text-[26px] font-bold text-ink tabular-nums">{d.done}</span><span className="text-[15px] font-semibold text-muted">/{d.cleans}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">done</span></span>
+              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (d.late > 0 ? 'text-rose-600' : 'text-ink/30')}>{d.late}</span><span className={'block text-[10px] font-semibold uppercase tracking-wide mt-1 ' + (d.late > 0 ? 'text-rose-600' : 'text-muted')}>late</span></span>
+              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (d.atRisk > 0 ? 'text-amber-600' : 'text-ink/30')}>{d.atRisk}</span><span className={'block text-[10px] font-semibold uppercase tracking-wide mt-1 ' + (d.atRisk > 0 ? 'text-amber-600' : 'text-muted')}>at risk</span></span>
+              <span className="leading-none"><span className="text-[26px] font-bold text-ink tabular-nums">{d.running}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">running</span></span>
+              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (byMkt.some(u => u.sameDayTurn && !u.allDone) ? 'text-rose-600' : 'text-ink/30')}>{byMkt.filter(u => u.sameDayTurn && !u.allDone).length}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">same-day</span></span>
+              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (byMkt.some(u => u.unassigned) ? 'text-rose-600' : 'text-ink/30')}>{byMkt.filter(u => u.unassigned).length}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">unassigned</span></span>
+              <span className="flex-1 min-w-[120px] self-center">
+                <span className="block h-2 rounded-full bg-app overflow-hidden">
+                  <span className={'block h-full ' + (d.late > 0 ? 'bg-rose-500' : 'bg-emerald-500')} style={{ width: (d.cleans ? Math.round((d.done / d.cleans) * 100) : 0) + '%' }} />
+                </span>
+                <span className="block text-[10px] text-muted mt-1 text-right tabular-nums">{d.cleans ? Math.round((d.done / d.cleans) * 100) : 0}% of cleans done</span>
+              </span>
             </div>
           </div>
           <button onClick={() => setPanel(panel === 'glitches' ? '' : 'glitches')} className={'px-5 py-3 text-left flex items-center gap-2 transition ' + (panel === 'glitches' ? 'bg-rose-50/70' : 'hover:bg-app/50')} title="Guest-reported problems happening right now \u2014 click to see them">
@@ -768,6 +787,12 @@ function SignalChips({ s, onAct }: { s: any; onAct: (seed: any) => void }) {
     <>
       {pending > 0 && (
         <button onClick={() => onAct({ key: 'pending' })} title={'Open Breezeway work on this unit from the last 60 days that was never finished - oldest is ' + ((s.pending[0] || {}).daysOld || 0) + ' days old'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100">{pending} pending task{pending === 1 ? '' : 's'}</button>
+      )}
+      {s.feedback && s.feedback.count > 0 && (
+        <a href="/reviews/actions" title={'Open feedback-fix jobs on this unit from recent guest complaints \u2014 top: ' + (s.feedback.top || '')}
+          className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ' + (s.feedback.urgent ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100' : 'bg-violet-50 text-violet-700 border-violet-300 hover:bg-violet-100')}>
+          {s.feedback.count} fix job{s.feedback.count === 1 ? '' : 's'}{s.feedback.urgent ? ' \u00b7 urgent' : ''}
+        </a>
       )}
       {rev && (
         <button onClick={() => onAct({ key: 'review', template: 'feedback', title: 'Guest-feedback inspection', reason: rev.rating + '\u2605 review ' + (rev.at || '') + (rev.excerpt ? ' \u2014 \u201c' + String(rev.excerpt).slice(0, 120) + '\u201d' : '') })} title={'Recent review ' + rev.rating + '\u2605' + (rev.at ? ' on ' + rev.at : '') + ' - inspect before the next guest'} className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 hover:bg-rose-100">Review inspection {'\u00b7'} {rev.rating}{'\u2605'}</button>
