@@ -69,6 +69,7 @@ type Item = {
   benchRate: number | null; benchLabel: string; benchPct: number | null; benchPrev: number | null
   mixWeekday: number; mixWeekend: number; leadDays: number | null
   stayTag: 'owner' | 'ff' | null
+  canceled: boolean
   rental: number; commission: number; other: number; net: number
   rate: number | null; avgRate: number | null
   lines: Line[]; flags: Flag[]
@@ -504,7 +505,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
       return [
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
-        sourceLabel(it.source), it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
+        sourceLabel(it.source), it.canceled ? 'Canceled' : it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
         it.checkIn, it.checkOut, it.monthNights,
         it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2), it.avgRate == null ? '' : it.avgRate.toFixed(2),
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
@@ -546,6 +547,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.kind === 'reservation' && <SourceChip source={it.source} />}
               {it.stayTag === 'owner' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Owner stay</span>}
               {it.stayTag === 'ff' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Friends &amp; family</span>}
+              {it.canceled && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300 line-through decoration-neutral-400">Canceled</span>}
             </div>
             <div className="text-[11px] text-muted truncate">
               {it.unit || (it.kind === 'line' ? 'Owner-level line items' : '')}
