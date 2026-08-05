@@ -119,7 +119,6 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   const canSubmit = !!fullName.trim() && allInitialed && !!sig && !!idPhoto && !!selfie && !busy
   const card = 'rounded-2xl border border-neutral-200 bg-white shadow-sm p-5 mb-4'
   const primaryBtn = 'w-full rounded-xl bg-neutral-900 text-white font-semibold py-3.5 hover:bg-neutral-800 transition-colors disabled:opacity-40'
-  const initialAll = () => { const m: Record<string, string> = {}; for (let i = 0; i < rules.length; i++) m[rules[i].id] = defaultInitials; setRuleInitials(m) }
 
   return (
     <Shell>
@@ -140,13 +139,7 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
       {/* House rules (read-only) */}
       <div className={card}>
         <div className="text-base font-bold mb-1">House &amp; building rules</div>
-        <p className="text-xs text-neutral-500 mb-3">Please read each rule and initial it. Tap a box to fill your initials{defaultInitials ? ' (' + defaultInitials + ')' : ''} automatically — or type your own.</p>
-        {defaultInitials ? (
-          <button type="button" onClick={initialAll}
-            className="w-full mb-3 rounded-xl border border-neutral-900 bg-neutral-900 text-white text-sm font-semibold py-2.5 hover:bg-neutral-800 transition-colors">
-            Initial all {rules.length} rules ({defaultInitials})
-          </button>
-        ) : null}
+        <p className="text-xs text-neutral-500 mb-3">Please read each rule and initial it individually. Tap the box next to a rule and your initials{defaultInitials ? ' (' + defaultInitials + ')' : ''} fill in for that rule — or type your own.</p>
         <div className="space-y-2.5">
           {rules.map((r, i) => {
             const val = ruleInitials[r.id] || ''
