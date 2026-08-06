@@ -7,7 +7,7 @@ import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Radar
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Radar, Receipt
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -64,6 +64,7 @@ const SECTIONS: {
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
       { to: '/channels', label: 'Channels',     Icon: Share2 },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
+      { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
       { to: '/reports',  label: 'Owner Reports', Icon: FileText },
       { to: '/owner-audit', label: 'Owner Audit', Icon: ListChecks },
     ],
