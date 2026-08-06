@@ -378,7 +378,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
           <div className="gd-card gd-shadow" style={{ maxWidth: 380, width: '100%', padding: 24 }}>
             <Eyebrow>Admin</Eyebrow>
             <h3 style={{ fontFamily: SERIF, fontSize: 24, margin: '6px 0 4px' }}>Unlock editing</h3>
-            <p className="text-sm" style={{ color: 'rgba(22,32,75,.6)' }}>Use the StayBoard admin password. Guests never see this.</p>
+            <p className="text-sm" style={{ color: 'rgba(22,32,75,.6)' }}>Use the Lighthouse admin password. Guests never see this.</p>
             <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlock() }}
               placeholder="Admin password" autoFocus
               style={{ width: '100%', marginTop: 14, padding: '10px 12px', borderRadius: 12, border: '1px solid rgba(22,32,75,.2)', outline: 'none' }} />
