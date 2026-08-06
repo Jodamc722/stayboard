@@ -2,7 +2,7 @@
 // Deliberately NOT a Breezeway task: most of what he sees is a coaching note, not a work order.
 // A task is one click away from the row if something needs fixing.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
@@ -20,8 +20,8 @@ function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Ame
 function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('inspections', 'view')
+  if (!g.ok) return g.res
   const sp = req.nextUrl.searchParams
   const days = Math.min(Math.max(Number(sp.get('days') || 30), 1), 730)
   const q = str(sp.get('q')).trim().toLowerCase()
@@ -62,8 +62,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('inspections', 'edit')
+  if (!g.ok) return g.res
+  const access = g.access
   const b = await req.json().catch(() => ({}))
   const unit = str(b.unit).trim()
   const notes = str(b.notes).trim()
@@ -89,8 +90,9 @@ export async function POST(req: NextRequest) {
 
 // Record that a task was raised off the back of an inspection.
 export async function PATCH(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('inspections', 'edit')
+  if (!g.ok) return g.res
+  const access = g.access
   const b = await req.json().catch(() => ({}))
   const id = str(b.id), taskId = str(b.taskId)
   if (!id || !taskId) return NextResponse.json({ ok: false, error: 'id and taskId required' }, { status: 400 })
@@ -101,8 +103,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('inspections', 'full')
+  if (!g.ok) return g.res
   const b = await req.json().catch(() => ({}))
   // Deletes are password-gated everywhere else in this app; inspections are no different.
   const { adminPasswordOk } = await import('@/lib/shareAuth')
