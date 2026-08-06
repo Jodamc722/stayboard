@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
     const start = addDays(today, -1)
     const end = addDays(today, 6)
     const farEnd = addDays(today, 30)
+    const pastStart = addDays(today, -30)
     const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,bedrooms,pictures,cfRaw:raw->customFields,coRaw:raw->>defaultCheckOutTime,ciRaw:raw->>defaultCheckInTime')
     const match: Record<string, { name: string; bedrooms: number | null; doorCode: string | null; checkOutTime: string | null; checkInTime: string | null }> = {}
     const bannerCands: { name: string; url: string; count: number; full: boolean }[] = []
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest) {
     } catch {}
     const bannerImage = bannerOverride || autoBanner
     const ids = Object.keys(match)
-    if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, bannerImage, bannerOverride, bannerOptions, arrivals: [], departures: [], active: [], upcoming: [] })
+    if (!ids.length) return NextResponse.json({ ok: true, label: scope.label, today, start, end, unitCount: 0, bannerImage, bannerOverride, bannerOptions, arrivals: [], departures: [], active: [], upcoming: [], past: [] })
     // custom-field id -> human name (for the parking / details list). Resolves from the table first,
     // falls back to Guesty's live definitions, cached 1h — so names work even if the table is unpopulated.
     const cfNameById = await customFieldNameMap()
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
     // paged to clear the 1000-row cap on bigger scopes.
     let resAll: any[] = []
     for (let p = 0; p < 6; p++) {
-      const { data } = await db.from('guesty_reservations').select('id,listing_id,guest_name,guest_phone,check_in,check_out,nights,status,source,confirmation_code,notes,custom_fields,raw').in('listing_id', ids).lte('check_in', farEnd).gte('check_out', start).range(p * 1000, p * 1000 + 999)
+      const { data } = await db.from('guesty_reservations').select('id,listing_id,guest_name,guest_phone,check_in,check_out,nights,status,source,confirmation_code,notes,custom_fields,raw').in('listing_id', ids).lte('check_in', farEnd).gte('check_out', pastStart).range(p * 1000, p * 1000 + 999)
       if (!data || !data.length) break
       resAll = resAll.concat(data)
       if (data.length < 1000) break
@@ -153,6 +154,9 @@ export async function GET(req: NextRequest) {
     const active = all.filter(r => r.checkIn <= today && r.checkOut > today).sort((a, b) => a.checkOut.localeCompare(b.checkOut) || byUnitDate(a, b))
     // Future arrivals beyond this week, out to the 30-day horizon (front desk wants to see what's coming).
     const upcoming = all.filter(r => r.checkIn > end && r.checkIn <= farEnd).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || byUnitDate(a, b))
+    // Past checkouts in the last 30 days — most recent first. Lets the front desk look back at recent
+    // guests and (for Salato) their completed verification.
+    const past = all.filter(r => r.checkOut < today && r.checkOut >= pastStart).sort((a, b) => b.checkOut.localeCompare(a.checkOut) || byUnitDate(a, b))
     // EXTENSION GUARD (walk-in prevention): Breezeway still has a clean scheduled on a day, but the
     // guest's stay now runs past it — i.e. they extended. Surface it so nobody cleans an occupied unit.
     const depSet: Record<string, boolean> = {}
@@ -190,6 +194,7 @@ export async function GET(req: NextRequest) {
     for (const r of arrivals) r.doorCode = null
     for (const r of active) r.doorCode = null
     for (const r of upcoming) r.doorCode = null
+    for (const r of past) r.doorCode = null
     for (const r of departures) { if ((r.cleanDay || r.checkOut) !== today || r.extended) r.doorCode = null }
 
     // Salato in-person verification: attach status + (this board is already password-gated) short-lived
@@ -197,7 +202,7 @@ export async function GET(req: NextRequest) {
     const verifyEnabled = v === 'salato'
     if (verifyEnabled) {
       try {
-        const guestRows: any[] = arrivals.concat(active).concat(upcoming)
+        const guestRows: any[] = arrivals.concat(active).concat(upcoming).concat(past)
         const rids: string[] = []
         for (const r of guestRows) { if (r.id && rids.indexOf(r.id) < 0) rids.push(r.id) }
         if (rids.length) {
@@ -219,7 +224,7 @@ export async function GET(req: NextRequest) {
     // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, unitCount: ids.length, verifyEnabled, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming })
+    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, pastStart, unitCount: ids.length, verifyEnabled, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming, past })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
