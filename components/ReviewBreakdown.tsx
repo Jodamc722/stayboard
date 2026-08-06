@@ -11,18 +11,21 @@
 // "6 of 25 units reviewed" is deliberate: a building where 19 units produced no reviews at all in
 // the window is telling you something too, and a plain unit count hides it.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Building2, ChevronRight, Search, Download, Star, TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, MessageSquareWarning } from 'lucide-react'
+import { Building2, ChevronRight, Search, Download, TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, MessageSquareWarning } from 'lucide-react'
 
 type Ch = { channel: string; n: number; avg: number; low: number }
+// The published listing score per OTA — lifetime, not the window. `display` is already converted to
+// the scale that channel shows the public (Booking.com publishes out of 10).
+type Ota = { channel: string; n: number; avg: number; display: number; scale: number; units?: number; url?: string | null; lastAt?: string | null }
 type Unit = {
   listingId: string; unit: string; building: string; market: string
   n: number; avg: number | null; fiveShare: number | null; lowCount: number; score: number | null
-  change: number | null; ranked: boolean; awaiting: number; channels: Ch[]
+  change: number | null; ranked: boolean; awaiting: number; channels: Ch[]; ota: Ota[]
 }
 type Bld = {
   building: string; market: string
   n: number; avg: number | null; fiveShare: number | null; lowCount: number; score: number | null
-  change: number | null; awaiting: number; unitsReviewed: number; unitsTotal: number
+  change: number | null; awaiting: number; unitsReviewed: number; unitsTotal: number; ota: Ota[]
 }
 
 const PERIODS = [{ d: 30, l: '30d' }, { d: 90, l: '90d' }, { d: 180, l: '6m' }, { d: 365, l: '12m' }]
@@ -55,6 +58,50 @@ function avgCls(a: number | null) {
   return 'text-rose-700'
 }
 
+// THE LIVE LISTING SCORE. The number a guest reads on the OTA page itself: that channel's lifetime
+// average for these listings, on the channel's own scale (Booking.com out of 10). It deliberately
+// ignores the period buttons above — a listing's public score is not a 90-day number.
+const OTA_STYLE: Record<string, string> = {
+  'Airbnb': 'bg-rose-50 text-rose-700 border-rose-200',
+  'Booking.com': 'bg-blue-50 text-blue-700 border-blue-200',
+  'Vrbo': 'bg-sky-50 text-sky-700 border-sky-200',
+  'Expedia': 'bg-amber-50 text-amber-800 border-amber-200',
+}
+// Where the channel's own "good" line sits, on ITS scale: Airbnb throttles placement below 4.7ish,
+// Booking's "Superb" starts at 9.0, Vrbo's premier tier at 4.3. Dull when healthy, red when not.
+const OTA_FLOOR: Record<string, number> = { 'Airbnb': 4.7, 'Booking.com': 8.6, 'Vrbo': 4.3, 'Expedia': 4.3 }
+function OtaScores({ ota, compact }: { ota: Ota[]; compact?: boolean }) {
+  if (!ota || !ota.length) return null
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {!compact && <span className="text-[9.5px] uppercase tracking-wider font-semibold text-muted mr-0.5">Listing score</span>}
+      {ota.map(o => {
+        const floor = OTA_FLOOR[o.channel]
+        const weak = floor != null && o.display < floor
+        const body = (
+          <>
+            <span className="opacity-70 font-semibold">{o.channel}</span>
+            <span className="font-bold tabular-nums">{o.display}</span>
+            <span className="opacity-60 text-[9.5px]">/{o.scale}</span>
+            <span className="opacity-55 text-[9.5px] tabular-nums">{o.n}</span>
+            {o.url ? <ExternalLink size={9} className="opacity-60" /> : null}
+          </>
+        )
+        const cls = 'inline-flex items-baseline gap-1 text-[10.5px] px-1.5 py-0.5 rounded border '
+          + (weak ? 'bg-rose-50 text-rose-700 border-rose-300 font-semibold' : (OTA_STYLE[o.channel] || 'bg-app text-muted border-line'))
+        const title = o.channel + ' listing score ' + o.display + '/' + o.scale
+          + ' — lifetime average across ' + o.n + ' review' + (o.n === 1 ? '' : 's')
+          + (o.units ? ' from ' + o.units + ' unit' + (o.units === 1 ? '' : 's') : '')
+          + (floor != null ? (weak ? ' · BELOW the ' + floor + ' line this channel rewards' : ' · above the ' + floor + ' line') : '')
+          + (o.url ? ' · click to open the live listing' : '')
+        return o.url
+          ? <a key={o.channel} href={o.url} target="_blank" rel="noreferrer" title={title} onClick={e => e.stopPropagation()} className={cls + ' hover:brightness-95'}>{body}</a>
+          : <span key={o.channel} title={title} className={cls}>{body}</span>
+      })}
+    </span>
+  )
+}
+
 function ChannelChips({ chs }: { chs: Ch[] }) {
   if (!chs || !chs.length) return null
   return (
@@ -85,6 +132,10 @@ function Stats({ n, avg, change, fiveShare, lowCount, awaiting }: { n: number; a
 }
 
 export function ReviewBreakdown() {
+  // CLOSED UNTIL ASKED (Jon, 2026-08-06: "the page should be collapsed at all times unless I open
+  // it"). Deliberately NOT remembered across loads — the page opens quiet every time, and nothing
+  // below is fetched until it is opened, so the reviews page stays fast for people who never do.
+  const [open, setOpen] = useState(false)
   const [days, setDays] = useState(90)
   const [market, setMarket] = useState('all')
   const [q, setQ] = useState('')
@@ -105,7 +156,7 @@ export function ReviewBreakdown() {
     } catch (e: any) { setErr(String(e?.message || e)) }
     setLoading(false)
   }, [days])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { if (open) load() }, [open, load])
 
   // The API splits units into ranked / unranked (too few reviews to rank fairly). A breakdown wants
   // BOTH — a unit with 2 reviews still happened — so they are stitched back together here.
@@ -162,13 +213,19 @@ export function ReviewBreakdown() {
   }, [flat, visUnits, visBuildings])
 
   const exportCsv = () => {
-    const head = ['Building', 'Unit', 'Market', 'Reviews', 'Average', 'Change', 'FiveStarPct', 'LowReviews', 'AwaitingReply', 'Channels']
+    // Listing scores get their own columns, not a blob: this file gets pasted into owner decks and
+    // "Airbnb 4.63" needs to be sortable there too.
+    const head = ['Building', 'Unit', 'Market', 'Reviews', 'Average', 'Change', 'FiveStarPct', 'LowReviews', 'AwaitingReply',
+      'Airbnb_listing_score', 'Booking_listing_score_10', 'Vrbo_listing_score', 'Channels_in_window']
     const lines = [head.join(',')]
     const esc = (v: any) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
+    const ota = (rows: Ota[] | undefined, ch: string) => { const o = (rows || []).find(x => x.channel === ch); return o ? o.display : '' }
     for (const b of visBuildings) {
-      lines.push([b.building, '(building total)', b.market, b.n, b.avg ?? '', b.change ?? '', b.fiveShare ?? '', b.lowCount, b.awaiting, ''].map(esc).join(','))
+      lines.push([b.building, '(building total)', b.market, b.n, b.avg ?? '', b.change ?? '', b.fiveShare ?? '', b.lowCount, b.awaiting,
+        ota(b.ota, 'Airbnb'), ota(b.ota, 'Booking.com'), ota(b.ota, 'Vrbo'), ''].map(esc).join(','))
       for (const u of (unitsByBuilding[b.building] || [])) {
         lines.push([b.building, u.unit, u.market, u.n, u.avg ?? '', u.change ?? '', u.fiveShare ?? '', u.lowCount, u.awaiting,
+          ota(u.ota, 'Airbnb'), ota(u.ota, 'Booking.com'), ota(u.ota, 'Vrbo'),
           (u.channels || []).map(c => c.channel + ' ' + c.avg + ' (' + c.n + ')').join(' | ')].map(esc).join(','))
       }
     }
@@ -196,17 +253,22 @@ export function ReviewBreakdown() {
 
   return (
     <section className="rounded-xl border border-line bg-white mb-5 overflow-hidden">
-      <div className="flex items-center gap-2 flex-wrap px-3 py-2 border-b border-line">
-        <Building2 size={14} className="text-brand-600" />
-        <span className="text-[13px] font-bold text-ink">Breakdown</span>
-        <span className="text-[11.5px] text-muted">
-          {totals.n} review{totals.n === 1 ? '' : 's'}
-          {totals.avg != null ? ' · ' + totals.avg + ' avg' : ''}
-          {totals.low ? ' · ' + totals.low + ' low' : ''}
-          {totals.aw ? ' · ' + totals.aw + ' awaiting' : ''}
-        </span>
+      <div className={'flex items-center gap-2 flex-wrap px-3 py-2 ' + (open ? 'border-b border-line' : '')}>
+        <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-left group">
+          <ChevronRight size={13} className={'text-muted transition-transform ' + (open ? 'rotate-90' : '')} />
+          <Building2 size={14} className="text-brand-600" />
+          <span className="text-[13px] font-bold text-ink group-hover:text-brand-700">Breakdown</span>
+          <span className="text-[11.5px] text-muted">
+            {open
+              ? (totals.n + ' review' + (totals.n === 1 ? '' : 's')
+                + (totals.avg != null ? ' · ' + totals.avg + ' avg' : '')
+                + (totals.low ? ' · ' + totals.low + ' low' : '')
+                + (totals.aw ? ' · ' + totals.aw + ' awaiting' : ''))
+              : 'Properties and units, with each listing’s live score on Airbnb, Booking.com and Vrbo'}
+          </span>
+        </button>
 
-        <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+        {open && <span className="ml-auto flex items-center gap-1.5 flex-wrap">
           <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
             <button onClick={() => setFlat(false)} className={'text-[11px] font-semibold px-2 py-1 ' + (!flat ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Group units under their property">By property</button>
             <button onClick={() => setFlat(true)} className={'text-[11px] font-semibold px-2 py-1 ' + (flat ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Every unit in one flat list">All units</button>
@@ -231,8 +293,10 @@ export function ReviewBreakdown() {
             <Download size={11} /> CSV
           </button>
           {loading && <Loader2 size={12} className="animate-spin text-muted" />}
-        </span>
+        </span>}
       </div>
+
+      {open && <>
 
       {err && <div className="px-3 py-2 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</div>}
 
@@ -247,30 +311,41 @@ export function ReviewBreakdown() {
             return (
               <div key={b.building}>
                 <button onClick={() => setOpenB(x => ({ ...x, [b.building]: !open }))}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-app/50 transition">
-                  <ChevronRight size={13} className={'text-muted flex-shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
-                  <span className="flex-1 min-w-0 truncate">
-                    <span className="text-[13px] font-bold text-ink">{b.building}</span>
-                    <span className="text-[11px] text-muted"> {'·'} {b.market || 'unmapped'} {'·'} {b.unitsReviewed} of {b.unitsTotal || b.unitsReviewed} unit{(b.unitsTotal || b.unitsReviewed) === 1 ? '' : 's'} reviewed</span>
+                  className="w-full px-3 py-2 text-left hover:bg-app/50 transition">
+                  <span className="flex items-center gap-2">
+                    <ChevronRight size={13} className={'text-muted flex-shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
+                    <span className="flex-1 min-w-0 truncate">
+                      <span className="text-[13px] font-bold text-ink">{b.building}</span>
+                      <span className="text-[11px] text-muted"> {'·'} {b.market || 'unmapped'} {'·'} {b.unitsReviewed} of {b.unitsTotal || b.unitsReviewed} unit{(b.unitsTotal || b.unitsReviewed) === 1 ? '' : 's'} reviewed</span>
+                    </span>
+                    <Stats n={b.n} avg={b.avg} change={b.change} fiveShare={b.fiveShare} lowCount={b.lowCount} awaiting={b.awaiting} />
+                    <span className="w-[150px] hidden lg:block flex-shrink-0" />
                   </span>
-                  <Stats n={b.n} avg={b.avg} change={b.change} fiveShare={b.fiveShare} lowCount={b.lowCount} awaiting={b.awaiting} />
-                  <span className="w-[150px] hidden lg:block flex-shrink-0" />
+                  {/* THE PUBLISHED SCORE — what a guest reads on each OTA before they book here. */}
+                  {!!(b.ota || []).length && (
+                    <span className="flex items-center gap-2 pl-[21px] pt-1"><OtaScores ota={b.ota} /></span>
+                  )}
                 </button>
                 {open && (
                   <div className="bg-app/30 border-t border-line/60">
                     {kids.length === 0 && <div className="px-3 py-2 text-[12px] text-muted pl-8">No unit-level reviews in this window.</div>}
                     {kids.map(u => (
-                      <a key={u.listingId} href={'/listings/' + u.listingId}
-                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-white group border-b border-line/40 last:border-b-0">
-                        <span className="w-[13px] flex-shrink-0" />
-                        <span className="flex-1 min-w-0 truncate text-[12.5px] text-ink pl-4">
-                          {u.unit}
-                          {!u.ranked && <span className="ml-1.5 text-[9.5px] uppercase font-semibold px-1 py-0.5 rounded bg-slate-100 text-muted" title="Too few reviews in this window to rank fairly">few</span>}
-                          <ExternalLink size={10} className="inline ml-1 text-muted opacity-0 group-hover:opacity-100" />
-                        </span>
-                        <Stats n={u.n} avg={u.avg} change={u.change} fiveShare={u.fiveShare} lowCount={u.lowCount} awaiting={u.awaiting} />
-                        <span className="w-[150px] hidden lg:block flex-shrink-0"><ChannelChips chs={u.channels} /></span>
-                      </a>
+                      <div key={u.listingId} className="border-b border-line/40 last:border-b-0 hover:bg-white group">
+                        <a href={'/listings/' + u.listingId} className="flex items-center gap-2 px-3 py-1.5">
+                          <span className="w-[13px] flex-shrink-0" />
+                          <span className="flex-1 min-w-0 truncate text-[12.5px] text-ink pl-4">
+                            {u.unit}
+                            {!u.ranked && <span className="ml-1.5 text-[9.5px] uppercase font-semibold px-1 py-0.5 rounded bg-slate-100 text-muted" title="Too few reviews in this window to rank fairly">few</span>}
+                            <ExternalLink size={10} className="inline ml-1 text-muted opacity-0 group-hover:opacity-100" />
+                          </span>
+                          <Stats n={u.n} avg={u.avg} change={u.change} fiveShare={u.fiveShare} lowCount={u.lowCount} awaiting={u.awaiting} />
+                          <span className="w-[150px] hidden lg:block flex-shrink-0"><ChannelChips chs={u.channels} /></span>
+                        </a>
+                        {/* the unit's own published score, each chip a deep link to the live listing */}
+                        {!!(u.ota || []).length && (
+                          <div className="px-3 pb-1.5 pl-[54px]"><OtaScores ota={u.ota} compact /></div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -304,13 +379,17 @@ export function ReviewBreakdown() {
         </div>
       )}
 
-      <div className="px-3 py-1.5 border-t border-line bg-app/40 text-[10.5px] text-muted flex items-center gap-2 flex-wrap">
-        <MessageSquareWarning size={11} />
+      <div className="px-3 py-1.5 border-t border-line bg-app/40 text-[10.5px] text-muted flex items-start gap-2 flex-wrap">
+        <MessageSquareWarning size={11} className="mt-0.5 flex-shrink-0" />
         <span>
           Averages are weighted by review count. {'“'}Low{'”'} is 3{'★'} or below; {'“'}Wait{'”'} counts reviews a human can still reply to,
           the same rule as the queue at the top of the page. Trend compares against the previous {days} days.
+          {' '}<b>Listing score</b> is the channel{'’'}s lifetime average on its own scale (Booking.com out of 10) — the number a guest reads on
+          the live page, so it ignores the period buttons. Guesty publishes no OTA rating field, so it is computed from every review that
+          channel sent us; each chip links to the live listing to check it.
         </span>
       </div>
+      </>}
     </section>
   )
 }
