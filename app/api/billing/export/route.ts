@@ -38,7 +38,7 @@ function linesOf(t: BillingTask): Line[] {
     out.push({
       ...base, kind: 'labor',
       description: hourly ? 'Labor (hourly)' : 'Labor (flat)',
-      hours: hourly ? (t.billedHours != null ? t.billedHours.toFixed(2) : hrs(t.actualMinutes)) : hrs(t.actualMinutes),
+      hours: t.billedHours != null ? t.billedHours.toFixed(2) : hrs(t.actualMinutes),
       rate: t.ratePaid != null ? money(t.ratePaid) : '',
       amount: t.laborAmount,
     })
