@@ -26,6 +26,10 @@ export const FEATURES: Feature[] = [
   { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
   { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
   { key: 'faq',           label: 'FAQ & How-To',      path: '/faq', group: 'Guests' },
+  // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
+  // The public share/verify links (/salato/share, /salato/verify) stay open — OPEN_PREFIXES wins
+  // before the role gate in middleware.
+  { key: 'salato',        label: 'Salato Front Desk', path: '/salato', group: 'Guests' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
   { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast', group: 'Operations' },
@@ -72,8 +76,8 @@ export function isOpenPath(path: string): boolean {
   return false
 }
 // Login-required pages that deliberately have NO per-role setting:
-// /users gates itself (admin console); /salato stays open to all members (Jon 2026-08-06).
-export const UNGATED_PAGES = ['/users', '/salato']
+// /users gates itself (admin console).
+export const UNGATED_PAGES = ['/users']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
