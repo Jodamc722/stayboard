@@ -92,3 +92,23 @@ export async function adminPasswordOk(pw: string | undefined | null): Promise<{ 
   if (!pw || String(pw) !== cur) return { ok: false, reason: 'Wrong admin password.' }
   return { ok: true, reason: '' }
 }
+
+// SALATO RULES password \u2014 a dedicated credential to EDIT the Salato house/building rules from the
+// front-desk share link by people who are NOT signed into the app. Signed-in app users never need
+// it. Stored as share_settings row id=5. FAIL CLOSED: while unset, only signed-in app users can
+// edit the rules (a share-only viewer cannot).
+export async function currentRulesPassword(): Promise<string> {
+  try {
+    const db = supabaseAdmin()
+    const { data, error } = await db.from('share_settings').select('password').eq('id', 5).maybeSingle()
+    if (error) { console.error('rules_settings read', error.message); return '' }
+    return data && data.password ? String(data.password) : ''
+  } catch (e) { console.error('rules_settings read', e); return '' }
+}
+
+export async function rulesPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string }> {
+  const cur = await currentRulesPassword()
+  if (!cur) return { ok: false, reason: 'Editing rules from the share link is locked. Set a rules password in Users \u2192 Share links & security first, or sign in.' }
+  if (!pw || String(pw) !== cur) return { ok: false, reason: 'Wrong rules password.' }
+  return { ok: true, reason: '' }
+}
