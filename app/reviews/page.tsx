@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ReviewsPanel } from '@/app/command/ReviewsPanel'
 import { ReviewKpis } from '@/components/ReviewKpis'
+import { ReviewBreakdown } from '@/components/ReviewBreakdown'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,6 +28,10 @@ export default async function ReviewsPage() {
       </header>
 
       <ReviewKpis />
+
+      {/* WHERE the score comes from: property → unit, worst first. Sits under the headline strip
+          because "how are we doing" is read first and "which building is dragging" second. */}
+      <ReviewBreakdown />
 
       {/* The action board lives on its own page: it is a work queue, not a metric, and reading the
           reputation numbers is a different job from working the list. */}
