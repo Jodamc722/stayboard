@@ -2,7 +2,7 @@
 // for the Salato building, with rich Guesty reservation detail (ETA, car, guest info, notes) plus a
 // TEAM NOTES section the front desk can append to. Internal (auth-gated) because it exposes guest PII.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -15,9 +15,8 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 const LIVE = /confirm|checked/i
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('salato', 'view')
+  if (!g.ok) return g.res
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
@@ -72,9 +71,9 @@ export async function GET(req: NextRequest) {
 
 // Add a team note to a reservation.
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('salato', 'edit')
+  if (!g.ok) return g.res
+  const user = g.access.user
   try {
     const body = await req.json().catch(() => ({}))
     const reservationId = str(body.reservationId).trim()
