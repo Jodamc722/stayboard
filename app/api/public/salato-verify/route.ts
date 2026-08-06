@@ -5,7 +5,7 @@
 // The reservation id is the capability, so the guest device does not need the share password.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { SALATO_RULES, SALATO_RULES_VERSION } from '@/lib/salato-rules'
+import { loadSalatoRules } from '@/lib/salato-rules'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
 
@@ -49,10 +49,11 @@ export async function GET(req: NextRequest) {
     const info = await loadSalatoRes(db, rid)
     if (!info.ok) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
     const rec = await readRecord(db, rid)
+    const { rules, version } = await loadSalatoRules(db)
     return NextResponse.json({
       ok: true, guestName: info.guestName, guestFirst: info.guestFirst, unit: info.unit,
       checkIn: info.checkIn, checkOut: info.checkOut, nights: info.nights, guests: info.guests, confirmationCode: info.confirmationCode,
-      rules: SALATO_RULES, rulesVersion: SALATO_RULES_VERSION,
+      rules, rulesVersion: version,
       status: rec?.status || 'pending', verifiedAt: rec?.signedAt || null,
     })
   } catch (e: any) {
@@ -81,17 +82,18 @@ export async function POST(req: NextRequest) {
     // Name is auto-filled from the reservation; fall back to it if the client didn't send one.
     const fullName = (str(body?.fullName).trim() || str(info.guestName).trim()).slice(0, 120)
     // Per-rule initials — the guest must initial EVERY house & building rule. Validated against the
-    // server's own rule list so a client can't skip any.
+    // server's own (possibly team-edited) rule list so a client can't skip any.
+    const { rules: activeRules, version: rulesVersion } = await loadSalatoRules(db)
     const riRaw: any = (body && typeof body.ruleInitials === 'object' && body.ruleInitials) ? body.ruleInitials : {}
     const ruleInitials: Record<string, string> = {}
-    for (let i = 0; i < SALATO_RULES.length; i++) {
-      const rule = SALATO_RULES[i]
+    for (let i = 0; i < activeRules.length; i++) {
+      const rule = activeRules[i]
       const v = str(riRaw[rule.id]).trim().slice(0, 12)
       if (!v) return NextResponse.json({ ok: false, error: 'Please initial every rule before submitting.' }, { status: 400 })
       ruleInitials[rule.id] = v
     }
     // Representative initials for the summary note (the guest normally uses the same initials on each).
-    const initials = ruleInitials[SALATO_RULES[0].id] || str(body?.initials).trim().slice(0, 12)
+    const initials = (activeRules[0] && ruleInitials[activeRules[0].id]) || str(body?.initials).trim().slice(0, 12)
 
     const sig = decodeImage(str(body?.signature))
     const idp = decodeImage(str(body?.idPhoto))
@@ -115,7 +117,7 @@ export async function POST(req: NextRequest) {
 
     const record: any = {
       status: 'verified', rid, unit: info.unit, guestFirst: info.guestFirst,
-      fullName, initials, ruleInitials, rulesVersion: SALATO_RULES_VERSION, rulesAcknowledged: true,
+      fullName, initials, ruleInitials, rulesVersion, rulesAcknowledged: true,
       idPath, selfiePath, signaturePath,
       signedAt: new Date().toISOString(),
       pushedToGuesty: false,
@@ -136,7 +138,7 @@ export async function POST(req: NextRequest) {
           const existing = live.find(isNotes)
           const prior = existing && typeof existing.value === 'string' ? existing.value : ''
           const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-          const line = '[' + stamp + '] ✅ In-person verification completed — ' + fullName + ' (all ' + SALATO_RULES.length + ' rules initialed: ' + initials + '). View ID, selfie & signature: ' + link
+          const line = '[' + stamp + '] ✅ In-person verification completed — ' + fullName + ' (all ' + activeRules.length + ' rules initialed: ' + initials + '). View ID, selfie & signature: ' + link
           const newNotes = prior ? prior + '\n' + line : line
           const notesId = existing ? (fieldIdOf(existing) || RES_NOTES_FIELD) : RES_NOTES_FIELD
           const w = await writeCustomFields(rid, token, [{ fieldId: notesId, value: newNotes }])
