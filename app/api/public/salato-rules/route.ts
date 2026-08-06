@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { SHARE_COOKIE, shareCookieValid, rulesPasswordOk } from '@/lib/shareAuth'
+import { getAccess } from '@/lib/access'
 import { SALATO_RULES_KEY, SALATO_RULES_VERSION, sanitizeRules, loadSalatoRules } from '@/lib/salato-rules'
 
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,13 @@ export async function POST(req: NextRequest) {
   if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
   try {
     const body: any = await req.json().catch(() => ({}))
+    // Editing the rules requires MORE than just the share password. Either you're a signed-in
+    // Stayboard app user, or you enter the dedicated rules password (Users → Share links & security).
+    const access = await getAccess()
+    if (!access.user) {
+      const gate = await rulesPasswordOk(body && body.password)
+      if (!gate.ok) return NextResponse.json({ ok: false, needsRulesPassword: true, error: gate.reason }, { status: 403 })
+    }
     const rules = sanitizeRules(body && body.rules)
     if (!rules.length) return NextResponse.json({ ok: false, error: 'Add at least one rule with a title.' }, { status: 400 })
     const db = supabaseAdmin()
