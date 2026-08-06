@@ -7,7 +7,7 @@ import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck
 } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
@@ -44,6 +44,7 @@ const SECTIONS: {
       { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
       { to: '/glitches', label: 'Guest Issues', Icon: AlertTriangle },
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
+      { to: '/inspections', label: 'Inspections', Icon: ClipboardCheck }, // gated 2026-08-06 — was URL-only
       { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
       { to: '/requests', label: 'Work Orders', Icon: ClipboardList },
     ],

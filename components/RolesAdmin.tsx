@@ -5,7 +5,7 @@
 // actions) · Full (destructive + settings actions on that tab).
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus, Copy, Trash2, Check, AlertTriangle, ShieldCheck, Users, Save } from 'lucide-react'
-import { FEATURES, type Level } from '@/lib/features'
+import { FEATURES, GROUP_ORDER, type Level } from '@/lib/features'
 
 type RoleRow = { key: string; label: string; blurb: string; landing: string; perms: Record<string, string>; is_system: boolean; sort: number }
 
@@ -16,16 +16,19 @@ const LEVEL_OPTS: { key: Level; label: string; hint: string }[] = [
   { key: 'full', label: 'Full', hint: 'Everything on this tab — delete, settings, policies' },
 ]
 
-// Grid grouping mirrors the sidebar so the editor reads like the app.
-const GROUPS: { title: string; keys: string[] }[] = [
-  { title: 'Overview',   keys: ['command', 'home'] },
-  { title: 'Guests',     keys: ['reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'claims', 'faq'] },
-  { title: 'Operations', keys: ['plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests'] },
-  { title: 'Portfolio',  keys: ['buildings', 'listings', 'optimize', 'health', 'vault'] },
-  { title: 'Money',      keys: ['revenue', 'channels', 'marketing', 'reports'] },
-  { title: 'Team',       keys: ['cleaners', 'labor'] },
-  { title: 'Admin',      keys: ['integrations', 'custom-fields'] },
-]
+// Grid grouping is DERIVED from the FEATURES registry (lib/features.ts) — never hand-listed here.
+// That's what keeps this editor complete: register a tab once and it appears in the grid. Any
+// feature whose group isn't recognized still shows, in a "New tabs" bucket at the bottom.
+const GROUPS: { title: string; keys: string[] }[] = (() => {
+  const gs = GROUP_ORDER
+    .map(title => ({ title, keys: FEATURES.filter(f => f.group === title).map(f => f.key) }))
+    .filter(g => g.keys.length > 0)
+  const claimed: string[] = []
+  for (const g of gs) for (const k of g.keys) claimed.push(k)
+  const extra = FEATURES.filter(f => claimed.indexOf(f.key) < 0).map(f => f.key)
+  if (extra.length > 0) gs.push({ title: 'New tabs', keys: extra })
+  return gs
+})()
 
 const label = (key: string) => FEATURES.find(f => f.key === key)?.label || key
 const lvlOf = (perms: Record<string, string>, key: string): Level => {
@@ -75,7 +78,11 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
     if (!role) return
     setBusy(true); setError(null); setMsg(null)
     try {
-      const r = await fetch('/api/roles', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: role.key, label: dLabel, landing: dLanding, perms: dPerms }) })
+      // Keep the role's '*' catch-all when saving: it's what decides the level of FUTURE tabs
+      // that ship after this save (e.g. manager '*'=full → new tabs appear for managers at Full).
+      // dPerms only carries the tabs that exist today, so without this the default would be lost.
+      const star = role.perms && role.perms['*'] != null ? { '*': String(role.perms['*']) } : {}
+      const r = await fetch('/api/roles', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: role.key, label: dLabel, landing: dLanding, perms: { ...star, ...dPerms } }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to save.')
       setMsg(`Saved ${dLabel}.`); load(role.key)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
@@ -201,7 +208,13 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
                     <div className="grid gap-1.5 sm:grid-cols-2">
                       {g.keys.map(k => (
                         <div key={k} className="flex items-center gap-2 rounded-lg border border-line bg-app/40 px-2.5 py-1.5">
-                          <span className="text-[12px] font-medium text-ink flex-1 truncate">{label(k)}</span>
+                          <span className="text-[12px] font-medium text-ink flex-1 truncate inline-flex items-center gap-1.5">
+                            {label(k)}
+                            {role.perms && role.perms[k] == null && (
+                              <span title="Added in a recent build — running on this role's default until you pick a level and save"
+                                className="text-[9px] font-bold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-px shrink-0">New</span>
+                            )}
+                          </span>
                           <div className="inline-flex rounded-lg border border-line overflow-hidden">
                             {LEVEL_OPTS.map(o => {
                               const active = dPerms[k] === o.key
