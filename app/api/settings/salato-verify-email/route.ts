@@ -7,8 +7,9 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 export const dynamic = 'force-dynamic'
 
 export const SALATO_NOTIFY_KEY = 'salato_verify_notify'
-type NotifyCfg = { emails: string; enabled: boolean }
-const DEFAULT_CFG: NotifyCfg = { emails: '', enabled: true }
+type NotifyCfg = { emails: string; enabled: boolean; from?: string }
+const DEFAULT_FROM = 'jon@stay-hospitality.com'
+const DEFAULT_CFG: NotifyCfg = { emails: '', enabled: true, from: DEFAULT_FROM }
 
 // Split a free-text list ("a@x.com, b@y.com; c@z.com") into clean, de-duped, valid-looking emails.
 export function parseEmails(s: string): string[] {
@@ -32,7 +33,7 @@ export async function GET() {
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
   const cfg = await getSetting<NotifyCfg>(SALATO_NOTIFY_KEY, DEFAULT_CFG)
-  return NextResponse.json({ ok: true, emails: cfg.emails || '', enabled: cfg.enabled !== false, valid: parseEmails(cfg.emails || '') })
+  return NextResponse.json({ ok: true, emails: cfg.emails || '', enabled: cfg.enabled !== false, from: cfg.from || DEFAULT_FROM, valid: parseEmails(cfg.emails || '') })
 }
 
 export async function PUT(req: NextRequest) {
@@ -43,10 +44,11 @@ export async function PUT(req: NextRequest) {
     const body: any = await req.json().catch(() => ({}))
     const emails = String(body?.emails == null ? '' : body.emails).slice(0, 1000)
     const enabled = body?.enabled !== false
+    const from = (parseEmails(String(body?.from == null ? '' : body.from))[0]) || DEFAULT_FROM
     const valid = parseEmails(emails)
-    const res = await setSetting(SALATO_NOTIFY_KEY, { emails, enabled } as NotifyCfg, access.email || null)
+    const res = await setSetting(SALATO_NOTIFY_KEY, { emails, enabled, from } as NotifyCfg, access.email || null)
     if (!res.ok) return NextResponse.json({ ok: false, error: res.error || 'Could not save' }, { status: 500 })
-    return NextResponse.json({ ok: true, emails, enabled, valid })
+    return NextResponse.json({ ok: true, emails, enabled, from, valid })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
