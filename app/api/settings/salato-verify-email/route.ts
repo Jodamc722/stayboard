@@ -1,0 +1,53 @@
+// Salato verification notifications — who gets the completion email (with details, ID/selfie/
+// signature images, and the PDF record). Editable in App settings. Stored in app_settings.
+import { NextRequest, NextResponse } from 'next/server'
+import { getAccess } from '@/lib/access'
+import { getSetting, setSetting } from '@/lib/app-settings'
+
+export const dynamic = 'force-dynamic'
+
+export const SALATO_NOTIFY_KEY = 'salato_verify_notify'
+type NotifyCfg = { emails: string; enabled: boolean }
+const DEFAULT_CFG: NotifyCfg = { emails: '', enabled: true }
+
+// Split a free-text list ("a@x.com, b@y.com; c@z.com") into clean, de-duped, valid-looking emails.
+export function parseEmails(s: string): string[] {
+  const out: string[] = []
+  const seen: Record<string, boolean> = {}
+  const parts = String(s || '').split(/[,;\s]+/)
+  for (let i = 0; i < parts.length; i++) {
+    const e = parts[i].trim()
+    if (!e) continue
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) continue
+    const k = e.toLowerCase()
+    if (seen[k]) continue
+    seen[k] = true
+    out.push(e)
+  }
+  return out
+}
+
+export async function GET() {
+  const access = await getAccess()
+  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  const cfg = await getSetting<NotifyCfg>(SALATO_NOTIFY_KEY, DEFAULT_CFG)
+  return NextResponse.json({ ok: true, emails: cfg.emails || '', enabled: cfg.enabled !== false, valid: parseEmails(cfg.emails || '') })
+}
+
+export async function PUT(req: NextRequest) {
+  const access = await getAccess()
+  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  try {
+    const body: any = await req.json().catch(() => ({}))
+    const emails = String(body?.emails == null ? '' : body.emails).slice(0, 1000)
+    const enabled = body?.enabled !== false
+    const valid = parseEmails(emails)
+    const res = await setSetting(SALATO_NOTIFY_KEY, { emails, enabled } as NotifyCfg, access.email || null)
+    if (!res.ok) return NextResponse.json({ ok: false, error: res.error || 'Could not save' }, { status: 500 })
+    return NextResponse.json({ ok: true, emails, enabled, valid })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
+}
