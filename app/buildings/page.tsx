@@ -8,8 +8,9 @@ import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
-import { computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars } from '@/lib/optimize-score'
-import { Building2, BedDouble, Users, Wrench, MapPin, ArrowRight, AlertTriangle, Star } from 'lucide-react'
+import { computeScore, rollupBuilding, ratingToStars } from '@/lib/optimize-score'
+import { BuildingGrid } from '@/components/BuildingGrid'
+import { Building2 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -177,87 +178,8 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
       {buildings.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No listings synced yet.</div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {buildings.map(b => {
-            const ui = b.avg != null ? bandUi(band(b.avg)) : null
-            return (
-              <Link key={b.name} href={`/buildings/${buildingSlug(b.name)}`} prefetch={false}
-                className="group block rounded-2xl border border-line bg-white overflow-hidden hover:border-brand-300 hover:shadow-soft transition-all">
-                <div className="px-4 py-3 border-b border-line">
-                  <div className="flex items-center justify-between gap-2">
-                    <h2 className="font-semibold text-ink text-sm inline-flex items-center gap-1.5 truncate">
-                      <Building2 size={15} className="text-brand-600 shrink-0" /> {b.name}
-                    </h2>
-                    {b.avg != null && ui && (
-                      <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded-lg text-sm font-bold tabular-nums ring-1 shrink-0 ${ui.ring}`} title="Building Optimize Score">{b.avg}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 flex-wrap">
-                    {b.city && <p className="text-[11px] text-muted inline-flex items-center gap-1"><MapPin size={10} /> {b.city}</p>}
-                    {workByBuilding[b.name] ? (
-                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
-                        <Wrench size={10} /> {workByBuilding[b.name]} open
-                      </span>
-                    ) : null}
-                    {b.weak > 0 && (
-                      <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
-                        <AlertTriangle size={10} /> {b.weak} need work
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Overall rating first, then the same rating narrowed to the selected window. */}
-                <div className="grid grid-cols-2 divide-x divide-line border-b border-line text-center">
-                  <Rating label="Overall" value={b.rating} count={b.reviewCount} />
-                  <Rating label={period.label} value={b.ratingP} count={b.reviewCountP} />
-                </div>
-
-                <div className="grid grid-cols-3 divide-x divide-line border-b border-line text-center">
-                  <Mini label="Units" value={b.unitCount} />
-                  <Mini label="Bedrooms" value={b.beds} Icon={BedDouble} />
-                  <Mini label="Sleeps" value={b.sleeps} Icon={Users} />
-                </div>
-
-                <div className="px-4 py-2.5 flex items-center justify-between text-[11px] font-medium text-muted group-hover:text-brand-700 transition-colors">
-                  <span>{ui ? ui.label : 'View units'}</span>
-                  <ArrowRight size={13} className="group-hover:translate-x-0.5 transition-transform" />
-                </div>
-              </Link>
-            )
-          })}
-        </div>
+        <BuildingGrid buildings={buildings} workByBuilding={workByBuilding} periodLabel={period.label} />
       )}
     </Shell>
-  )
-}
-
-// One rating cell. `null` means no reviews in that span — shown as an em dash, never as 0.00,
-// so an empty window can't be misread as a terrible score.
-function Rating({ label, value, count }: { label: string; value: number | null; count: number }) {
-  return (
-    <div className="py-2.5">
-      <div className="text-base font-bold text-ink tabular-nums inline-flex items-center gap-1 justify-center">
-        {value != null ? (
-          <><Star size={12} className="text-amber-500 fill-amber-500" /> {value.toFixed(2)}</>
-        ) : (
-          <span className="text-muted font-semibold">—</span>
-        )}
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-0.5">
-        {label}{value != null && <span className="normal-case tracking-normal"> · {count}</span>}
-      </div>
-    </div>
-  )
-}
-
-function Mini({ label, value, Icon }: { label: string; value: number; Icon?: any }) {
-  return (
-    <div className="py-2.5">
-      <div className="text-base font-bold text-ink tabular-nums inline-flex items-center gap-1 justify-center">
-        {Icon && <Icon size={12} className="text-muted" />} {value}
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-0.5">{label}</div>
-    </div>
   )
 }
