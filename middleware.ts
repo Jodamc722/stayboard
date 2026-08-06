@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { featureForPath, pageAllowed, firstEnabled, levelsForRole, legacyLevels, landingFor, workspaceDef, normWorkspace, type RoleDef } from './lib/features'
+import { featureForPath, pageAllowed, firstEnabled, levelsForRole, legacyLevels, landingFor, workspaceDef, normWorkspace, isOpenPath as openPath, type RoleDef } from './lib/features'
 
 type CookieToSet = { name: string; value: string; options: CookieOptions }
 
@@ -94,7 +94,9 @@ export async function middleware(request: NextRequest) {
   const user: any = await Promise.race([supabase.auth.getUser().then((r: any) => (r && r.data && r.data.user) || null).catch(() => null), new Promise<any>((res) => setTimeout(() => res(null), 2500))])
 
   const path = request.nextUrl.pathname
-  const isOpenPath = path.startsWith('/login') || path.startsWith('/auth') || path.startsWith('/signup') || path === '/no-access' || path.startsWith('/api') || path.startsWith('/g/') || path === '/day' || path.startsWith('/day/') || path.startsWith('/guide/') || path.startsWith('/r/') || path.startsWith('/audit/') || path.startsWith('/walk/') || path.startsWith('/field/') || path.startsWith('/approve/') || path.startsWith('/new-order') || path.startsWith('/vendor/') || path.startsWith('/delivery') || path.startsWith('/owner-orders') || path.startsWith('/salato/share') || path.startsWith('/salato/verify') || path.startsWith('/report/') || path === '/manifest.json' || path.startsWith('/favicon') || path === '/robots.txt'
+  // The open-path list lives in lib/features.ts (OPEN_EXACT / OPEN_PREFIXES) so the build-time
+  // tab check and the middleware can never disagree about what is public.
+  const isOpenPath = openPath(path)
 
   // Lock the whole app behind auth: any visitor without a session on a non-public path is sent to /login.
   // The public guest guidebook (/g/) stays open, so a shared book link can never expose the app itself.
