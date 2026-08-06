@@ -220,9 +220,13 @@ export async function GET(req: NextRequest) {
             if (rec && rec.status === 'verified') {
               r.verified = true; r.verifiedAt = rec.signedAt || null
               // Photos are for signed-in users only — a share-password-only viewer sees the
-              // "Verified" badge but never the ID/selfie/signature images.
+              // "Verified" badge but never the ID/selfie/signature images. Email send status is
+              // shown to signed-in users too, so "did it email the team?" is answerable at a glance.
               if (isAppUser) {
                 r.idUrl = await sign(str(rec.idPath)); r.selfieUrl = await sign(str(rec.selfiePath)); r.signatureUrl = await sign(str(rec.signaturePath))
+                r.emailedTo = Array.isArray(rec.emailedTo) ? rec.emailedTo : []
+                r.emailedCc = Array.isArray(rec.emailedCc) ? rec.emailedCc : []
+                r.emailError = rec.emailError || null
               }
             } else { r.verified = false }
           }
