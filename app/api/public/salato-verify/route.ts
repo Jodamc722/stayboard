@@ -8,6 +8,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadSalatoRules } from '@/lib/salato-rules'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
+import { getSetting } from '@/lib/app-settings'
+import { buildVerifyPdf } from '@/lib/salato-pdf'
+import { sendResendEmail } from '@/lib/resend-send'
+
+function escapeHtml(s: any): string { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }
+function fmtDay(d?: string): string { if (!d) return '—'; const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? String(d) : x.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
+function validEmails(s: string): string[] { const out: string[] = []; const seen: Record<string, boolean> = {}; const parts = String(s || '').split(/[,;\s]+/); for (let i = 0; i < parts.length; i++) { const e = parts[i].trim(); if (!e || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) continue; const k = e.toLowerCase(); if (seen[k]) continue; seen[k] = true; out.push(e) } return out }
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -154,10 +161,57 @@ export async function POST(req: NextRequest) {
       }
     } catch {}
 
+    // Team notification: details + ID/selfie/signature images + a PDF record of the initialed rules.
+    // Recipients are editable in App settings (app_settings 'salato_verify_notify'). Best-effort.
+    try {
+      const cfg: any = await getSetting('salato_verify_notify', { emails: '', enabled: true })
+      const to = validEmails(cfg && cfg.emails)
+      if ((cfg?.enabled !== false) && to.length) {
+        const origin = new URL(req.url).origin
+        const viewLink = origin + '/salato/share?verify=' + rid
+        const details: { label: string; value: string }[] = [
+          { label: 'Guest', value: fullName || '—' },
+          { label: 'Unit', value: info.unit || '—' },
+          { label: 'Check-in', value: fmtDay(info.checkIn) },
+          { label: 'Check-out', value: fmtDay(info.checkOut) },
+        ]
+        if (info.confirmationCode) details.push({ label: 'Confirmation', value: info.confirmationCode })
+        details.push({ label: 'Verified', value: new Date(record.signedAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET' })
+        const pdfRules = activeRules.map((r, i) => ({ n: i + 1, title: r.title, body: r.body, initials: ruleInitials[r.id] || '' }))
+        const ctOf = (ext: string) => ext === 'png' ? 'image/png' : 'image/jpeg'
+        const att: any[] = [
+          { filename: 'id.' + idp.ext, content: idp.bytes, contentType: ctOf(idp.ext), contentId: 'idimg' },
+          { filename: 'selfie.' + self.ext, content: self.bytes, contentType: ctOf(self.ext), contentId: 'selfieimg' },
+          { filename: 'signature.' + sig.ext, content: sig.bytes, contentType: ctOf(sig.ext), contentId: 'sigimg' },
+        ]
+        try {
+          const pdfImages: { caption: string; jpeg: Buffer }[] = []
+          if (idp.ext !== 'png') pdfImages.push({ caption: 'Government ID', jpeg: idp.bytes })
+          if (self.ext !== 'png') pdfImages.push({ caption: 'Selfie', jpeg: self.bytes })
+          if (sig.ext !== 'png') pdfImages.push({ caption: 'Signature', jpeg: sig.bytes })
+          const pdf = buildVerifyPdf({ title: 'Salato — Guest Verification', subtitle: 'In-person verification completed', details, rulesVersion, rules: pdfRules, images: pdfImages })
+          att.push({ filename: 'salato-verification-' + (info.confirmationCode || rid) + '.pdf', content: pdf, contentType: 'application/pdf' })
+        } catch {}
+        const rowsHtml = details.map(d => '<tr><td style="padding:2px 12px 2px 0;color:#6b7280;font-size:13px">' + escapeHtml(d.label) + '</td><td style="padding:2px 0;font-weight:600;font-size:13px">' + escapeHtml(d.value) + '</td></tr>').join('')
+        const rulesHtml = pdfRules.map(r => '<li style="margin-bottom:8px"><b>' + escapeHtml(r.title) + '</b> &mdash; <span style="color:#059669;font-weight:700">initialed ' + escapeHtml(r.initials) + '</span>' + (r.body ? '<br><span style="color:#6b7280;font-size:12px">' + escapeHtml(r.body) + '</span>' : '') + '</li>').join('')
+        const html = '<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;max-width:640px;margin:0 auto">'
+          + '<div style="background:#111827;color:#fff;border-radius:14px;padding:18px 20px;margin-bottom:16px"><div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#fcd34d;font-weight:700">Stay Hospitality</div><div style="font-size:20px;font-weight:800;margin-top:4px">Salato verification completed</div></div>'
+          + '<table style="border-collapse:collapse;margin-bottom:16px">' + rowsHtml + '</table>'
+          + '<div style="font-weight:700;margin:8px 0">ID &amp; selfie</div>'
+          + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px"><img src="cid:idimg" alt="ID" style="max-width:300px;border:1px solid #e5e7eb;border-radius:10px"><img src="cid:selfieimg" alt="Selfie" style="max-width:220px;border:1px solid #e5e7eb;border-radius:10px"></div>'
+          + '<div style="font-weight:700;margin:8px 0">Signature</div><img src="cid:sigimg" alt="Signature" style="max-width:360px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;margin-bottom:16px">'
+          + '<div style="font-weight:700;margin:8px 0">House &amp; building rules (v' + rulesVersion + ') — initialed by guest</div><ol style="padding-left:18px;margin-top:4px">' + rulesHtml + '</ol>'
+          + '<p style="font-size:12px;color:#6b7280;margin-top:16px">A PDF copy is attached. View on the board: <a href="' + viewLink + '">' + viewLink + '</a></p></div>'
+        const send = await sendResendEmail({ to, subject: 'Salato verification — ' + (fullName || 'Guest') + (info.unit ? ' — ' + info.unit : ''), html, attachments: att })
+        record.emailedTo = send.ok ? to : []
+        if (!send.ok) record.emailError = send.error
+      }
+    } catch (e: any) { record.emailError = String(e?.message || e) }
+
     const { error } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() })
     if (error) return NextResponse.json({ ok: false, error: String(error.message || error).slice(0, 160) }, { status: 500 })
 
-    return NextResponse.json({ ok: true, pushedToGuesty: record.pushedToGuesty })
+    return NextResponse.json({ ok: true, pushedToGuesty: record.pushedToGuesty, emailedTo: record.emailedTo || [] })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
