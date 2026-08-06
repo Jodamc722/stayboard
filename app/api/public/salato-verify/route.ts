@@ -11,6 +11,8 @@ import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-cus
 import { getSetting } from '@/lib/app-settings'
 import { buildVerifyPdf } from '@/lib/salato-pdf'
 import { sendGmail } from '@/lib/gmail-send'
+import { getAccess } from '@/lib/access'
+import { adminPasswordOk } from '@/lib/shareAuth'
 
 function escapeHtml(s: any): string { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }
 function fmtDay(d?: string): string { if (!d) return '—'; const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? String(d) : x.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
@@ -85,6 +87,23 @@ export async function POST(req: NextRequest) {
     const db = supabaseAdmin()
     const info = await loadSalatoRes(db, rid)
     if (!info.ok) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
+
+    // REOPEN: a verification was done incorrectly — reset it to pending so the guest can redo it.
+    // Gated: a signed-in Stayboard user, or the admin password (the same credential that gates other
+    // destructive actions). Front-desk share-only users must supply that password.
+    if (str(body?.action) === 'reopen') {
+      const access = await getAccess()
+      if (!access.user) {
+        const gate = await adminPasswordOk(body?.password)
+        if (!gate.ok) return NextResponse.json({ ok: false, needsAdminPassword: true, error: gate.reason }, { status: 403 })
+      }
+      const rec = await readRecord(db, rid)
+      if (!rec || rec.status !== 'verified') return NextResponse.json({ ok: true, reopened: true, note: 'Nothing to reopen — this stay is not verified.' })
+      const reopened = Object.assign({}, rec, { status: 'pending', reopenedAt: new Date().toISOString(), reopenedBy: access.user ? (access.email || 'admin') : 'front-desk', priorSignedAt: rec.signedAt || null })
+      const { error: rErr } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(reopened), updated_at: new Date().toISOString() })
+      if (rErr) return NextResponse.json({ ok: false, error: String(rErr.message || rErr).slice(0, 160) }, { status: 500 })
+      return NextResponse.json({ ok: true, reopened: true })
+    }
 
     // Name is auto-filled from the reservation; fall back to it if the client didn't send one.
     const fullName = (str(body?.fullName).trim() || str(info.guestName).trim()).slice(0, 120)
