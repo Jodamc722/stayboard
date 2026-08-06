@@ -25,6 +25,7 @@ export type Activation = {
   start?: string       // optional first date it runs (seasonal)
   end?: string         // optional last date it runs
   at?: string          // HH:MM 24h, only for ordering within a day
+  src?: string         // 'web' = written by the daily calendar sync; blank = typed by hand (never overwritten)
 }
 
 export type Guide = {
@@ -32,7 +33,7 @@ export type Guide = {
   theme?: { ink?: string; deep?: string; leaf?: string; sand?: string; accent?: string }
   hero: { eyebrow: string; title: string; subtitle: string; image: string; chips: string[]; ctas: Cta[] }
   quick: { title: string; items: Kv[] }
-  activations: { title: string; note: string; items: Activation[] }
+  activations: { title: string; note: string; items: Activation[]; source?: string; syncedAt?: string }
   venues: { title: string; note: string; items: { name: string; tagline: string; image: string; hours: Kv[]; note: string; phone: string; link: string; linkLabel: string }[] }
   menu: { title: string; note: string; link: string; linkLabel: string; groups: MenuGroup[] }
   quotes: { title: string; note: string; auto: boolean; keywords: string[]; items: { text: string; who: string; source: string; date: string }[] }
