@@ -23,7 +23,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 import { isLiveStay } from './stay-status'
-import { THEMES, sentenceAbout, type Theme, type IntelKind } from './review-themes'
+import { THEMES, THEME_BY_KEY, sentenceAbout, type Theme, type IntelKind } from './review-themes'
 
 export type { IntelKind }
 
@@ -33,10 +33,13 @@ export type { IntelKind }
 // version are still recognised and swept instead of stacking up.
 export const INTEL_STRIP_RE = /--- STAY INTEL[\s\S]*?--- end intel ---/g
 const INTEL_END = '--- end intel ---'
+// BILINGUAL HEADERS (2026-08-05 revamp): the field crews read Spanish, the coordinators read
+// English. Every block carries both, deterministically paired — no translation API sits in the
+// push path, so a push can never slow down or fail waiting on one. Guest quotes stay verbatim.
 const HEADER: Record<IntelKind, string> = {
-  clean: '--- STAY INTEL - for the cleaner ---',
-  inspection: '--- STAY INTEL - for the inspector ---',
-  maintenance: '--- STAY INTEL - about this unit ---',
+  clean: '--- STAY INTEL - for the cleaner / PARA LIMPIEZA ---',
+  inspection: '--- STAY INTEL - for the inspector / PARA INSPECCIÓN ---',
+  maintenance: '--- STAY INTEL - about this unit / SOBRE ESTA UNIDAD ---',
 }
 
 const REVIEW_DAYS = 365          // how far back guest feedback still describes the unit
@@ -44,7 +47,7 @@ const TASK_DAYS = 365            // history window for repeat faults and upkeep 
 const INSPECT_DAYS = 120         // coordinator inspections worth repeating to the field
 const LOW_STAR = 3               // at or below this is a bad review
 const LONG_STAY = 10             // nights that change how a unit is cleaned
-const MAX_CHARS = 1400           // keep the block readable on a phone
+const MAX_CHARS = 2800           // bilingual pairs roughly double the text; still phone-readable
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -91,6 +94,9 @@ export type IntelCtx = {
   stays: Record<string, any[]>
   tasks: Record<string, any[]>
   glitches: Record<string, any[]>
+  // ALL glitches from the last year (open AND resolved) — the raw material for "this unit's common
+  // complaints". Open-only misses the pattern: three fixed A/C glitches ARE the story.
+  glitchHistory: Record<string, any[]>
   inspections: Record<string, any[]>
   orders: Record<string, any[]>
   auditLast: Record<string, string>
@@ -102,7 +108,7 @@ export type IntelCtx = {
 }
 
 const emptyCtx = (date: string): IntelCtx => ({
-  ok: false, date, listings: {}, reviews: {}, stays: {}, tasks: {}, glitches: {},
+  ok: false, date, listings: {}, reviews: {}, stays: {}, tasks: {}, glitches: {}, glitchHistory: {},
   inspections: {}, orders: {}, auditLast: {}, benchmark: {}, actions: {},
 })
 
@@ -143,7 +149,7 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
   const inspFrom = addDays(date, -INSPECT_DAYS)
 
   try {
-    const [lRes, revRows, staysRows, taskRows, gRes, iRes, oRes, aRes, bench] = await Promise.all([
+    const [lRes, revRows, staysRows, taskRows, gRes, ghRes, iRes, oRes, aRes, bench] = await Promise.all([
       db.from('guesty_listings')
         .select('id,nickname,title,building,bedrooms:raw->>bedrooms,bathrooms:raw->>bathrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields')
         .in('id', ids).limit(300),
@@ -162,6 +168,10 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
       db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id')
         .in('listing_id', ids).not('status', 'in', '("done","resolved","closed")')
         .order('created_at', { ascending: false }).limit(400),
+      // full-year glitch history (resolved included) for the common-complaints pattern lines
+      db.from('glitches').select('id,listing_id,overview,status,created_at')
+        .in('listing_id', ids).gte('created_at', addDays(date, -365))
+        .order('created_at', { ascending: false }).limit(800),
       db.from('unit_inspections').select('id,unit,cleaner,rating,notes,follow_up,inspector,inspected_on')
         .gte('inspected_on', inspFrom).order('inspected_on', { ascending: false }).limit(1000),
       db.from('audit_items').select('id,listing_id,title,kind,status,qty,room')
@@ -198,6 +208,7 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
     }
     for (const t of taskRows) { const k = str(t.reference_property_id); (ctx.tasks[k] = ctx.tasks[k] || []).push(t) }
     for (const g of (((gRes as any).data || []) as any[])) { const k = str(g.listing_id); (ctx.glitches[k] = ctx.glitches[k] || []).push(g) }
+    for (const g of (((ghRes as any).data || []) as any[])) { const k = str(g.listing_id); (ctx.glitchHistory[k] = ctx.glitchHistory[k] || []).push(g) }
     for (const o of (((oRes as any).data || []) as any[])) { const k = str(o.listing_id); (ctx.orders[k] = ctx.orders[k] || []).push(o) }
     for (const a of (((aRes as any).data || []) as any[])) {
       if (!/complete/i.test(str(a.status))) continue
@@ -232,21 +243,60 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
   return ctx
 }
 
+// ── BILINGUAL RENDER HELPERS (2026-08-05) ───────────────────────────────────────────────────────
+// bi() writes an English line and its Spanish pair under it; sec() opens a labelled section with a
+// blank line above so the block reads as WHAT'S THE JOB → THIS UNIT'S PATTERN → BY THE WAY instead
+// of one undifferentiated wall. Spanish is hand-written pairs, never machine output at push time.
+const bi = (lines: string[], en: string, es: string) => { lines.push(en); lines.push('   » ' + es) }
+const sec = (lines: string[], en: string, es: string) => { if (lines.length) lines.push(' '); lines.push('■ ' + en + ' / ' + es) }
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
 // ── DERIVED FACTS ───────────────────────────────────────────────────────────────────────────────
-function themeHits(ctx: IntelCtx, id: string, kind: IntelKind) {
+/**
+ * COMMON COMPLAINTS AT THIS UNIT — Jon's "Hendricks 1" rule (2026-08-05): when a unit keeps
+ * generating the same complaint, every task pushed to it must SAY so. Reviews and the glitch log
+ * are counted together per theme, so "4 review mentions + 3 reported glitches about A/C" reads as
+ * ONE pattern instead of two half-patterns nobody connects.
+ */
+function commonComplaints(ctx: IntelCtx, id: string, kind: IntelKind) {
   const revs = (ctx.reviews[id] || []).filter(r => str(r.content).trim())
-  if (revs.length < 4) return []          // two mentions out of three reviews is not a pattern
-  const out: { theme: Theme; n: number; quote: string; rating: number; at: string }[] = []
+  const hist = ctx.glitchHistory[id] || []
+  const out: { theme: Theme; rev: number; gl: number; glOpen: number; quote: string }[] = []
   for (const t of THEMES) {
     if (t.who.indexOf(kind) < 0) continue
-    const hits = revs.filter(r => t.re.test(str(r.content)))
-    if (hits.length < 2) continue
-    const worst = hits.slice().sort((a, b) => (Number(a.rating) || 5) - (Number(b.rating) || 5))[0]
-    out.push({ theme: t, n: hits.length, quote: sentenceAbout(str(worst.content), t.re), rating: Number(worst.rating) || 0, at: str(worst.created_at).slice(0, 10) })
+    // same evidence bars as always: 2+ review mentions (out of 4+ reviews) or 2+ logged glitches
+    const rHits = revs.length >= 4 ? revs.filter(r => t.re.test(str(r.content))) : []
+    const gHits = hist.filter(g => t.re.test(str(g.overview)))
+    const rev = rHits.length >= 2 ? rHits.length : 0
+    const gl = gHits.length >= 2 ? gHits.length : 0
+    if (!rev && !gl) continue
+    const worst = rHits.slice().sort((a, b) => (Number(a.rating) || 5) - (Number(b.rating) || 5))[0]
+    out.push({
+      theme: t, rev, gl,
+      glOpen: gHits.filter(g => !/done|resolved|closed/i.test(str(g.status))).length,
+      quote: worst ? sentenceAbout(str(worst.content), t.re) : '',
+    })
   }
-  return out.sort((a, b) => b.n - a.n).slice(0, 3)
+  return out.sort((a, b) => (b.rev + b.gl) - (a.rev + a.gl)).slice(0, 3)
 }
-function reviewCount(ctx: IntelCtx, id: string): number { return (ctx.reviews[id] || []).filter(r => str(r.content).trim()).length }
+
+/** The pattern rendered as bilingual lines, with the worst guest quote left verbatim. */
+function complaintLines(ctx: IntelCtx, id: string, kind: IntelKind): string[] {
+  const cc = commonComplaints(ctx, id, kind)
+  const lines: string[] = []
+  for (const c of cc) {
+    const enBits: string[] = []
+    if (c.rev) enBits.push(c.rev + ' review mentions')
+    if (c.gl) enBits.push(c.gl + ' reported glitches this year' + (c.glOpen ? ' (' + c.glOpen + ' still open)' : ''))
+    const esBits: string[] = []
+    if (c.rev) esBits.push(c.rev + ' menciones en reseñas')
+    if (c.gl) esBits.push(c.gl + ' reportes este año' + (c.glOpen ? ' (' + c.glOpen + ' sin resolver)' : ''))
+    lines.push('- ' + cap(c.theme.label) + ': ' + enBits.join(' + ') + '. ' + c.theme.action)
+    lines.push('   » ' + cap(c.theme.labelEs) + ': ' + esBits.join(' + ') + '. ' + c.theme.actionEs)
+    if (c.quote) lines.push('  Guest: "' + c.quote + '"')
+  }
+  return lines
+}
 
 /**
  * OPEN ACTIONS for this unit, aimed at whoever is holding this task.
@@ -272,6 +322,9 @@ function openActions(ctx: IntelCtx, id: string, kind: IntelKind): string[] {
     if (a.worst_rating != null) bits.push('worst ' + a.worst_rating + ' star')
     if (Number(a.reopened_count) > 0) bits.push('REPORTED AGAIN AFTER WE FIXED IT x' + a.reopened_count)
     out.push('- ' + str(a.action) + (bits.length ? ' (' + bits.join(', ') + ')' : ''))
+    // the Spanish pair comes from the theme's hand-written instruction; a themeless action stays EN
+    const t = THEME_BY_KEY[str(a.theme_key)]
+    if (t && t.actionEs) out.push('   » ' + cap(t.labelEs) + (Number(a.reopened_count) > 0 ? ' (VOLVIÓ A PASAR después de arreglarlo)' : '') + ': ' + t.actionEs)
     const ev = Array.isArray(a.evidence) ? a.evidence : []
     const q = ev.length ? str(ev[0].quote) : ''
     if (q) out.push('  Guest: "' + q.slice(0, 160) + '"')
@@ -327,18 +380,18 @@ function weakCategory(ctx: IntelCtx, id: string) {
   return { label: worst.key.charAt(0).toUpperCase() + worst.key.slice(1).replace(/_/g, ' '), avg: worst.avg, portfolio: worst.portfolio }
 }
 
-const UPKEEP: { label: string; every: number; match: RegExp }[] = [
-  { label: 'Lock batteries', every: 12, match: /\bbatter/i },
-  { label: 'A/C filter', every: 3, match: /a\/?c filter|air filter|hvac filter|filter change|change filter/i },
-  { label: 'Preventative maintenance', every: 6, match: /preventative|preventive|(^|\s)pm(\s|$)/i },
-  { label: 'Deep clean', every: 6, match: /deep clean/i },
-  { label: 'Annual quality audit', every: 12, match: /\baudit\b/i },
+const UPKEEP: { label: string; labelEs: string; every: number; match: RegExp }[] = [
+  { label: 'Lock batteries', labelEs: 'pilas de las cerraduras', every: 12, match: /\bbatter/i },
+  { label: 'A/C filter', labelEs: 'filtro del A/C', every: 3, match: /a\/?c filter|air filter|hvac filter|filter change|change filter/i },
+  { label: 'Preventative maintenance', labelEs: 'mantenimiento preventivo', every: 6, match: /preventative|preventive|(^|\s)pm(\s|$)/i },
+  { label: 'Deep clean', labelEs: 'limpieza profunda', every: 6, match: /deep clean/i },
+  { label: 'Annual quality audit', labelEs: 'auditoría anual de calidad', every: 12, match: /\baudit\b/i },
 ]
 const isDoneStatus = (s: string) => /complete|finish|close|approv/i.test(str(s))
 
-function overdueUpkeep(ctx: IntelCtx, id: string): string[] {
+function overdueUpkeep(ctx: IntelCtx, id: string): { en: string; es: string }[] {
   const done = (ctx.tasks[id] || []).filter(t => t.finished_at || isDoneStatus(str(t.status)))
-  const out: string[] = []
+  const out: { en: string; es: string }[] = []
   for (const rule of UPKEEP) {
     let last: string | null = null
     for (const t of done) {
@@ -351,28 +404,31 @@ function overdueUpkeep(ctx: IntelCtx, id: string): string[] {
     const m = monthsAgo(last, ctx.date)
     // The task history only goes back a year, so a 12-month cadence can only be judged from what
     // is inside that window. Anything at or past its interval is named with its date attached.
-    if (m >= rule.every) out.push(rule.label + ' - last done ' + niceDate(last) + ' (' + Math.round(m) + ' months ago)')
+    if (m >= rule.every) out.push({
+      en: rule.label + ' - last done ' + niceDate(last) + ' (' + Math.round(m) + ' months ago)',
+      es: cap(rule.labelEs) + ' — última vez ' + niceDate(last) + ' (hace ' + Math.round(m) + ' meses)',
+    })
   }
   return out.slice(0, 4)
 }
 
 /** Has this exact complaint been worked on this unit before? A third A/C call is a replacement. */
-function repeatFaults(ctx: IntelCtx, id: string, taskName: string): string | null {
+function repeatFaults(ctx: IntelCtx, id: string, taskName: string): { en: string; es: string } | null {
   const nm = str(taskName)
   if (!nm) return null
-  const words: { label: string; re: RegExp }[] = [
-    { label: 'A/C', re: /\b(a\/?c|air con\w*|hvac|cooling|thermostat)\b/i },
-    { label: 'the toilet', re: /\btoilet\b/i },
-    { label: 'a leak', re: /\b(leak|leaking|leaks)\b/i },
-    { label: 'the shower', re: /\b(shower|water pressure|hot water)\b/i },
-    { label: 'the fridge', re: /\b(fridge|refrigerator|freezer)\b/i },
-    { label: 'the washer or dryer', re: /\b(washer|dryer|laundry machine)\b/i },
-    { label: 'the dishwasher', re: /\bdishwasher\b/i },
-    { label: 'the door lock', re: /\b(lock|door code|keypad|fob)\b/i },
-    { label: 'the TV', re: /\b(tv|television|roku|firestick)\b/i },
-    { label: 'the Wi-Fi', re: /\b(wi-?fi|internet|router)\b/i },
-    { label: 'pests', re: /\b(pest|roach|roaches|ants?|bugs?)\b/i },
-    { label: 'a plumbing issue', re: /\b(plumb\w*|drain|clog\w*|sink)\b/i },
+  const words: { label: string; es: string; re: RegExp }[] = [
+    { label: 'A/C', es: 'el A/C', re: /\b(a\/?c|air con\w*|hvac|cooling|thermostat)\b/i },
+    { label: 'the toilet', es: 'el inodoro', re: /\btoilet\b/i },
+    { label: 'a leak', es: 'una fuga', re: /\b(leak|leaking|leaks)\b/i },
+    { label: 'the shower', es: 'la regadera', re: /\b(shower|water pressure|hot water)\b/i },
+    { label: 'the fridge', es: 'el refrigerador', re: /\b(fridge|refrigerator|freezer)\b/i },
+    { label: 'the washer or dryer', es: 'la lavadora o secadora', re: /\b(washer|dryer|laundry machine)\b/i },
+    { label: 'the dishwasher', es: 'el lavavajillas', re: /\bdishwasher\b/i },
+    { label: 'the door lock', es: 'la cerradura', re: /\b(lock|door code|keypad|fob)\b/i },
+    { label: 'the TV', es: 'la TV', re: /\b(tv|television|roku|firestick)\b/i },
+    { label: 'the Wi-Fi', es: 'el Wi-Fi', re: /\b(wi-?fi|internet|router)\b/i },
+    { label: 'pests', es: 'plagas', re: /\b(pest|roach|roaches|ants?|bugs?)\b/i },
+    { label: 'a plumbing issue', es: 'un problema de plomería', re: /\b(plumb\w*|drain|clog\w*|sink)\b/i },
   ]
   const hit = words.find(w => w.re.test(nm))
   if (!hit) return null
@@ -384,11 +440,14 @@ function repeatFaults(ctx: IntelCtx, id: string, taskName: string): string | nul
   if (prior.length < 2) return null        // this task is usually one of them
   const dates = prior.map(t => str(t.finished_at || t.scheduled_date).slice(0, 10)).filter(Boolean).sort()
   const first = dates[0]
-  return prior.length + ' jobs on ' + hit.label + ' at this unit in the last year' + (first ? ', starting ' + niceDate(first) : '') + '. If this is the same fault again, price a replacement instead of another repair.'
+  return {
+    en: prior.length + ' jobs on ' + hit.label + ' at this unit in the last year' + (first ? ', starting ' + niceDate(first) : '') + '. If this is the same fault again, price a replacement instead of another repair.',
+    es: prior.length + ' trabajos por ' + hit.es + ' en esta unidad en el último año' + (first ? ', desde ' + niceDate(first) : '') + '. Si es la misma falla otra vez, cotiza un reemplazo en lugar de otra reparación.',
+  }
 }
 
 /** Who is in the unit, and until when — the difference between "walk in" and "call first". */
-function accessLine(ctx: IntelCtx, id: string): string {
+function accessLine(ctx: IntelCtx, id: string): { en: string; es: string } {
   const date = ctx.date
   const L = ctx.listings[id] || {}
   const stays = ctx.stays[id] || []
@@ -398,12 +457,27 @@ function accessLine(ctx: IntelCtx, id: string): string {
   const outT = niceTime(L.checkOut) || '11am'
   const inT = niceTime(L.checkIn) || '4pm'
   const now = minutesNowET()
-  if (through) return 'Guest is in the unit all day (' + (str(through.guest_name) || 'in house') + '). Call or message before anyone enters.'
-  if (out && now < minutesOf(L.checkOut, 11 * 60)) return 'Guest still in the unit until checkout at ' + outT + (inn ? '. Next guest arrives ' + inT + '.' : '.')
-  if (inn && now < minutesOf(L.checkIn, 16 * 60)) return 'Unit is empty right now. Guest arrives at ' + inT + ' - be finished before then.'
-  if (inn) return 'Guest has arrived (' + (str(inn.guest_name) || 'in house') + '). Call or message before anyone enters.'
+  if (through) return {
+    en: 'Guest is in the unit all day (' + (str(through.guest_name) || 'in house') + '). Call or message before anyone enters.',
+    es: 'Hay un huésped en la unidad todo el día. Llama o manda mensaje antes de entrar.',
+  }
+  if (out && now < minutesOf(L.checkOut, 11 * 60)) return {
+    en: 'Guest still in the unit until checkout at ' + outT + (inn ? '. Next guest arrives ' + inT + '.' : '.'),
+    es: 'El huésped sigue en la unidad hasta el checkout a las ' + outT + (inn ? '. El siguiente llega a las ' + inT + '.' : '.'),
+  }
+  if (inn && now < minutesOf(L.checkIn, 16 * 60)) return {
+    en: 'Unit is empty right now. Guest arrives at ' + inT + ' - be finished before then.',
+    es: 'La unidad está vacía ahora. El huésped llega a las ' + inT + ' — termina antes de esa hora.',
+  }
+  if (inn) return {
+    en: 'Guest has arrived (' + (str(inn.guest_name) || 'in house') + '). Call or message before anyone enters.',
+    es: 'El huésped ya llegó. Llama o manda mensaje antes de entrar.',
+  }
   const na = nextArrivalOf(ctx, id)
-  return 'Unit is empty' + (na ? '. Next guest ' + niceDate(na) + '.' : ' and nothing is booked in the next 60 days.')
+  return {
+    en: 'Unit is empty' + (na ? '. Next guest ' + niceDate(na) + '.' : ' and nothing is booked in the next 60 days.'),
+    es: 'La unidad está vacía' + (na ? '. Próximo huésped ' + niceDate(na) + '.' : ' y no hay reservas en los próximos 60 días.'),
+  }
 }
 
 // Derived at RENDER time, not load time: one push can carry several days, and each task's block is
@@ -462,59 +536,69 @@ function renderClean(ctx: IntelCtx, id: string): string | null {
   const leaving = stays.find(s => str(s.check_out).slice(0, 10) === date)
   const arriving = stays.find(s => str(s.check_in).slice(0, 10) === date)
 
-  // 1. THE DEADLINE. Everything else is detail next to this.
+  // ■ 1. THE JOB — deadline first, then what the stay that just ended did to the unit.
+  sec(lines, "TODAY'S JOB", 'EL TRABAJO DE HOY')
   if (arriving) {
     const inT = niceTime(L.checkIn) || '4pm'
     const nights = Number(arriving.nights)
-    lines.push('DEADLINE: next guest arrives TODAY at ' + inT + (Number.isFinite(nights) && nights >= LONG_STAY ? ' for ' + nights + ' nights - they will live here, so it has to be right' : '') + '.')
+    const long = Number.isFinite(nights) && nights >= LONG_STAY
+    bi(lines,
+      'DEADLINE: next guest arrives TODAY at ' + inT + (long ? ' for ' + nights + ' nights - they will live here, so it has to be right' : '') + '.',
+      'FECHA LÍMITE: el próximo huésped llega HOY a las ' + inT + (long ? ' por ' + nights + ' noches — va a vivir aquí, tiene que quedar perfecto' : '') + '.')
   } else {
     const na = nextArrivalOf(ctx, id)
-    lines.push('DEADLINE: no arrival today' + (na ? ' - next guest ' + niceDate(na) : '') + '.')
+    bi(lines,
+      'DEADLINE: no arrival today' + (na ? ' - next guest ' + niceDate(na) : '') + '.',
+      'FECHA LÍMITE: hoy no llega nadie' + (na ? ' — próximo huésped ' + niceDate(na) : '') + '.')
   }
-
-  // 2. WHAT THE STAY THAT JUST ENDED DID TO THE UNIT.
   if (leaving) {
     const nights = Number(leaving.nights)
     const pets = Number((leaving.guests || {}).pets)
     if (Number.isFinite(nights) && nights >= LONG_STAY) {
-      lines.push('LONG STAY: the guest was here ' + nights + ' nights. Allow extra time - full laundry, fridge emptied and wiped, bins, and check for wear and marks they lived with.')
+      bi(lines,
+        'LONG STAY: the guest was here ' + nights + ' nights. Allow extra time - full laundry, fridge emptied and wiped, bins, and check for wear and marks they lived with.',
+        'ESTANCIA LARGA: el huésped estuvo ' + nights + ' noches. Toma más tiempo: toda la lavandería, refrigerador vacío y limpio, botes de basura, y revisa desgaste y marcas.')
     } else if (Number.isFinite(nights) && nights > 0) {
-      lines.push('The stay that just ended was ' + nights + (nights === 1 ? ' night.' : ' nights.'))
+      bi(lines,
+        'The stay that just ended was ' + nights + (nights === 1 ? ' night.' : ' nights.'),
+        'La estancia que acaba de terminar fue de ' + nights + (nights === 1 ? ' noche.' : ' noches.'))
     }
-    if (Number.isFinite(pets) && pets > 0) lines.push('PETS on the booking that just left (' + pets + ') - hair on soft furnishings, under beds and on the balcony, and check for damage.')
+    if (Number.isFinite(pets) && pets > 0) bi(lines,
+      'PETS on the booking that just left (' + pets + ') - hair on soft furnishings, under beds and on the balcony, and check for damage.',
+      'MASCOTAS en la reserva que salió (' + pets + ') — pelo en los muebles, bajo las camas y en el balcón; revisa si hay daños.')
   }
 
-  // 3a. THE SPECIFIC THINGS RAISED OFF GUEST FEEDBACK AND STILL OPEN. These come first because they
-  // are the difference between "clean the unit" and "clean the unit AND look hard at the shower".
+  // ■ 2. THIS UNIT'S PATTERN — open fix-jobs first, then the counted complaint pattern
+  // (reviews + glitch log together). This is the "Hendricks 1 common complaints" section.
   const acts = openActions(ctx, id, 'clean')
-  if (acts.length) {
-    lines.push('CHECK THESE ON TOP OF THE NORMAL CLEAN (raised by guests, still open):')
-    for (const a of acts) lines.push(a)
-  }
-
-  // 3b. WHAT GUESTS KEEP SAYING ABOUT THIS UNIT.
-  const th = themeHits(ctx, id, 'clean')
-  const n = reviewCount(ctx, id)
-  if (th.length) {
-    lines.push('WHAT GUESTS SAY ABOUT THIS UNIT (last ' + n + ' reviews):')
-    for (const h of th) {
-      lines.push('- ' + h.n + ' guests mentioned ' + h.theme.label + '. ' + h.theme.action)
-      if (h.quote) lines.push('  Guest: "' + h.quote + '"')
+  const cc = complaintLines(ctx, id, 'clean')
+  if (acts.length || cc.length) {
+    sec(lines, 'COMMON COMPLAINTS AT THIS UNIT', 'QUEJAS FRECUENTES EN ESTA UNIDAD')
+    if (acts.length) {
+      bi(lines,
+        'CHECK THESE ON TOP OF THE NORMAL CLEAN (raised by guests, still open):',
+        'REVISA ESTO ADEMÁS DE LA LIMPIEZA NORMAL (reportado por huéspedes, sigue abierto):')
+      for (const a of acts) lines.push(a)
     }
+    for (const l of cc) lines.push(l)
   }
 
-  // 4. WHAT THE LAST WALK OF THIS UNIT FOUND.
+  // ■ 3. BY THE WAY — worth knowing while you are in there, but not the job itself.
   const insp = lastInspection(ctx, id)
-  if (insp) {
-    const score = insp.rating == null ? '' : ' scored ' + insp.rating + '/5'
-    const note = str(insp.notes).replace(/\s+/g, ' ').trim().slice(0, 160)
-    lines.push('LAST INSPECTION (' + niceDate(str(insp.inspected_on).slice(0, 10)) + ')' + score
-      + (str(insp.cleaner) ? ', cleaned by ' + str(insp.cleaner) : '') + (note ? ': ' + note : '.'))
-    if (insp.follow_up) lines.push('That inspection asked for a follow-up - check it was actually done.')
-  }
-
   const size = sizeLine(ctx, id)
-  if (size) lines.push('UNIT: ' + size + '.')
+  if (insp || size) {
+    sec(lines, "BY THE WAY - WHILE YOU'RE THERE", 'YA QUE ESTÁS AQUÍ')
+    if (insp) {
+      const score = insp.rating == null ? '' : ' scored ' + insp.rating + '/5'
+      const note = str(insp.notes).replace(/\s+/g, ' ').trim().slice(0, 160)
+      lines.push('LAST INSPECTION / ÚLTIMA INSPECCIÓN (' + niceDate(str(insp.inspected_on).slice(0, 10)) + ')' + score
+        + (str(insp.cleaner) ? ', cleaned by ' + str(insp.cleaner) : '') + (note ? ': ' + note : '.'))
+      if (insp.follow_up) bi(lines,
+        'That inspection asked for a follow-up - check it was actually done.',
+        'Esa inspección pidió seguimiento — confirma que de verdad se hizo.')
+    }
+    if (size) lines.push('UNIT / UNIDAD: ' + size + '.')
+  }
   return finish('clean', lines)
 }
 
@@ -524,57 +608,61 @@ function renderInspection(ctx: IntelCtx, id: string, taskName: string): string |
   const bad = badReview(ctx, id)
   const insp = lastInspection(ctx, id)
 
-  // 1. WHY THIS INSPECTION EXISTS.
+  // ■ 1. WHY THIS INSPECTION EXISTS.
+  sec(lines, 'WHY YOU ARE HERE', 'POR QUÉ ESTÁS AQUÍ')
   if (bad) {
-    lines.push('WHY YOU ARE HERE: a ' + bad.rating + '-star review on ' + niceDate(bad.at)
-      + (bad.channel ? ' (' + bad.channel + ')' : '') + '.')
+    bi(lines,
+      'A ' + bad.rating + '-star review on ' + niceDate(bad.at) + (bad.channel ? ' (' + bad.channel + ')' : '') + '.',
+      'Una reseña de ' + bad.rating + ' estrellas el ' + niceDate(bad.at) + '.')
     if (bad.excerpt) lines.push('Guest: "' + bad.excerpt + '"')
   } else if (insp && insp.follow_up) {
-    lines.push('WHY YOU ARE HERE: the inspection on ' + niceDate(str(insp.inspected_on).slice(0, 10)) + ' asked for a follow-up.')
+    bi(lines,
+      'The inspection on ' + niceDate(str(insp.inspected_on).slice(0, 10)) + ' asked for a follow-up.',
+      'La inspección del ' + niceDate(str(insp.inspected_on).slice(0, 10)) + ' pidió seguimiento.')
   } else {
-    lines.push('WHY YOU ARE HERE: scheduled check on this unit.')
+    bi(lines, 'Scheduled check on this unit.', 'Revisión programada de esta unidad.')
   }
-
-  // 2. THE CATEGORY THIS UNIT IS BEHIND THE PORTFOLIO ON.
   const weak = weakCategory(ctx, id)
-  if (weak) lines.push('WEAK SPOT: ' + weak.label + ' scores ' + weak.avg + ' here vs ' + weak.portfolio + ' across the portfolio. Look hardest at that.')
+  if (weak) bi(lines,
+    'WEAK SPOT: ' + weak.label + ' scores ' + weak.avg + ' here vs ' + weak.portfolio + ' across the portfolio. Look hardest at that.',
+    'PUNTO DÉBIL: ' + weak.label + ' puntúa ' + weak.avg + ' aquí vs ' + weak.portfolio + ' en el portafolio. Pon más atención ahí.')
 
-  // 2b. OPEN ACTIONS OFF GUEST FEEDBACK — the named things to verify on this walk.
+  // ■ 2. THIS UNIT'S PATTERN — named fix-jobs, then the counted complaint pattern.
   const acts = openActions(ctx, id, 'inspection')
-  if (acts.length) {
-    lines.push('INSPECT THESE SPECIFICALLY (raised by guests, still open):')
-    for (const a of acts) lines.push(a)
+  const cc = complaintLines(ctx, id, 'inspection')
+  if (acts.length || cc.length) {
+    sec(lines, 'COMMON COMPLAINTS AT THIS UNIT', 'QUEJAS FRECUENTES EN ESTA UNIDAD')
+    if (acts.length) {
+      bi(lines,
+        'INSPECT THESE SPECIFICALLY (raised by guests, still open):',
+        'INSPECCIONA ESTO EN ESPECÍFICO (reportado por huéspedes, sigue abierto):')
+      for (const a of acts) lines.push(a)
+    }
+    for (const l of cc) lines.push(l)
   }
 
-  // 3. WHAT GUESTS KEEP SAYING.
-  const th = themeHits(ctx, id, 'inspection')
-  if (th.length) {
-    lines.push('THINGS TO CHECK (from the last ' + reviewCount(ctx, id) + ' reviews):')
-    for (const h of th) lines.push('- ' + h.n + ' guests mentioned ' + h.theme.label + '. ' + h.theme.action)
-  }
-
-  // 4. WHAT IS ALREADY KNOWN TO BE BROKEN.
+  // ■ 3. BY THE WAY — what is already known broken, upkeep that aged out, the last walk, access.
   const gl = ctx.glitches[id] || []
+  const up = overdueUpkeep(ctx, id)
+  sec(lines, "BY THE WAY - WHILE YOU'RE THERE", 'YA QUE ESTÁS AQUÍ')
   if (gl.length) {
-    lines.push('OPEN GLITCHES (' + gl.length + '):')
+    bi(lines, 'OPEN GLITCHES (' + gl.length + '):', 'FALLAS ABIERTAS (' + gl.length + '):')
     for (const g of gl.slice(0, 4)) lines.push('- ' + str(g.overview).replace(/\s+/g, ' ').trim().slice(0, 110) + ' (raised ' + niceDate(str(g.created_at).slice(0, 10)) + ')')
   }
-
-  // 5. UPKEEP THAT HAS AGED OUT.
-  const up = overdueUpkeep(ctx, id)
-  if (up.length) { lines.push('OVERDUE UPKEEP:'); for (const u of up) lines.push('- ' + u) }
-
-  // 6. THE LAST TIME SOMEBODY WALKED IT.
+  if (up.length) {
+    bi(lines, 'OVERDUE UPKEEP:', 'MANTENIMIENTO VENCIDO:')
+    for (const u of up) { lines.push('- ' + u.en); lines.push('   » ' + u.es) }
+  }
   if (insp) {
     const note = str(insp.notes).replace(/\s+/g, ' ').trim().slice(0, 160)
-    lines.push('LAST INSPECTION (' + niceDate(str(insp.inspected_on).slice(0, 10)) + ')'
+    lines.push('LAST INSPECTION / ÚLTIMA INSPECCIÓN (' + niceDate(str(insp.inspected_on).slice(0, 10)) + ')'
       + (insp.rating == null ? '' : ' scored ' + insp.rating + '/5')
       + (str(insp.inspector) ? ' by ' + str(insp.inspector) : '') + (note ? ': ' + note : '.'))
   }
-
   const size = sizeLine(ctx, id)
-  if (size) lines.push('UNIT: ' + size + '.')
-  lines.push('ACCESS: ' + accessLine(ctx, id))
+  if (size) lines.push('UNIT / UNIDAD: ' + size + '.')
+  const acc = accessLine(ctx, id)
+  bi(lines, 'ACCESS: ' + acc.en, 'ACCESO: ' + acc.es)
   return finish('inspection', lines)
 }
 
@@ -582,45 +670,47 @@ function renderInspection(ctx: IntelCtx, id: string, taskName: string): string |
 function renderMaintenance(ctx: IntelCtx, id: string, taskName: string): string | null {
   const lines: string[] = []
 
-  // 1. HAS THIS HAPPENED HERE BEFORE?
+  // ■ 1. THE JOB — has this happened here before, and can you get in right now.
+  sec(lines, 'THE JOB', 'EL TRABAJO')
   const rep = repeatFaults(ctx, id, taskName)
-  if (rep) lines.push('HISTORY: ' + rep)
+  if (rep) { lines.push('HISTORY: ' + rep.en); lines.push('   » HISTORIAL: ' + rep.es) }
+  const acc = accessLine(ctx, id)
+  bi(lines, 'ACCESS: ' + acc.en, 'ACCESO: ' + acc.es)
 
-  // 1b. OPEN ACTIONS OFF GUEST FEEDBACK that maintenance owns on this unit.
+  // ■ 2. THIS UNIT'S PATTERN — open fix-jobs, then the counted complaint pattern.
   const acts = openActions(ctx, id, 'maintenance')
-  if (acts.length) {
-    lines.push('RAISED BY GUESTS ON THIS UNIT, STILL OPEN:')
-    for (const a of acts) lines.push(a)
+  const cc = complaintLines(ctx, id, 'maintenance')
+  if (acts.length || cc.length) {
+    sec(lines, 'COMMON COMPLAINTS AT THIS UNIT', 'QUEJAS FRECUENTES EN ESTA UNIDAD')
+    if (acts.length) {
+      bi(lines,
+        'RAISED BY GUESTS ON THIS UNIT, STILL OPEN:',
+        'REPORTADO POR HUÉSPEDES EN ESTA UNIDAD, SIGUE ABIERTO:')
+      for (const a of acts) lines.push(a)
+    }
+    for (const l of cc) lines.push(l)
   }
 
-  // 2. THE GUEST'S OWN WORDS, if a guest raised this.
-  const th = themeHits(ctx, id, 'maintenance')
-  const named = th.filter(h => h.theme.re.test(str(taskName)))
-  const show = named.length ? named : th.slice(0, 1)
-  for (const h of show.slice(0, 2)) {
-    lines.push('GUESTS ON THIS: ' + h.n + ' of the last ' + reviewCount(ctx, id) + ' reviews mentioned ' + h.theme.label + '.')
-    if (h.quote) lines.push('  Guest (' + (h.rating || '?') + '-star, ' + niceDate(h.at) + '): "' + h.quote + '"')
-  }
-
-  // 3. CAN YOU GET IN RIGHT NOW?
-  lines.push('ACCESS: ' + accessLine(ctx, id))
-
-  // 4. IS THE PART ALREADY ON ORDER? Nobody should buy the same thing twice.
+  // ■ 3. BY THE WAY — the order desk, whatever else is open, the unit basics.
   const ord = ctx.orders[id] || []
-  if (ord.length) {
-    lines.push('ALREADY ON THE ORDER DESK (' + ord.length + ') - check before you buy anything:')
-    for (const o of ord.slice(0, 4)) lines.push('- ' + str(o.title).slice(0, 80) + (o.qty ? ' x' + o.qty : '') + ' (' + str(o.status) + ')')
-  }
-
-  // 5. WHAT ELSE IS OPEN ON THIS UNIT, so one trip closes more than one job.
   const gl = ctx.glitches[id] || []
-  if (gl.length) {
-    lines.push('ALSO OPEN ON THIS UNIT (' + gl.length + '):')
-    for (const g of gl.slice(0, 3)) lines.push('- ' + str(g.overview).replace(/\s+/g, ' ').trim().slice(0, 110))
-  }
-
   const size = sizeLine(ctx, id)
-  if (size) lines.push('UNIT: ' + size + '.')
+  if (ord.length || gl.length || size) {
+    sec(lines, "BY THE WAY - WHILE YOU'RE THERE", 'YA QUE ESTÁS AQUÍ')
+    if (ord.length) {
+      bi(lines,
+        'ALREADY ON THE ORDER DESK (' + ord.length + ') - check before you buy anything:',
+        'YA ESTÁ EN PEDIDOS (' + ord.length + ') — revisa antes de comprar algo:')
+      for (const o of ord.slice(0, 4)) lines.push('- ' + str(o.title).slice(0, 80) + (o.qty ? ' x' + o.qty : '') + ' (' + str(o.status) + ')')
+    }
+    if (gl.length) {
+      bi(lines,
+        'ALSO OPEN ON THIS UNIT (' + gl.length + ') - one trip can close more than one job:',
+        'TAMBIÉN ABIERTO EN ESTA UNIDAD (' + gl.length + ') — un solo viaje puede cerrar varios trabajos:')
+      for (const g of gl.slice(0, 3)) lines.push('- ' + str(g.overview).replace(/\s+/g, ' ').trim().slice(0, 110))
+    }
+    if (size) lines.push('UNIT / UNIDAD: ' + size + '.')
+  }
   return finish('maintenance', lines)
 }
 
