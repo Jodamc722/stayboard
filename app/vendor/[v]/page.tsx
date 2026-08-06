@@ -2,16 +2,17 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; past?: Row[]; error?: string }
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; isAppUser?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; past?: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming' | 'past' | 'rules'
 
+// 'rules' is intentionally NOT a day tab — it opens from the header (Rules button), gated to
+// signed-in users or the rules password.
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'arrivals', label: 'Arrivals' },
   { key: 'departures', label: 'Departure cleans' },
   { key: 'active', label: 'Active reservations' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'past', label: 'Past' },
-  { key: 'rules', label: 'Rules' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 // 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
@@ -50,6 +51,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [rulesBusy, setRulesBusy] = useState(false)
   const [rulesMsg, setRulesMsg] = useState('')
   const [rulesLoaded, setRulesLoaded] = useState(false)
+  // Non-signed-in viewers must enter the dedicated rules password to save edits (signed-in app
+  // users don't need it — the board API tells us who's who via data.isAppUser).
+  const [rulesPw, setRulesPw] = useState('')
   useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} }, [])
 
   const load = useCallback(async () => {
@@ -118,7 +122,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const saveRules = async () => {
     setRulesBusy(true); setRulesMsg('')
     try {
-      const r = await fetch('/api/public/salato-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: rulesDraft || [] }) })
+      const payload: any = { rules: rulesDraft || [] }
+      if (!data?.isAppUser) payload.password = rulesPw
+      const r = await fetch('/api/public/salato-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setRulesMsg(j.error || 'Could not save'); setRulesBusy(false); return }
       setRulesDraft((j.rules || []).map((x: any) => ({ id: x.id, title: x.title || '', body: x.body || '' }))); setRulesMsg('Saved — applies to new verification links')
@@ -222,6 +228,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                 <button onClick={exportCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">CSV</button>
                 {bannerOpts.length > 0 && <button onClick={() => setPickerOpen(v => !v)} className={'text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ' + (pickerOpen ? 'border-amber-400 bg-amber-400/20 text-amber-200' : 'border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20')}>Photo</button>}
                 <button onClick={() => window.print()} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">Print</button>
+                {data.verifyEnabled && <button onClick={() => setTab(tab === 'rules' ? 'departures' : 'rules')} className={'text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ' + (tab === 'rules' ? 'border-amber-400 bg-amber-400/20 text-amber-200' : 'border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20')}>Rules</button>}
               </div>
             </div>
             {pickerOpen && bannerOpts.length > 0 && (
@@ -239,17 +246,28 @@ export default function VendorPage({ params }: { params: { v: string } }) {
         </div>
         {syncMsg && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-3 inline-block print:hidden">{syncMsg}</div>}
 
+        {tab !== 'rules' && (
         <div className="flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm print:hidden overflow-x-auto">
-          {TABS.filter(t => t.key !== 'rules' || data.verifyEnabled).map(t => { const n = t.key === 'rules' ? null : ((data as any)[t.key] || []).length; return (
-            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 whitespace-nowrap text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}{n !== null && <span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span>}</button>
+          {TABS.map(t => { const n = ((data as any)[t.key] || []).length; return (
+            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 whitespace-nowrap text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
           )})}
         </div>
+        )}
 
         {tab === 'rules' ? (
           <div className="space-y-3">
             <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
               <div className="text-sm font-bold">Edit house &amp; building rules</div>
               <p className="text-xs text-neutral-500 mt-1">Add, edit, reorder, or remove the rules guests initial on the Salato verification link. Changes apply to new verifications.</p>
+              {data.isAppUser ? (
+                <div className="text-[11px] text-emerald-700 mt-2 font-medium">Signed in — you can save changes.</div>
+              ) : (
+                <div className="mt-3">
+                  <label className="block text-xs font-semibold text-neutral-500 mb-1">Rules password</label>
+                  <input type="password" value={rulesPw} onChange={e => setRulesPw(e.target.value)} placeholder="Enter the rules password to save" className="w-full max-w-xs text-sm border border-neutral-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
+                  <div className="text-[11px] text-neutral-400 mt-1">Set by an admin in Users → Share links &amp; security. Signed-in Stayboard users don&rsquo;t need it.</div>
+                </div>
+              )}
             </div>
             {rulesDraft === null ? <div className="text-neutral-400 text-sm py-8 text-center">Loading rules…{rulesMsg ? ' ' + rulesMsg : ''}</div> : (
               <div className="space-y-3">
@@ -267,7 +285,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                 ))}
                 <button onClick={addRule} className="w-full rounded-2xl border-2 border-dashed border-neutral-300 text-neutral-600 text-sm font-semibold py-3 hover:border-neutral-400 hover:bg-neutral-50 transition-colors">+ Add rule</button>
                 <div className="sticky bottom-3 flex items-center gap-2 bg-white/95 backdrop-blur rounded-2xl border border-neutral-200 p-3 shadow-lg">
-                  <button onClick={saveRules} disabled={rulesBusy} className="flex-1 rounded-xl bg-neutral-900 text-white text-sm font-semibold py-2.5 disabled:opacity-40 hover:bg-neutral-800 transition-colors">{rulesBusy ? 'Saving…' : 'Save rules'}</button>
+                  <button onClick={saveRules} disabled={rulesBusy || (!data.isAppUser && rulesPw.trim().length < 4)} className="flex-1 rounded-xl bg-neutral-900 text-white text-sm font-semibold py-2.5 disabled:opacity-40 hover:bg-neutral-800 transition-colors">{rulesBusy ? 'Saving…' : 'Save rules'}</button>
                   <button onClick={loadRules} disabled={rulesBusy} className="rounded-xl border border-neutral-300 text-neutral-700 text-sm font-semibold px-4 py-2.5 disabled:opacity-40">Reload</button>
                 </div>
                 {rulesMsg && <div className="text-xs text-neutral-500 text-center">{rulesMsg}</div>}
@@ -340,11 +358,15 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                               {r.verified ? (
                                 <div>
                                   <div className="text-emerald-700 text-[13px] font-semibold mb-2">✓ Verified{r.verifiedAt ? ' · ' + fmtDate(String(r.verifiedAt).slice(0, 10)) : ''}</div>
-                                  <div className="grid grid-cols-3 gap-2">
-                                    {r.idUrl && <a href={r.idUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">ID</div><img src={r.idUrl} alt="ID" className="w-full rounded-lg border border-neutral-200" /></a>}
-                                    {r.selfieUrl && <a href={r.selfieUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Selfie</div><img src={r.selfieUrl} alt="Selfie" className="w-full rounded-lg border border-neutral-200" /></a>}
-                                    {r.signatureUrl && <a href={r.signatureUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Signature</div><img src={r.signatureUrl} alt="Signature" className="w-full rounded-lg border border-neutral-200 bg-white" /></a>}
-                                  </div>
+                                  {data.isAppUser ? (
+                                    <div className="grid grid-cols-3 gap-2">
+                                      {r.idUrl && <a href={r.idUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">ID</div><img src={r.idUrl} alt="ID" className="w-full rounded-lg border border-neutral-200" /></a>}
+                                      {r.selfieUrl && <a href={r.selfieUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Selfie</div><img src={r.selfieUrl} alt="Selfie" className="w-full rounded-lg border border-neutral-200" /></a>}
+                                      {r.signatureUrl && <a href={r.signatureUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Signature</div><img src={r.signatureUrl} alt="Signature" className="w-full rounded-lg border border-neutral-200 bg-white" /></a>}
+                                    </div>
+                                  ) : (
+                                    <div className="text-neutral-400 text-[12px]">Sign in to the Stayboard app to view the ID, selfie &amp; signature.</div>
+                                  )}
                                 </div>
                               ) : (tab === 'past'
                                 ? <div className="text-neutral-400 text-[13px]">No verification on file for this stay.</div>
