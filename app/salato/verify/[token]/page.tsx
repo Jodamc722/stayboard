@@ -105,11 +105,19 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
 
   if (done || data.status === 'verified') return (
     <Shell>
-      <div className="rounded-2xl border border-emerald-200 bg-white shadow-sm px-5 py-8 text-center">
-        <div className="mx-auto w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-2xl mb-3">✓</div>
-        <div className="text-lg font-bold">You're all set{data.guestFirst ? ', ' + data.guestFirst : ''}.</div>
-        <p className="text-sm text-neutral-500 mt-2">Verification complete. Please see the front desk if you need anything. Enjoy your stay!</p>
+      <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg overflow-hidden text-center px-6 py-10 text-white">
+        <div className="mx-auto w-16 h-16 rounded-full bg-white/15 ring-4 ring-white/20 flex items-center justify-center text-3xl mb-4">✓</div>
+        <div className="text-[12px] uppercase tracking-[0.2em] font-semibold text-emerald-50/90">Verification complete</div>
+        <h2 className="text-2xl font-bold mt-1 tracking-tight">Welcome to Salato{data.guestFirst ? ', ' + data.guestFirst : ''}!</h2>
+        <p className="text-sm text-emerald-50/90 mt-2 max-w-sm mx-auto">You're all checked in. Thanks for verifying — enjoy your stay. Our front desk is here if you need anything.</p>
       </div>
+      {(data.unit || data.checkIn || data.checkOut) && (
+        <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm p-5 mt-4">
+          {data.unit ? <Detail label="Unit" value={data.unit} /> : null}
+          {data.checkIn ? <Detail label="Check-in" value={fmtDate(data.checkIn)} /> : null}
+          {data.checkOut ? <Detail label="Check-out" value={fmtDate(data.checkOut)} /> : null}
+        </div>
+      )}
     </Shell>
   )
 
@@ -366,7 +374,18 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (s: string
     ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(p.x, p.y); ctx.stroke()
     last.current = p; dirty.current = true
   }
-  const end = () => { drawing.current = false; last.current = null; if (dirty.current && canvasRef.current) onChange(canvasRef.current.toDataURL('image/png')) }
+  const end = () => {
+    drawing.current = false; last.current = null
+    if (dirty.current && canvasRef.current) {
+      // Export as JPEG on a white background so it embeds cleanly in the team PDF/email
+      // (JPEG has no transparency; compositing white avoids a black signature box).
+      const c = canvasRef.current
+      const off = document.createElement('canvas'); off.width = c.width; off.height = c.height
+      const octx = off.getContext('2d')
+      if (octx) { octx.fillStyle = '#ffffff'; octx.fillRect(0, 0, off.width, off.height); octx.drawImage(c, 0, 0); onChange(off.toDataURL('image/jpeg', 0.85)) }
+      else onChange(c.toDataURL('image/png'))
+    }
+  }
 
   const onMouseDown = (e: React.MouseEvent) => { e.preventDefault(); start(e.clientX, e.clientY) }
   const onMouseMove = (e: React.MouseEvent) => { if (drawing.current) { e.preventDefault(); draw(e.clientX, e.clientY) } }
