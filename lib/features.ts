@@ -8,46 +8,72 @@
 //      set of pages they can see and their landing page. Unknown/missing workspace = 'gm' (all pages).
 //   2. Per-user feature OVERRIDES — features[key] === false turns a page off for that user on top of
 //      the workspace. The owner (jon@stay-hospitality.com) always has every page.
-export type Feature = { key: string; label: string; path: string }
+export type Feature = { key: string; label: string; path: string; group: string }
+
+// Group titles for the /users → Roles grid (mirrors the sidebar). Every feature MUST name one of
+// these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
+// can never silently miss the permission editor again.
+export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Money', 'Team', 'Admin']
 
 export const FEATURES: Feature[] = [
-  { key: 'command',       label: 'Command Center',    path: '/command' },
-  { key: 'home',          label: 'Home',              path: '/' },
-  { key: 'reservations',  label: 'Reservations',      path: '/reservations' },
-  { key: 'reservation-emails', label: 'Reservation Emails', path: '/reservation-emails' },
-  { key: 'messages',      label: 'Messages',          path: '/messages' },
-  { key: 'reviews',       label: 'Reviews',           path: '/reviews' },
-  { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls' },
-  { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks' },
-  { key: 'faq',           label: 'FAQ & How-To',      path: '/faq' },
-  { key: 'plan',          label: 'Today in Ops',      path: '/plan' },
-  { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule' },
-  { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast' },
-  { key: 'glitches',      label: 'Glitches',          path: '/glitches' },
-  { key: 'audits',        label: 'Audits',            path: '/audits' },
-  { key: 'orders',        label: 'Orders',            path: '/orders' },
-  { key: 'requests',      label: 'Requests',          path: '/requests' },
-  { key: 'vault',         label: 'Vault',             path: '/vault' },
-  { key: 'buildings',     label: 'Properties',        path: '/buildings' },
-  { key: 'health',        label: 'Health Score',      path: '/health' },
-  { key: 'revenue',       label: 'Revenue',           path: '/revenue' },
-  { key: 'channels',      label: 'Channels',          path: '/channels' },
-  { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing' },
-  { key: 'reports',       label: 'Owner Reports',     path: '/reports' },
-  // Owner-money page: deliberately in NO ops/cs/data bundle below, so out of the box only Admin
-  // and GM (pages:'all') can open it. Reviewers without a login use /report/owner-audit instead.
-  { key: 'owner-audit',   label: 'Owner Audit',       path: '/owner-audit' },
-  { key: 'claims',        label: 'Claims',            path: '/claims' },
-  { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners' },
-  { key: 'labor',         label: 'Labor',             path: '/labor' },
-  { key: 'listings',      label: 'Listings',          path: '/listings' },
-  { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize' },
-  { key: 'custom-fields', label: 'Custom Fields',     path: '/settings/custom-fields' },
+  { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
+  { key: 'home',          label: 'Home',              path: '/', group: 'Overview' },
+  { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guests' },
+  { key: 'reservation-emails', label: 'Reservation Emails', path: '/reservation-emails', group: 'Guests' },
+  { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guests' },
+  { key: 'reviews',       label: 'Reviews',           path: '/reviews', group: 'Guests' },
+  { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls', group: 'Guests' },
+  { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
+  { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
+  { key: 'faq',           label: 'FAQ & How-To',      path: '/faq', group: 'Guests' },
+  { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
+  { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
+  { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast', group: 'Operations' },
+  { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Operations' },
+  { key: 'audits',        label: 'Audits',            path: '/audits', group: 'Operations' },
+  // Gated 2026-08-06 (Jon): was reachable by any logged-in member with no permission setting.
+  { key: 'inspections',   label: 'Inspections',       path: '/inspections', group: 'Operations' },
+  { key: 'orders',        label: 'Orders',            path: '/orders', group: 'Operations' },
+  { key: 'requests',      label: 'Requests',          path: '/requests', group: 'Operations' },
+  { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
+  { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
+  { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
+  { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },
+  { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
+  { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
+  { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Money' },
+  { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing', group: 'Money' },
+  { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Money' },
+  // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
+  // Revenue). Reviewers without a login use /report/owner-audit instead.
+  { key: 'owner-audit',   label: 'Owner Audit',       path: '/owner-audit', group: 'Money' },
+  { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
+  { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
+  { key: 'custom-fields', label: 'Custom Fields',     path: '/settings/custom-fields', group: 'Admin' },
   // Connected apps (Slack, email). Deliberately LEFT OUT of the ops / cs / data bundles below, so
   // out of the box only Admin and GM can reach it — "a few people for now". To give it to someone
   // else, switch them to GM or flip it on for them individually on /users → Edit access.
-  { key: 'integrations', label: 'Integrations',       path: '/integrations' },
+  { key: 'integrations', label: 'Integrations',       path: '/integrations', group: 'Admin' },
 ]
+
+// ---- Route census (2026-08-06). The build-time check (scripts/check-tabs.mjs, run from
+// next.config.mjs) fails the build if a page route is not covered by FEATURES or one of these
+// lists — so every new tab is a forced, conscious decision about user settings before it ships.
+// Public/share routes (no login). Mirrors middleware.ts isOpenPath — middleware imports from here.
+export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt']
+export const OPEN_PREFIXES = [
+  '/login', '/auth', '/signup', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
+  '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
+  '/salato/share', '/salato/verify', '/report/', '/favicon',
+]
+export function isOpenPath(path: string): boolean {
+  if (OPEN_EXACT.indexOf(path) >= 0) return true
+  for (const p of OPEN_PREFIXES) if (path.startsWith(p)) return true
+  return false
+}
+// Login-required pages that deliberately have NO per-role setting:
+// /users gates itself (admin console); /salato stays open to all members (Jon 2026-08-06).
+export const UNGATED_PAGES = ['/users', '/salato']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
