@@ -130,12 +130,16 @@ function TaskRow({ t, canEdit, onSaved }: { t: Task; canEdit: boolean; onSaved: 
           {t.billTo ? <span className={chip('bg-emerald-50 text-emerald-700 ring-emerald-200') + ' ml-1'}>bill: {t.billTo}</span> : null}
         </div>
         <div className="col-span-2 truncate text-muted">{t.assignees.map(a => a.name).filter(Boolean).join(', ') || t.finishedBy || '—'}</div>
-        <div className="col-span-1 tabular-nums text-right">{hours(t.actualMinutes)}</div>
+        <div className="col-span-1 tabular-nums text-right" title={t.billedHours != null ? 'Billed hours (edited) — actual ' + hours(t.actualMinutes) : 'Actual time on task'}>
+          {t.billedHours != null ? <span className="font-semibold text-brand-600">{t.billedHours.toFixed(1)}h</span> : hours(t.actualMinutes)}
+        </div>
         <div className="col-span-1 tabular-nums text-right text-muted">{t.ratePaid != null ? money(t.ratePaid) + (String(t.rateType).toLowerCase() === 'hourly' ? '/h' : '') : '—'}</div>
         <div className="col-span-1 tabular-nums text-right font-bold text-ink">{money(t.billedAmount)}</div>
-        <div className="col-span-1 flex items-center justify-end gap-1">
+        <div className="col-span-1 flex items-center justify-end gap-1.5">
           {!t.hasDetail ? <span title="Billing detail not pulled yet"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span> : null}
           {done ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : null}
+          <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" title="Open this task in Breezeway"
+            className="text-muted hover:text-brand-600"><ExternalLink className="w-3.5 h-3.5" /></a>
         </div>
       </div>
       {open ? (
@@ -154,16 +158,15 @@ function TaskRow({ t, canEdit, onSaved }: { t: Task; canEdit: boolean; onSaved: 
               className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">
               {busy === 'rate' ? 'Saving…' : 'Save to Breezeway'}
             </button>
-            {String(rateType).toLowerCase() === 'hourly' ? (
-              <span className="flex items-center gap-1.5 ml-2">
-                <span className="text-[11px] text-muted">billed hours</span>
-                <input value={billedH} onChange={e => setBilledH(e.target.value)} disabled={!canEdit} placeholder={t.actualMinutes != null ? (t.actualMinutes / 60).toFixed(2) : 'actual'}
-                  className="w-20 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums" />
-                <button onClick={() => saveAdjust({ billed_hours: billedH }, 'bh')} disabled={!canEdit || busy === 'bh'} className="text-[12px] font-semibold text-brand-600">Set</button>
-              </span>
-            ) : null}
+            <span className="flex items-center gap-1.5 ml-2">
+              <span className="text-[11px] text-muted">billed hours</span>
+              <input value={billedH} onChange={e => setBilledH(e.target.value)} disabled={!canEdit} placeholder={t.actualMinutes != null ? (t.actualMinutes / 60).toFixed(2) : 'actual'}
+                className="w-20 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums" />
+              <button onClick={() => saveAdjust({ billed_hours: billedH }, 'bh')} disabled={!canEdit || busy === 'bh'} className="text-[12px] font-semibold text-brand-600">{busy === 'bh' ? 'Saving…' : 'Set'}</button>
+            </span>
             <span className="grow" />
-            {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-[12px] text-brand-600 font-semibold inline-flex items-center gap-1">Breezeway report <ExternalLink className="w-3 h-3" /></a> : null}
+            <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" className="text-[12px] text-brand-600 font-semibold inline-flex items-center gap-1">Open in Breezeway <ExternalLink className="w-3 h-3" /></a>
+            {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-[12px] text-brand-600 font-semibold inline-flex items-center gap-1">Report <ExternalLink className="w-3 h-3" /></a> : null}
             <button onClick={refreshDetail} disabled={busy === 'detail'} className="text-[12px] text-muted font-semibold inline-flex items-center gap-1">
               <RefreshCw className={'w-3 h-3 ' + (busy === 'detail' ? 'animate-spin' : '')} /> Re-pull from Breezeway
             </button>
