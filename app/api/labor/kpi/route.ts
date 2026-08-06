@@ -143,7 +143,7 @@ export async function GET(req: Request) {
     const cleanerNames = new Set<string>(attributed.map(x => x.assignee as string))
     timecards.forEach(t => { if (!t.role || /clean|housekeep|turn/i.test(t.role)) cleanerNames.add(t.name) })
 
-    const perCleaner = [...cleanerNames].map(name => {
+    const perCleaner = Array.from(cleanerNames).map(name => {
       const mine = attributed.filter(x => nameMatches(x.assignee as string, name))
       const revenue = round2(mine.reduce((a, x) => a + (x.fee as number), 0))
       const myCards = timecards.filter(t => nameMatches(t.name, name))
