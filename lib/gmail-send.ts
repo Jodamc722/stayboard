@@ -76,8 +76,10 @@ export type GmailAttachment = {
 
 // Build the RFC822 message. HTML-only stays a single text/html part (unchanged wire shape). With
 // attachments we nest: multipart/mixed [ multipart/related [ html, inline images ], files... ].
-function buildRaw(opts: { to: string[]; subject: string; html: string; attachments?: GmailAttachment[] }): string {
+function buildRaw(opts: { to: string[]; cc?: string[]; subject: string; html: string; attachments?: GmailAttachment[] }): string {
   const headTo = `To: ${opts.to.join(', ')}\r\n`
+  const cc = (opts.cc || []).map(c => String(c || '').trim()).filter(Boolean)
+  const headCc = cc.length ? `Cc: ${cc.join(', ')}\r\n` : ''
   const headSubj = `Subject: ${encodeHeader(opts.subject)}\r\n`
   const atts = (opts.attachments || []).filter(a => a && a.content)
 
@@ -88,7 +90,7 @@ function buildRaw(opts: { to: string[]; subject: string; html: string; attachmen
 
   if (!atts.length) {
     // Base64-encode the HTML so accented characters survive intact.
-    return headTo + headSubj + `MIME-Version: 1.0\r\n` + htmlPart
+    return headTo + headCc + headSubj + `MIME-Version: 1.0\r\n` + htmlPart
   }
 
   const inline: GmailAttachment[] = []
@@ -139,21 +141,23 @@ function buildRaw(opts: { to: string[]; subject: string; html: string; attachmen
   body += `--${mixB}\r\n` + relatedBlock + `\r\n`
   for (let i = 0; i < files.length; i++) body += `--${mixB}\r\n` + filePart(files[i]) + `\r\n`
   body += `--${mixB}--`
-  return headTo + headSubj + body
+  return headTo + headCc + headSubj + body
 }
 
 export async function sendGmail(opts: {
   fromEmail: string           // whose mailbox sends (must have a google_tokens row with gmail.send)
   to: string[]
+  cc?: string[]               // carbon-copy recipients (also delivered to; shown as Cc)
   subject: string
   html: string
   attachments?: GmailAttachment[]
 }): Promise<{ ok: boolean; error?: string }> {
   const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
-  if (!to.length) return { ok: false, error: 'no recipients' }
+  const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
+  if (!to.length && !cc.length) return { ok: false, error: 'no recipients' }
   const { token, error } = await accessTokenFor(opts.fromEmail)
   if (!token) return { ok: false, error }
-  const raw = buildRaw({ to, subject: opts.subject, html: opts.html, attachments: opts.attachments })
+  const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments })
   try {
     const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
