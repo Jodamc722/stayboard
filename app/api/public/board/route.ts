@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { getAccess } from '@/lib/access'
 import { customFieldNameMap } from '@/lib/custom-fields'
 
 export const dynamic = 'force-dynamic'
@@ -53,6 +54,10 @@ export async function GET(req: NextRequest) {
   if (!scope) return NextResponse.json({ ok: false, error: 'Unknown link' }, { status: 404 })
   const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
   if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  // Signed-in Stayboard user (not just a share-password viewer)? Guest ID/selfie/signature photos
+  // are shown ONLY to signed-in users; a share-only viewer never receives the image URLs.
+  let isAppUser = false
+  try { isAppUser = !!(await getAccess()).user } catch { isAppUser = false }
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
@@ -214,7 +219,11 @@ export async function GET(req: NextRequest) {
             const rec = recs[r.id]
             if (rec && rec.status === 'verified') {
               r.verified = true; r.verifiedAt = rec.signedAt || null
-              r.idUrl = await sign(str(rec.idPath)); r.selfieUrl = await sign(str(rec.selfiePath)); r.signatureUrl = await sign(str(rec.signaturePath))
+              // Photos are for signed-in users only — a share-password-only viewer sees the
+              // "Verified" badge but never the ID/selfie/signature images.
+              if (isAppUser) {
+                r.idUrl = await sign(str(rec.idPath)); r.selfieUrl = await sign(str(rec.selfiePath)); r.signatureUrl = await sign(str(rec.signaturePath))
+              }
             } else { r.verified = false }
           }
         }
@@ -224,7 +233,7 @@ export async function GET(req: NextRequest) {
     // when the reservation mirror was last pulled from Guesty (drives 'last synced' + the 30-min resync throttle)
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, pastStart, unitCount: ids.length, verifyEnabled, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming, past })
+    return NextResponse.json({ ok: true, label: scope.label, today, start, end, farEnd, pastStart, unitCount: ids.length, verifyEnabled, isAppUser, bannerImage, bannerOverride, bannerOptions, lastSync, arrivals, departures, active, upcoming, past })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
