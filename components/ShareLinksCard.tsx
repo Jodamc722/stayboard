@@ -36,12 +36,19 @@ export function ShareLinksCard() {
   const [oaMsg, setOaMsg] = useState('')
   const [oaErr, setOaErr] = useState('')
   const [oaBusy, setOaBusy] = useState(false)
+  // Salato rules-editing password — lets front-desk staff (no app login) edit the Salato rules.
+  const [rpSet, setRpSet] = useState(false)
+  const [rpCurrent, setRpCurrent] = useState('')
+  const [rpDraft, setRpDraft] = useState('')
+  const [rpMsg, setRpMsg] = useState('')
+  const [rpErr, setRpErr] = useState('')
+  const [rpBusy, setRpBusy] = useState(false)
 
   useEffect(() => { setOrigin(window.location.origin) }, [])
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || ''); setOaLinks(j.auditLinks || []); setOaSet(!!j.auditSet); setOaCurrent(j.auditPassword || ''); setOaDraft(j.auditPassword || '') } })
+      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || ''); setOaLinks(j.auditLinks || []); setOaSet(!!j.auditSet); setOaCurrent(j.auditPassword || ''); setOaDraft(j.auditPassword || ''); setRpSet(!!j.rulesSet); setRpCurrent(j.rulesPassword || ''); setRpDraft(j.rulesPassword || '') } })
       .catch(() => {})
   }, [])
 
@@ -87,6 +94,17 @@ export function ShareLinksCard() {
       setOaSet(true); setOaCurrent(j.auditPassword || oaDraft.trim()); setOaMsg('Audit password saved. Send it with the link above.')
     } catch (e: any) { setOaErr(String(e?.message || e)) }
     setOaBusy(false)
+  }
+
+  const saveRp = async () => {
+    setRpBusy(true); setRpErr(''); setRpMsg('')
+    try {
+      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rulesPassword: rpDraft.trim() }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setRpErr(j.error || 'Could not save'); setRpBusy(false); return }
+      setRpSet(true); setRpCurrent(j.rulesPassword || rpDraft.trim()); setRpMsg('Rules password saved. Front-desk staff can use it to edit the Salato rules from the share link.')
+    } catch (e: any) { setRpErr(String(e?.message || e)) }
+    setRpBusy(false)
   }
 
   const copy = (v: string, url: string) => { try { navigator.clipboard.writeText(url); setCopied(v); setTimeout(() => setCopied(''), 1500) } catch {} }
@@ -151,6 +169,16 @@ export function ShareLinksCard() {
         </div>
         {oaMsg && <div className="text-xs text-emerald-700 mt-2">{oaMsg}</div>}
         {oaErr && <div className="text-xs text-red-600 mt-2">{oaErr}</div>}
+      </div>
+      <div className="border-t border-line pt-4 mt-4">
+        <label className="text-xs uppercase tracking-wide text-muted">Salato rules editing &mdash; separate password</label>
+        <p className="text-xs text-muted mt-0.5 mb-2">Lets front-desk staff who don&rsquo;t sign into the app edit the Salato house &amp; building rules from the share link. Signed-in Stayboard users don&rsquo;t need it. {rpSet ? 'Currently SET.' : 'Not set yet — only signed-in users can edit rules until you set one.'}</p>
+        <div className="flex gap-2 mt-1 max-w-md">
+          <input value={rpDraft} onChange={e => setRpDraft(e.target.value)} placeholder={rpSet ? 'Rules password' : 'Create rules password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <button onClick={saveRp} disabled={rpBusy || rpDraft.trim().length < 4 || rpDraft.trim() === rpCurrent} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{rpBusy ? 'Saving…' : rpSet ? 'Update' : 'Set'}</button>
+        </div>
+        {rpMsg && <div className="text-xs text-emerald-700 mt-2">{rpMsg}</div>}
+        {rpErr && <div className="text-xs text-red-600 mt-2">{rpErr}</div>}
       </div>
       <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>
