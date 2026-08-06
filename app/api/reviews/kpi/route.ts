@@ -194,6 +194,13 @@ export async function GET(req: NextRequest) {
   const catByUnit: Record<string, Record<string, { n: number; sum: number }>> = {}
   const replyTimes: number[] = []
   let replied = 0
+  // THE BREAKDOWN (2026-08-06, Jon: "break down of properties, units, etc"). Same numbers the
+  // headline uses, kept per unit and per building so the page can show property → unit as a table
+  // instead of two flat top-12 lists. `await*` uses the SAME replyable() rule as the headline, so a
+  // building's reply queue always adds up to the number at the top of the page.
+  const awaitByUnit: Record<string, number> = {}
+  const awaitByBuilding: Record<string, number> = {}
+  const chByUnit: Record<string, Record<string, Agg>> = {}
 
   for (const r of cur) {
     const rating = Number(r.rating)
@@ -204,7 +211,15 @@ export async function GET(req: NextRequest) {
     push(byBuilding[li.building] = byBuilding[li.building] || emptyAgg(), rating)
     push(byChannel[str(r.channel) || 'Other'] = byChannel[str(r.channel) || 'Other'] || emptyAgg(), rating)
     push(byMonth[str(r.created_at).slice(0, 7)] = byMonth[str(r.created_at).slice(0, 7)] || emptyAgg(), rating)
+    // per-unit channel mix — a unit can be fine on Airbnb and bleeding on Booking.com
+    const chKey = str(r.channel) || 'Other'
+    const cu2 = chByUnit[lid] = chByUnit[lid] || {}
+    push(cu2[chKey] = cu2[chKey] || emptyAgg(), rating)
     if (r.has_reply) { replied++; const m = replyMinutes(r.raw); if (m != null) replyTimes.push(m) }
+    else if (!r.dismissed && replyable(lid, r)) {
+      awaitByUnit[lid] = (awaitByUnit[lid] || 0) + 1
+      awaitByBuilding[li.building] = (awaitByBuilding[li.building] || 0) + 1
+    }
     for (const c of categoriesOf(r.raw)) {
       const k = c.key === 'check_in' ? 'checkin' : c.key
       const e = cat[k] = cat[k] || { n: 0, sum: 0 }
@@ -243,11 +258,28 @@ export async function GET(req: NextRequest) {
     return {
       listingId: lid, unit: li.name, building: li.building, market: li.market,
       ...s, change: delta(byUnit[lid], byUnitPrev[lid] || emptyAgg()), ranked: byUnit[lid].n >= MIN_N,
+      awaiting: awaitByUnit[lid] || 0,
+      channels: Object.keys(chByUnit[lid] || {}).map(c => ({ channel: c, n: chByUnit[lid][c].n, avg: round(chByUnit[lid][c].sum / chByUnit[lid][c].n), low: chByUnit[lid][c].low }))
+        .sort((a, b) => b.n - a.n),
     }
   })
+  // Units per building comes from the LISTING MAP, not the review set: a building with 25 units of
+  // which 6 got reviewed should read "6 of 25 reviewed", not "6 units". Silence is data too.
+  const unitsTotalByBuilding: Record<string, number> = {}
+  const marketByBuilding: Record<string, string> = {}
+  for (const l of Object.values(lmap) as any[]) {
+    if (!l || !l.active) continue
+    if (market !== 'all' && l.market !== market) continue
+    unitsTotalByBuilding[l.building] = (unitsTotalByBuilding[l.building] || 0) + 1
+    if (!marketByBuilding[l.building]) marketByBuilding[l.building] = l.market
+  }
   const buildings = Object.keys(byBuilding).map(b => ({
     building: b, ...summarise(byBuilding[b], mean),
     change: delta(byBuilding[b], byBuildingPrev[b] || emptyAgg()),
+    awaiting: awaitByBuilding[b] || 0,
+    market: marketByBuilding[b] || '',
+    unitsReviewed: Object.keys(byUnit).filter(lid => (lmap[lid] || {}).building === b).length,
+    unitsTotal: unitsTotalByBuilding[b] || 0,
   })).sort((a, b) => (a.score ?? 9) - (b.score ?? 9))
 
   // ---- CLEANLINESS BY CLEANER (gated). review -> reservation -> that day's clean -> assignees.
