@@ -191,27 +191,12 @@ export function ReviewKpis() {
             </div>
           )}
 
+          {/* The old thin "Units" and "Buildings" folds (a top-12 list with an average and nothing
+              to click) were replaced on 2026-08-06 by the full Breakdown table directly below this
+              strip — property → unit, with low counts, reply queue and channel mix. Two lists of
+              the same numbers, one of them truncated, was exactly the noise Jon asked us to kill. */}
+
           {/* everything granular, out of the way */}
-          <Fold title="Units" summary={units.length + ' ranked' + (units[0] ? ' · lowest ' + units[0].unit + ' ' + units[0].avg : '') + (d?.unranked?.length ? ' · ' + d.unranked.length + ' too few reviews' : '')}>
-            {units.slice(0, 12).map((u: any) => (
-              <div key={u.listingId} className="flex items-center gap-2 text-[12.5px] py-0.5">
-                <span className="min-w-0 flex-1 truncate text-ink">{u.unit} <span className="text-muted">· {u.n}</span></span>
-                <span className="font-bold text-ink w-9 text-right tabular-nums">{u.avg}</span>
-                <span className="w-12 text-right"><Trend v={u.change ?? null} /></span>
-              </div>
-            ))}
-          </Fold>
-
-          <Fold title="Buildings" summary={(d?.buildings || []).length + ' · lowest ' + ((d?.buildings || [])[0]?.building ?? '—') + ' ' + ((d?.buildings || [])[0]?.avg ?? '')}>
-            {(d?.buildings || []).map((b: any) => (
-              <div key={b.building} className="flex items-center gap-2 text-[12.5px] py-0.5">
-                <span className="min-w-0 flex-1 truncate text-ink">{b.building} <span className="text-muted">· {b.n}</span></span>
-                <span className="font-bold text-ink w-9 text-right tabular-nums">{b.avg}</span>
-                <span className="w-12 text-right"><Trend v={b.change ?? null} /></span>
-              </div>
-            ))}
-          </Fold>
-
           <Fold title="Categories" summary={worstCat ? 'weakest ' + worstCat.label.toLowerCase() + ' ' + worstCat.avg : '—'}>
             {(d?.categories || []).map((c: any) => {
               const gap = h.avg != null ? Math.round((c.avg - h.avg) * 100) / 100 : null
