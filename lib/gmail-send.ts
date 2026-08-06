@@ -39,28 +39,126 @@ function b64url(s: string): string {
   return Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+// A raw-message payload can contain non-ASCII bytes (an accented guest name in the HTML). We keep
+// the raw string as latin1 so every byte survives the final base64url pass unchanged.
+function rawToB64url(raw: string): string {
+  return Buffer.from(raw, 'latin1').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+// RFC 2047 encoded-word for a header value that may contain non-ASCII (e.g. the subject line).
+function encodeHeader(s: string): string {
+  const v = String(s || '').replace(/[\r\n]+/g, ' ')
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(v)) return v
+  return '=?UTF-8?B?' + Buffer.from(v, 'utf8').toString('base64') + '?='
+}
+
+// Base64 body wrapped at 76 chars per line, per RFC 2045.
+function b64Wrapped(buf: Buffer): string {
+  const b = buf.toString('base64')
+  const lines: string[] = []
+  for (let i = 0; i < b.length; i += 76) lines.push(b.slice(i, i + 76))
+  return lines.join('\r\n')
+}
+
+let boundarySeq = 0
+function boundary(tag: string): string {
+  boundarySeq += 1
+  return '==_' + tag + '_' + boundarySeq + '_' + Math.random().toString(36).slice(2, 12) + '=='
+}
+
+export type GmailAttachment = {
+  filename: string
+  content: Buffer | Uint8Array
+  contentType: string
+  contentId?: string   // present -> inline image referenced from the HTML as cid:<contentId>
+}
+
+// Build the RFC822 message. HTML-only stays a single text/html part (unchanged wire shape). With
+// attachments we nest: multipart/mixed [ multipart/related [ html, inline images ], files... ].
+function buildRaw(opts: { to: string[]; subject: string; html: string; attachments?: GmailAttachment[] }): string {
+  const headTo = `To: ${opts.to.join(', ')}\r\n`
+  const headSubj = `Subject: ${encodeHeader(opts.subject)}\r\n`
+  const atts = (opts.attachments || []).filter(a => a && a.content)
+
+  const htmlPart =
+    `Content-Type: text/html; charset="UTF-8"\r\n` +
+    `Content-Transfer-Encoding: base64\r\n\r\n` +
+    b64Wrapped(Buffer.from(opts.html, 'utf8'))
+
+  if (!atts.length) {
+    // Base64-encode the HTML so accented characters survive intact.
+    return headTo + headSubj + `MIME-Version: 1.0\r\n` + htmlPart
+  }
+
+  const inline: GmailAttachment[] = []
+  const files: GmailAttachment[] = []
+  for (let i = 0; i < atts.length; i++) { (atts[i].contentId ? inline : files).push(atts[i]) }
+
+  const filePart = (a: GmailAttachment): string => {
+    const buf = Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content)
+    const name = String(a.filename || 'attachment').replace(/[\r\n"]+/g, '')
+    return (
+      `Content-Type: ${a.contentType}; name="${name}"\r\n` +
+      `Content-Transfer-Encoding: base64\r\n` +
+      `Content-Disposition: attachment; filename="${name}"\r\n\r\n` +
+      b64Wrapped(buf)
+    )
+  }
+  const inlinePart = (a: GmailAttachment): string => {
+    const buf = Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content)
+    const name = String(a.filename || 'image').replace(/[\r\n"]+/g, '')
+    const cid = String(a.contentId).replace(/[\r\n<>]+/g, '')
+    return (
+      `Content-Type: ${a.contentType}\r\n` +
+      `Content-Transfer-Encoding: base64\r\n` +
+      `Content-ID: <${cid}>\r\n` +
+      `Content-Disposition: inline; filename="${name}"\r\n\r\n` +
+      b64Wrapped(buf)
+    )
+  }
+
+  // The HTML plus any inline images form a multipart/related unit.
+  let relatedBlock: string
+  if (inline.length) {
+    const relB = boundary('rel')
+    let s = `Content-Type: multipart/related; boundary="${relB}"\r\n\r\n`
+    s += `--${relB}\r\n` + htmlPart + `\r\n`
+    for (let i = 0; i < inline.length; i++) s += `--${relB}\r\n` + inlinePart(inline[i]) + `\r\n`
+    s += `--${relB}--`
+    relatedBlock = s
+  } else {
+    relatedBlock = htmlPart
+  }
+
+  // If there are no separate file attachments and no inline images, we already returned above.
+  // With only inline images we still need a mixed wrapper is unnecessary — related is enough — but
+  // keeping a single mixed wrapper for both cases keeps the structure simple and valid.
+  const mixB = boundary('mix')
+  let body = `MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="${mixB}"\r\n\r\n`
+  body += `--${mixB}\r\n` + relatedBlock + `\r\n`
+  for (let i = 0; i < files.length; i++) body += `--${mixB}\r\n` + filePart(files[i]) + `\r\n`
+  body += `--${mixB}--`
+  return headTo + headSubj + body
+}
+
 export async function sendGmail(opts: {
   fromEmail: string           // whose mailbox sends (must have a google_tokens row with gmail.send)
   to: string[]
   subject: string
   html: string
+  attachments?: GmailAttachment[]
 }): Promise<{ ok: boolean; error?: string }> {
   const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
   if (!to.length) return { ok: false, error: 'no recipients' }
   const { token, error } = await accessTokenFor(opts.fromEmail)
   if (!token) return { ok: false, error }
-  // RFC822 with an HTML body. Gmail sets From to the authenticated mailbox itself.
-  const msg =
-    `To: ${to.join(', ')}\r\n` +
-    `Subject: ${opts.subject.replace(/[\r\n]+/g, ' ')}\r\n` +
-    `MIME-Version: 1.0\r\n` +
-    `Content-Type: text/html; charset="UTF-8"\r\n\r\n` +
-    opts.html
+  const raw = buildRaw({ to, subject: opts.subject, html: opts.html, attachments: opts.attachments })
   try {
     const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ raw: b64url(msg) }),
+      body: JSON.stringify({ raw: rawToB64url(raw) }),
       cache: 'no-store',
     })
     if (r.ok) return { ok: true }
