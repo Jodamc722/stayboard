@@ -44,6 +44,33 @@ function push(a: Agg, rating: number) {
   if (rating >= 4.9) a.five++
   if (rating <= 3) a.low++
 }
+// ── THE LIVE LISTING SCORE ──────────────────────────────────────────────────────────────────────
+// Guesty exposes NO OTA-published rating field (checked against the live payload 2026-08-06: the
+// integrations array carries platform + externalUrl and nothing else). So the score shown per
+// channel is the listing's LIFETIME average of every review that channel sent us — the same basis
+// the OTA itself publishes — and each one carries the deep link so it can be checked in one click.
+//
+// Booking.com publishes out of 10 while Guesty normalises to 5, so it is doubled back for display.
+// Showing 3.89 next to a Booking page that says 7.8 is the kind of mismatch that costs trust.
+const CHANNEL_SCALE10: Record<string, boolean> = { 'Booking.com': true }
+const PLATFORM_TO_CHANNEL: Record<string, string> = {
+  airbnb: 'Airbnb', airbnb2: 'Airbnb',
+  bookingcom: 'Booking.com', bookingCom: 'Booking.com', booking: 'Booking.com',
+  homeaway: 'Vrbo', homeaway2: 'Vrbo', vrbo: 'Vrbo',
+  expedia: 'Expedia',
+}
+function listingUrls(ints: any): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!Array.isArray(ints)) return out
+  for (const i of ints) {
+    const p = String((i && i.platform) || '')
+    const ch = PLATFORM_TO_CHANNEL[p] || PLATFORM_TO_CHANNEL[p.toLowerCase()]
+    const url = String((i && i.externalUrl) || '')
+    if (ch && url && !out[ch]) out[ch] = url
+  }
+  return out
+}
+
 function summarise(a: Agg, mean: number) {
   if (!a.n) return { n: 0, avg: null, fiveShare: null, lowCount: 0, score: null }
   return {
@@ -128,14 +155,22 @@ export async function GET(req: NextRequest) {
     }
     return out
   }
-  const [reviewRows, lRes, stayRows] = await Promise.all([
+  const [reviewRows, lRes, stayRows, lifeRows] = await Promise.all([
     page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,excluded_from_score,raw',
       q => q.gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false })),
-    db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
+    // raw->integrations carries the LIVE listing URL per channel (airbnb2 / bookingCom / homeaway2),
+    // which is the only channel-specific thing Guesty actually stores — there is no OTA-published
+    // rating field in the API, so the score below is computed and the link is how you verify it.
+    db.from('guesty_listings').select('id,nickname,title,building,address_city,status,ints:raw->integrations'),
     // Review RATE needs a denominator: stays that ENDED early enough to have been reviewed. Guests
     // take up to a fortnight to write one, so the window is shifted back rather than matched exactly.
     page('guesty_reservations', 'id,listing_id,check_out,status',
       q => q.gte('check_out', addDays(from, -14)).lte('check_out', addDays(to, -3)).order('check_out', { ascending: false })),
+    // THE LISTING SCORE (2026-08-06, Jon). The number a guest sees on the live Airbnb / Booking /
+    // Vrbo page is the listing's LIFETIME average on that channel — not our 90-day window. So this
+    // pass is deliberately unwindowed: every synced review, ever, per listing per channel.
+    page('guesty_reviews', 'listing_id,rating,channel,created_at',
+      q => q.eq('excluded_from_score', false).order('created_at', { ascending: false })),
   ])
   const rRes = { data: reviewRows }
   const resRes = { data: stayRows }
@@ -149,6 +184,7 @@ export async function GET(req: NextRequest) {
       name, building: buildingOf(str(l.building)) || buildingOf(name) || str(l.building) || 'Other',
       market: marketOf(l.building, l.address_city, name),
       active: str(l.status).trim().toLowerCase() === 'active',
+      urls: listingUrls(l.ints),
     }
   }
   // Can a human actually reply to this review? Mirrors app/api/reviews/route.ts exactly:
@@ -201,6 +237,51 @@ export async function GET(req: NextRequest) {
   const awaitByUnit: Record<string, number> = {}
   const awaitByBuilding: Record<string, number> = {}
   const chByUnit: Record<string, Record<string, Agg>> = {}
+  // LIFETIME per-channel — the published listing score. Unwindowed on purpose (see listingUrls
+  // above); the date filters on this page move the window numbers, never this one.
+  const lifeUnit: Record<string, Record<string, { n: number; sum: number; last: string }>> = {}
+  const lifeBld: Record<string, Record<string, { n: number; sum: number; units: Set<string> }>> = {}
+  for (const r of (lifeRows as any[])) {
+    const rating = Number(r.rating)
+    if (!Number.isFinite(rating) || rating <= 0) continue
+    const lid = String(r.listing_id)
+    const li = lmap[lid]
+    if (!li || !inScope(lid)) continue
+    const ch = str(r.channel) || 'Other'
+    const at = str(r.created_at).slice(0, 10)
+    const u = lifeUnit[lid] = lifeUnit[lid] || {}
+    const ue = u[ch] = u[ch] || { n: 0, sum: 0, last: '' }
+    ue.n++; ue.sum += rating; if (at > ue.last) ue.last = at
+    const b = lifeBld[li.building] = lifeBld[li.building] || {}
+    const be = b[ch] = b[ch] || { n: 0, sum: 0, units: new Set<string>() }
+    be.n++; be.sum += rating; be.units.add(lid)
+  }
+  // Ordered the way the team talks about them, biggest channel first; unknown channels sort last.
+  const CH_ORDER = ['Airbnb', 'Booking.com', 'Vrbo', 'Expedia']
+  const chRank = (c: string) => { const i = CH_ORDER.indexOf(c); return i < 0 ? 99 : i }
+  const otaFor = (lid: string) => Object.keys(lifeUnit[lid] || {})
+    .map(ch => {
+      const e = lifeUnit[lid][ch]
+      const avg = round(e.sum / e.n)
+      return {
+        channel: ch, n: e.n, avg, lastAt: e.last || null,
+        display: CHANNEL_SCALE10[ch] ? round(avg * 2, 1) : avg,
+        scale: CHANNEL_SCALE10[ch] ? 10 : 5,
+        url: ((lmap[lid] || {}).urls || {})[ch] || null,
+      }
+    })
+    .sort((a, b) => chRank(a.channel) - chRank(b.channel) || b.n - a.n)
+  const otaForBuilding = (bname: string) => Object.keys(lifeBld[bname] || {})
+    .map(ch => {
+      const e = lifeBld[bname][ch]
+      const avg = round(e.sum / e.n)
+      return {
+        channel: ch, n: e.n, avg, units: e.units.size,
+        display: CHANNEL_SCALE10[ch] ? round(avg * 2, 1) : avg,
+        scale: CHANNEL_SCALE10[ch] ? 10 : 5,
+      }
+    })
+    .sort((a, b) => chRank(a.channel) - chRank(b.channel) || b.n - a.n)
 
   for (const r of cur) {
     const rating = Number(r.rating)
@@ -261,6 +342,7 @@ export async function GET(req: NextRequest) {
       awaiting: awaitByUnit[lid] || 0,
       channels: Object.keys(chByUnit[lid] || {}).map(c => ({ channel: c, n: chByUnit[lid][c].n, avg: round(chByUnit[lid][c].sum / chByUnit[lid][c].n), low: chByUnit[lid][c].low }))
         .sort((a, b) => b.n - a.n),
+      ota: otaFor(lid),
     }
   })
   // Units per building comes from the LISTING MAP, not the review set: a building with 25 units of
@@ -280,6 +362,8 @@ export async function GET(req: NextRequest) {
     market: marketByBuilding[b] || '',
     unitsReviewed: Object.keys(byUnit).filter(lid => (lmap[lid] || {}).building === b).length,
     unitsTotal: unitsTotalByBuilding[b] || 0,
+    // the published listing score per OTA, all-time — independent of the window controls above
+    ota: otaForBuilding(b),
   })).sort((a, b) => (a.score ?? 9) - (b.score ?? 9))
 
   // ---- CLEANLINESS BY CLEANER (gated). review -> reservation -> that day's clean -> assignees.
