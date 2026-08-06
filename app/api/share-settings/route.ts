@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { currentSharePassword, currentAdminPassword, currentMarketingPassword, currentAuditPassword } from '@/lib/shareAuth'
+import { currentSharePassword, currentAdminPassword, currentMarketingPassword, currentAuditPassword, currentRulesPassword } from '@/lib/shareAuth'
 import { isSuperadmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -37,7 +37,8 @@ export async function GET() {
   // The admin password itself is visible ONLY to the Super Admin account (Jon).
   const marketing = await currentMarketingPassword()
   const audit = await currentAuditPassword()
-  const payload: Record<string, any> = { ok: true, password, adminSet, links: LINKS, marketingLinks: MARKETING_LINKS, marketingSet: !!marketing, marketingPassword: marketing, auditLinks: AUDIT_LINKS, auditSet: !!audit, auditPassword: audit }
+  const rules = await currentRulesPassword()
+  const payload: Record<string, any> = { ok: true, password, adminSet, links: LINKS, marketingLinks: MARKETING_LINKS, marketingSet: !!marketing, marketingPassword: marketing, auditLinks: AUDIT_LINKS, auditSet: !!audit, auditPassword: audit, rulesSet: !!rules, rulesPassword: rules }
   if (isSuperadmin(user.email)) payload.adminPassword = adminCur
   return NextResponse.json(payload)
 }
@@ -72,6 +73,14 @@ export async function POST(req: NextRequest) {
       const { error } = await db.from('share_settings').upsert({ id: 4, password: ap, updated_at: new Date().toISOString() })
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true, auditSet: true, auditPassword: ap })
+    }
+    // RULES password (row id=5) — lets share-link (non-signed-in) users edit the Salato rules
+    if (body.rulesPassword !== undefined) {
+      const rp = String(body.rulesPassword || '').trim()
+      if (rp.length < 4) return NextResponse.json({ ok: false, error: 'Rules password must be at least 4 characters.' }, { status: 400 })
+      const { error } = await db.from('share_settings').upsert({ id: 5, password: rp, updated_at: new Date().toISOString() })
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, rulesSet: true, rulesPassword: rp })
     }
     const password = String(body.password || '').trim()
     if (password.length < 4) return NextResponse.json({ ok: false, error: 'Password must be at least 4 characters.' }, { status: 400 })
