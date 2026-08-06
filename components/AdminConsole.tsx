@@ -16,6 +16,7 @@ import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
 import { ReviewVoiceAdmin } from '@/components/ReviewVoiceAdmin'
 import { ReservationEmailsAdmin } from '@/components/ReservationEmailsAdmin'
 import { ShareLinksCard } from '@/components/ShareLinksCard'
+import { SalatoVerifyEmailAdmin } from '@/components/SalatoVerifyEmailAdmin'
 
 type Tab = 'people' | 'roles' | 'settings'
 
@@ -57,6 +58,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
           <Fold title="Approval limits"><ApprovalLimitsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Review-reply AI voice"><ReviewVoiceAdmin /></Fold>
           <Fold title="Front-desk notices"><ReservationEmailsAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Salato verification email"><SalatoVerifyEmailAdmin /></Fold>
           <Fold title="Share links & passwords"><ShareLinksCard /></Fold>
         </div>
       )}
