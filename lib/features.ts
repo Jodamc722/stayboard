@@ -26,10 +26,6 @@ export const FEATURES: Feature[] = [
   { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
   { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
   { key: 'faq',           label: 'FAQ & How-To',      path: '/faq', group: 'Guests' },
-  // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
-  // The public share/verify links (/salato/share, /salato/verify) stay open — OPEN_PREFIXES wins
-  // before the role gate in middleware.
-  { key: 'salato',        label: 'Salato Front Desk', path: '/salato', group: 'Guests' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
   { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast', group: 'Operations' },
@@ -44,6 +40,8 @@ export const FEATURES: Feature[] = [
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
   { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },
   { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
+  // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
+  { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
   { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Money' },
   { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing', group: 'Money' },
@@ -76,8 +74,8 @@ export function isOpenPath(path: string): boolean {
   return false
 }
 // Login-required pages that deliberately have NO per-role setting:
-// /users gates itself (admin console).
-export const UNGATED_PAGES = ['/users']
+// /users gates itself (admin console); /salato stays open to all members (Jon 2026-08-06).
+export const UNGATED_PAGES = ['/users', '/salato']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
@@ -148,11 +146,11 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'faq'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'patterns', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'buildings', 'listings', 'claims'] },
+    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'patterns', 'buildings', 'listings', 'claims'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
