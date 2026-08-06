@@ -1,0 +1,229 @@
+// lib/homebase-labor.ts
+// Timecards + labor KPIs on top of lib/homebase.ts.
+// Reads HOMEBASE_API_KEY / HOMEBASE_LOCATION_UUID from env (set in Vercel).
+//
+// Everything is written defensively against field-name drift — run the
+// /api/homebase/probe route once and we tighten the pickers to your account's
+// actual schema.
+
+import { getLocationUuid, getShifts, nameMatches, type Shift } from '@/lib/homebase'
+
+const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/public'
+const OT_WEEKLY_HOURS = 40 // FL: overtime is federal FLSA — over 40h/workweek
+
+type Json = any
+const pick = (o: Json, ...ks: string[]) => {
+  for (const k of ks) if (o?.[k] != null && o[k] !== '') return o[k]
+  return null
+}
+const arr = (d: Json): Json[] => {
+  if (Array.isArray(d)) return d
+  for (const k of ['data', 'timecards', 'results']) if (Array.isArray(d?.[k])) return d[k]
+  return []
+}
+
+async function hb(path: string): Promise<Json> {
+  const r = await fetch(`${BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${process.env.HOMEBASE_API_KEY}`,
+      Accept: 'application/vnd.homebase-v1+json',
+    },
+    cache: 'no-store',
+  })
+  if (!r.ok) throw new Error(`Homebase ${r.status} on ${path}`)
+  return r.json()
+}
+
+export type Timecard = {
+  name: string
+  role: string | null
+  date: string | null        // YYYY-MM-DD
+  clockIn: string | null
+  clockOut: string | null
+  hours: number | null       // actual worked hours (net of breaks when the API nets them)
+  regularHours: number | null
+  overtimeHours: number | null
+  wageRate: number | null    // $/hr if exposed
+  laborCost: number | null   // regular + OT cost if exposed, else rate*hours, else null
+  open: boolean              // clocked in, not yet out
+}
+
+export async function getTimecards(startDate: string, endDate: string): Promise<Timecard[]> {
+  const loc = await getLocationUuid()
+  const raw = arr(await hb(
+    `/locations/${loc}/timecards?start_date=${startDate}&end_date=${endDate}`
+  ))
+  return raw.map((t: Json): Timecard => {
+    const nested = pick(t, 'employee', 'user') || {}
+    const name =
+      [pick(t, 'first_name'), pick(t, 'last_name')].filter(Boolean).join(' ') ||
+      pick(nested, 'name', 'full_name') ||
+      [pick(nested, 'first_name'), pick(nested, 'last_name')].filter(Boolean).join(' ') || 'Unknown'
+    const clockIn = pick(t, 'clock_in', 'clock_in_at', 'start_at', 'clockIn')
+    const clockOut = pick(t, 'clock_out', 'clock_out_at', 'end_at', 'clockOut')
+    let hours = num(pick(t, 'hours', 'total_hours', 'worked_hours', 'duration_hours'))
+    if (hours == null && clockIn && clockOut)
+      hours = round2((new Date(clockOut).getTime() - new Date(clockIn).getTime()) / 36e5)
+    const regularHours = num(pick(t, 'regular_hours', 'regularHours'))
+    const overtimeHours = num(pick(t, 'overtime_hours', 'overtimeHours'))
+    const wageRate = num(pick(t, 'wage_rate', 'wage', 'hourly_wage', 'rate'))
+    let laborCost = num(pick(t, 'labor_cost', 'estimated_wages', 'total_wages', 'cost'))
+    if (laborCost == null && wageRate != null && hours != null)
+      laborCost = round2(wageRate * hours) // approximation: ignores OT premium
+    return {
+      name,
+      role: pick(t, 'role', 'position', 'department'),
+      date: (pick(t, 'date', 'shift_date') || clockIn || '').slice(0, 10) || null,
+      clockIn, clockOut, hours, regularHours, overtimeHours, wageRate, laborCost,
+      open: !!clockIn && !clockOut,
+    }
+  })
+}
+
+const num = (v: Json): number | null => {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+const round2 = (n: number) => Math.round(n * 100) / 100
+const round1 = (n: number) => Math.round(n * 10) / 10
+
+// ---------------------------------------------------------------------------
+// KPI computation
+// ---------------------------------------------------------------------------
+
+export type PersonLabor = {
+  name: string
+  scheduledHours: number
+  actualHours: number
+  varianceHours: number       // actual - scheduled; + = worked past schedule
+  overtimeHours: number
+  laborCost: number | null
+  weekToDateHours: number
+  remainingScheduledThisWeek: number
+  projectedWeekHours: number
+  overtimeRisk: boolean       // projected ≥ 40h this workweek
+  openTimecard: boolean       // still clocked in
+  noShow: boolean             // had a shift, no timecard that day
+}
+
+export type LaborKpis = {
+  range: { start: string; end: string }
+  totalScheduledHours: number
+  totalActualHours: number
+  totalOvertimeHours: number
+  totalLaborCost: number | null      // null when no wage data on any card
+  costDataCoverage: number           // 0..1 share of timecards carrying cost
+  cleansCompleted: number | null
+  hoursPerClean: number | null       // housekeeping hours ÷ completed cleans
+  laborCostPerOccupiedNight: number | null
+  people: PersonLabor[]
+  flags: {
+    overtimeRisk: string[]
+    noShows: { name: string; date: string }[]
+    stillClockedIn: string[]         // open timecards from a previous day = missed punch
+  }
+}
+
+const shiftHours = (s: Shift): number =>
+  s.startAt && s.endAt
+    ? Math.max(0, (new Date(s.endAt).getTime() - new Date(s.startAt).getTime()) / 36e5)
+    : 0
+
+/**
+ * Aggregate shifts + timecards into per-person and portfolio KPIs.
+ * `cleans` and `occupiedNights` come from your existing Supabase data
+ * (breezeway_tasks_sync / guesty_reservations) — pass null to skip those KPIs.
+ */
+export function computeLaborKpis(opts: {
+  start: string; end: string
+  shifts: (Shift & { date?: string })[]
+  timecards: Timecard[]
+  weekShifts: (Shift & { date?: string })[]   // rest of the current workweek, for OT projection
+  otWeeklyHours?: number
+  cleansCompleted: number | null
+  occupiedNights: number | null
+  todayISO: string
+}): LaborKpis {
+  const { start, end, shifts, timecards, weekShifts, cleansCompleted, occupiedNights, todayISO } = opts
+  const OT = opts.otWeeklyHours ?? OT_WEEKLY_HOURS
+
+  const names = new Set<string>()
+  shifts.forEach(s => !s.open && names.add(s.name))
+  timecards.forEach(t => names.add(t.name))
+
+  const people: PersonLabor[] = [...names].map(name => {
+    const mySh = shifts.filter(s => !s.open && nameMatches(s.name, name))
+    const myTc = timecards.filter(t => nameMatches(t.name, name))
+    const scheduled = round1(mySh.reduce((a, s) => a + shiftHours(s), 0))
+    const actual = round1(myTc.reduce((a, t) => a + (t.hours ?? 0), 0))
+    const ot = round1(myTc.reduce((a, t) => a + (t.overtimeHours ?? 0), 0))
+    const costs = myTc.map(t => t.laborCost).filter((c): c is number => c != null)
+    const wtd = actual // caller passes a workweek-aligned range for the daily view
+    const remaining = round1(
+      weekShifts
+        .filter(s => !s.open && nameMatches(s.name, name) && String(s.startAt) > todayISO)
+        .reduce((a, s) => a + shiftHours(s), 0)
+    )
+    const shiftDates = new Set(mySh.map(s => (s.date || String(s.startAt)).slice(0, 10)))
+    const tcDates = new Set(myTc.map(t => t.date))
+    const missed = [...shiftDates].filter(d => d < todayISO.slice(0, 10) && !tcDates.has(d))
+    return {
+      name,
+      scheduledHours: scheduled,
+      actualHours: actual,
+      varianceHours: round1(actual - scheduled),
+      overtimeHours: ot,
+      laborCost: costs.length ? round2(costs.reduce((a, c) => a + c, 0)) : null,
+      weekToDateHours: wtd,
+      remainingScheduledThisWeek: remaining,
+      projectedWeekHours: round1(wtd + remaining),
+      overtimeRisk: wtd + remaining >= OT,
+      openTimecard: myTc.some(t => t.open),
+      noShow: missed.length > 0,
+    }
+  }).sort((a, b) => b.actualHours - a.actualHours)
+
+  const withCost = timecards.filter(t => t.laborCost != null)
+  const totalCost = withCost.length
+    ? round2(withCost.reduce((a, t) => a + (t.laborCost as number), 0))
+    : null
+  const totalActual = round1(timecards.reduce((a, t) => a + (t.hours ?? 0), 0))
+
+  const cleaningHours = round1(
+    timecards
+      .filter(t => !t.role || /clean|housekeep|turn/i.test(t.role))
+      .reduce((a, t) => a + (t.hours ?? 0), 0)
+  )
+
+  const noShows = people.filter(p => p.noShow).flatMap(p => {
+    const myShiftDates = shifts
+      .filter(s => !s.open && nameMatches(s.name, p.name))
+      .map(s => (s.date || String(s.startAt)).slice(0, 10))
+    const myTcDates = new Set(timecards.filter(t => nameMatches(t.name, p.name)).map(t => t.date))
+    return myShiftDates
+      .filter(d => d < todayISO.slice(0, 10) && !myTcDates.has(d))
+      .map(date => ({ name: p.name, date }))
+  })
+
+  return {
+    range: { start, end },
+    totalScheduledHours: round1(shifts.filter(s => !s.open).reduce((a, s) => a + shiftHours(s), 0)),
+    totalActualHours: totalActual,
+    totalOvertimeHours: round1(timecards.reduce((a, t) => a + (t.overtimeHours ?? 0), 0)),
+    totalLaborCost: totalCost,
+    costDataCoverage: timecards.length ? round2(withCost.length / timecards.length) : 0,
+    cleansCompleted,
+    hoursPerClean: cleansCompleted ? round2(cleaningHours / cleansCompleted) : null,
+    laborCostPerOccupiedNight:
+      totalCost != null && occupiedNights ? round2(totalCost / occupiedNights) : null,
+    people,
+    flags: {
+      overtimeRisk: people.filter(p => p.overtimeRisk).map(p => p.name),
+      noShows,
+      stillClockedIn: people
+        .filter(p => p.openTimecard)
+        .map(p => p.name),
+    },
+  }
+}
