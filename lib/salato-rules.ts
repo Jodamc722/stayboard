@@ -20,3 +20,39 @@ export const SALATO_RULES: HouseRule[] = [
   { id: 'id-consent', title: 'ID & identity verification', body: 'I consent to providing a valid government-issued photo ID and a photo of myself for identity verification, and confirm the ID is mine and I am the guest of record.' },
   { id: 'accuracy', title: 'Accuracy & agreement', body: 'I confirm the information I have provided is accurate, I am at least 18 years old (or the local age of majority), and I agree to these house rules for the duration of my stay.' },
 ]
+
+// Rules can be edited by the team (Rules tab on the Salato board); the active set is stored here.
+export const SALATO_RULES_KEY = 'salato_rules'
+
+// Clean + de-dupe a rules array coming from the editor / storage into safe HouseRule[].
+export function sanitizeRules(input: any): HouseRule[] {
+  const arr = Array.isArray(input) ? input : []
+  const out: HouseRule[] = []
+  const seen: Record<string, boolean> = {}
+  for (let i = 0; i < arr.length && out.length < 50; i++) {
+    const r = arr[i] || {}
+    const title = String(r.title == null ? '' : r.title).trim().slice(0, 200)
+    const body = String(r.body == null ? '' : r.body).trim().slice(0, 2000)
+    if (!title && !body) continue
+    let id = String(r.id == null ? '' : r.id).trim().slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '')
+    if (!id) id = 'rule-' + (i + 1)
+    while (seen[id]) id = id + '-x'
+    seen[id] = true
+    out.push({ id, title: title || 'Rule', body })
+  }
+  return out
+}
+
+// Active rule set: the team's custom rules (app_settings) if present & valid, else the defaults above.
+export async function loadSalatoRules(db: any): Promise<{ rules: HouseRule[]; version: number; custom: boolean }> {
+  try {
+    const { data } = await db.from('app_settings').select('value').eq('key', SALATO_RULES_KEY).limit(1)
+    const row: any = Array.isArray(data) ? data[0] : null
+    if (row && row.value) {
+      const j = JSON.parse(row.value)
+      const rules = sanitizeRules(j && j.rules)
+      if (rules.length) return { rules, version: Number(j && j.version) || SALATO_RULES_VERSION, custom: true }
+    }
+  } catch {}
+  return { rules: SALATO_RULES, version: SALATO_RULES_VERSION, custom: false }
+}
