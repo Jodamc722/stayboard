@@ -175,6 +175,21 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
     setBusy(false)
   }
 
+  // Daily calendar sync - the hotel's own events page is the source of truth for activations.
+  const [syncMsg, setSyncMsg] = useState('')
+  async function syncActivations() {
+    setBusy(true); setSyncMsg('')
+    try {
+      const r = await fetch('/api/cron/guide-activations', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (j && j.content) setG(j.content)
+      setSyncMsg(j && j.ok ? ('Synced ' + (j.synced || 0) + ' from the hotel calendar') : ('Sync failed: ' + ((j && j.error) || 'unknown')))
+    } catch (e: any) { setSyncMsg('Sync failed: ' + String(e?.message || e)) }
+    setBusy(false)
+  }
+
   async function pullQuotes() {
     setBusy(true)
     try {
@@ -363,7 +378,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
           <div className="gd-card gd-shadow" style={{ maxWidth: 380, width: '100%', padding: 24 }}>
             <Eyebrow>Admin</Eyebrow>
             <h3 style={{ fontFamily: SERIF, fontSize: 24, margin: '6px 0 4px' }}>Unlock editing</h3>
-            <p className="text-sm" style={{ color: 'rgba(22,32,75,.6)' }}>Use the Lighthouse admin password. Guests never see this.</p>
+            <p className="text-sm" style={{ color: 'rgba(22,32,75,.6)' }}>Use the StayBoard admin password. Guests never see this.</p>
             <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlock() }}
               placeholder="Admin password" autoFocus
               style={{ width: '100%', marginTop: 14, padding: '10px 12px', borderRadius: 12, border: '1px solid rgba(22,32,75,.2)', outline: 'none' }} />
@@ -476,7 +491,26 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
               </span>
             ) : null}
             {edit ? <Btn onClick={() => addActivation(pickDay)} tone="solid">+ Add{pickDay ? ' on ' + shortDate(pickDay) : ' an activation'}</Btn> : null}
+            {edit ? <Btn onClick={syncActivations}>{busy ? 'Syncing...' : 'Sync from hotel site'}</Btn> : null}
+            {!edit && g.activations?.syncedAt ? (
+              <span style={{ fontSize: 12, color: 'rgba(22,32,75,.45)' }}>
+                Updated {new Date(g.activations.syncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+            ) : null}
           </div>
+          {edit ? (
+            <div className="mb-5 space-y-1.5" style={{ maxWidth: 640 }}>
+              <div className="flex items-center gap-2">
+                <span style={{ fontSize: 11, color: 'rgba(22,32,75,.55)', fontWeight: 600, whiteSpace: 'nowrap' }}>Calendar source</span>
+                <Ed v={(g.activations as any)?.source || ''} on={s2 => set(['activations', 'source'], s2)} ph="https://... the hotel's events page" />
+              </div>
+              <p style={{ fontSize: 12, color: 'rgba(22,32,75,.55)' }}>
+                Read every morning. Events it finds are refreshed automatically; anything you type here by hand is left alone.
+                {g.activations?.syncedAt ? ' Last read ' + new Date(g.activations.syncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.' : ''}
+              </p>
+              {syncMsg ? <div style={{ fontSize: 12.5, fontWeight: 600, color: syncMsg.indexOf('failed') >= 0 ? '#b42318' : 'var(--leaf)' }}>{syncMsg}</div> : null}
+            </div>
+          ) : null}
 
           {/* month calendar - floats over the page so nothing below it jumps */}
           {calOpen ? (
@@ -574,6 +608,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                       </details>
                       <div className="flex items-center gap-1.5 pt-1">
                         <span style={{ fontSize: 11, color: 'rgba(22,32,75,.5)', fontWeight: 600 }}>{repeatLabel(it)}</span>
+                        {it.src === 'web' ? <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--leaf)', border: '1px solid rgba(92,138,74,.35)', borderRadius: 999, padding: '1px 7px' }}>Auto</span> : null}
                         <span style={{ flex: 1 }} />
                         <Btn onClick={() => drop(['activations', 'items'], i)} tone="danger">Remove</Btn>
                       </div>
