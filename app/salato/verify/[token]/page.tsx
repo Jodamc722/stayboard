@@ -137,14 +137,19 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
         {data.confirmationCode ? <Detail label="Confirmation" value={data.confirmationCode} /> : null}
       </div>
 
-      {/* House & building rules — one at a time; initial each to continue */}
+      {/* House & building rules — one clean screen per rule; initial each to continue */}
       <div className={card}>
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-base font-bold">House &amp; building rules</div>
-          <div className="text-[11px] font-medium text-neutral-500">{allInitialed ? '✓ All initialed' : ('Rule ' + (Math.min(ruleStep, Math.max(0, rules.length - 1)) + 1) + ' of ' + rules.length)}</div>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <div className="text-base font-bold leading-tight">House &amp; building rules</div>
+            <div className="text-[11px] text-neutral-400 mt-0.5">Read and initial each one</div>
+          </div>
+          <div className={'shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full ' + (allInitialed ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-600')}>
+            {allInitialed ? '✓ Done' : ((Math.min(ruleStep, Math.max(0, rules.length - 1)) + 1) + ' / ' + rules.length)}
+          </div>
         </div>
-        <div className="h-1.5 rounded-full bg-neutral-100 overflow-hidden mb-3">
-          <div className="h-full bg-emerald-500 transition-all" style={{ width: (rules.length ? Math.round((initialedCount / rules.length) * 100) : 0) + '%' }} />
+        <div className="h-1.5 rounded-full bg-neutral-100 overflow-hidden mb-4">
+          <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: (rules.length ? Math.round((initialedCount / rules.length) * 100) : 0) + '%' }} />
         </div>
         {rules.length === 0 ? <div className="text-neutral-400 text-sm">No rules to review.</div> : (() => {
           const step = Math.min(ruleStep, rules.length - 1)
@@ -154,32 +159,35 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
           const isLast = step === rules.length - 1
           return (
             <div>
-              <div className={'rounded-xl border p-4 ' + (ok ? 'border-emerald-200 bg-emerald-50/50' : 'border-neutral-200 bg-neutral-50')}>
-                <div className="text-sm font-semibold mb-1">{step + 1}. {r.title}</div>
-                <div className="text-[13px] text-neutral-600 leading-relaxed">{r.body}</div>
-                <div className="mt-4 pt-3 border-t border-neutral-200/70 flex items-center gap-3">
-                  <div className="text-[11px] text-neutral-500 flex-1">Tap the box to initial{defaultInitials ? ' (' + defaultInitials + ')' : ''} and confirm you agree to this rule.</div>
-                  <div className="text-center">
-                    <input value={val} aria-label={'Initials for rule ' + (step + 1)} placeholder="INIT" autoCapitalize="characters" autoComplete="off" inputMode="text"
-                      onFocus={() => { if (!(ruleInitials[r.id] || '').trim() && defaultInitials) setRuleInitials(prev => Object.assign({}, prev, { [r.id]: defaultInitials })) }}
-                      onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z\s.]/g, '').slice(0, 6); setRuleInitials(prev => Object.assign({}, prev, { [r.id]: v })) }}
-                      className={'w-20 rounded-lg border px-2 py-2 text-base tracking-widest text-center uppercase ' + (ok ? 'border-emerald-300 text-emerald-800' : 'border-neutral-300')} />
-                    <div className={'text-[9px] mt-0.5 ' + (ok ? 'text-emerald-600 font-semibold' : 'text-neutral-400')}>{ok ? '✓ Initialed' : 'Tap to initial'}</div>
+              <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={'shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold ' + (ok ? 'bg-emerald-500 text-white' : 'bg-neutral-900 text-white')}>{ok ? '✓' : (step + 1)}</div>
+                  <div className="text-[15px] font-bold leading-snug">{r.title}</div>
+                </div>
+                <div className="text-[13.5px] text-neutral-600 leading-relaxed">{r.body}</div>
+                <div className="mt-5 rounded-xl border border-dashed border-neutral-300 bg-white p-3 flex items-center gap-3">
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold text-neutral-700">Your initials</div>
+                    <div className="text-[11px] text-neutral-400 mt-0.5">Tap to add{defaultInitials ? ' (' + defaultInitials + ')' : ''} — confirms you agree</div>
                   </div>
+                  <input value={val} aria-label={'Initials for rule ' + (step + 1)} placeholder="—" autoCapitalize="characters" autoComplete="off" inputMode="text"
+                    onFocus={() => { if (!(ruleInitials[r.id] || '').trim() && defaultInitials) setRuleInitials(prev => Object.assign({}, prev, { [r.id]: defaultInitials })) }}
+                    onChange={e => { const v = e.target.value.toUpperCase().replace(/[^A-Z\s.]/g, '').slice(0, 6); setRuleInitials(prev => Object.assign({}, prev, { [r.id]: v })) }}
+                    className={'w-20 h-12 shrink-0 rounded-xl border-2 text-lg font-bold tracking-widest text-center uppercase ' + (ok ? 'border-emerald-400 text-emerald-700 bg-emerald-50' : 'border-neutral-300 text-neutral-900')} />
                 </div>
               </div>
-              <div className="flex items-center gap-2 mt-3">
+              <div className="flex items-center gap-2 mt-4">
                 <button type="button" onClick={() => setRuleStep(Math.max(0, step - 1))} disabled={step === 0}
-                  className="px-4 py-2 rounded-xl border border-neutral-300 text-neutral-700 text-sm font-semibold disabled:opacity-40">Back</button>
+                  className="px-4 py-3 rounded-xl border border-neutral-300 text-neutral-700 text-sm font-semibold disabled:opacity-30">Back</button>
                 {!isLast
                   ? <button type="button" onClick={() => setRuleStep(step + 1)} disabled={!ok}
-                      className="flex-1 px-4 py-2 rounded-xl bg-neutral-900 text-white text-sm font-semibold disabled:opacity-40">Next rule</button>
-                  : <div className={'flex-1 text-center px-4 py-2 rounded-xl text-sm font-semibold ' + (allInitialed ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-100 text-neutral-400')}>{allInitialed ? '✓ All rules initialed' : 'Initial to finish'}</div>}
+                      className="flex-1 px-4 py-3 rounded-xl bg-neutral-900 text-white text-sm font-semibold disabled:opacity-30 hover:bg-neutral-800 transition-colors">{ok ? 'Next rule →' : 'Initial to continue'}</button>
+                  : <div className={'flex-1 text-center px-4 py-3 rounded-xl text-sm font-bold ' + (allInitialed ? 'bg-emerald-500 text-white' : 'bg-neutral-100 text-neutral-400')}>{allInitialed ? '✓ All rules initialed' : 'Initial to finish'}</div>}
               </div>
-              <div className="flex flex-wrap gap-1.5 mt-3 justify-center">
+              <div className="flex flex-wrap gap-1.5 mt-4 justify-center">
                 {rules.map((rr, di) => { const dok = !!(ruleInitials[rr.id] || '').trim(); return (
                   <button key={rr.id} type="button" onClick={() => setRuleStep(di)} aria-label={'Go to rule ' + (di + 1)}
-                    className={'h-2.5 w-2.5 rounded-full transition-colors ' + (di === step ? 'bg-neutral-900' : dok ? 'bg-emerald-400' : 'bg-neutral-300')} />
+                    className={'h-2 rounded-full transition-all ' + (di === step ? 'w-6 bg-neutral-900' : dok ? 'w-2 bg-emerald-400' : 'w-2 bg-neutral-300')} />
                 )})}
               </div>
             </div>
