@@ -15,6 +15,8 @@ export function SalatoVerifyEmailAdmin() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [testBusy, setTestBusy] = useState(false)
+  const [testMsg, setTestMsg] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/salato-verify-email', { cache: 'no-store' })
@@ -34,6 +36,17 @@ export function SalatoVerifyEmailAdmin() {
       setMsg('Saved' + (j.valid && j.valid.length ? ' — ' + j.valid.length + ' recipient' + (j.valid.length === 1 ? '' : 's') : ''))
     } catch (e: any) { setMsg(String(e?.message || e)) }
     setBusy(false)
+  }
+
+  const sendTest = async () => {
+    setTestBusy(true); setTestMsg('')
+    try {
+      const r = await fetch('/api/settings/salato-verify-email', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ test: true }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setTestMsg(j?.error || 'Test failed'); setTestBusy(false); return }
+      setTestMsg('Test sent to you (' + (j.to || 'your email') + ') from ' + (j.from || '') + ' — check your inbox.')
+    } catch (e: any) { setTestMsg(String(e?.message || e)) }
+    setTestBusy(false)
   }
 
   if (loading) return <div className="text-sm text-muted">Loading…</div>
@@ -63,10 +76,12 @@ export function SalatoVerifyEmailAdmin() {
           className="w-full text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-600/40" />
         <div className="text-[11px] text-muted mt-1">Must be a teammate who has connected Google with the Gmail permission (the same grant used by the Morning Ops Brief). The email is sent from this mailbox.</div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button onClick={save} disabled={busy} className="rounded-lg bg-brand-600 text-white text-sm font-semibold px-4 py-2 disabled:opacity-40 hover:bg-brand-700 transition-colors">{busy ? 'Saving…' : 'Save'}</button>
+        <button onClick={sendTest} disabled={testBusy} className="rounded-lg border border-line text-ink text-sm font-semibold px-4 py-2 disabled:opacity-40 hover:bg-app transition-colors">{testBusy ? 'Sending…' : 'Send test to me'}</button>
         {msg && <span className="text-xs text-muted">{msg}</span>}
       </div>
+      {testMsg && <div className="text-xs text-muted">{testMsg}</div>}
     </div>
   )
 }
