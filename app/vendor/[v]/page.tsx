@@ -3,7 +3,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; past?: Row[]; error?: string }
-type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming' | 'past'
+type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming' | 'past' | 'rules'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'arrivals', label: 'Arrivals' },
@@ -11,6 +11,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'active', label: 'Active reservations' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'past', label: 'Past' },
+  { key: 'rules', label: 'Rules' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 // 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
@@ -44,6 +45,11 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   // Banner photo pick — saved on the server (app_settings) so it sticks for everyone on the link.
   const [pickerOpen, setPickerOpen] = useState(false)
   const [savingBanner, setSavingBanner] = useState(false)
+  // Rules editor (Salato only) — the team edits the house & building rules shown on the verify link.
+  const [rulesDraft, setRulesDraft] = useState<{ id?: string; title: string; body: string }[] | null>(null)
+  const [rulesBusy, setRulesBusy] = useState(false)
+  const [rulesMsg, setRulesMsg] = useState('')
+  const [rulesLoaded, setRulesLoaded] = useState(false)
   useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} }, [])
 
   const load = useCallback(async () => {
@@ -94,6 +100,30 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     try { await fetch('/api/public/banner-set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ surface: 'board:' + params.v.toLowerCase(), url: url || '' }) }) } catch {}
     await load()
     setSavingBanner(false); setPickerOpen(false)
+  }
+  const loadRules = useCallback(async () => {
+    setRulesMsg('')
+    try {
+      const r = await fetch('/api/public/salato-rules', { cache: 'no-store' })
+      const j = await r.json()
+      if (r.ok && j.ok) { setRulesDraft((j.rules || []).map((x: any) => ({ id: x.id, title: x.title || '', body: x.body || '' }))); setRulesLoaded(true) }
+      else setRulesMsg(j.error || 'Could not load rules')
+    } catch (e: any) { setRulesMsg(String(e?.message || e)) }
+  }, [])
+  useEffect(() => { if (tab === 'rules' && !rulesLoaded) loadRules() }, [tab, rulesLoaded, loadRules])
+  const setRule = (i: number, field: 'title' | 'body', v: string) => setRulesDraft(d => { const n = (d || []).slice(); const cur = Object.assign({}, n[i]); if (field === 'title') cur.title = v; else cur.body = v; n[i] = cur; return n })
+  const addRule = () => setRulesDraft(d => (d || []).concat([{ title: '', body: '' }]))
+  const delRule = (i: number) => setRulesDraft(d => (d || []).filter((_, ix) => ix !== i))
+  const moveRule = (i: number, dir: number) => setRulesDraft(d => { const n = (d || []).slice(); const j = i + dir; if (j < 0 || j >= n.length) return n; const t = n[i]; n[i] = n[j]; n[j] = t; return n })
+  const saveRules = async () => {
+    setRulesBusy(true); setRulesMsg('')
+    try {
+      const r = await fetch('/api/public/salato-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: rulesDraft || [] }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setRulesMsg(j.error || 'Could not save'); setRulesBusy(false); return }
+      setRulesDraft((j.rules || []).map((x: any) => ({ id: x.id, title: x.title || '', body: x.body || '' }))); setRulesMsg('Saved — applies to new verification links')
+    } catch (e: any) { setRulesMsg(String(e?.message || e)) }
+    setRulesBusy(false)
   }
   const saveNote = async (rid: string) => {
     if (!noteText.trim()) return
@@ -209,12 +239,42 @@ export default function VendorPage({ params }: { params: { v: string } }) {
         </div>
         {syncMsg && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-3 inline-block print:hidden">{syncMsg}</div>}
 
-        <div className="flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm print:hidden">
-          {TABS.map(t => { const n = ((data as any)[t.key] || []).length; return (
-            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
+        <div className="flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm print:hidden overflow-x-auto">
+          {TABS.filter(t => t.key !== 'rules' || data.verifyEnabled).map(t => { const n = t.key === 'rules' ? null : ((data as any)[t.key] || []).length; return (
+            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 whitespace-nowrap text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}{n !== null && <span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span>}</button>
           )})}
         </div>
 
+        {tab === 'rules' ? (
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-bold">Edit house &amp; building rules</div>
+              <p className="text-xs text-neutral-500 mt-1">Add, edit, reorder, or remove the rules guests initial on the Salato verification link. Changes apply to new verifications.</p>
+            </div>
+            {rulesDraft === null ? <div className="text-neutral-400 text-sm py-8 text-center">Loading rules…{rulesMsg ? ' ' + rulesMsg : ''}</div> : (
+              <div className="space-y-3">
+                {rulesDraft.map((rd, i) => (
+                  <div key={i} className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="shrink-0 h-6 w-6 rounded-full bg-neutral-900 text-white text-xs font-bold flex items-center justify-center">{i + 1}</span>
+                      <input value={rd.title} onChange={e => setRule(i, 'title', e.target.value)} placeholder="Rule title" className="flex-1 min-w-0 text-sm font-semibold border border-neutral-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
+                      <button onClick={() => moveRule(i, -1)} disabled={i === 0} title="Move up" className="shrink-0 h-8 w-8 rounded-lg border border-neutral-200 text-neutral-500 hover:bg-neutral-50 disabled:opacity-30">↑</button>
+                      <button onClick={() => moveRule(i, 1)} disabled={i === rulesDraft.length - 1} title="Move down" className="shrink-0 h-8 w-8 rounded-lg border border-neutral-200 text-neutral-500 hover:bg-neutral-50 disabled:opacity-30">↓</button>
+                      <button onClick={() => delRule(i)} title="Delete rule" className="shrink-0 h-8 w-8 rounded-lg border border-red-200 text-red-600 hover:bg-red-50">✕</button>
+                    </div>
+                    <textarea value={rd.body} onChange={e => setRule(i, 'body', e.target.value)} placeholder="The rule text the guest agrees to…" rows={3} className="w-full text-[13px] border border-neutral-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
+                  </div>
+                ))}
+                <button onClick={addRule} className="w-full rounded-2xl border-2 border-dashed border-neutral-300 text-neutral-600 text-sm font-semibold py-3 hover:border-neutral-400 hover:bg-neutral-50 transition-colors">+ Add rule</button>
+                <div className="sticky bottom-3 flex items-center gap-2 bg-white/95 backdrop-blur rounded-2xl border border-neutral-200 p-3 shadow-lg">
+                  <button onClick={saveRules} disabled={rulesBusy} className="flex-1 rounded-xl bg-neutral-900 text-white text-sm font-semibold py-2.5 disabled:opacity-40 hover:bg-neutral-800 transition-colors">{rulesBusy ? 'Saving…' : 'Save rules'}</button>
+                  <button onClick={loadRules} disabled={rulesBusy} className="rounded-xl border border-neutral-300 text-neutral-700 text-sm font-semibold px-4 py-2.5 disabled:opacity-40">Reload</button>
+                </div>
+                {rulesMsg && <div className="text-xs text-neutral-500 text-center">{rulesMsg}</div>}
+              </div>
+            )}
+          </div>
+        ) : (<>
         {rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">{tab === 'upcoming' ? 'No upcoming reservations in the next 30 days.' : tab === 'past' ? 'No checkouts in the last 30 days.' : 'Nothing here this week.'}</div>}
 
         <div className="space-y-5">
@@ -315,6 +375,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
             </div>
           ))}
         </div>
+        </>)}
       </div>
     </div>
   )
