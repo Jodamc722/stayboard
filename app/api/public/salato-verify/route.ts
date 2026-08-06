@@ -166,8 +166,9 @@ export async function POST(req: NextRequest) {
     try {
       const cfg: any = await getSetting('salato_verify_notify', { emails: '', enabled: true })
       const to = validEmails(cfg && cfg.emails)
+      const cc = validEmails(cfg && cfg.cc)
       const fromEmail = (validEmails(cfg && cfg.from)[0]) || 'jon@stay-hospitality.com'
-      if ((cfg?.enabled !== false) && to.length) {
+      if ((cfg?.enabled !== false) && (to.length || cc.length)) {
         const origin = new URL(req.url).origin
         const viewLink = origin + '/salato/share?verify=' + rid
         const details: { label: string; value: string }[] = [
@@ -203,8 +204,9 @@ export async function POST(req: NextRequest) {
           + '<div style="font-weight:700;margin:8px 0">Signature</div><img src="cid:sigimg" alt="Signature" style="max-width:360px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;margin-bottom:16px">'
           + '<div style="font-weight:700;margin:8px 0">House &amp; building rules (v' + rulesVersion + ') — initialed by guest</div><ol style="padding-left:18px;margin-top:4px">' + rulesHtml + '</ol>'
           + '<p style="font-size:12px;color:#6b7280;margin-top:16px">A PDF copy is attached. View on the board: <a href="' + viewLink + '">' + viewLink + '</a></p></div>'
-        const send = await sendGmail({ fromEmail, to, subject: 'Salato verification — ' + (fullName || 'Guest') + (info.unit ? ' — ' + info.unit : ''), html, attachments: att })
+        const send = await sendGmail({ fromEmail, to, cc, subject: 'Salato verification — ' + (fullName || 'Guest') + (info.unit ? ' — ' + info.unit : ''), html, attachments: att })
         record.emailedTo = send.ok ? to : []
+        record.emailedCc = send.ok ? cc : []
         record.emailedFrom = fromEmail
         if (!send.ok) record.emailError = send.error
       }
