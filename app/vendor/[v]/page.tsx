@@ -2,19 +2,20 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
-type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; error?: string }
-type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming'
+type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; past?: Row[]; error?: string }
+type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming' | 'past'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'arrivals', label: 'Arrivals' },
   { key: 'departures', label: 'Departure cleans' },
   { key: 'active', label: 'Active reservations' },
   { key: 'upcoming', label: 'Upcoming' },
+  { key: 'past', label: 'Past' },
 ]
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 // 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
 function fmtTime(t: string | null | undefined) { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(String(t)); if (!m) return String(t); let h = parseInt(m[1], 10); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + m[2] + ' ' + ap }
-function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? (r.cleanDay || r.checkOut) : r.checkIn }
+function dateFor(r: Row, tab: TabKey) { return tab === 'departures' ? (r.cleanDay || r.checkOut) : tab === 'past' ? r.checkOut : r.checkIn }
 function bedLabel(n: number | null) { if (n == null) return ''; return n === 0 ? 'Studio' : n + 'BR' }
 function keyOf(r: Row, tab: TabKey) { return tab.charAt(0) + r.unit + '|' + dateFor(r, tab) }
 function relDay(iso: string, today: string) { if (!today) return ''; if (iso === today) return 'Today'; const a = new Date(iso + 'T12:00:00'), b = new Date(today + 'T12:00:00'); const dd = Math.round((+a - +b) / 86400000); if (dd === 1) return 'Tomorrow'; return '' }
@@ -155,10 +156,11 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const byDay: Record<string, Row[]> = {}
   for (const r of rows) { const k = dateFor(r, tab); if (!byDay[k]) { byDay[k] = []; dayKeys.push(k) } byDay[k].push(r) }
   dayKeys.sort()
+  if (tab === 'past') dayKeys.reverse() // most recent checkout first
 
   const exportCsv = () => {
-    const head = [['Date', 'Unit', 'Guest', 'Bedrooms', 'Code', tab === 'departures' ? 'Checkout' : 'Check-in', 'Same-day turn', 'Notes']]
-    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', fmtTime(tab === 'departures' ? r.checkOutTime : r.checkInTime), r.sameDayTurn ? 'YES' : '', r.extended ? 'EXTENDED - do not clean (now out ' + (r.extendedTo || '') + ')' : (r.resNotes || r.notes || '')])
+    const head = [['Date', 'Unit', 'Guest', 'Bedrooms', 'Code', (tab === 'departures' || tab === 'past') ? 'Checkout' : 'Check-in', 'Same-day turn', 'Notes']]
+    const body = rows.map(r => [dateFor(r, tab), r.unit, r.guestName || '', bedLabel(r.bedrooms), r.doorCode || '', fmtTime((tab === 'departures' || tab === 'past') ? r.checkOutTime : r.checkInTime), r.sameDayTurn ? 'YES' : '', r.extended ? 'EXTENDED - do not clean (now out ' + (r.extendedTo || '') + ')' : (r.resNotes || r.notes || '')])
     const csv = head.concat(body).map(line => line.map(x => /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -213,7 +215,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
           )})}
         </div>
 
-        {rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">{tab === 'upcoming' ? 'No upcoming reservations in the next 30 days.' : 'Nothing here this week.'}</div>}
+        {rows.length === 0 && <div className="text-neutral-400 text-sm py-10 text-center">{tab === 'upcoming' ? 'No upcoming reservations in the next 30 days.' : tab === 'past' ? 'No checkouts in the last 30 days.' : 'Nothing here this week.'}</div>}
 
         <div className="space-y-5">
           {dayKeys.map(day => (
@@ -221,11 +223,11 @@ export default function VendorPage({ params }: { params: { v: string } }) {
               <div className="flex items-baseline gap-2 mb-2 px-1">
                 <h2 className="text-sm font-bold text-neutral-900">{fmtDate(day)}</h2>
                 {relDay(day, data.today || '') && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-neutral-900 text-white">{relDay(day, data.today || '')}</span>}
-                <span className="text-xs text-neutral-400">{byDay[day].length} {tab === 'departures' ? 'cleans' : (tab === 'arrivals' || tab === 'upcoming') ? 'arrivals' : 'staying'}</span>
+                <span className="text-xs text-neutral-400">{byDay[day].length} {tab === 'departures' ? 'cleans' : (tab === 'arrivals' || tab === 'upcoming') ? 'arrivals' : tab === 'past' ? 'departed' : 'staying'}</span>
               </div>
               <div className="space-y-2">
                 {byDay[day].map((r, i) => {
-                  const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
+                  const time = (tab === 'departures' || tab === 'past') ? r.checkOutTime : r.checkInTime
                   const id = keyOf(r, tab) + i
                   const open = expanded === id
                   return (
@@ -238,14 +240,16 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                             {tab === 'departures' && r.sameDayTurn && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">Same-day turn</span>}
                             {r.extended && <span title="Guest extended - this unit is still occupied. Do not clean." className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">Extended {'\u00b7'} do not clean</span>}
                             {(r.resNotes || r.notes) && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">Note</span>}
-                            {data.verifyEnabled && (tab === 'arrivals' || tab === 'active' || tab === 'upcoming') && (r.verified
+                            {data.verifyEnabled && (tab === 'arrivals' || tab === 'active' || tab === 'upcoming' || tab === 'past') && (r.verified
                               ? <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">Verified</span>
-                              : <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">Needs verification</span>)}
+                              : (tab === 'past'
+                                ? <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-500 border border-neutral-200">Not verified</span>
+                                : <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">Needs verification</span>))}
                           </div>
                           <div className="text-xs text-neutral-500 truncate">{r.guestName || 'Guest'}{r.guests ? ' · ' + r.guests + ' guests' : ''}{bedLabel(r.bedrooms) ? ' · ' + bedLabel(r.bedrooms) : ''}{r.doorCode ? ' · code ' + r.doorCode : ''}{r.extended && r.extendedTo ? ' · now out ' + fmtDate(r.extendedTo) : ''}</div>
                         </div>
                         <div className="text-right shrink-0">
-                          {time && <div className="text-sm font-medium text-emerald-700">{tab === 'departures' ? 'out ' : 'in '}{fmtTime(time)}</div>}
+                          {time && <div className="text-sm font-medium text-emerald-700">{(tab === 'departures' || tab === 'past') ? 'out ' : 'in '}{fmtTime(time)}</div>}
                           {(tab === 'active' || tab === 'upcoming') && <div className="text-xs text-neutral-400">out {fmtDate(r.checkOut)}</div>}
                         </div>
                         <span className="text-neutral-300 text-xs">{open ? '▲' : '▼'}</span>
@@ -270,7 +274,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                               </div>
                             </div>
                           )}
-                          {data.verifyEnabled && (tab === 'arrivals' || tab === 'active' || tab === 'upcoming') && r.id && (
+                          {data.verifyEnabled && (tab === 'arrivals' || tab === 'active' || tab === 'upcoming' || tab === 'past') && r.id && (
                             <div className="col-span-2 mt-1 print:hidden">
                               <div className="text-xs uppercase tracking-wide text-neutral-400 mb-1">ID verification</div>
                               {r.verified ? (
@@ -282,8 +286,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                                     {r.signatureUrl && <a href={r.signatureUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Signature</div><img src={r.signatureUrl} alt="Signature" className="w-full rounded-lg border border-neutral-200 bg-white" /></a>}
                                   </div>
                                 </div>
-                              ) : (
-                                <a href={'/salato/verify/' + r.id} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-2 rounded-lg text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors">Start verification</a>
+                              ) : (tab === 'past'
+                                ? <div className="text-neutral-400 text-[13px]">No verification on file for this stay.</div>
+                                : <a href={'/salato/verify/' + r.id} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-2 rounded-lg text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors">Start verification</a>
                               )}
                             </div>
                           )}
