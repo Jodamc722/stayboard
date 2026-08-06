@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null; emailedTo?: string[]; emailedCc?: string[]; emailError?: string | null }
 type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; isAppUser?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; past?: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming' | 'past' | 'rules'
 
@@ -54,6 +54,12 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   // Non-signed-in viewers must enter the dedicated rules password to save edits (signed-in app
   // users don't need it — the board API tells us who's who via data.isAppUser).
   const [rulesPw, setRulesPw] = useState('')
+  // Reopen a completed verification (done incorrectly). App users reopen directly; share-only
+  // viewers must supply the admin password. reopenFor holds the row id whose confirm box is open.
+  const [reopenFor, setReopenFor] = useState('')
+  const [reopenPw, setReopenPw] = useState('')
+  const [reopenBusy, setReopenBusy] = useState(false)
+  const [reopenMsg, setReopenMsg] = useState('')
   useEffect(() => { try { const b = localStorage.getItem('board_note_by'); if (b) setNoteBy(b) } catch {} }, [])
 
   const load = useCallback(async () => {
@@ -130,6 +136,18 @@ export default function VendorPage({ params }: { params: { v: string } }) {
       setRulesDraft((j.rules || []).map((x: any) => ({ id: x.id, title: x.title || '', body: x.body || '' }))); setRulesMsg('Saved — applies to new verification links')
     } catch (e: any) { setRulesMsg(String(e?.message || e)) }
     setRulesBusy(false)
+  }
+  const reopen = async (rid: string) => {
+    setReopenBusy(true); setReopenMsg('')
+    try {
+      const payload: any = { rid, action: 'reopen' }
+      if (!data?.isAppUser) payload.password = reopenPw
+      const r = await fetch('/api/public/salato-verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setReopenMsg(j.error || 'Could not reopen'); setReopenBusy(false); return }
+      setReopenFor(''); setReopenPw(''); await load()
+    } catch (e: any) { setReopenMsg(String(e?.message || e)) }
+    setReopenBusy(false)
   }
   const saveNote = async (rid: string) => {
     if (!noteText.trim()) return
@@ -367,6 +385,32 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                                   ) : (
                                     <div className="text-neutral-400 text-[12px]">Sign in to the Stayboard app to view the ID, selfie &amp; signature.</div>
                                   )}
+                                  {data.isAppUser && (
+                                    <div className="text-[11px] mt-2">
+                                      {r.emailError
+                                        ? <span className="text-red-600">Email not sent: {r.emailError}</span>
+                                        : (r.emailedTo && r.emailedTo.length)
+                                          ? <span className="text-neutral-500">Emailed {r.emailedTo.join(', ')}{r.emailedCc && r.emailedCc.length ? ' · cc ' + r.emailedCc.join(', ') : ''}</span>
+                                          : <span className="text-neutral-400">No email sent (no recipient set, or notifications off).</span>}
+                                    </div>
+                                  )}
+                                  <div className="mt-3">
+                                    {reopenFor === (keyOf(r, tab) + i) ? (
+                                      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2.5">
+                                        <div className="text-[12px] text-neutral-700 mb-1.5">Reopen this verification so the guest can complete it again?</div>
+                                        {!data.isAppUser && (
+                                          <input type="password" value={reopenPw} onChange={e => setReopenPw(e.target.value)} placeholder="Admin password" className="w-full max-w-xs text-sm border border-neutral-200 rounded-lg px-2 py-1.5 mb-1.5 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
+                                        )}
+                                        <div className="flex items-center gap-2">
+                                          <button onClick={() => reopen(r.id as string)} disabled={reopenBusy || (!data.isAppUser && reopenPw.trim().length < 4)} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white disabled:opacity-40 hover:bg-red-700 transition-colors">{reopenBusy ? 'Reopening…' : 'Confirm reopen'}</button>
+                                          <button onClick={() => { setReopenFor(''); setReopenPw(''); setReopenMsg('') }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-neutral-300 text-neutral-700">Cancel</button>
+                                          {reopenMsg && <span className="text-xs text-red-600">{reopenMsg}</span>}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <button onClick={() => { setReopenFor(keyOf(r, tab) + i); setReopenPw(''); setReopenMsg('') }} className="text-[12px] font-medium text-neutral-500 hover:text-red-600 underline">Reopen verification</button>
+                                    )}
+                                  </div>
                                 </div>
                               ) : (tab === 'past'
                                 ? <div className="text-neutral-400 text-[13px]">No verification on file for this stay.</div>
