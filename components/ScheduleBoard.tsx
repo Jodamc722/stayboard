@@ -5,6 +5,7 @@
 // Breezeway task. Botanica is hotel-staff (vendor) so its rows are tagged. NOTHING writes to Breezeway until
 // you click Push. The schedule is cached and only re-pulls on the morning/noon cron or when you hit Sync.
 import { useEffect, useMemo, useState, useRef, Fragment } from 'react'
+import { HomebaseWeek } from '@/components/HomebaseWeek'
 import { createPortal } from 'react-dom'
 import { useOpsPresets } from '@/lib/useOpsPresets'
 import { benchmarkMinutes, DEFAULT_TIMING, type Timing } from '@/lib/ops-presets'
@@ -506,6 +507,7 @@ async function pushBlocks() {
   if (tab === 'planner') return (
     <div className="space-y-4">
       {tabsBar}
+      <HomebaseWeek />
       <ForecastBoard mode="weekly" />
     </div>
   )
