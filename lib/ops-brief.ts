@@ -1,5 +1,4 @@
-// THE MORNING OPS BRIEF — the operations twin of the Daily Financial Brief.
-//
+// THE MORNING OPS BRIEF - the operations twin of the Daily Financial Brief.
 // Built ON TOP OF the daysheet engine (lib/daysheet), which already computes the day the way the
 // ops boards do: arrivals with walk-in detection, owner stays, departures, vacants with next
 // arrival, open glitches and plain-English exceptions — one source of truth, so the email can
@@ -341,12 +340,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         vendor: VEN2.test(str(l.building)) || VEN2.test(str(nm2)),
       }
     }
-    const want = variant === 'full' ? null : variant.toLowerCase()
+    // Payroll is one Homebase location and cannot be split by market, so the labor %
+    // is always portfolio-wide payroll vs portfolio-wide in-house fees - comparing
+    // whole payroll to one market's fees produced a nonsense 300%+ figure.
     let fees = 0
     for (const r of (rr2.data || []) as any[]) {
       const info = mk2[String(r.listing_id)]
       if (!info || info.vendor) continue
-      if (want && info.m !== want) continue
       const f = Number((r as any).cleaning); if (Number.isFinite(f)) fees += f
     }
     const status = laborRevenueStatus(payroll > 0 ? payroll : null, fees > 0 ? fees : null, lset)
@@ -358,7 +358,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const money = variant === 'full'
       ? ` · <b>${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees`
       : ''
-    const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}</span>` +
+    const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
     laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
