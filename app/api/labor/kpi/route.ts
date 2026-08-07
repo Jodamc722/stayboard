@@ -272,7 +272,11 @@ export async function GET(req: Request) {
     }
     const hk = agg['housekeeping'] || { hours: 0, payroll: 0, people: new Set<string>() }
     const mt = agg['maintenance'] || { hours: 0, payroll: 0, people: new Set<string>() }
-    const mtTaskMinutes = taskRows.filter(t => classify(t) === 'maintenance').reduce((a, t) => a + (num(t.total_minutes) ?? 0), 0)
+    const mtPeopleArr = Array.from(mt.people)
+    const mtTaskMinutes = taskRows
+      .filter(t => classify(t) === 'maintenance')
+      .filter(t => { const d = doer(t); return !!d && mtPeopleArr.some(p => nameMatches(d, p)) })
+      .reduce((a, t) => a + (num(t.total_minutes) ?? 0), 0)
     const departments = {
       housekeeping: {
         people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
