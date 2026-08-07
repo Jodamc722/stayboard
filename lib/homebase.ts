@@ -138,7 +138,7 @@ export function crossCheck(
     cleanersOnBoard.set(key, [...(cleanersOnBoard.get(key) || []), c.unit])
   }
 
-  const assignedNotScheduled = [...cleanersOnBoard.entries()]
+  const assignedNotScheduled = Array.from(cleanersOnBoard.entries())
     .filter(([cleaner]) => !shifts.some(s => !s.open && nameMatches(s.name, cleaner)))
     .map(([cleaner, units]) => ({ cleaner, units }))
 
@@ -148,7 +148,7 @@ export function crossCheck(
   const scheduledNoAssignment = shifts.filter(s =>
     !s.open &&
     looksLikeCleaner(s) &&
-    ![...cleanersOnBoard.keys()].some(c => nameMatches(s.name, c))
+    !Array.from(cleanersOnBoard.keys()).some(c => nameMatches(s.name, c))
   )
 
   return { onShift: shifts, assignedNotScheduled, scheduledNoAssignment }
