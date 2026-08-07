@@ -9,7 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
-import { getShifts, nameMatches, type Shift } from '@/lib/homebase'
+import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { sendGmail } from '@/lib/gmail-send'
@@ -84,7 +84,16 @@ export async function GET(req: NextRequest) {
 
     const cleanTasks = ((tr.data || []) as any[]).filter(t =>
       /clean|housekeep|turn/.test((String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()))
-    const doer = (t: any): string | null => t.assignee_name || t.finished_by_name || null
+    // Canonicalize Breezeway doers to Homebase names (fuzzy + unique-first-name).
+    const aliasCache: Record<string, string | null> = {}
+    const roster: string[] = []
+    for (const t of timecards) if (roster.indexOf(t.name) < 0) roster.push(t.name)
+    const doer = (t: any): string | null => {
+      const raw = t.assignee_name || t.finished_by_name || null
+      if (!raw) return null
+      if (!(raw in aliasCache)) aliasCache[raw] = nameMatchesRoster(String(raw), roster)
+      return aliasCache[raw] || String(raw)
+    }
     const used: Record<string, boolean> = {}
     const atts: { fee: number | null; who: string | null; vendor: boolean }[] = []
     for (const r of (rr.data || []) as any[]) {
