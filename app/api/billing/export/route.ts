@@ -63,16 +63,68 @@ function toCsv(tasks: BillingTask[]): string {
   return rows.join('\n')
 }
 
-function cell(v: string, type: 'String' | 'Number' = 'String'): string {
-  return `<Cell><Data ss:Type="${type}">${type === 'Number' ? v : xml(v)}</Data></Cell>`
+function cell(v: string, type: 'String' | 'Number' = 'String', styleId?: string): string {
+  const st = styleId ? ` ss:StyleID="${styleId}"` : ''
+  return `<Cell${st}><Data ss:Type="${type}">${type === 'Number' ? v : xml(v)}</Data></Cell>`
 }
 function row(cells: string[]): string { return '<Row>' + cells.join('') + '</Row>' }
+// Basic look for the owner-statement attachment: bold title/headers, currency columns, real column
+// widths — so the sheet drops straight into an owner statement without cleanup.
+const XLS_STYLES =
+  '<Styles>' +
+  '<Style ss:ID="title"><Font ss:Bold="1" ss:Size="14"/></Style>' +
+  '<Style ss:ID="sub"><Font ss:Color="#666666"/></Style>' +
+  '<Style ss:ID="hdr"><Font ss:Bold="1"/><Interior ss:Color="#EEEFF3" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>' +
+  '<Style ss:ID="cur"><NumberFormat ss:Format="&quot;$&quot;#,##0.00"/></Style>' +
+  '<Style ss:ID="num"><NumberFormat ss:Format="0.00"/></Style>' +
+  '<Style ss:ID="tot"><Font ss:Bold="1"/><NumberFormat ss:Format="&quot;$&quot;#,##0.00"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>' +
+  '<Style ss:ID="totlbl"><Font ss:Bold="1"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>' +
+  '</Styles>'
+const OWNER_COLS = '<Column ss:Width="62"/><Column ss:Width="130"/><Column ss:Width="230"/><Column ss:Width="80"/><Column ss:Width="46"/><Column ss:Width="52"/><Column ss:Width="70"/><Column ss:Width="150"/>'
+function monthLabel(month: string): string {
+  const d = new Date(month + '-15T12:00:00Z')
+  return isNaN(d.getTime()) ? month : d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
 function sheetName(s: string, used: Record<string, boolean>): string {
   let n = s.replace(/[\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28) || 'Owner'
   let k = n; let i = 2
   while (used[k]) { k = n.slice(0, 25) + ' ' + i; i++ }
   used[k] = true
   return k
+}
+
+// One clean, statement-ready sheet per owner: title block, Date/Unit/Service columns, currency
+// formatting, grand total. Only lines with money on them — a $0 clean has no place on an owner
+// statement attachment.
+function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: Record<string, boolean>): string {
+  const billable = ts.filter(t => t.billedAmount > 0)
+    .sort((a, b) => (a.unit + (a.scheduledDate || '')).localeCompare(b.unit + (b.scheduledDate || '')))
+  const rows: string[] = []
+  rows.push(row([cell('Stay Hospitality — Billable Services', 'String', 'title')]))
+  rows.push(row([cell(ownerName, 'String', 'sub')]))
+  rows.push(row([cell('Period: ' + monthLabel(month), 'String', 'sub')]))
+  rows.push('<Row/>')
+  rows.push(row(['Date', 'Unit', 'Service', 'Type', 'Hours', 'Rate', 'Amount', 'Note'].map(h => cell(h, 'String', 'hdr'))))
+  let total = 0
+  for (const t of billable) {
+    for (const l of linesOf(t)) {
+      if (l.amount <= 0) continue
+      total += l.amount
+      const service = l.kind === 'labor' || l.kind === 'override' ? l.task : l.task + ' — ' + l.description
+      rows.push(row([
+        cell(l.date), cell(l.unit), cell(service), cell(l.kind === 'override' ? 'labor' : l.kind),
+        cell(l.hours || '', l.hours ? 'Number' : 'String', l.hours ? 'num' : undefined),
+        cell(l.rate || '', l.rate ? 'Number' : 'String', l.rate ? 'cur' : undefined),
+        cell(money(l.amount), 'Number', 'cur'),
+        cell(l.note),
+      ]))
+    }
+  }
+  rows.push(row([
+    cell('TOTAL', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'),
+    cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell(money(total), 'Number', 'tot'), cell('', 'String', 'totlbl'),
+  ]))
+  return `<Worksheet ss:Name="${xml(sheetName(ownerName, used))}"><Table>` + OWNER_COLS + rows.join('') + '</Table></Worksheet>'
 }
 
 function toXls(month: string, tasks: BillingTask[]): string {
@@ -85,38 +137,28 @@ function toXls(month: string, tasks: BillingTask[]): string {
   }
   const ownerNames = Object.keys(byOwner).sort((a, b) => a.localeCompare(b))
   const used: Record<string, boolean> = {}
-  const head = ['Unit', 'Date', 'Task', 'Department', 'Line type', 'Description', 'Hours', 'Rate', 'Amount', 'Assignee', 'Note']
 
-  const summaryRows = [row([cell('Billing owner'), cell('Tasks'), cell('Actual hours'), cell('Billed')])]
-  for (const o of ownerNames) {
-    const ts = byOwner[o]
-    const mins = ts.reduce((s, t) => s + (t.actualMinutes || 0), 0)
-    const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
-    summaryRows.push(row([cell(o), cell(String(ts.length), 'Number'), cell(hrs(mins) || '0.00', 'Number'), cell(money(billed), 'Number')]))
-  }
-  const sheets: string[] = [
-    `<Worksheet ss:Name="Summary ${xml(month)}"><Table>` + summaryRows.join('') + '</Table></Worksheet>',
-  ]
-  for (const o of ownerNames) {
-    const ts = byOwner[o].slice().sort((a, b) => (a.unit + (a.scheduledDate || '')).localeCompare(b.unit + (b.scheduledDate || '')))
-    const rows: string[] = [row(head.map(h => cell(h)))]
-    let total = 0
-    for (const t of ts) {
-      for (const l of linesOf(t)) {
-        total += l.amount
-        rows.push(row([
-          cell(l.unit), cell(l.date), cell(l.task), cell(l.dept), cell(l.kind), cell(l.description),
-          cell(l.hours || '0', 'Number'), cell(l.rate || '0', 'Number'), cell(money(l.amount), 'Number'),
-          cell(l.assignee), cell(l.note),
-        ]))
-      }
+  const sheets: string[] = []
+  if (ownerNames.length > 1) {
+    const summaryRows: string[] = []
+    summaryRows.push(row([cell('Billable Services — ' + monthLabel(month), 'String', 'title')]))
+    summaryRows.push('<Row/>')
+    summaryRows.push(row([cell('Billing owner', 'String', 'hdr'), cell('Tasks', 'String', 'hdr'), cell('Hours', 'String', 'hdr'), cell('Billed', 'String', 'hdr')]))
+    let grand = 0
+    for (const o of ownerNames) {
+      const ts = byOwner[o]
+      const mins = ts.reduce((s, t) => s + (t.actualMinutes || 0), 0)
+      const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
+      grand += billed
+      summaryRows.push(row([cell(o), cell(String(ts.length), 'Number'), cell(hrs(mins) || '0.00', 'Number', 'num'), cell(money(billed), 'Number', 'cur')]))
     }
-    rows.push(row([cell('TOTAL'), cell(''), cell(''), cell(''), cell(''), cell(''), cell(''), cell(''), cell(money(total), 'Number'), cell(''), cell('')]))
-    sheets.push(`<Worksheet ss:Name="${xml(sheetName(o, used))}"><Table>` + rows.join('') + '</Table></Worksheet>')
+    summaryRows.push(row([cell('TOTAL', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell(money(grand), 'Number', 'tot')]))
+    sheets.push('<Worksheet ss:Name="Summary"><Table><Column ss:Width="220"/><Column ss:Width="50"/><Column ss:Width="60"/><Column ss:Width="80"/>' + summaryRows.join('') + '</Table></Worksheet>')
   }
+  for (const o of ownerNames) sheets.push(ownerSheet(month, o, byOwner[o], used))
   return '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
     '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
-    sheets.join('') + '</Workbook>'
+    XLS_STYLES + sheets.join('') + '</Workbook>'
 }
 
 export async function GET(req: NextRequest) {
@@ -134,10 +176,13 @@ export async function GET(req: NextRequest) {
     if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt)
     if (format === 'xls') {
       const body = toXls(month, scoped)
+      // Per-owner downloads carry the owner's name so the file drops into their statement folder.
+      const ownerName = ownerId && scoped[0] ? String(scoped[0].ownerName || '').replace(/[^A-Za-z0-9 _-]/g, '').trim().replace(/\s+/g, '-').slice(0, 40) : ''
+      const fname = ownerName ? `billable-${ownerName}-${month || 'month'}.xls` : `billing-${month || 'month'}.xls`
       return new NextResponse(body, {
         headers: {
           'Content-Type': 'application/vnd.ms-excel',
-          'Content-Disposition': `attachment; filename="billing-${month || 'month'}.xls"`,
+          'Content-Disposition': `attachment; filename="${fname}"`,
         },
       })
     }
