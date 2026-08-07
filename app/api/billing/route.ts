@@ -14,11 +14,13 @@ export async function GET(req: NextRequest) {
   if (!gate.ok) return gate.res
   const month = String(req.nextUrl.searchParams.get('month') || '').slice(0, 7)
   try {
-    const [data, rates] = await Promise.all([
+    const [data, rates, def] = await Promise.all([
       billingMonth(month),
       getSetting<Record<string, number>>('labor_cost_rates', {}),
+      getSetting<{ rate: number }>('billing_default_rate', { rate: 40 }),
     ])
-    return NextResponse.json({ ok: true, month, ...data, laborRates: rates })
+    const defaultRate = Number(def?.rate)
+    return NextResponse.json({ ok: true, month, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40 })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
