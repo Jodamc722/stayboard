@@ -302,18 +302,20 @@ function workbookSheets(month: string, tasks: BillingTask[], chargeRate: number)
     const rows: XCell[][] = []
     rows.push([{ v: 'Billable Services — ' + monthLabel(month), s: 2 }])
     rows.push([])
-    rows.push(['Billing owner', 'Tasks', 'Hours', 'Billed'].map(h => ({ v: h, s: 3 })))
-    let grand = 0
+    rows.push(['Billing owner', 'Tasks', 'Hours', 'In-house labor', 'Vendor labor', 'Billed'].map(h => ({ v: h, s: 3 })))
+    let grand = 0, grandIn = 0, grandVen = 0
     for (const o of ownerNames) {
       const ts = byOwner[o]
       const mins = ts.reduce((s, t) => s + (t.actualMinutes || 0), 0)
       const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
-      grand += billed
-      rows.push([{ v: o }, { v: String(ts.length), num: true }, { v: hrs(mins) || '0.00', s: 5, num: true }, { v: money(billed), s: 4, num: true }])
+      const laborIn = ts.reduce((s, t) => s + (!t.excluded && t.crew === 'inhouse' ? t.laborAmount : 0), 0)
+      const laborVen = ts.reduce((s, t) => s + (!t.excluded && t.crew === 'vendor' ? t.laborAmount : 0), 0)
+      grand += billed; grandIn += laborIn; grandVen += laborVen
+      rows.push([{ v: o }, { v: String(ts.length), num: true }, { v: hrs(mins) || '0.00', s: 5, num: true }, { v: money(laborIn), s: 4, num: true }, { v: money(laborVen), s: 4, num: true }, { v: money(billed), s: 4, num: true }])
     }
-    rows.push([{ v: 'TOTAL', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 }, { v: money(grand), s: 6, num: true }])
+    rows.push([{ v: 'TOTAL', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 }, { v: money(grandIn), s: 6, num: true }, { v: money(grandVen), s: 6, num: true }, { v: money(grand), s: 6, num: true }])
     used['Summary'] = true
-    sheets.push({ name: 'Summary', widths: [34, 8, 10, 14], rows })
+    sheets.push({ name: 'Summary', widths: [34, 8, 10, 14, 14, 14], rows })
   }
   for (const o of ownerNames) sheets.push(ownerSheetData(month, o, byOwner[o], chargeRate, used))
   return sheets
