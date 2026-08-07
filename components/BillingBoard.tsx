@@ -27,7 +27,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -64,7 +64,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 }
 
 // ── Per-task editor row ─────────────────────────────────────────────────────
-function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit: boolean; onSaved: () => void; selected?: boolean; onSelect?: () => void }) {
+function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: Task; canEdit: boolean; onSaved: () => void; selected?: boolean; onSelect?: () => void; defaultRate?: number }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -76,6 +76,10 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit
   const [extraDesc, setExtraDesc] = useState('')
   const [extraAmt, setExtraAmt] = useState('')
   const [itemAmt, setItemAmt] = useState<Record<string, string>>({})
+  // Inline row editing (Jon 2026-08-07): hours + rate editable right in the row, no expand needed.
+  const [rowH, setRowH] = useState<string | null>(null)
+  const [rowR, setRowR] = useState<string | null>(null)
+  const [rowA, setRowA] = useState<string | null>(null)
 
   const post = useCallback(async (body: any, tag: string) => {
     setBusy(tag); setErr(null)
@@ -125,6 +129,40 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit
     setItemAmt(m => ({ ...m, [it.key]: '' }))
     saveAdjust({ item_overrides: overrideMap(it.key) }, 'item')
   }
+  // Row-level saves. HOURS and AMOUNT are the same fact at the charge rate (Jon: "we charge 40
+  // per hour — if they put 20 it's .5 hours"): editing either overwrites the billed total AND
+  // keeps the other in sync at $rate/h. Stored as our overlay (billed_hours + override_amount) —
+  // Breezeway has no writable time field; their clock is the crew's taps. RATE edits push to
+  // Breezeway (rate_paid + hourly).
+  const chargeRate = defaultRate != null && defaultRate > 0 ? defaultRate : 40
+  const saveRowHours = () => {
+    if (rowH == null) return
+    const cur = t.billedHours != null ? t.billedHours : (t.actualMinutes != null ? Math.round((t.actualMinutes / 60) * 100) / 100 : null)
+    if (rowH === '') { setRowH(null); if (t.billedHours != null || t.overrideAmount != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowh'); return }
+    const v = Number(rowH)
+    if (!Number.isFinite(v) || v < 0) { setRowH(null); return }
+    if (v === cur && t.overrideAmount != null) { setRowH(null); return }
+    saveAdjust({ billed_hours: v, override_amount: Math.round(v * chargeRate * 100) / 100 }, 'rowh')
+    setRowH(null)
+  }
+  const saveRowAmount = () => {
+    if (rowA == null) return
+    if (rowA === '') { setRowA(null); if (t.overrideAmount != null || t.billedHours != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowa'); return }
+    const v = Number(rowA)
+    if (!Number.isFinite(v) || v < 0) { setRowA(null); return }
+    if (v === t.billedAmount) { setRowA(null); return }
+    saveAdjust({ override_amount: v, billed_hours: Math.round((v / chargeRate) * 100) / 100 }, 'rowa')
+    setRowA(null)
+  }
+  const saveRowRate = () => {
+    if (rowR == null) return
+    const v = rowR === '' ? (defaultRate != null ? defaultRate : null) : Number(rowR)
+    if (v == null || !Number.isFinite(v)) { setRowR(null); return }
+    if (t.ratePaid === v && String(t.rateType).toLowerCase() === 'hourly') { setRowR(null); return }
+    post({ action: 'update', rate_paid: v, rate_type: 'hourly' }, 'rowr')
+    setRowR(null)
+  }
+
   const refreshDetail = async () => {
     setBusy('detail'); setErr(null)
     try {
@@ -158,11 +196,41 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit
           {t.billTo ? <span className={chip('bg-emerald-50 text-emerald-700 ring-emerald-200') + ' ml-1'}>bill: {t.billTo}</span> : null}
         </div>
         <div className="col-span-2 truncate text-muted">{t.assignees.map(a => a.name).filter(Boolean).join(', ') || t.finishedBy || '—'}</div>
-        <div className="col-span-1 tabular-nums text-right" title={t.billedHours != null ? 'Billed hours (edited) — actual ' + hours(t.actualMinutes) : 'Actual time on task'}>
-          {t.billedHours != null ? <span className="font-semibold text-brand-600">{t.billedHours.toFixed(1)}h</span> : hours(t.actualMinutes)}
+        <div className="col-span-1 text-right" title={t.billedHours != null ? 'Billed hours (edited) — actual ' + hours(t.actualMinutes) : 'Hours billed (defaults to actual time on task) — click to edit'}>
+          {canEdit ? (
+            <input
+              value={rowH != null ? rowH : (t.billedHours != null ? String(t.billedHours) : (t.actualMinutes != null ? String(Math.round((t.actualMinutes / 60) * 100) / 100) : ''))}
+              onChange={e => setRowH(e.target.value)}
+              onBlur={saveRowHours}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              placeholder="0"
+              className={'w-14 rounded-lg border px-1.5 py-0.5 text-right text-[12.5px] tabular-nums ' + (t.billedHours != null ? 'border-brand-300 text-brand-700 font-semibold' : 'border-line')}
+            />
+          ) : (t.billedHours != null ? <span className="font-semibold text-brand-600 tabular-nums">{t.billedHours.toFixed(1)}h</span> : <span className="tabular-nums">{hours(t.actualMinutes)}</span>)}
         </div>
-        <div className="col-span-1 tabular-nums text-right text-muted">{t.ratePaid != null ? money(t.ratePaid) + (String(t.rateType).toLowerCase() === 'hourly' ? '/h' : '') : '—'}</div>
-        <div className="col-span-1 tabular-nums text-right font-bold text-ink">{money(t.billedAmount)}</div>
+        <div className="col-span-1 text-right" title="Hourly rate billed — saving pushes to Breezeway">
+          {canEdit ? (
+            <input
+              value={rowR != null ? rowR : (t.ratePaid != null ? String(t.ratePaid) : '')}
+              onChange={e => setRowR(e.target.value)}
+              onBlur={saveRowRate}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              placeholder={defaultRate != null ? String(defaultRate) : '0'}
+              className="w-14 rounded-lg border border-line px-1.5 py-0.5 text-right text-[12.5px] tabular-nums"
+            />
+          ) : <span className="tabular-nums text-muted">{t.ratePaid != null ? money(t.ratePaid) + (String(t.rateType).toLowerCase() === 'hourly' ? '/h' : '') : '—'}</span>}
+        </div>
+        <div className="col-span-1 text-right" title="Billed amount — editing overwrites the total and sets hours at the charge rate ($20 at $40/h = 0.5h)">
+          {canEdit && !t.excluded ? (
+            <input
+              value={rowA != null ? rowA : String(t.billedAmount)}
+              onChange={e => setRowA(e.target.value)}
+              onBlur={saveRowAmount}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              className={'w-[72px] rounded-lg border px-1.5 py-0.5 text-right text-[12.5px] tabular-nums font-bold ' + (t.overrideAmount != null ? 'border-brand-300 text-brand-700' : 'border-line text-ink')}
+            />
+          ) : <span className="tabular-nums font-bold text-ink">{money(t.billedAmount)}</span>}
+        </div>
         <div className="col-span-1 flex items-center justify-end gap-1.5">
           {!t.hasDetail ? <span title="Billing detail not pulled yet"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span> : null}
           {done ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : null}
@@ -414,7 +482,8 @@ export function BillingBoard() {
   const [sel, setSel] = useState<Record<string, boolean>>({})
   const [bulk, setBulk] = useState<{ doing: string; done: number; total: number } | null>(null)
   const [bulkRate, setBulkRate] = useState('')
-  const [bulkRateType, setBulkRateType] = useState('piece')
+  const [bulkRateType, setBulkRateType] = useState('hourly')
+  const [rateDraft, setRateDraft] = useState<string | null>(null)
 
   const load = useCallback(async (m: string) => {
     setLoading(true); setErr(null)
@@ -634,6 +703,29 @@ export function BillingBoard() {
                 </select>
               </span>
             ) : null}
+            {canEdit ? (
+              <span className="flex items-center gap-1 text-[12px] text-muted" title="Your standard hourly charge — prefills every rate box">
+                Charge $
+                <input
+                  value={rateDraft != null ? rateDraft : (data && data.defaultRate != null ? String(data.defaultRate) : '40')}
+                  onChange={e => setRateDraft(e.target.value)}
+                  onBlur={async () => {
+                    if (rateDraft == null) return
+                    const n = Number(rateDraft)
+                    if (Number.isFinite(n) && n >= 0 && n !== data?.defaultRate) {
+                      try {
+                        const r = await fetch('/api/billing/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ defaultRate: n }) })
+                        const j = await r.json().catch(() => ({}))
+                        if (j.ok) setData(d => d ? { ...d, defaultRate: n } : d)
+                      } catch { /* keep draft */ }
+                    }
+                    setRateDraft(null)
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  className="w-12 rounded-lg border border-line bg-white px-1.5 py-1 text-right tabular-nums"
+                />/h
+              </span>
+            ) : null}
             <span className="grow" />
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -656,7 +748,7 @@ export function BillingBoard() {
               <button onClick={() => runBulk('Including', () => ({ action: 'adjust', excluded: false }))}
                 className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold">Include</button>
               <span className="flex items-center gap-1.5">
-                <input value={bulkRate} onChange={e => setBulkRate(e.target.value)} placeholder="Rate 0.00"
+                <input value={bulkRate} onChange={e => setBulkRate(e.target.value)} placeholder={data && data.defaultRate != null ? 'Rate ' + data.defaultRate : 'Rate 0.00'}
                   className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums bg-white" />
                 <select value={bulkRateType} onChange={e => setBulkRateType(e.target.value)} className="rounded-lg border border-line px-1.5 py-1 text-[12px] bg-white">
                   <option value="piece">flat</option>
@@ -693,7 +785,7 @@ export function BillingBoard() {
             <div className="col-span-1 text-right">Billed</div>
             <div className="col-span-1"></div>
           </div>
-          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload}
+          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} defaultRate={data.defaultRate}
             selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
           {!sortedFlat.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
         </div>
@@ -723,7 +815,7 @@ export function BillingBoard() {
                     </a>
                   ) : null}
                 </div>
-                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload}
+                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} defaultRate={data.defaultRate}
                   selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />) : null}
               </div>
             )
