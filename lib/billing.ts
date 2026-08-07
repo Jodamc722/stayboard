@@ -14,6 +14,7 @@
 // the Breezeway side ('owner' | 'guest') flags WHETHER a line is owner-billable.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { getEmployeeNames, nameMatches } from './homebase'
 
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
 // originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
@@ -38,6 +39,7 @@ export type BillingTask = {
   actualMinutes: number | null
   ratePaid: number | null
   rateType: string | null          // 'hourly' | 'piece' | null (unknown until detail pull)
+  crew: 'inhouse' | 'vendor' | null // who did it: our Homebase staff, an outside vendor, or unknown (no assignee)
   billTo: string | null            // task-level bill_to
   items: BillingLineItem[]         // costs + billable supplies + our extra items
   hasDetail: boolean               // billing detail pulled for this task?
@@ -62,6 +64,8 @@ export type OwnerGroup = {
   tasks: number
   billed: number
   labor: number
+  laborInhouse: number   // labor $ done by our Homebase staff
+  laborVendor: number    // labor $ done by outside vendors
   items: number
   actualMinutes: number
 }
@@ -266,6 +270,11 @@ function ownerFromName(name: string, tokens: TokenOwner): { ownerId: string; own
 export async function billingMonth(month: string): Promise<{ tasks: BillingTask[]; owners: OwnerGroup[]; missingDetail: number }> {
   const db = supabaseAdmin()
   const [raw, owners] = await Promise.all([monthTasks(month), ownerMap()])
+  // Homebase roster - a task's doer that matches an employee is in-house labor,
+  // a named doer that matches nobody is an outside vendor. No roster (API down)
+  // means crew stays null everywhere rather than mislabelling.
+  let staffNames: string[] = []
+  try { staffNames = await getEmployeeNames() } catch { /* crew stays null */ }
   const ids = raw.map(t => String(t.id))
   const details: Record<string, any> = {}
   const adjs: Record<string, any> = {}
@@ -329,6 +338,10 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
     const excluded = !!(a && a.excluded)
     const override = a && a.override_amount != null ? Number(a.override_amount) : null
     const billed = excluded ? 0 : (override != null ? override : Math.round((labor + itemsTotal) * 100) / 100)
+    const doerName = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
+    const crew: 'inhouse' | 'vendor' | null = doerName && staffNames.length
+      ? (staffNames.some(s => nameMatches(doerName, s)) ? 'inhouse' : 'vendor')
+      : null
     return {
       id, listingId: lid,
       unit: lid && names[lid] ? names[lid].unit : (prop && prop.name ? prop.name : (lid || '—')),
@@ -355,6 +368,7 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
       billedHours,
       reviewedBy: a && a.reviewed_by ? String(a.reviewed_by) : null,
       reviewedAt: a && a.reviewed_at ? String(a.reviewed_at) : null,
+      crew,
       laborAmount: labor,
       billedAmount: billed,
       reportUrl: t.report_url ? String(t.report_url) : null,
@@ -365,12 +379,14 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
   const unitsSeen: Record<string, Record<string, boolean>> = {}
   for (const t of tasks) {
     const k = t.ownerId || '—'
-    if (!groups[k]) { groups[k] = { ownerId: t.ownerId, ownerName: t.ownerName, units: 0, tasks: 0, billed: 0, labor: 0, items: 0, actualMinutes: 0 }; unitsSeen[k] = {} }
+    if (!groups[k]) { groups[k] = { ownerId: t.ownerId, ownerName: t.ownerName, units: 0, tasks: 0, billed: 0, labor: 0, laborInhouse: 0, laborVendor: 0, items: 0, actualMinutes: 0 }; unitsSeen[k] = {} }
     const g = groups[k]
     g.tasks += 1
     g.billed = Math.round((g.billed + t.billedAmount) * 100) / 100
     if (!t.excluded) {
       g.labor = Math.round((g.labor + t.laborAmount) * 100) / 100
+      if (t.crew === 'vendor') g.laborVendor = Math.round((g.laborVendor + t.laborAmount) * 100) / 100
+      else if (t.crew === 'inhouse') g.laborInhouse = Math.round((g.laborInhouse + t.laborAmount) * 100) / 100
       g.items = Math.round((g.items + t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)) * 100) / 100
     }
     g.actualMinutes += t.actualMinutes || 0
