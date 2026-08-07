@@ -1,30 +1,23 @@
-// app/api/labor/kpi/route.ts  (v3)
+// app/api/labor/kpi/route.ts  (v5)
 //
 //   GET /api/labor/kpi?days=7&market=all|miami|broward|north
+//   GET /api/labor/kpi?from=2026-08-01&to=2026-08-07&market=miami
+//   (from=to=YYYY-MM-DD gives a single-day view)
 //
-// Real schema (from lib/breezeway.ts, lib/kpi.ts, lib/segments.ts):
-//   breezeway_tasks_sync: finished_at, type_department, name, assignee_name,
-//     finished_by_name, reference_property_id (guesty listing id), rate_paid,
-//     total_minutes
-//   guesty_reservations: check_out, listing_id, status, raw->money->>fareCleaning
-//   guesty_listings: id, nickname, title, building, address_city -> marketOf()
-//
-// Cost basis: rate_paid (what the cleaner was actually paid per task) is the
-// primary labor-cost source — real dollars per task, independent of Homebase
-// wage visibility. Homebase supplies hours / OT / no-shows.
-//
-// Workweek: Sunday–Saturday by default ((settings as any).week_start = 'monday'
-// to override). OT projection is week-to-date within THIS workweek + remaining
-// scheduled shifts, not the rolling window.
-//
-// ACCURACY CONTRACT unchanged: revenue attributes only through the explicit
-// checkout -> clean-task join; everything unattributable is reported, and
-// attributed + unattributed reconciles to the total.
+// v5 adds:
+//   - custom from/to range (overrides days)
+//   - parallel Homebase day fetches (was serial — ~28s, now a few seconds)
+//   - payroll block: actual payroll (timecards labor.costs) + scheduled payroll
+//     (shifts labor.scheduled_costs) vs revenue, with labor % banding
+//   - today block for in-day decisions: clocked-in-now, payroll accrued today,
+//     scheduled payroll today, cleaning revenue today
+//   - personTasks: every person's Breezeway tasks in the window (unit, task,
+//     dept, date, minutes, pay) for the drill-down
 
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getShifts, nameMatches } from '@/lib/homebase'
+import { getShifts, nameMatches, type Shift } from '@/lib/homebase'
 import { getTimecards, computeLaborKpis } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
@@ -37,9 +30,10 @@ const dISO = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 864e5)
 const round2 = (n: number) => Math.round(n * 100) / 100
 const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : null }
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 function currentWorkweek(now: Date, weekStart: 'sunday' | 'monday') {
-  const localDow = new Date(now.toLocaleString('en-US', { timeZone: TZ })).getDay() // 0=Sun
+  const localDow = new Date(now.toLocaleString('en-US', { timeZone: TZ })).getDay()
   const offset = weekStart === 'sunday' ? localDow : (localDow + 6) % 7
   return { start: dISO(addDays(now, -offset)), end: dISO(addDays(now, 6 - offset)) }
 }
@@ -55,6 +49,17 @@ async function pageAll(q: (a: number, b: number) => any, pages = 5): Promise<any
   return out
 }
 
+async function shiftsForRange(start: string, end: string): Promise<(Shift & { date: string })[]> {
+  const dates: string[] = []
+  for (let d = new Date(start + 'T12:00:00Z'); dISO(d) <= end; d = addDays(d, 1)) dates.push(dISO(d))
+  const perDay = await Promise.all(dates.map(async date => {
+    try { return (await getShifts(date, TZ)).map(x => ({ ...x, date })) } catch { return [] }
+  }))
+  const all: (Shift & { date: string })[] = []
+  for (const day of perDay) all.push(...day)
+  return all
+}
+
 export async function GET(req: Request) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -63,10 +68,17 @@ export async function GET(req: Request) {
   const url = new URL(req.url)
   const now = new Date()
   const today = dISO(now)
-  const days = Math.min(90, Math.max(1, Number(url.searchParams.get('days')) || 7))
   const marketParam = String(url.searchParams.get('market') || 'all').toLowerCase()
-  const start = dISO(addDays(now, -(days - 1)))
-  const end = today
+  const fromQ = url.searchParams.get('from') || ''
+  const toQ = url.searchParams.get('to') || ''
+  let start: string, end: string
+  if (DATE_RE.test(fromQ) && DATE_RE.test(toQ) && fromQ <= toQ) {
+    start = fromQ; end = toQ > today ? today : toQ
+    if (start > end) start = end
+  } else {
+    const days = Math.min(90, Math.max(1, Number(url.searchParams.get('days')) || 7))
+    start = dISO(addDays(now, -(days - 1))); end = today
+  }
 
   try {
     const settings = await getLaborSettings(marketParam === 'all' ? 'default' : marketParam)
@@ -82,7 +94,6 @@ export async function GET(req: Request) {
         .select('id,nickname,title,building,address_city').range(a, b)),
     ])
 
-    // listing id -> { market, name }
     const lmap: Record<string, { market: string; name: string }> = {}
     for (const l of listingRows) {
       const name = l.nickname || l.title || 'Unit'
@@ -91,7 +102,7 @@ export async function GET(req: Request) {
     const marketFilter = (listingId: any) =>
       marketParam === 'all' || (lmap[String(listingId)]?.market === marketParam)
 
-    // ---- Tasks: everything finished in the window (real columns) ----------
+    // ---- Tasks in window ---------------------------------------------------
     const taskRows = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
       .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
       .gte('finished_at', start).lte('finished_at', end + 'T23:59:59')
@@ -109,17 +120,14 @@ export async function GET(req: Request) {
 
     const tasks = { clean: 0, inspection: 0, maintenance: 0, other: 0, total: 0 }
     const cleanTasks: any[] = []
-    let taskPayTotal = 0, taskMinutesTotal = 0
     for (const t of taskRows) {
       const c = classify(t)
       ;(tasks as any)[c]++; tasks.total++
-      taskPayTotal += num(t.rate_paid) ?? 0
-      taskMinutesTotal += num(t.total_minutes) ?? 0
       if (c === 'clean') cleanTasks.push(t)
     }
     const cleaningTaskPay = round2(cleanTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
 
-    // ---- Checkouts + cleaning fees (raw->money->>fareCleaning) ------------
+    // ---- Checkouts + cleaning fees ----------------------------------------
     const resRows = (await pageAll((a, b) => sb.from('guesty_reservations')
       .select('id,listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
       .gte('check_out', start).lte('check_out', end)
@@ -127,9 +135,9 @@ export async function GET(req: Request) {
       .range(a, b)))
       .filter(r => marketFilter(r.listing_id))
 
-    // ---- Join: checkout -> the clean that turned it ------------------------
+    // ---- Attribution join --------------------------------------------------
     const usedTask = new Set<string>()
-    type Attr = { fee: number | null; assignee: string | null }
+    type Attr = { fee: number | null; assignee: string | null; checkOut: string }
     const attributions: Attr[] = []
     for (const r of resRows) {
       const co = String(r.check_out).slice(0, 10)
@@ -140,37 +148,49 @@ export async function GET(req: Request) {
         [co, coNext].includes(String(t.finished_at).slice(0, 10))
       )
       if (match) usedTask.add(String(match.id))
-      attributions.push({ fee: num(r.cleaning), assignee: match ? doer(match) : null })
+      attributions.push({ fee: num(r.cleaning), assignee: match ? doer(match) : null, checkOut: co })
     }
 
     const totalFees = round2(attributions.reduce((a, x) => a + (x.fee ?? 0), 0))
     const attributed = attributions.filter(x => x.assignee && x.fee != null)
     const attributedFees = round2(attributed.reduce((a, x) => a + (x.fee as number), 0))
 
-    // ---- Per-cleaner: revenue generated vs what they were paid ------------
-    const cleanerNames = new Set<string>()
-    cleanTasks.forEach(t => { const d = doer(t); if (d) cleanerNames.add(d) })
+    // ---- Per-cleaner + person task detail ---------------------------------
+    const personNames = new Set<string>()
+    taskRows.forEach(t => { const d = doer(t); if (d) personNames.add(d) })
+    timecards.forEach(t => personNames.add(t.name))
 
-    const perCleaner = Array.from(cleanerNames).map(name => {
+    const personTasks: Record<string, any[]> = {}
+    for (const name of Array.from(personNames)) {
+      const mine = taskRows.filter(t => doer(t) && nameMatches(doer(t) as string, name))
+      if (mine.length) personTasks[name] = mine
+        .sort((a, b) => String(a.finished_at).localeCompare(String(b.finished_at)))
+        .map(t => ({
+          date: String(t.finished_at).slice(0, 10),
+          unit: lmap[String(t.reference_property_id)]?.name || String(t.reference_property_id || 'Unknown'),
+          task: t.name || t.type_department || 'Task',
+          kind: classify(t),
+          minutes: num(t.total_minutes),
+          pay: num(t.rate_paid),
+        }))
+    }
+
+    const cleanerNames = Array.from(new Set(cleanTasks.map(t => doer(t)).filter(Boolean))) as string[]
+    const perCleaner = cleanerNames.map(name => {
       const myTasks = cleanTasks.filter(t => doer(t) && nameMatches(doer(t) as string, name))
       const myPay = round2(myTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
-      const myMinutes = myTasks.reduce((a, t) => a + (num(t.total_minutes) ?? 0), 0)
       const mine = attributed.filter(x => nameMatches(x.assignee as string, name))
       const revenue = round2(mine.reduce((a, x) => a + (x.fee as number), 0))
       const myCards = timecards.filter(t => nameMatches(t.name, name))
-      const hbHours = round2(myCards.reduce((a, t) => a + (t.hours ?? 0), 0))
+      const payroll = round2(myCards.reduce((a, t) => a + (t.laborCost ?? 0), 0))
+      const hours = round2(myCards.reduce((a, t) => a + (t.hours ?? 0), 0))
+      const cost = payroll > 0 ? payroll : myPay
       return {
-        name,
-        cleans: myTasks.length,
-        checkoutsAttributed: mine.length,
-        revenueGenerated: revenue,
-        taskPay: myPay,
-        taskHours: round2(myMinutes / 60),
-        homebaseHours: hbHours,
-        margin: round2(revenue - myPay),
-        revenuePerLaborDollar: myPay > 0 ? round2(revenue / myPay) : null,
+        name, cleans: myTasks.length, checkoutsAttributed: mine.length,
+        revenueGenerated: revenue, taskPay: myPay, payroll, hours,
+        margin: round2(revenue - cost),
+        revenuePerLaborDollar: cost > 0 ? round2(revenue / cost) : null,
         avgFeePerClean: mine.length ? round2(revenue / mine.length) : null,
-        avgPayPerClean: myTasks.length ? round2(myPay / myTasks.length) : null,
       }
     }).sort((a, b) => (b.revenuePerLaborDollar ?? -1) - (a.revenuePerLaborDollar ?? -1))
 
@@ -187,7 +207,6 @@ export async function GET(req: Request) {
       attributedRevenue: attributedFees,
       rate: totalFees > 0 ? round2(attributedFees / totalFees) : 0,
       reliable: totalFees > 0 && attributedFees / totalFees >= (Number(settings.attribution_min) || 0.85),
-      note: 'Below the gate, fix Breezeway assignees / listing mappings before comparing cleaners.',
     }
 
     // ---- Homebase hours/OT (workweek-aligned) ------------------------------
@@ -199,32 +218,49 @@ export async function GET(req: Request) {
       weekStartDate: week.start,
     } as any)
 
+    // ---- Payroll vs revenue ------------------------------------------------
+    const scheduledCost = round2(dayShifts.reduce((a, s: any) => a + (s.scheduledCost ?? 0), 0))
+    const payrollTotal = kpis.totalLaborCost ?? 0
+    const laborPct = totalFees > 0 && payrollTotal > 0 ? round2((payrollTotal / totalFees) * 100) : null
+    const band = laborPct == null ? 'no_data'
+      : laborPct <= Number(settings.pct_good) ? 'on_target'
+      : laborPct <= Number(settings.pct_bad) ? 'watch' : 'over'
+    const payroll = {
+      actual: payrollTotal,
+      scheduled: scheduledCost,
+      revenue: totalFees,
+      laborPct, band,
+      goalPct: Number(settings.pct_good),
+      note: 'payroll = Homebase timecard costs; revenue = guest cleaning fees in window',
+    }
+
+    // ---- Today (in-day decisions) -----------------------------------------
+    const tcToday = timecards.filter(t => t.date === today)
+    const shToday = dayShifts.filter((s: any) => s.date === today)
+    const todayBlock = (start <= today && today <= end) ? {
+      date: today,
+      clockedInNow: Array.from(new Set(tcToday.filter(t => t.open).map(t => t.name))),
+      hoursSoFar: round2(tcToday.reduce((a, t) => a + (t.hours ?? 0), 0)),
+      payrollSoFar: round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
+      scheduledPayroll: round2(shToday.reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0)),
+      cleaningRevenueToday: round2(attributions.filter(x => x.checkOut === today).reduce((a, x) => a + (x.fee ?? 0), 0)),
+      tasksDoneToday: taskRows.filter(t => String(t.finished_at).slice(0, 10) === today).length,
+    } : null
+
     const economics = {
       cleaningRevenue: totalFees,
-      cleaningLaborCost: cleaningTaskPay,           // real: sum of rate_paid on cleans
-      allTaskPay: round2(taskPayTotal),
-      cleaningMargin: round2(totalFees - cleaningTaskPay),
-      cleaningMarginPct: totalFees > 0 ? round2(((totalFees - cleaningTaskPay) / totalFees) * 100) : null,
-      revenuePerLaborDollar: cleaningTaskPay > 0 ? round2(totalFees / cleaningTaskPay) : null,
-      avgMinutesPerTask: tasks.total ? Math.round(taskMinutesTotal / tasks.total) : null,
-      costBasis: 'breezeway rate_paid (per-task pay)',
+      cleaningLaborCost: cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal,
+      cleaningMargin: round2(totalFees - (cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal)),
+      revenuePerLaborDollar: payrollTotal > 0 ? round2(totalFees / payrollTotal) : null,
+      costBasis: cleaningTaskPay > 0 ? 'breezeway rate_paid' : 'homebase payroll',
     }
 
     return NextResponse.json({
-      ok: true, market: marketParam, week: { ...week, weekStart },
-      ...kpis, tasks, economics, perCleaner, attribution, unattributed, settings,
+      ok: true, market: marketParam, range: { start, end }, week: { ...week, weekStart },
+      ...kpis, tasks, economics, payroll, today: todayBlock,
+      perCleaner, personTasks, attribution, unattributed, settings,
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || String(e) })
   }
-}
-
-async function shiftsForRange(start: string, end: string) {
-  const all = []
-  for (let d = new Date(start + 'T12:00:00Z'); dISO(d) <= end; d = addDays(d, 1)) {
-    const date = dISO(d)
-    try { all.push(...(await getShifts(date, TZ)).map(x => ({ ...x, date }))) }
-    catch {}
-  }
-  return all
 }
