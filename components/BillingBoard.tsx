@@ -64,7 +64,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 }
 
 // ── Per-task editor row ─────────────────────────────────────────────────────
-function TaskRow({ t, canEdit, onSaved }: { t: Task; canEdit: boolean; onSaved: () => void }) {
+function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit: boolean; onSaved: () => void; selected?: boolean; onSelect?: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -118,13 +118,16 @@ function TaskRow({ t, canEdit, onSaved }: { t: Task; canEdit: boolean; onSaved: 
   return (
     <div className={'border-t border-line ' + (t.excluded ? 'opacity-50' : '')}>
       <div className="grid grid-cols-12 items-center gap-2 px-4 py-2 text-[12.5px]">
-        <button className="col-span-4 flex items-center gap-2 text-left min-w-0" onClick={() => setOpen(v => !v)}>
+        <div className="col-span-4 flex items-center gap-2 min-w-0">
+        {onSelect ? <input type="checkbox" checked={!!selected} onChange={onSelect} className="shrink-0" aria-label="Select task" /> : null}
+        <button className="flex items-center gap-2 text-left min-w-0 grow" onClick={() => setOpen(v => !v)}>
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted" />}
           <span className="min-w-0">
             <span className="font-semibold text-ink block truncate">{t.name}</span>
             <span className="text-[11px] text-muted block truncate">{t.unit}{t.building ? ' · ' + t.building : ''} · {t.scheduledDate || (t.finishedAt || '').slice(0, 10) || 'undated'}</span>
           </span>
         </button>
+        </div>
         <div className="col-span-2 min-w-0">
           <span className={chip(deptCls)}>{t.department}</span>
           {t.billTo ? <span className={chip('bg-emerald-50 text-emerald-700 ring-emerald-200') + ' ml-1'}>bill: {t.billTo}</span> : null}
@@ -361,6 +364,15 @@ export function BillingBoard() {
   const [q, setQ] = useState('')
   const [openOwners, setOpenOwners] = useState<Record<string, boolean>>({})
   const [pulling, setPulling] = useState<{ done: number; total: number } | null>(null)
+  // Sorting — applies inside each owner group AND to the flat All-tasks view.
+  const [sortKey, setSortKey] = useState<'date' | 'unit' | 'amount' | 'hours' | 'task'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [ownerSort, setOwnerSort] = useState<'billed' | 'name' | 'tasks' | 'hours'>('billed')
+  // Bulk selection — tick tasks (or a whole owner group) then act on all of them at once.
+  const [sel, setSel] = useState<Record<string, boolean>>({})
+  const [bulk, setBulk] = useState<{ doing: string; done: number; total: number } | null>(null)
+  const [bulkRate, setBulkRate] = useState('')
+  const [bulkRateType, setBulkRateType] = useState('piece')
 
   const load = useCallback(async (m: string) => {
     setLoading(true); setErr(null)
@@ -409,6 +421,19 @@ export function BillingBoard() {
     })
   }, [data, dept, billableOnly, showExcluded, q])
 
+  const cmpTasks = useCallback((a: Task, b: Task) => {
+    let r = 0
+    if (sortKey === 'date') r = String(a.scheduledDate || (a.finishedAt || '').slice(0, 10)).localeCompare(String(b.scheduledDate || (b.finishedAt || '').slice(0, 10)))
+    else if (sortKey === 'unit') r = a.unit.localeCompare(b.unit)
+    else if (sortKey === 'amount') r = a.billedAmount - b.billedAmount
+    else if (sortKey === 'hours') r = (a.actualMinutes || 0) - (b.actualMinutes || 0)
+    else r = a.name.localeCompare(b.name)
+    if (r === 0) r = a.unit.localeCompare(b.unit)
+    return sortDir === 'asc' ? r : -r
+  }, [sortKey, sortDir])
+
+  const sortedFlat = useMemo(() => filtered.slice().sort(cmpTasks), [filtered, cmpTasks])
+
   const byOwner = useMemo(() => {
     const map: Record<string, { g: { ownerId: string | null; ownerName: string }; tasks: Task[]; billed: number; minutes: number }> = {}
     for (const t of filtered) {
@@ -418,8 +443,38 @@ export function BillingBoard() {
       map[k].billed += t.billedAmount
       map[k].minutes += t.actualMinutes || 0
     }
-    return Object.keys(map).map(k => map[k]).sort((a, b) => b.billed - a.billed)
-  }, [filtered])
+    const groups = Object.keys(map).map(k => map[k])
+    for (const g of groups) g.tasks.sort(cmpTasks)
+    groups.sort((a, b) => {
+      if (ownerSort === 'name') return a.g.ownerName.localeCompare(b.g.ownerName)
+      if (ownerSort === 'tasks') return b.tasks.length - a.tasks.length
+      if (ownerSort === 'hours') return b.minutes - a.minutes
+      return b.billed - a.billed
+    })
+    return groups
+  }, [filtered, cmpTasks, ownerSort])
+
+  // ---- bulk actions over the current selection ----
+  const selIds = useMemo(() => Object.keys(sel).filter(k => sel[k]), [sel])
+  const toggleSel = useCallback((id: string) => setSel(s => ({ ...s, [id]: !s[id] })), [])
+  const setMany = useCallback((ids: string[], on: boolean) => setSel(s => {
+    const next = { ...s }
+    for (const id of ids) next[id] = on
+    return next
+  }), [])
+
+  const runBulk = useCallback(async (label: string, body: (id: string) => any) => {
+    setBulk({ doing: label, done: 0, total: selIds.length })
+    for (let i = 0; i < selIds.length; i++) {
+      try {
+        await fetch('/api/billing/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: selIds[i], ...body(selIds[i]) }) })
+      } catch { /* keep going — reload shows the truth */ }
+      setBulk({ doing: label, done: i + 1, total: selIds.length })
+    }
+    setBulk(null)
+    setSel({})
+    reload()
+  }, [selIds, reload])
 
   const kpis = useMemo(() => {
     let billed = 0; let labor = 0; let items = 0; let minutes = 0
@@ -510,6 +565,29 @@ export function BillingBoard() {
             <label className="flex items-center gap-1.5 text-[12px] text-muted">
               <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} /> Show excluded
             </label>
+            <span className="flex items-center gap-1 text-[12px] text-muted">
+              Sort
+              <select value={sortKey} onChange={e => setSortKey(e.target.value as any)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[12px]">
+                <option value="date">date</option>
+                <option value="unit">unit</option>
+                <option value="amount">billed $</option>
+                <option value="hours">hours</option>
+                <option value="task">task name</option>
+              </select>
+              <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')} title="Flip sort direction"
+                className="rounded-lg border border-line bg-white px-1.5 py-1 font-semibold">{sortDir === 'asc' ? '↑' : '↓'}</button>
+            </span>
+            {view === 'owner' ? (
+              <span className="flex items-center gap-1 text-[12px] text-muted">
+                Owners by
+                <select value={ownerSort} onChange={e => setOwnerSort(e.target.value as any)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[12px]">
+                  <option value="billed">billed $</option>
+                  <option value="name">name</option>
+                  <option value="tasks">tasks</option>
+                  <option value="hours">hours</option>
+                </select>
+              </span>
+            ) : null}
             <span className="grow" />
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -519,6 +597,35 @@ export function BillingBoard() {
           </>
         ) : null}
       </div>
+
+      {canEdit && selIds.length > 0 && view !== 'labor' ? (
+        <div className="sticky top-2 z-10 rounded-2xl border border-brand-200 bg-brand-50/95 backdrop-blur px-4 py-2.5 flex items-center gap-3 flex-wrap shadow-soft">
+          <span className="text-[12.5px] font-bold text-ink">{selIds.length} selected</span>
+          {bulk ? (
+            <span className="text-[12.5px] text-muted">{bulk.doing}… {bulk.done}/{bulk.total}</span>
+          ) : (
+            <>
+              <button onClick={() => runBulk('Excluding', () => ({ action: 'adjust', excluded: true }))}
+                className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold">Exclude from billing</button>
+              <button onClick={() => runBulk('Including', () => ({ action: 'adjust', excluded: false }))}
+                className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold">Include</button>
+              <span className="flex items-center gap-1.5">
+                <input value={bulkRate} onChange={e => setBulkRate(e.target.value)} placeholder="Rate 0.00"
+                  className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums bg-white" />
+                <select value={bulkRateType} onChange={e => setBulkRateType(e.target.value)} className="rounded-lg border border-line px-1.5 py-1 text-[12px] bg-white">
+                  <option value="piece">flat</option>
+                  <option value="hourly">hourly</option>
+                </select>
+                <button onClick={() => { if (Number(bulkRate) >= 0 && bulkRate !== '') runBulk('Setting rate on', () => ({ action: 'update', rate_paid: bulkRate, rate_type: bulkRateType })) }}
+                  disabled={bulkRate === ''}
+                  className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">Set rate → Breezeway</button>
+              </span>
+              <span className="grow" />
+              <button onClick={() => setSel({})} className="text-[12px] text-muted font-semibold">Clear</button>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {loading && !data ? (
         <div className="rounded-2xl border border-line bg-white p-10 text-center text-[13px] text-muted">Loading the month…</div>
@@ -540,8 +647,9 @@ export function BillingBoard() {
             <div className="col-span-1 text-right">Billed</div>
             <div className="col-span-1"></div>
           </div>
-          {filtered.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} />)}
-          {!filtered.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
+          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload}
+            selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
+          {!sortedFlat.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
         </div>
       ) : null}
 
@@ -550,9 +658,12 @@ export function BillingBoard() {
           {byOwner.map(o => {
             const k = o.g.ownerId || '—'
             const open = openOwners[k] !== false
+            const allSel = o.tasks.length > 0 && o.tasks.every(t => sel[t.id])
             return (
               <div key={k} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
                 <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
+                  {canEdit ? <input type="checkbox" checked={allSel} onChange={e => setMany(o.tasks.map(t => t.id), e.target.checked)}
+                    title="Select every task for this owner" aria-label="Select all tasks for this owner" /> : null}
                   <button onClick={() => setOpenOwners(s => ({ ...s, [k]: !open }))} className="flex items-center gap-2 min-w-0">
                     {open ? <ChevronDown className="w-4 h-4 text-muted" /> : <ChevronRight className="w-4 h-4 text-muted" />}
                     <span className="font-bold text-ink truncate">{o.g.ownerName}</span>
@@ -566,7 +677,8 @@ export function BillingBoard() {
                     </a>
                   ) : null}
                 </div>
-                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} />) : null}
+                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload}
+                  selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />) : null}
               </div>
             )
           })}
