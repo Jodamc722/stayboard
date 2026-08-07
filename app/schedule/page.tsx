@@ -3,6 +3,7 @@
 // departure clean and push the assignments to Breezeway. force-dynamic; client board fetches live.
 import { Shell } from '@/components/Shell'
 import { ScheduleBoard } from '@/components/ScheduleBoard'
+import { LaborStrip } from '@/components/LaborStrip'
 import { CalendarRange } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -15,6 +16,8 @@ export default function SchedulePage() {
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Turnover Schedule</h1>
         <p className="text-sm text-muted mt-1">The day's cleans by building with cleaner needs and who's working — assign, block, and push to Breezeway. Switch to the Weekly planner tab to build the team's week.</p>
       </header>
+
+      <LaborStrip />
       <ScheduleBoard />
     </Shell>
   )
