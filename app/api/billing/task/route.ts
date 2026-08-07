@@ -85,6 +85,20 @@ export async function POST(req: NextRequest) {
       note: body?.note !== undefined ? (String(body.note || '').slice(0, 500) || null) : (cur.note ?? null),
       override_amount: body?.override_amount !== undefined ? num(body.override_amount) : (cur.override_amount ?? null),
       billed_hours: body?.billed_hours !== undefined ? num(body.billed_hours) : (cur.billed_hours ?? null),
+      // Per-line-item amount overrides ('cost:<id>'/'supply:<id>' → dollars). Client sends the
+      // FULL map each time; an empty object clears every override on the task.
+      item_overrides: (() => {
+        if (body?.item_overrides === undefined) return cur.item_overrides ?? {}
+        const clean: Record<string, number> = {}
+        const src = body.item_overrides
+        if (src && typeof src === 'object') {
+          for (const k of Object.keys(src)) {
+            const v = num(src[k])
+            if (k && v != null && v >= 0) clean[String(k).slice(0, 60)] = v
+          }
+        }
+        return clean
+      })(),
       extra_items: body?.extra_items !== undefined
         ? (Array.isArray(body.extra_items) ? body.extra_items.slice(0, 30).map((x: any) => ({
             description: String(x?.description || '').slice(0, 200),
