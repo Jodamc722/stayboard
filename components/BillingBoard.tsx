@@ -278,7 +278,12 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted" />}
           <span className="min-w-0">
             <span className="font-semibold text-ink block truncate">{t.name}</span>
-            <span className="text-[11px] text-muted block truncate">{showUnit ? t.unit + (t.building ? ' · ' + t.building : '') + ' · ' : ''}{t.scheduledDate || (t.finishedAt || '').slice(0, 10) || 'undated'}{t.note ? ' · 📝 ' + t.note : ''}</span>
+            <span className="text-[11px] text-muted block truncate">
+              {showUnit ? t.unit + (t.building ? ' · ' + t.building : '') + ' · ' : ''}
+              {t.scheduledDate || (t.finishedAt || '').slice(0, 10) || 'undated'}
+              {t.reviewedBy ? <span className="text-emerald-600 font-semibold"> · ✓ {String(t.reviewedBy).split('@')[0]}{t.reviewedAt ? ' ' + String(t.reviewedAt).slice(5, 10) : ''}</span> : null}
+              {t.note ? ' · 📝 ' + t.note : ''}
+            </span>
           </span>
         </button>
         </div>
@@ -610,7 +615,9 @@ export function BillingBoard() {
   // Billing is for FINISHED work — open/scheduled tasks stay hidden unless asked for.
   const [completedOnly, setCompletedOnly] = useState(true)
   const [showExcluded, setShowExcluded] = useState(false)
-  const [unreviewedOnly, setUnreviewedOnly] = useState(false)
+  // Review workflow (Jon): marking a task ✓ MOVES it from "To review" to "Reviewed" — the board
+  // is a daily/weekly worklist, not a month-end audit. Default = the work that still needs eyes.
+  const [reviewFilter, setReviewFilter] = useState<'todo' | 'done' | 'all'>('todo')
   const [translating, setTranslating] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [openOwners, setOpenOwners] = useState<Record<string, boolean>>({})
@@ -679,7 +686,8 @@ export function BillingBoard() {
       // deliberate billable even while its Breezeway task is still open.
       if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)) return false
       if (dept !== 'all' && t.department !== dept) return false
-      if (unreviewedOnly && t.reviewedBy) return false
+      if (reviewFilter === 'todo' && t.reviewedBy) return false
+      if (reviewFilter === 'done' && !t.reviewedBy) return false
       // Jon's rule: the billable view is tasks with a VALUE — anything over $0 goes on the owner
       // statement; the $0 rows are noise here (they still show with the toggle off).
       if (billableOnly && !(t.billedAmount > 0)) return false
@@ -689,7 +697,26 @@ export function BillingBoard() {
       }
       return true
     })
-  }, [data, dept, billableOnly, completedOnly, showExcluded, unreviewedOnly, q])
+  }, [data, dept, billableOnly, completedOnly, showExcluded, reviewFilter, q])
+
+  // Counts for the To review / Reviewed switch — same filters, ignoring the review split itself.
+  const reviewCounts = useMemo(() => {
+    if (!data) return { todo: 0, done: 0 }
+    const needle = q.trim().toLowerCase()
+    let todo = 0; let done = 0
+    for (const t of data.tasks) {
+      if (!showExcluded && t.excluded) continue
+      if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)) continue
+      if (dept !== 'all' && t.department !== dept) continue
+      if (billableOnly && !(t.billedAmount > 0)) continue
+      if (needle) {
+        const hay = (t.name + ' ' + t.unit + ' ' + (t.building || '') + ' ' + t.ownerName + ' ' + t.assignees.map(a => a.name).join(' ')).toLowerCase()
+        if (hay.indexOf(needle) < 0) continue
+      }
+      if (t.reviewedBy) done++; else todo++
+    }
+    return { todo, done }
+  }, [data, dept, billableOnly, completedOnly, showExcluded, q])
 
   const cmpTasks = useCallback((a: Task, b: Task) => {
     let r = 0
@@ -884,9 +911,20 @@ export function BillingBoard() {
             <label className="flex items-center gap-1.5 text-[12px] text-muted">
               <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} /> Show excluded
             </label>
-            <label className="flex items-center gap-1.5 text-[12px] text-muted" title="Only tasks nobody has reviewed yet">
-              <input type="checkbox" checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} /> Unreviewed only
-            </label>
+            <span className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden" title="Marking a task ✓ moves it from To review into Reviewed">
+              <button onClick={() => setReviewFilter('todo')}
+                className={'px-2.5 py-1 text-[12px] font-semibold ' + (reviewFilter === 'todo' ? 'bg-amber-500 text-white' : 'text-muted hover:text-ink')}>
+                To review{reviewCounts.todo ? ' · ' + reviewCounts.todo : ''}
+              </button>
+              <button onClick={() => setReviewFilter('done')}
+                className={'px-2.5 py-1 text-[12px] font-semibold ' + (reviewFilter === 'done' ? 'bg-emerald-600 text-white' : 'text-muted hover:text-ink')}>
+                Reviewed{reviewCounts.done ? ' · ' + reviewCounts.done : ''}
+              </button>
+              <button onClick={() => setReviewFilter('all')}
+                className={'px-2.5 py-1 text-[12px] font-semibold ' + (reviewFilter === 'all' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                All
+              </button>
+            </span>
             <span className="flex items-center gap-1 text-[12px] text-muted">
               Sort
               <select value={sortKey} onChange={e => setSortKey(e.target.value as any)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[12px]">
