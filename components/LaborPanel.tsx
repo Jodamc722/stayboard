@@ -150,7 +150,7 @@ export function LaborPanel() {
 
       {/* DEPARTMENTS: housekeeping economics + maintenance utilization */}
       {d?.departments && (
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping</p>
             <div className="grid grid-cols-3 gap-y-3">
@@ -161,6 +161,14 @@ export function LaborPanel() {
               <Stat label="Cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} />
               <Stat label="Fee / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.feePerClean)} />
               <Stat label="Labor %" value={loading ? '…' : (d.departments.housekeeping.laborPct != null ? d.departments.housekeeping.laborPct + '%' : '—')} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-line bg-white px-3 py-4">
+            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Inspections</p>
+            <div className="grid grid-cols-3 gap-y-3">
+              <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.inspection?.payroll)} sub={(d.departments.inspection?.hours ?? 0) + 'h · ' + (d.departments.inspection?.people ?? 0) + ' people'} />
+              <Stat label="Inspections" value={loading ? '…' : String(d.departments.inspection?.inspections ?? 0)} />
+              <Stat label="Cost / inspection" value={loading ? '…' : fmt$(d.departments.inspection?.costPerInspection)} />
             </div>
           </div>
           <div className="rounded-xl border border-line bg-white px-3 py-4">
