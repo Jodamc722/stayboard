@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { billingMonth, type BillingTask } from '@/lib/billing'
+import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -96,7 +97,7 @@ function sheetName(s: string, used: Record<string, boolean>): string {
 // One clean, statement-ready sheet per owner: title block, Date/Unit/Service columns, currency
 // formatting, grand total. Only lines with money on them — a $0 clean has no place on an owner
 // statement attachment.
-function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: Record<string, boolean>): string {
+function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: Record<string, boolean>, chargeRate: number): string {
   const billable = ts.filter(t => t.billedAmount > 0)
     .sort((a, b) => (a.unit + (a.scheduledDate || '')).localeCompare(b.unit + (b.scheduledDate || '')))
   const rows: string[] = []
@@ -111,10 +112,16 @@ function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: R
       if (l.amount <= 0) continue
       total += l.amount
       const service = l.kind === 'labor' || l.kind === 'override' ? l.task : l.task + ' — ' + l.description
+      // The team enters FLAT AMOUNTS in Breezeway; billing reads them as labor at the charge
+      // rate — hours = amount ÷ rate, regardless of the task clock. Supplies stay hourless.
+      const isLabor = l.kind !== 'supply'
+      const h = isLabor
+        ? (t.billedHours != null && (l.kind === 'labor' || l.kind === 'override') ? t.billedHours.toFixed(2) : (l.amount / chargeRate).toFixed(2))
+        : ''
       rows.push(row([
-        cell(l.date), cell(l.unit), cell(service), cell(l.kind === 'override' ? 'labor' : l.kind),
-        cell(l.hours || '', l.hours ? 'Number' : 'String', l.hours ? 'num' : undefined),
-        cell(l.rate || '', l.rate ? 'Number' : 'String', l.rate ? 'cur' : undefined),
+        cell(l.date), cell(l.unit), cell(service), cell(l.kind === 'supply' ? 'supply' : 'labor'),
+        cell(h, h ? 'Number' : 'String', h ? 'num' : undefined),
+        cell(h ? chargeRate.toFixed(2) : '', h ? 'Number' : 'String', h ? 'cur' : undefined),
         cell(money(l.amount), 'Number', 'cur'),
         cell(l.note),
       ]))
@@ -127,7 +134,7 @@ function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: R
   return `<Worksheet ss:Name="${xml(sheetName(ownerName, used))}"><Table>` + OWNER_COLS + rows.join('') + '</Table></Worksheet>'
 }
 
-function toXls(month: string, tasks: BillingTask[]): string {
+function toXls(month: string, tasks: BillingTask[], chargeRate: number): string {
   const live = tasks.filter(t => !t.excluded)
   const byOwner: Record<string, BillingTask[]> = {}
   for (const t of live) {
@@ -155,7 +162,7 @@ function toXls(month: string, tasks: BillingTask[]): string {
     summaryRows.push(row([cell('TOTAL', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell(money(grand), 'Number', 'tot')]))
     sheets.push('<Worksheet ss:Name="Summary"><Table><Column ss:Width="220"/><Column ss:Width="50"/><Column ss:Width="60"/><Column ss:Width="80"/>' + summaryRows.join('') + '</Table></Worksheet>')
   }
-  for (const o of ownerNames) sheets.push(ownerSheet(month, o, byOwner[o], used))
+  for (const o of ownerNames) sheets.push(ownerSheet(month, o, byOwner[o], used, chargeRate))
   return '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
     '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
     XLS_STYLES + sheets.join('') + '</Workbook>'
@@ -175,7 +182,9 @@ export async function GET(req: NextRequest) {
     let scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
     if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt)
     if (format === 'xls') {
-      const body = toXls(month, scoped)
+      const def = await getSetting<{ rate: number }>('billing_default_rate', { rate: 40 })
+      const chargeRate = Number(def?.rate) > 0 ? Number(def.rate) : 40
+      const body = toXls(month, scoped, chargeRate)
       // Per-owner downloads carry the owner's name so the file drops into their statement folder.
       const ownerName = ownerId && scoped[0] ? String(scoped[0].ownerName || '').replace(/[^A-Za-z0-9 _-]/g, '').trim().replace(/\s+/g, '-').slice(0, 40) : ''
       const fname = ownerName ? `billable-${ownerName}-${month || 'month'}.xls` : `billing-${month || 'month'}.xls`
