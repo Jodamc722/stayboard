@@ -17,10 +17,21 @@ export async function GET() {
   return NextResponse.json({ ok: true, rates })
 }
 
+// The default CHARGE rate ($/h billed to owners — Jon: "we charge 40 per hour").
+// Separate from labor_cost_rates (what we PAY). Used to prefill row/bulk rate inputs.
+const DEFAULT_RATE_KEY = 'billing_default_rate'
+
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('billing', 'edit')
   if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
+  if (body?.defaultRate !== undefined) {
+    const n = Number(body.defaultRate)
+    if (!Number.isFinite(n) || n < 0 || n >= 1000) return NextResponse.json({ ok: false, error: 'bad defaultRate' }, { status: 400 })
+    const r0 = await setSetting(DEFAULT_RATE_KEY, { rate: Math.round(n * 100) / 100 }, gate.access.email)
+    if (!r0.ok) return NextResponse.json({ ok: false, error: r0.error }, { status: 500 })
+    if (!body?.rates) return NextResponse.json({ ok: true, defaultRate: Math.round(n * 100) / 100 })
+  }
   const incoming = body?.rates
   if (!incoming || typeof incoming !== 'object') return NextResponse.json({ ok: false, error: 'rates map required' }, { status: 400 })
   const clean: Record<string, number> = {}
