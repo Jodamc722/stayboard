@@ -15,7 +15,10 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 
-export type BillingLineItem = { description: string; amount: number; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
+// key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
+// originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
+// totals + exports; the original stays visible for the audit trail).
+export type BillingLineItem = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
 
 export type BillingTask = {
   id: string
@@ -152,23 +155,35 @@ export async function listingNames(ids: string[]): Promise<Record<string, { unit
   return out
 }
 
-function detailItems(costs: any, supplies: any, extras: any): BillingLineItem[] {
+function detailItems(costs: any, supplies: any, extras: any, overrides: any): BillingLineItem[] {
+  const ov: Record<string, any> = overrides && typeof overrides === 'object' ? overrides : {}
   const items: BillingLineItem[] = []
-  for (const c of (Array.isArray(costs) ? costs : [])) {
+  const push = (key: string, description: string, amount: number, bill_to: string | null, kind: 'cost' | 'supply' | 'extra') => {
+    const o = num(ov[key])
+    const adjusted = kind !== 'extra' && o != null && o !== amount
+    items.push({ key, description, amount: adjusted ? (o as number) : amount, originalAmount: adjusted ? amount : null, bill_to, kind })
+  }
+  const cArr = Array.isArray(costs) ? costs : []
+  for (let i = 0; i < cArr.length; i++) {
+    const c = cArr[i]
     const amt = num(c?.cost)
     if (amt == null) continue
-    items.push({ description: String(c?.description || (c?.type_cost && c.type_cost.name) || 'Cost'), amount: amt, bill_to: c?.bill_to ? String(c.bill_to) : null, kind: 'cost' })
+    push('cost:' + (c?.id ?? i), String(c?.description || (c?.type_cost && c.type_cost.name) || 'Cost'), amt, c?.bill_to ? String(c.bill_to) : null, 'cost')
   }
-  for (const s of (Array.isArray(supplies) ? supplies : [])) {
+  const sArr = Array.isArray(supplies) ? supplies : []
+  for (let i = 0; i < sArr.length; i++) {
+    const s = sArr[i]
     const amt = num(s?.total_price != null ? s.total_price : s?.unit_cost)
     if (amt == null) continue
     if (s?.billable === false) continue
-    items.push({ description: String(s?.name || s?.description || 'Supply') + (s?.quantity && Number(s.quantity) > 1 ? ' ×' + Number(s.quantity) : ''), amount: amt, bill_to: s?.bill_to ? String(s.bill_to) : null, kind: 'supply' })
+    push('supply:' + (s?.id ?? i), String(s?.name || s?.description || 'Supply') + (s?.quantity && Number(s.quantity) > 1 ? ' ×' + Number(s.quantity) : ''), amt, s?.bill_to ? String(s.bill_to) : null, 'supply')
   }
-  for (const e of (Array.isArray(extras) ? extras : [])) {
+  const eArr = Array.isArray(extras) ? extras : []
+  for (let i = 0; i < eArr.length; i++) {
+    const e = eArr[i]
     const amt = num(e?.amount)
     if (amt == null) continue
-    items.push({ description: String(e?.description || 'Adjustment'), amount: amt, bill_to: e?.bill_to ? String(e.bill_to) : 'owner', kind: 'extra' })
+    push('extra:' + i, String(e?.description || 'Adjustment'), amt, e?.bill_to ? String(e.bill_to) : 'owner', 'extra')
   }
   return items
 }
@@ -217,7 +232,7 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
     const d = details[id] || null
     const a = adjs[id] || null
     const own = lid ? owners.byListing[lid] : undefined
-    const items = detailItems(d && d.costs, d && d.supplies, a && a.extra_items)
+    const items = detailItems(d && d.costs, d && d.supplies, a && a.extra_items, a && a.item_overrides)
     const ratePaid = num(t.rate_paid)
     const rateType = d && d.rate_type ? String(d.rate_type) : null
     const billedHours = a && a.billed_hours != null ? Number(a.billed_hours) : null
