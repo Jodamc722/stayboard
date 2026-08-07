@@ -152,7 +152,7 @@ export function computeLaborKpis(opts: {
   shifts.forEach(s => !s.open && names.add(s.name))
   timecards.forEach(t => names.add(t.name))
 
-  const people: PersonLabor[] = [...names].map(name => {
+  const people: PersonLabor[] = Array.from(names).map(name => {
     const mySh = shifts.filter(s => !s.open && nameMatches(s.name, name))
     const myTc = timecards.filter(t => nameMatches(t.name, name))
     const scheduled = round1(mySh.reduce((a, s) => a + shiftHours(s), 0))
@@ -167,7 +167,7 @@ export function computeLaborKpis(opts: {
     )
     const shiftDates = new Set(mySh.map(s => (s.date || String(s.startAt)).slice(0, 10)))
     const tcDates = new Set(myTc.map(t => t.date))
-    const missed = [...shiftDates].filter(d => d < todayISO.slice(0, 10) && !tcDates.has(d))
+    const missed = Array.from(shiftDates).filter(d => d < todayISO.slice(0, 10) && !tcDates.has(d))
     return {
       name,
       scheduledHours: scheduled,
