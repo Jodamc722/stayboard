@@ -17,7 +17,7 @@ const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/
 type Json = any
 
 async function hb(path: string): Promise<Json> {
-  const key = process.env.HOMEBASE_API_KEY
+  const key = process.env.HOMEBASE_API_KEY || process.env['Homebase_Secret_id']
   if (!key) throw new Error('HOMEBASE_API_KEY is not set')
   const r = await fetch(`${BASE}${path}`, {
     headers: {
