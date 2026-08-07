@@ -1,9 +1,12 @@
-// BILLING EXPORT. GET ?month=YYYY-MM&format=csv|xls[&owner=<ownerId>]
-//   csv — flat file, one row per billable line (labor / cost / supply / extra), Excel-friendly.
-//   xls — SpreadsheetML workbook (no dependency needed): a Summary sheet of owner totals plus
-//         one worksheet per billing owner. Opens directly in Excel / Numbers / Sheets.
-// Excluded tasks are omitted from per-owner sheets and amounts; they appear in the CSV with
-// excluded=yes so nothing silently disappears from the record.
+// BILLING EXPORT. GET ?month=YYYY-MM&format=csv|xls|zip[&owner=<ownerId>][&done=1][&reviewed=1]
+//   csv — flat file, one row per billable line.
+//   xls — a REAL .xlsx workbook (Office Open XML, built with the in-file ZIP writer — no
+//         dependency): Summary sheet + one styled worksheet per owner. Replaces the old
+//         SpreadsheetML output, which Excel opened reluctantly and rendered poorly.
+//   zip — one standalone .xlsx per owner, named "<Owner> - Billable Labor - <Month>.xlsx",
+//         for dropping straight into each owner's statement. $0 owners are skipped.
+// done=1 → completed work only (matches the board default). reviewed=1 → only owners marked
+// reviewed for the month (the close-out set).
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { billingMonth, type BillingTask } from '@/lib/billing'
@@ -18,9 +21,23 @@ const esc = (s: any) => {
   const v = String(s == null ? '' : s)
   return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v
 }
-const xml = (s: any) => String(s == null ? '' : s)
+const xesc = (s: any) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
+function monthLabel(month: string): string {
+  const d = new Date(month + '-15T12:00:00Z')
+  return isNaN(d.getTime()) ? month : d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+function sheetName(s: string, used: Record<string, boolean>): string {
+  let n = s.replace(/[\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28) || 'Owner'
+  let k = n; let i = 2
+  while (used[k]) { k = n.slice(0, 25) + ' ' + i; i++ }
+  used[k] = true
+  return k
+}
+const cleanName = (s: string) => String(s || 'Owner').replace(/[^A-Za-z0-9 ,&._-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+
+// ── Billable lines per task ─────────────────────────────────────────────────
 type Line = { owner: string; unit: string; building: string; date: string; task: string; dept: string; kind: string; description: string; hours: string; rate: string; amount: number; assignee: string; status: string; excluded: boolean; note: string }
 
 function linesOf(t: BillingTask): Line[] {
@@ -64,117 +81,7 @@ function toCsv(tasks: BillingTask[]): string {
   return rows.join('\n')
 }
 
-function cell(v: string, type: 'String' | 'Number' = 'String', styleId?: string): string {
-  const st = styleId ? ` ss:StyleID="${styleId}"` : ''
-  return `<Cell${st}><Data ss:Type="${type}">${type === 'Number' ? v : xml(v)}</Data></Cell>`
-}
-function row(cells: string[]): string { return '<Row>' + cells.join('') + '</Row>' }
-// Basic look for the owner-statement attachment: bold title/headers, currency columns, real column
-// widths — so the sheet drops straight into an owner statement without cleanup.
-const XLS_STYLES =
-  '<Styles>' +
-  '<Style ss:ID="title"><Font ss:Bold="1" ss:Size="14"/></Style>' +
-  '<Style ss:ID="sub"><Font ss:Color="#666666"/></Style>' +
-  '<Style ss:ID="hdr"><Font ss:Bold="1"/><Interior ss:Color="#EEEFF3" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>' +
-  '<Style ss:ID="cur"><NumberFormat ss:Format="&quot;$&quot;#,##0.00"/></Style>' +
-  '<Style ss:ID="num"><NumberFormat ss:Format="0.00"/></Style>' +
-  '<Style ss:ID="tot"><Font ss:Bold="1"/><NumberFormat ss:Format="&quot;$&quot;#,##0.00"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>' +
-  '<Style ss:ID="totlbl"><Font ss:Bold="1"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>' +
-  '</Styles>'
-const OWNER_COLS = '<Column ss:Width="62"/><Column ss:Width="130"/><Column ss:Width="230"/><Column ss:Width="80"/><Column ss:Width="46"/><Column ss:Width="52"/><Column ss:Width="70"/><Column ss:Width="150"/>'
-function monthLabel(month: string): string {
-  const d = new Date(month + '-15T12:00:00Z')
-  return isNaN(d.getTime()) ? month : d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
-}
-function sheetName(s: string, used: Record<string, boolean>): string {
-  let n = s.replace(/[\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28) || 'Owner'
-  let k = n; let i = 2
-  while (used[k]) { k = n.slice(0, 25) + ' ' + i; i++ }
-  used[k] = true
-  return k
-}
-
-// One clean, statement-ready sheet per owner: title block, Date/Unit/Service columns, currency
-// formatting, grand total. Only lines with money on them — a $0 clean has no place on an owner
-// statement attachment.
-function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: Record<string, boolean>, chargeRate: number): string {
-  const billable = ts.filter(t => t.billedAmount > 0)
-    .sort((a, b) => (a.unit + (a.scheduledDate || '')).localeCompare(b.unit + (b.scheduledDate || '')))
-  const rows: string[] = []
-  rows.push(row([cell('Stay Hospitality — Billable Services', 'String', 'title')]))
-  rows.push(row([cell(ownerName, 'String', 'sub')]))
-  rows.push(row([cell('Period: ' + monthLabel(month), 'String', 'sub')]))
-  rows.push('<Row/>')
-  rows.push(row(['Date', 'Unit', 'Service', 'Type', 'Hours', 'Rate', 'Amount', 'Note'].map(h => cell(h, 'String', 'hdr'))))
-  let total = 0
-  for (const t of billable) {
-    for (const l of linesOf(t)) {
-      if (l.amount <= 0) continue
-      total += l.amount
-      const service = l.kind === 'labor' || l.kind === 'override' ? l.task : l.task + ' — ' + l.description
-      // The team enters FLAT AMOUNTS in Breezeway; billing reads them as labor at the charge
-      // rate — hours = amount ÷ rate, regardless of the task clock. Supplies stay hourless.
-      const isLabor = l.kind !== 'supply'
-      const h = isLabor
-        ? (t.billedHours != null && (l.kind === 'labor' || l.kind === 'override') ? t.billedHours.toFixed(2) : (l.amount / chargeRate).toFixed(2))
-        : ''
-      // Type shows WHAT KIND of work this was: a maintenance task reads "Maintenance" on the
-      // owner statement (Jon), housekeeping reads "Housekeeping"; supplies stay "Supply".
-      const dept = String(t.department || 'labor')
-      const typeLabel = l.kind === 'supply' ? 'Supply' : (dept.charAt(0).toUpperCase() + dept.slice(1))
-      rows.push(row([
-        cell(l.date), cell(l.unit), cell(service), cell(typeLabel),
-        cell(h, h ? 'Number' : 'String', h ? 'num' : undefined),
-        cell(h ? chargeRate.toFixed(2) : '', h ? 'Number' : 'String', h ? 'cur' : undefined),
-        cell(money(l.amount), 'Number', 'cur'),
-        cell(l.note),
-      ]))
-    }
-  }
-  rows.push(row([
-    cell('TOTAL', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'),
-    cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell(money(total), 'Number', 'tot'), cell('', 'String', 'totlbl'),
-  ]))
-  return `<Worksheet ss:Name="${xml(sheetName(ownerName, used))}"><Table>` + OWNER_COLS + rows.join('') + '</Table></Worksheet>'
-}
-
-function toXls(month: string, tasks: BillingTask[], chargeRate: number): string {
-  const live = tasks.filter(t => !t.excluded)
-  const byOwner: Record<string, BillingTask[]> = {}
-  for (const t of live) {
-    const k = t.ownerName
-    if (!byOwner[k]) byOwner[k] = []
-    byOwner[k].push(t)
-  }
-  const ownerNames = Object.keys(byOwner).sort((a, b) => a.localeCompare(b))
-  const used: Record<string, boolean> = {}
-
-  const sheets: string[] = []
-  if (ownerNames.length > 1) {
-    const summaryRows: string[] = []
-    summaryRows.push(row([cell('Billable Services — ' + monthLabel(month), 'String', 'title')]))
-    summaryRows.push('<Row/>')
-    summaryRows.push(row([cell('Billing owner', 'String', 'hdr'), cell('Tasks', 'String', 'hdr'), cell('Hours', 'String', 'hdr'), cell('Billed', 'String', 'hdr')]))
-    let grand = 0
-    for (const o of ownerNames) {
-      const ts = byOwner[o]
-      const mins = ts.reduce((s, t) => s + (t.actualMinutes || 0), 0)
-      const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
-      grand += billed
-      summaryRows.push(row([cell(o), cell(String(ts.length), 'Number'), cell(hrs(mins) || '0.00', 'Number', 'num'), cell(money(billed), 'Number', 'cur')]))
-    }
-    summaryRows.push(row([cell('TOTAL', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell('', 'String', 'totlbl'), cell(money(grand), 'Number', 'tot')]))
-    sheets.push('<Worksheet ss:Name="Summary"><Table><Column ss:Width="220"/><Column ss:Width="50"/><Column ss:Width="60"/><Column ss:Width="80"/>' + summaryRows.join('') + '</Table></Worksheet>')
-  }
-  for (const o of ownerNames) sheets.push(ownerSheet(month, o, byOwner[o], used, chargeRate))
-  return '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
-    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
-    XLS_STYLES + sheets.join('') + '</Workbook>'
-}
-
 // ── Minimal ZIP writer (stored entries, no compression, no dependency) ──────
-// The repo ships without new packages, and a statement attachment is a few KB of XML — store is
-// fine. Standard ZIP: local headers + central directory + EOCD, CRC-32 per entry.
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256)
   for (let n = 0; n < 256; n++) {
@@ -222,13 +129,197 @@ function buildZip(entries: { name: string; data: Buffer }[]): Buffer {
   return Buffer.concat([Buffer.concat(locals), cd, eocd])
 }
 
-// One standalone workbook for ONE owner (the file that goes into the ZIP / statement folder).
-function ownerWorkbook(month: string, ownerName: string, ts: BillingTask[], chargeRate: number): string {
-  return '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
-    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
-    XLS_STYLES + ownerSheet(month, ownerName, ts, {}, chargeRate) + '</Workbook>'
+// ── Real .xlsx builder (Office Open XML — an xlsx IS a zip of XML parts) ────
+// Style indexes (cellXfs below):
+//   0 default · 1 bold · 2 title (bold 14) · 3 header (bold, grey fill, bottom border)
+//   4 currency · 5 number 0.00 · 6 total currency (bold, top border) · 7 total label · 8 muted
+type XCell = { v: string | number; s?: number; num?: boolean }
+type XSheet = { name: string; widths: number[]; rows: XCell[][]; links?: { ref: string; url: string }[] }
+
+function colRef(i: number): string {
+  let n = i + 1; let s = ''
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26) }
+  return s
 }
-const cleanName = (s: string) => String(s || 'Owner').replace(/[^A-Za-z0-9 ,&._-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts>' +
+  '<fonts count="5"><font><sz val="11"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="11"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="14"/><name val="Calibri"/></font>' +
+  '<font><sz val="11"/><color rgb="FF6B7280"/><name val="Calibri"/></font>' +
+  '<font><u/><sz val="11"/><color rgb="FF2563EB"/><name val="Calibri"/></font></fonts>' +
+  '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FFEEEFF3"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+  '<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border>' +
+  '<border><left/><right/><top/><bottom style="thin"><color rgb="FFB8BCC6"/></bottom><diagonal/></border>' +
+  '<border><left/><right/><top style="medium"/><bottom/><diagonal/></border></borders>' +
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+  '<cellXfs count="9">' +
+  '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+  '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+  '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+  '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>' +
+  '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+  '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+  '<xf numFmtId="164" fontId="1" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>' +
+  '<xf numFmtId="0" fontId="1" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"/>' +
+  '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+  '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+  '</cellXfs></styleSheet>'
+
+function sheetXml(sh: XSheet): string {
+  const cols = sh.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')
+  const rowsXml: string[] = []
+  for (let r = 0; r < sh.rows.length; r++) {
+    const cells: string[] = []
+    const row = sh.rows[r]
+    for (let c = 0; c < row.length; c++) {
+      const cellDef = row[c]
+      if (cellDef == null) continue
+      const ref = colRef(c) + String(r + 1)
+      const s = cellDef.s ? ` s="${cellDef.s}"` : ''
+      if (cellDef.num) cells.push(`<c r="${ref}"${s}><v>${cellDef.v}</v></c>`)
+      else if (cellDef.v === '' || cellDef.v == null) cells.push(`<c r="${ref}"${s}/>`)
+      else cells.push(`<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xesc(cellDef.v)}</t></is></c>`)
+    }
+    rowsXml.push(`<row r="${r + 1}">` + cells.join('') + '</row>')
+  }
+  const links = sh.links || []
+  const hyperlinks = links.length
+    ? '<hyperlinks>' + links.map((l, i) => `<hyperlink ref="${l.ref}" r:id="rhl${i + 1}"/>`).join('') + '</hyperlinks>'
+    : ''
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    (cols ? '<cols>' + cols + '</cols>' : '') +
+    '<sheetData>' + rowsXml.join('') + '</sheetData>' + hyperlinks + '</worksheet>'
+}
+
+function makeXlsx(sheets: XSheet[]): Buffer {
+  const entries: { name: string; data: Buffer }[] = []
+  const put = (name: string, xml: string) => entries.push({ name, data: Buffer.from(xml, 'utf8') })
+  const overrides = sheets.map((_, i) =>
+    `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
+  put('[Content_Types].xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    overrides + '</Types>')
+  put('_rels/.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+  const sheetTags = sheets.map((sh, i) => `<sheet name="${xesc(sh.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')
+  put('xl/workbook.xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets>' + sheetTags + '</sheets></workbook>')
+  const rels = sheets.map((_, i) =>
+    `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') +
+    `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`
+  put('xl/_rels/workbook.xml.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '</Relationships>')
+  put('xl/styles.xml', XLSX_STYLES)
+  for (let i = 0; i < sheets.length; i++) {
+    put(`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sheets[i]))
+    const links = sheets[i].links || []
+    if (links.length) {
+      const linkRels = links.map((l, j) =>
+        `<Relationship Id="rhl${j + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xesc(l.url)}" TargetMode="External"/>`).join('')
+      put(`xl/worksheets/_rels/sheet${i + 1}.xml.rels`,
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + linkRels + '</Relationships>')
+    }
+  }
+  return buildZip(entries)
+}
+
+// ── The owner sheet content: clean, statement-ready ─────────────────────────
+// Every INDIVIDUAL task line: what was done, when it was completed, by whom, the labor math,
+// and a clickable Breezeway link straight to the task (Jon 2026-08-07).
+const OWNER_WIDTHS = [11, 20, 42, 13, 18, 12, 7, 9, 11, 10]
+const LINK_COL = 9   // column J
+
+function ownerSheetData(month: string, ownerName: string, ts: BillingTask[], chargeRate: number, used: Record<string, boolean>): XSheet {
+  const billable = ts.filter(t => t.billedAmount > 0)
+    .sort((a, b) => (a.unit + (a.scheduledDate || '')).localeCompare(b.unit + (b.scheduledDate || '')))
+  const rows: XCell[][] = []
+  const links: { ref: string; url: string }[] = []
+  rows.push([{ v: 'Stay Hospitality — Billable Services', s: 2 }])
+  rows.push([{ v: ownerName, s: 1 }])
+  rows.push([{ v: 'Period: ' + monthLabel(month), s: 8 }])
+  rows.push([])
+  rows.push(['Date', 'Unit', 'Service', 'Type', 'Completed by', 'Completed', 'Hours', 'Rate', 'Amount', 'Task'].map(h => ({ v: h, s: 3 })))
+  let total = 0
+  for (const t of billable) {
+    for (const l of linesOf(t)) {
+      if (l.amount <= 0) continue
+      total += l.amount
+      let service = l.kind === 'labor' || l.kind === 'override' ? l.task : l.task + ' — ' + l.description
+      if (l.note) service += ' (' + l.note + ')'
+      const dept = String(t.department || 'labor')
+      const typeLabel = l.kind === 'supply' ? 'Supply' : (dept.charAt(0).toUpperCase() + dept.slice(1))
+      const isLabor = l.kind !== 'supply'
+      const h = isLabor
+        ? (t.billedHours != null && (l.kind === 'labor' || l.kind === 'override') ? t.billedHours.toFixed(2) : (l.amount / chargeRate).toFixed(2))
+        : ''
+      const by = t.finishedBy || l.assignee || ''
+      const doneOn = t.finishedAt ? String(t.finishedAt).slice(0, 10) : ''
+      rows.push([
+        { v: l.date }, { v: l.unit }, { v: service }, { v: typeLabel },
+        { v: by }, { v: doneOn },
+        h ? { v: h, s: 5, num: true } : { v: '' },
+        h ? { v: chargeRate.toFixed(2), s: 4, num: true } : { v: '' },
+        { v: money(l.amount), s: 4, num: true },
+        { v: 'View task', s: 9 },
+      ])
+      links.push({ ref: colRef(LINK_COL) + String(rows.length), url: 'https://app.breezeway.io/task/' + t.id })
+    }
+  }
+  rows.push([
+    { v: 'TOTAL', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 },
+    { v: '', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 }, { v: money(total), s: 6, num: true }, { v: '', s: 7 },
+  ])
+  return { name: sheetName(ownerName, used), widths: OWNER_WIDTHS, rows, links }
+}
+
+function workbookSheets(month: string, tasks: BillingTask[], chargeRate: number): XSheet[] {
+  const live = tasks.filter(t => !t.excluded)
+  const byOwner: Record<string, BillingTask[]> = {}
+  for (const t of live) {
+    const k = t.ownerName
+    if (!byOwner[k]) byOwner[k] = []
+    byOwner[k].push(t)
+  }
+  const ownerNames = Object.keys(byOwner).sort((a, b) => a.localeCompare(b))
+  const used: Record<string, boolean> = {}
+  const sheets: XSheet[] = []
+  if (ownerNames.length > 1) {
+    const rows: XCell[][] = []
+    rows.push([{ v: 'Billable Services — ' + monthLabel(month), s: 2 }])
+    rows.push([])
+    rows.push(['Billing owner', 'Tasks', 'Hours', 'Billed'].map(h => ({ v: h, s: 3 })))
+    let grand = 0
+    for (const o of ownerNames) {
+      const ts = byOwner[o]
+      const mins = ts.reduce((s, t) => s + (t.actualMinutes || 0), 0)
+      const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
+      grand += billed
+      rows.push([{ v: o }, { v: String(ts.length), num: true }, { v: hrs(mins) || '0.00', s: 5, num: true }, { v: money(billed), s: 4, num: true }])
+    }
+    rows.push([{ v: 'TOTAL', s: 7 }, { v: '', s: 7 }, { v: '', s: 7 }, { v: money(grand), s: 6, num: true }])
+    used['Summary'] = true
+    sheets.push({ name: 'Summary', widths: [34, 8, 10, 14], rows })
+  }
+  for (const o of ownerNames) sheets.push(ownerSheetData(month, o, byOwner[o], chargeRate, used))
+  return sheets
+}
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('billing', 'view')
@@ -239,19 +330,17 @@ export async function GET(req: NextRequest) {
   const ownerId = String(sp.get('owner') || '')
   try {
     const { tasks } = await billingMonth(month)
-    // done=1 → completed work only (matches the board's "Completed only" default — you bill finished work).
     const doneOnly = sp.get('done') === '1'
     let scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
     if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)
-    // reviewed=1 → only owners marked "reviewed" for this month (the close-out set).
     if (sp.get('reviewed') === '1') {
       const reviews = await getSetting<Record<string, any>>('billing_review:' + month, {})
       scoped = scoped.filter(t => !!reviews[String(t.ownerId || 'unassigned')])
     }
+
     if (format === 'zip') {
-      // One billable-labor sheet PER OWNER, zipped — each file named "<Owner> - Billable Labor -
-      // <Month>.xls" so it drops straight into that owner's statement. Owners with nothing billed
-      // are skipped: if there is a number on the report, it goes on the statement — $0 does not.
+      // One real .xlsx per owner, zipped — each named for the owner + month. $0 owners skipped:
+      // if there is a number on the report it goes on the statement; $0 does not.
       const def = await getSetting<{ rate: number }>('billing_default_rate', { rate: 40 })
       const chargeRate = Number(def?.rate) > 0 ? Number(def.rate) : 40
       const byOwner: Record<string, BillingTask[]> = {}
@@ -268,11 +357,12 @@ export async function GET(req: NextRequest) {
         const ts = byOwner[o]
         const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
         if (billed <= 0) continue
-        let base = cleanName(o) + ' - Billable Labor - ' + label
-        let name = base + '.xls'; let i = 2
-        while (usedNames[name]) { name = base + ' (' + i + ').xls'; i++ }
+        const base = cleanName(o) + ' - Billable Labor - ' + label
+        let name = base + '.xlsx'; let i = 2
+        while (usedNames[name]) { name = base + ' (' + i + ').xlsx'; i++ }
         usedNames[name] = true
-        entries.push({ name, data: Buffer.from(ownerWorkbook(month, o, ts, chargeRate), 'utf8') })
+        const used: Record<string, boolean> = {}
+        entries.push({ name, data: makeXlsx([ownerSheetData(month, o, ts, chargeRate, used)]) })
       }
       if (!entries.length) return NextResponse.json({ ok: false, error: 'No owners with billable amounts in this month.' }, { status: 404 })
       const zip = buildZip(entries)
@@ -283,20 +373,21 @@ export async function GET(req: NextRequest) {
         },
       })
     }
+
     if (format === 'xls') {
       const def = await getSetting<{ rate: number }>('billing_default_rate', { rate: 40 })
       const chargeRate = Number(def?.rate) > 0 ? Number(def.rate) : 40
-      const body = toXls(month, scoped, chargeRate)
-      // Per-owner downloads carry the owner's name so the file drops into their statement folder.
-      const ownerName = ownerId && scoped[0] ? String(scoped[0].ownerName || '').replace(/[^A-Za-z0-9 _-]/g, '').trim().replace(/\s+/g, '-').slice(0, 40) : ''
-      const fname = ownerName ? `billable-${ownerName}-${month || 'month'}.xls` : `billing-${month || 'month'}.xls`
-      return new NextResponse(body, {
+      const body = makeXlsx(workbookSheets(month, scoped, chargeRate))
+      const ownerName = ownerId && scoped[0] ? cleanName(String(scoped[0].ownerName || '')).replace(/\s+/g, '-').slice(0, 40) : ''
+      const fname = ownerName ? `billable-${ownerName}-${month || 'month'}.xlsx` : `billing-${month || 'month'}.xlsx`
+      return new NextResponse(body as any, {
         headers: {
-          'Content-Type': 'application/vnd.ms-excel',
+          'Content-Type': XLSX_MIME,
           'Content-Disposition': `attachment; filename="${fname}"`,
         },
       })
     }
+
     const body = toCsv(scoped)
     return new NextResponse(body, {
       headers: {
