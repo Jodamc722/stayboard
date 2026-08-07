@@ -15,7 +15,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { isDepartureCleanName } from './breezeway'
-import { getEmployeeNames, nameMatches } from './homebase'
+import { getEmployeeNames, nameMatchesRoster } from './homebase'
 
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
 // originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
@@ -347,7 +347,7 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
     if (!reviewedBy && billed === 0 && isDepartureCleanName(t.name)) { reviewedBy = 'auto'; reviewedAt = null }
     const doerName = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
     const crew: 'inhouse' | 'vendor' | null = doerName && staffNames.length
-      ? (staffNames.some(s => nameMatches(doerName, s)) ? 'inhouse' : 'vendor')
+      ? (nameMatchesRoster(doerName, staffNames) ? 'inhouse' : 'vendor')
       : null
     return {
       id, listingId: lid,
