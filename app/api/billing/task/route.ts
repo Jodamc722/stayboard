@@ -107,6 +107,13 @@ export async function POST(req: NextRequest) {
             bill_to: String(x?.bill_to || 'owner'),
           })).filter((x: any) => x.description && x.amount) : [])
         : (cur.extra_items ?? []),
+      // Per-task review mark (migration 029): review as you go, skim the leftovers at close-out.
+      reviewed_by: typeof body?.reviewed === 'boolean'
+        ? (body.reviewed ? (gate.access.email || 'unknown') : null)
+        : (cur.reviewed_by ?? null),
+      reviewed_at: typeof body?.reviewed === 'boolean'
+        ? (body.reviewed ? new Date().toISOString() : null)
+        : (cur.reviewed_at ?? null),
       updated_by: gate.access.email || null,
       updated_at: new Date().toISOString(),
     }
