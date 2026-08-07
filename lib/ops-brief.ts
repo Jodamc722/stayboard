@@ -16,6 +16,10 @@ import { THEMES, looksNegative, sentenceAbout } from './review-themes'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
+import { getShifts } from './homebase'
+import { getTimecards } from './homebase-labor'
+import { getLaborSettings } from './labor-settings'
+import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -304,6 +308,62 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const table = (heads: string[], rows: string) =>
     `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
 
+  // ---- Yesterday's labor (Homebase) --------------------------------------
+  // Full portfolio: hours + payroll + in-house revenue + labor %. Miami/Broward
+  // (team-facing): the % band and the flags only - never dollar amounts.
+  let laborCard = ''
+  let laborTile: Tile | null = null
+  try {
+    const yd = ymdET(new Date(Date.now() - 86400000))
+    const settingsKey = variant === 'full' ? 'default' : variant.toLowerCase()
+    const [ySh, yTc, lset] = await Promise.all([
+      getShifts(yd, 'America/New_York'),
+      getTimecards(yd, yd),
+      getLaborSettings(settingsKey),
+    ])
+    const flags = computeYesterdayLabor(yd, ySh, yTc, lset)
+    const payroll = yTc.reduce((a, t) => a + (t.laborCost ?? 0), 0)
+    // Yesterday's IN-HOUSE cleaning fees for this variant's market.
+    const db2 = supabaseAdmin()
+    const [lr2, rr2] = await Promise.all([
+      db2.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
+      db2.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+        .gte('check_out', yd).lte('check_out', yd)
+        .not('status', 'in', '("canceled","cancelled","declined")').limit(2000),
+    ])
+    const presets2 = await getOpsPresets()
+    const VEN2 = vendorRegex(presets2.vendorBuildings)
+    const mk2: Record<string, { m: string; vendor: boolean }> = {}
+    for (const l of (lr2.data || []) as any[]) {
+      const nm2 = l.nickname || l.title || ''
+      mk2[String(l.id)] = {
+        m: marketOf(l.building, l.address_city, nm2).toLowerCase(),
+        vendor: VEN2.test(str(l.building)) || VEN2.test(str(nm2)),
+      }
+    }
+    const want = variant === 'full' ? null : variant.toLowerCase()
+    let fees = 0
+    for (const r of (rr2.data || []) as any[]) {
+      const info = mk2[String(r.listing_id)]
+      if (!info || info.vendor) continue
+      if (want && info.m !== want) continue
+      const f = Number((r as any).cleaning); if (Number.isFinite(f)) fees += f
+    }
+    const status = laborRevenueStatus(payroll > 0 ? payroll : null, fees > 0 ? fees : null, lset)
+    const flagBits: string[] = []
+    if (flags.noShows.length) flagBits.push(`<span style="${S.red}">${flags.noShows.length} scheduled, never clocked in</span> (${flags.noShows.slice(0, 4).map(x => esc(x.name)).join(', ')}${flags.noShows.length > 4 ? '…' : ''})`)
+    if (flags.lateClockIns.length) flagBits.push(`${flags.lateClockIns.length} late clock-in${flags.lateClockIns.length === 1 ? '' : 's'} (${flags.lateClockIns.slice(0, 4).map(x => `${esc(x.name)} +${x.minutesLate}m`).join(', ')})`)
+    if (flags.overSchedule.length) flagBits.push(`${flags.overSchedule.length} worked past schedule (${flags.overSchedule.slice(0, 4).map(x => `${esc(x.name)} +${x.overByHours}h`).join(', ')})`)
+    if (flags.missedClockOuts.length) flagBits.push(`${flags.missedClockOuts.length} timecard${flags.missedClockOuts.length === 1 ? '' : 's'} left open`)
+    const money = variant === 'full'
+      ? ` · <b>${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees`
+      : ''
+    const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}</span>` +
+      (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
+    laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
+    laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
+  } catch { /* Homebase down — the brief still sends */ }
+
   const tiles: Tile[] = [
     { label: 'Arrivals', value: String(arrivals.length) },
     { label: 'Cleans', value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} same-day` : undefined, tone: sameDay.length ? 'amber' : undefined },
@@ -316,19 +376,23 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const eyebrow = (t: string) => `<p style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#9ca3af;margin:18px 8px 8px;text-transform:uppercase">${t}</p>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
 
+  const tilesAll = laborTile ? tiles.concat([laborTile]) : tiles
+
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
     <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
     <p style="${S.bandTitle}">Morning Ops Brief — ${label}</p>
     <p style="${S.bandSub}">${dateNice} · ${d.activeCount} active units</p>
   </div>
-  <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
+  <div style="${S.tilesOuter}">${tileRow(tilesAll)}</div>
 
   ${eyebrow('Act now')}
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
   ${card("Departure cleans — who's on each door", d.cleans.length, d.cleans.length ? table(['Unit', 'Cleaner', 'Status'], cleansRows) : emptyLine('No departure cleans today.'))}
+
+  ${laborCard}
 
   ${eyebrow('Today')}
   ${arrivals.length ? card('Arrivals', arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
