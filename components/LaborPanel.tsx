@@ -155,7 +155,7 @@ export function LaborPanel() {
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping</p>
             <div className="grid grid-cols-3 gap-y-3">
               <Stat label="In-house revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="cleaning fees, in-house units" />
-              <Stat label="Labor" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' people'} />
+              <Stat label="Labor" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' people' + (d.departments.housekeeping.supervisorPayroll ? ' · incl ' + fmt$(d.departments.housekeeping.supervisorPayroll) + ' supervisors' : '')} />
               <Stat label="In-house margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} />
               <Stat label="Vendor revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.vendorRevenue)} sub="cleaned by vendors" />
               <Stat label="Cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} />
@@ -170,7 +170,7 @@ export function LaborPanel() {
               <Stat label="Tasks done" value={loading ? '…' : String(d.departments.maintenance.tasksCompleted ?? 0)} sub={(d.departments.maintenance.taskHours ?? 0) + 'h on tasks'} />
               <Stat label="On-task %" value={loading ? '…' : (d.departments.maintenance.utilizationPct != null ? d.departments.maintenance.utilizationPct + '%' : '—')} sub="task time ÷ paid time" />
               <Stat label="Cost / task" value={loading ? '…' : fmt$(d.departments.maintenance.costPerTask)} />
-              <Stat label="Billable" value="—" sub="billing link pending" />
+              <Stat label="Billable" value={loading ? '…' : fmt$(d.departments.maintenance.billableRevenue)} sub={(d.departments.maintenance.billableTasks ?? 0) + ' tasks · Breezeway billing'} />
             </div>
           </div>
         </div>
