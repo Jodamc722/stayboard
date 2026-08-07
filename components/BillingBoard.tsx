@@ -400,6 +400,8 @@ export function BillingBoard() {
   const [view, setView] = useState<'owner' | 'all' | 'labor'>('owner')
   const [dept, setDept] = useState('all')
   const [billableOnly, setBillableOnly] = useState(true)
+  // Billing is for FINISHED work — open/scheduled tasks stay hidden unless asked for.
+  const [completedOnly, setCompletedOnly] = useState(true)
   const [showExcluded, setShowExcluded] = useState(false)
   const [q, setQ] = useState('')
   const [openOwners, setOpenOwners] = useState<Record<string, boolean>>({})
@@ -451,6 +453,7 @@ export function BillingBoard() {
     const needle = q.trim().toLowerCase()
     return data.tasks.filter(t => {
       if (!showExcluded && t.excluded) return false
+      if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt)) return false
       if (dept !== 'all' && t.department !== dept) return false
       if (billableOnly && !(t.billedAmount > 0 || t.ratePaid != null || t.items.length || t.billTo)) return false
       if (needle) {
@@ -459,7 +462,7 @@ export function BillingBoard() {
       }
       return true
     })
-  }, [data, dept, billableOnly, showExcluded, q])
+  }, [data, dept, billableOnly, completedOnly, showExcluded, q])
 
   const cmpTasks = useCallback((a: Task, b: Task) => {
     let r = 0
@@ -530,7 +533,7 @@ export function BillingBoard() {
   }, [filtered])
 
   const exportUrl = (format: string, ownerId?: string | null) =>
-    '/api/billing/export?month=' + month + '&format=' + format + (ownerId ? '&owner=' + encodeURIComponent(ownerId) : '')
+    '/api/billing/export?month=' + month + '&format=' + format + (completedOnly ? '&done=1' : '') + (ownerId ? '&owner=' + encodeURIComponent(ownerId) : '')
 
   const DEPTS = ['all', 'maintenance', 'housekeeping', 'inspection', 'safety']
 
@@ -599,6 +602,9 @@ export function BillingBoard() {
                 {d === 'all' ? 'All departments' : d}
               </button>
             ))}
+            <label className="flex items-center gap-1.5 text-[12px] text-muted">
+              <input type="checkbox" checked={completedOnly} onChange={e => setCompletedOnly(e.target.checked)} /> Completed only
+            </label>
             <label className="flex items-center gap-1.5 text-[12px] text-muted">
               <input type="checkbox" checked={billableOnly} onChange={e => setBillableOnly(e.target.checked)} /> Billable only
             </label>
