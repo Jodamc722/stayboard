@@ -139,7 +139,8 @@ export function LaborPanel() {
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-y-4">
           <Stat label="Payroll (actual)" value={loading ? '…' : fmt$(pay.actual)} sub="Homebase timecards" />
           <Stat label="Payroll (sched)" value={loading ? '…' : fmt$(pay.scheduled)} sub="Homebase shifts" />
-          <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(pay.revenue)} sub="guest fees" />
+          <Stat label="In-house revenue" value={loading ? '…' : fmt$(pay.revenueInhouse ?? pay.revenue)} sub="guest fees, in-house units" />
+          <Stat label="Vendor revenue" value={loading ? '…' : fmt$(pay.revenueVendor ?? 0)} sub="vendor-cleaned units" />
           <Stat label="Labor %" value={loading ? '…' : (pay.laborPct != null ? pay.laborPct + '%' : '—')}
             sub={pay.goalPct != null ? `goal ≤ ${pay.goalPct}%` : ''} tone={bandTone as any} />
           <Stat label="OT hours" value={loading ? '…' : String(d?.totalOvertimeHours ?? '—')} tone={(d?.totalOvertimeHours ?? 0) > 0 ? 'warn' : undefined} />
@@ -153,9 +154,10 @@ export function LaborPanel() {
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping</p>
             <div className="grid grid-cols-3 gap-y-3">
-              <Stat label="Revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="cleaning fees" />
+              <Stat label="In-house revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="cleaning fees, in-house units" />
               <Stat label="Labor" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' people'} />
-              <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} />
+              <Stat label="In-house margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} />
+              <Stat label="Vendor revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.vendorRevenue)} sub="cleaned by vendors" />
               <Stat label="Cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} />
               <Stat label="Fee / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.feePerClean)} />
               <Stat label="Labor %" value={loading ? '…' : (d.departments.housekeeping.laborPct != null ? d.departments.housekeeping.laborPct + '%' : '—')} />
