@@ -3,8 +3,9 @@
 // cost rates (app_settings 'labor_cost_rates') the Labor tab compares against actual hours.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { billingMonth } from '@/lib/billing'
+import { billingMonth, listingNames } from '@/lib/billing'
 import { getSetting } from '@/lib/app-settings'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -22,7 +23,18 @@ export async function GET(req: NextRequest) {
       getSetting<Record<string, { by: string; at: string }>>('billing_review:' + monthKey, {}),
     ])
     const defaultRate = Number(def?.rate)
-    return NextResponse.json({ ok: true, month: monthKey, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews })
+    // Unit list for "Add task" — every active Breezeway property (a new task must exist there).
+    let units: { id: string; name: string }[] = []
+    try {
+      const { data: props } = await supabaseAdmin().from('breezeway_properties')
+        .select('reference_property_id, status').limit(1000)
+      const ids = ((props || []) as any[])
+        .filter(p => String(p.status || '').toLowerCase() === 'active')
+        .map(p => String(p.reference_property_id || '')).filter(Boolean)
+      const names = await listingNames(ids)
+      units = ids.map(id => ({ id, name: (names[id] && names[id].unit) || id })).sort((a, b) => a.name.localeCompare(b.name))
+    } catch { /* Add-task select just stays empty */ }
+    return NextResponse.json({ ok: true, month: monthKey, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews, units })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
