@@ -449,19 +449,16 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       const trRows = list2.map(p2 => {
         const rev = revBy[p2.name] || 0
         const cpp = p2.cleans && p2.cost ? usd(p2.cost / p2.cleans) : 'n/a'
-        const ratio = p2.cost > 0 && rev > 0 ? usd(rev / p2.cost * 100) : 'n/a'
-        const ratioTxt = p2.cost > 0 && rev > 0 ? (rev / p2.cost).toFixed(2) : 'n/a'
         return '<tr><td style="' + S.td + '"><b>' + esc(p2.name) + '</b><br><span style="color:#6b7280">' + esc(p2.market) + '</span></td>' +
           '<td style="' + S.td + '">' + (p2.cleans || 0) + (p2.insp ? '<br><span style="color:#6b7280">' + p2.insp + ' insp</span>' : '') + '</td>' +
           '<td style="' + S.td + '">' + (p2.cost ? usd(p2.cost) : 'n/a') + '</td>' +
           '<td style="' + S.td + '">' + cpp + '</td>' +
           '<td style="' + S.td + '">' + (rev ? usd(rev) : 'n/a') + '</td>' +
-          '<td style="' + S.td + '">' + ratioTxt + '</td>' +
           '<td style="' + S.td + '">' + (p2.billable ? usd(p2.billable) : 'n/a') + '</td></tr>'
       }).join('')
       crewCard = list2.length ? card('Team economics yesterday: cost per clean, rev vs labor', list2.length,
         '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + mkLine + '. Vendor revenue kept separate. Billables broken out.</p>' +
-        table(['Person', 'Cleans', 'Labor', 'Cost/clean', 'Revenue', 'Rev per $1', 'Billable (maint)'], trRows), '#0891b2') : ''
+        table(['Person', 'Cleans', 'Labor', 'Cost/clean', 'Revenue', 'Billable (maint)'], trRows), '#0891b2') : ''
     }
   } catch { /* Homebase down — the brief still sends */ }
 
