@@ -353,6 +353,9 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
         </>
       )}
 
+      {/* labor economics - same numbers as /labor, the briefs and the schedule strip */}
+      <LaborEconStrip days={7} />
+
       {/* ---------------------------------------------------------------- ops throughput */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <div className="lg:col-span-2">
@@ -629,7 +632,4 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       </p>
     </div>
   )
-}{/* labor economics - same numbers as /labor, the briefs and the schedule strip */}
-      <LaborEconStrip days={7} />
-
-      
+}
