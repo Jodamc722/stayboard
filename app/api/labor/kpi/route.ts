@@ -262,9 +262,25 @@ export async function GET(req: Request) {
       if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
       return 'other'
     }
+    // Fallback: when the Homebase role doesn't identify a department,
+    // classify the person by what they actually did in Breezeway this window.
+    const deptOfPerson = (name: string, role: string | null) => {
+      const byRole = deptOf(role)
+      if (byRole !== 'other') return byRole
+      let m = 0, c = 0
+      for (const t of taskRows) {
+        const d = doer(t)
+        if (!d || !nameMatches(d, name)) continue
+        const k = classify(t)
+        if (k === 'maintenance') m++
+        else if (k === 'clean' || k === 'inspection') c++
+      }
+      if (!m && !c) return 'other'
+      return m > c ? 'maintenance' : 'housekeeping'
+    }
     const agg: Record<string, { hours: number; payroll: number; people: Set<string> }> = {}
     for (const t of timecards) {
-      const k = deptOf(t.role)
+      const k = deptOfPerson(t.name, t.role)
       agg[k] = agg[k] || { hours: 0, payroll: 0, people: new Set() }
       agg[k].hours += t.hours ?? 0
       agg[k].payroll += t.laborCost ?? 0
@@ -276,7 +292,7 @@ export async function GET(req: Request) {
     const mtTaskMinutes = taskRows
       .filter(t => classify(t) === 'maintenance')
       .filter(t => { const d = doer(t); return !!d && mtPeopleArr.some(p => nameMatches(d, p)) })
-      .reduce((a, t) => a + (num(t.total_minutes) ?? 0), 0)
+      .reduce((a, t) => a + Math.min(num(t.total_minutes) ?? 0, 480), 0) // cap runaway Breezeway timers at 8h/task
     const departments = {
       housekeeping: {
         people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
@@ -289,6 +305,7 @@ export async function GET(req: Request) {
       maintenance: {
         people: mt.people.size, hours: round2(mt.hours), payroll: round2(mt.payroll),
         tasksCompleted: tasks.maintenance,
+        teamNames: mtPeopleArr,
         taskHours: round2(mtTaskMinutes / 60),
         utilizationPct: mt.hours > 0 ? round2((mtTaskMinutes / 60 / mt.hours) * 100) : null,
         costPerTask: tasks.maintenance ? round2(mt.payroll / tasks.maintenance) : null,
