@@ -212,6 +212,13 @@ export async function GET(req: Request) {
     const vendorFees = round2(totalFees - inhouseFees)
     const attributed = attributions.filter(x => x.assignee && x.fee != null)
     const attributedFees = round2(attributed.reduce((a, x) => a + (x.fee as number), 0))
+    // Revenue per person - EVERYONE with an attributed clean, supervisors included
+    // (the ranked cleaner board still excludes them; this feeds the People table).
+    const personRevenue: Record<string, number> = {}
+    for (const x of attributed) {
+      const who = x.assignee as string
+      personRevenue[who] = round2((personRevenue[who] || 0) + (x.fee as number))
+    }
 
     // ---- Per-cleaner + person task detail ---------------------------------
     const personNames = new Set<string>()
@@ -425,7 +432,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
       ...kpis, tasks, economics, payroll, today: todayBlock,
-      perCleaner, personTasks, attribution, unattributed, settings,
+      perCleaner, personTasks, personRevenue, attribution, unattributed, settings,
       nameAliases: Object.keys(aliasCache).filter(k => aliasCache[k] && aliasCache[k] !== k).reduce((o: any, k) => { o[k] = aliasCache[k]; return o }, {}),
     })
   } catch (e: any) {
