@@ -18,6 +18,7 @@ type Task = {
   ownerId: string | null; ownerName: string
   department: string; name: string; description: string | null; status: string
   assignees: { id: number | null; name: string | null }[]
+  crew?: 'inhouse' | 'vendor' | null
   finishedBy: string | null
   scheduledDate: string | null; finishedAt: string | null
   actualMinutes: number | null
@@ -454,7 +455,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate 
 }
 
 // ── Labor tab ───────────────────────────────────────────────────────────────
-type PersonRow = { key: string; tasks: number; completed: number; minutes: number; billed: number; depts: Record<string, number> }
+type PersonRow = { crew?: 'inhouse' | 'vendor' | null; key: string; tasks: number; completed: number; minutes: number; billed: number; depts: Record<string, number> }
 
 function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: Record<string, number>; canEdit: boolean; onRates: (r: Record<string, number>) => void }) {
   const [dept, setDept] = useState<string>('maintenance')
@@ -472,8 +473,9 @@ function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: R
       const share = 1 / who.length
       const done = /complet|close|approv|finish/.test(t.status)
       for (const n of who) {
-        if (!map[n]) map[n] = { key: n, tasks: 0, completed: 0, minutes: 0, billed: 0, depts: {} }
+        if (!map[n]) map[n] = { key: n, crew: t.crew ?? null, tasks: 0, completed: 0, minutes: 0, billed: 0, depts: {} }
         const p = map[n]
+        if (!p.crew && t.crew) p.crew = t.crew
         p.tasks += 1
         if (done) p.completed += 1
         p.minutes += (t.actualMinutes || 0) * share
@@ -485,13 +487,18 @@ function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: R
   }, [tasks, dept])
 
   const totals = useMemo(() => {
+    let costInhouse = 0, costVendor = 0
     let minutes = 0; let billed = 0; let cost = 0
     for (const p of people) {
       minutes += p.minutes; billed += p.billed
       const r = Number(draft[p.key] != null ? draft[p.key] : rates[p.key])
-      if (Number.isFinite(r)) cost += (p.minutes / 60) * r
+      if (Number.isFinite(r)) {
+        const c0 = (p.minutes / 60) * r
+        cost += c0
+        if (p.crew === 'vendor') costVendor += c0; else costInhouse += c0
+      }
     }
-    return { minutes, billed, cost }
+    return { minutes, billed, cost, costInhouse, costVendor }
   }, [people, rates, draft])
 
   const saveRates = async () => {
@@ -529,7 +536,7 @@ function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: R
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Kpi label="Actual hours" value={(totals.minutes / 60).toFixed(1) + 'h'} sub="Breezeway time on task" />
         <Kpi label="Billable labor" value={money(totals.billed)} sub="rate math on these tasks" />
-        <Kpi label="Labor cost" value={money(totals.cost)} sub="actual hours × your rates" />
+        <Kpi label="Labor cost" value={money(totals.cost)} sub={money(totals.costInhouse) + ' in-house · ' + money(totals.costVendor) + ' vendor'} />
         <Kpi label="Margin" value={money(totals.billed - totals.cost)} sub={totals.cost > 0 ? Math.round(((totals.billed - totals.cost) / totals.cost) * 100) + '% over cost' : 'set rates below'} />
       </div>
       <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
