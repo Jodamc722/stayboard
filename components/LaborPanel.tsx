@@ -226,6 +226,7 @@ export function LaborPanel() {
               <th className="text-right font-semibold px-2 py-2">Sched</th>
               <th className="text-right font-semibold px-2 py-2">Actual</th>
               <th className="text-right font-semibold px-2 py-2">OT</th>
+              <th className="text-right font-semibold px-2 py-2">$/hr</th>
               <th className="text-right font-semibold px-2 py-2">Payroll</th>
               <th className="text-right font-semibold px-2 py-2">Tasks</th>
               <th className="text-right font-semibold px-4 py-2">Wk proj</th>
@@ -245,17 +246,74 @@ export function LaborPanel() {
                   <td className="px-2 py-2 text-right tabular-nums text-muted">{p.scheduledHours}</td>
                   <td className="px-2 py-2 text-right tabular-nums font-semibold text-ink">{p.actualHours}</td>
                   <td className={'px-2 py-2 text-right tabular-nums ' + (p.overtimeHours > 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{p.overtimeHours || '—'}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-ink">{(p as any).wageRate != null ? '
+                  <td className="px-2 py-2 text-right tabular-nums text-muted">{(personTasks[p.name] || []).length || '—'}</td>
+                  <td className={'px-4 py-2 text-right tabular-nums ' + (p.overtimeRisk ? 'text-rose-700 font-bold' : 'text-muted')}>{p.projectedWeekHours}h</td>
+                </tr>
+                {open === p.name && (
+                  <tr key={p.name + '-detail'}><td colSpan={8} className="p-0"><TaskList name={p.name} /></td></tr>
+                )}
+              </>
+            ))}
+            {!people.length && !loading && (
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* CLEANERS — revenue vs cost */}
+      <div className="rounded-xl border border-line bg-white overflow-hidden">
+        <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-4 pt-3 pb-1">
+          Cleaners · revenue generated vs cost
+        </p>
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted border-b border-line">
+              <th className="text-left font-semibold px-4 py-2">Cleaner</th>
+              <th className="text-right font-semibold px-2 py-2">Cleans</th>
+              <th className="text-right font-semibold px-2 py-2">Revenue</th>
+              <th className="text-right font-semibold px-2 py-2">Payroll</th>
+              <th className="text-right font-semibold px-2 py-2">Margin</th>
+              <th className="text-right font-semibold px-4 py-2">Rev / $</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cleaners.map((c: any) => (
+              <tr key={c.name} className="border-b border-line/50 last:border-0">
+                <td className="px-4 py-2 text-ink font-medium">{c.name}
+                  {c.avgFeePerClean != null && <span className="ml-2 text-[10.5px] text-muted">avg fee {fmt$(c.avgFeePerClean)}</span>}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums text-muted">{c.cleans}</td>
+                <td className="px-2 py-2 text-right tabular-nums font-semibold text-ink">{fmt$(c.revenueGenerated)}</td>
+                <td className="px-2 py-2 text-right tabular-nums text-ink">{fmt$(c.payroll > 0 ? c.payroll : c.taskPay)}</td>
+                <td className={'px-2 py-2 text-right tabular-nums ' + (c.margin < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{fmt$(c.margin)}</td>
+                <td className={'px-4 py-2 text-right tabular-nums font-bold ' + (c.revenuePerLaborDollar != null && c.revenuePerLaborDollar < 1 ? 'text-rose-700' : 'text-ink')}>
+                  {c.revenuePerLaborDollar != null ? '$' + c.revenuePerLaborDollar : '—'}
+                </td>
+              </tr>
+            ))}
+            {!cleaners.length && !loading && (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-muted">No completed cleans in this range{market !== 'all' ? ' for this market' : ''}.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+ + (p as any).wageRate : '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-ink">{p.laborCost != null ? fmt$(p.laborCost) : '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-muted">{(personTasks[p.name] || []).length || '—'}</td>
                   <td className={'px-4 py-2 text-right tabular-nums ' + (p.overtimeRisk ? 'text-rose-700 font-bold' : 'text-muted')}>{p.projectedWeekHours}h</td>
                 </tr>
                 {open === p.name && (
-                  <tr key={p.name + '-detail'}><td colSpan={7} className="p-0"><TaskList name={p.name} /></td></tr>
+                  <tr key={p.name + '-detail'}><td colSpan={8} className="p-0"><TaskList name={p.name} /></td></tr>
                 )}
               </>
             ))}
             {!people.length && !loading && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
             )}
           </tbody>
         </table>
