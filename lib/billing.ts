@@ -47,6 +47,8 @@ export type BillingTask = {
   note: string | null
   overrideAmount: number | null
   billedHours: number | null
+  reviewedBy: string | null
+  reviewedAt: string | null
   // Computed
   laborAmount: number              // rate math only (before items/override)
   billedAmount: number             // what the owner is billed for this task (0 when excluded)
@@ -351,6 +353,8 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
       note: a && a.note ? String(a.note) : null,
       overrideAmount: override,
       billedHours,
+      reviewedBy: a && a.reviewed_by ? String(a.reviewed_by) : null,
+      reviewedAt: a && a.reviewed_at ? String(a.reviewed_at) : null,
       laborAmount: labor,
       billedAmount: billed,
       reportUrl: t.report_url ? String(t.report_url) : null,
