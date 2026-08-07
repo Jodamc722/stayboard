@@ -17,7 +17,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getShifts, nameMatches, type Shift } from '@/lib/homebase'
+import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
 import { getTimecards, computeLaborKpis } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
@@ -130,7 +130,19 @@ export async function GET(req: Request) {
       if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s)) return 'maintenance'
       return 'other'
     }
-    const doer = (t: any): string | null => t.assignee_name || t.finished_by_name || null
+    // Canonicalize Breezeway doer names to the Homebase roster. Fuzzy full-name
+    // match first; then the unique-first-name fallback (last-name drift between
+    // systems). Everything downstream keys on the Homebase spelling.
+    const rosterNames: string[] = []
+    for (const t of timecardsAll) if (t.name && rosterNames.indexOf(t.name) < 0) rosterNames.push(t.name)
+    for (const s of weekShiftsAll as any[]) if (s.name && rosterNames.indexOf(s.name) < 0) rosterNames.push(s.name)
+    const aliasCache: Record<string, string | null> = {}
+    const doer = (t: any): string | null => {
+      const raw = t.assignee_name || t.finished_by_name || null
+      if (!raw) return null
+      if (!(raw in aliasCache)) aliasCache[raw] = nameMatchesRoster(String(raw), rosterNames)
+      return aliasCache[raw] || String(raw)
+    }
 
     // ---- Market scoping for PEOPLE (Jon 2026-08-07) ------------------------
     // Homebase is one location with no market concept. A person belongs to the
@@ -414,6 +426,7 @@ export async function GET(req: Request) {
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
       ...kpis, tasks, economics, payroll, today: todayBlock,
       perCleaner, personTasks, attribution, unattributed, settings,
+      nameAliases: Object.keys(aliasCache).filter(k => aliasCache[k] && aliasCache[k] !== k).reduce((o: any, k) => { o[k] = aliasCache[k]; return o }, {}),
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || String(e) })
