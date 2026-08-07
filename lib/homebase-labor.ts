@@ -25,7 +25,7 @@ const arr = (d: Json): Json[] => {
 async function hb(path: string): Promise<Json> {
   const r = await fetch(`${BASE}${path}`, {
     headers: {
-      Authorization: `Bearer ${process.env.HOMEBASE_API_KEY}`,
+      Authorization: `Bearer ${process.env.HOMEBASE_API_KEY || process.env['Homebase_Secret_id']}`,
       Accept: 'application/vnd.homebase-v1+json',
     },
     cache: 'no-store',
