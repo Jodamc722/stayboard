@@ -172,6 +172,23 @@ export function nameMatches(a: string, b: string): boolean {
   return !!al && !!bl && nearWord(af, bl) && nearWord(al, bf)
 }
 
+// Roster-aware last-ditch match: an external (Breezeway) name whose FIRST name
+// matches exactly ONE person on the Homebase roster counts as that person, even
+// when the last names disagree - catches married/maiden-name drift between the
+// two systems ('Shaany Espinoza' vs 'Shaany Christian'). Ambiguous first names
+// (two Marias) never match this way. Returns the roster name, or null.
+export function nameMatchesRoster(external: string, roster: string[]): string | null {
+  for (const r of roster) if (nameMatches(external, r)) return r
+  const ef = norm(external).split(/\s+/).filter(Boolean)[0]
+  if (!ef || ef.length < 4) return null
+  const hits: string[] = []
+  for (const r of roster) {
+    const rf = norm(r).split(/\s+/).filter(Boolean)[0]
+    if (rf && nearWord(ef, rf) && hits.indexOf(r) < 0) hits.push(r)
+  }
+  return hits.length === 1 ? hits[0] : null
+}
+
 export type StaffingCheck = {
   onShift: Shift[]
   /** Cleaners with a clean on the board today but no Homebase shift. */
