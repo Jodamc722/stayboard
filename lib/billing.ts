@@ -98,7 +98,7 @@ async function pageAll(build: (a: number, b: number) => any, cap = 12000): Promi
 
 // descr is the one raw->> scalar we pull (a single jsonb ->> extraction — never whole raw over
 // thousands of rows). It feeds the editable description on the billing row.
-const MIRROR_COLS = 'id, reference_property_id, type_department, name, status, assignees, assignee_name, finished_by_name, finished_at, total_minutes, rate_paid, scheduled_date, report_url, descr:raw->>description'
+const MIRROR_COLS = 'id, home_id, reference_property_id, type_department, name, status, assignees, assignee_name, finished_by_name, finished_at, total_minutes, rate_paid, scheduled_date, report_url, descr:raw->>description'
 
 /** All mirror tasks that belong to a month: scheduled in it, or (undated) finished in it. */
 export async function monthTasks(month: string): Promise<any[]> {
@@ -202,6 +202,64 @@ export function laborAmount(ratePaid: number | null, rateType: string | null, ac
   return rate // 'piece' (Breezeway's default) — the rate IS the price of the job
 }
 
+// ── Building-level (exterior/common-area) owner attribution ─────────────────
+// Breezeway carries building properties with no Guesty listing — "Eden Exterior", "Rustic
+// Exterior", trash/common-area routes. Jon: those belong to the BUILDING's owner (Rustic
+// exterior → Rustic's owner, Eden exterior → Eden's owner). We resolve the Breezeway property
+// NAME via home_id, parse the building token out of it, and assign the owner who owns that
+// building's units — only when one owner clearly dominates the building (≥60% of its owned
+// units), so a shared building can never quietly misbill.
+type TokenOwner = Record<string, { ownerId: string; ownerName: string }>
+
+async function buildingOwnerTokens(owners: OwnerMap): Promise<TokenOwner> {
+  const db = supabaseAdmin()
+  const tally: Record<string, Record<string, number>> = {}
+  try {
+    const { data } = await db.from('guesty_listings').select('id, building, nickname').limit(1000)
+    for (const l of (data || []) as any[]) {
+      const own = owners.byListing[String(l.id)]
+      if (!own) continue
+      const tokens: string[] = []
+      if (l.building) tokens.push(String(l.building))
+      const first = String(l.nickname || '').trim().split(/\s+/)[0]
+      if (first) tokens.push(first)
+      for (const raw of tokens) {
+        const tok = raw.toLowerCase().replace(/[^a-z0-9]/g, '')
+        if (tok.length < 3 || /^\d+$/.test(tok)) continue
+        if (!tally[tok]) tally[tok] = {}
+        tally[tok][own.ownerId] = (tally[tok][own.ownerId] || 0) + 1
+      }
+    }
+  } catch { /* attribution just stays off */ }
+  const out: TokenOwner = {}
+  for (const tok of Object.keys(tally)) {
+    const counts = tally[tok]
+    const ids = Object.keys(counts)
+    let total = 0; let best = ''; let bestN = 0
+    for (const id of ids) { total += counts[id]; if (counts[id] > bestN) { bestN = counts[id]; best = id } }
+    if (best && total > 0 && bestN / total >= 0.6) {
+      const name = ownerNameFor(owners, best)
+      if (name) out[tok] = { ownerId: best, ownerName: name }
+    }
+  }
+  return out
+}
+function ownerNameFor(owners: OwnerMap, ownerId: string): string | null {
+  const keys = Object.keys(owners.byListing)
+  for (const k of keys) if (owners.byListing[k].ownerId === ownerId) return owners.byListing[k].ownerName
+  return null
+}
+/** Match a building property name ("Eden Exterior") to a building token owner. Longest token wins. */
+function ownerFromName(name: string, tokens: TokenOwner): { ownerId: string; ownerName: string } | null {
+  const hay = ' ' + String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' '
+  let hit: { ownerId: string; ownerName: string } | null = null
+  let hitLen = 0
+  for (const tok of Object.keys(tokens)) {
+    if (tok.length > hitLen && hay.indexOf(' ' + tok + ' ') >= 0) { hit = tokens[tok]; hitLen = tok.length }
+  }
+  return hit
+}
+
 /** Assemble the month's billing view: mirror ⋈ details ⋈ adjustments ⋈ owners ⋈ listing names. */
 export async function billingMonth(month: string): Promise<{ tasks: BillingTask[]; owners: OwnerGroup[]; missingDetail: number }> {
   const db = supabaseAdmin()
@@ -229,12 +287,37 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
   }
   const names = await listingNames(listingIds)
 
+  // Building/exterior tasks: no Guesty listing (or one no owner claims) — resolve the Breezeway
+  // property name via home_id and prepare building→owner tokens so "Eden Exterior" bills Eden's
+  // owner and "Rustic Exterior" bills Rustic's.
+  const orphanHomes: number[] = []
+  const seenH: Record<string, boolean> = {}
+  for (const t of raw) {
+    const lid = String(t.reference_property_id || '')
+    const hid = Number(t.home_id)
+    if ((!lid || !owners.byListing[lid]) && Number.isFinite(hid) && !seenH[String(hid)]) { seenH[String(hid)] = true; orphanHomes.push(hid) }
+  }
+  const propName: Record<string, { name: string; ref: string | null }> = {}
+  for (let i = 0; i < orphanHomes.length; i += 200) {
+    const chunk = orphanHomes.slice(i, i + 200)
+    if (!chunk.length) break
+    try {
+      const { data } = await db.from('breezeway_properties').select('home_id, name, reference_property_id').in('home_id', chunk)
+      for (const p of (data || []) as any[]) propName[String(p.home_id)] = { name: String(p.name || ''), ref: p.reference_property_id ? String(p.reference_property_id) : null }
+    } catch { /* those tasks just stay unattributed */ }
+  }
+  const tokens = orphanHomes.length ? await buildingOwnerTokens(owners) : {}
+
   const tasks: BillingTask[] = raw.map(t => {
     const id = String(t.id)
     const lid = String(t.reference_property_id || '') || null
     const d = details[id] || null
     const a = adjs[id] || null
-    const own = lid ? owners.byListing[lid] : undefined
+    const hid = t.home_id != null ? String(t.home_id) : ''
+    const prop = hid ? propName[hid] : undefined
+    let own = lid ? owners.byListing[lid] : undefined
+    if (!own && prop && prop.ref) own = owners.byListing[prop.ref]
+    if (!own && prop && prop.name) { const hit = ownerFromName(prop.name, tokens); if (hit) own = hit }
     const items = detailItems(d && d.costs, d && d.supplies, a && a.extra_items, a && a.item_overrides)
     const ratePaid = num(t.rate_paid)
     const rateType = d && d.rate_type ? String(d.rate_type) : null
@@ -246,7 +329,7 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
     const billed = excluded ? 0 : (override != null ? override : Math.round((labor + itemsTotal) * 100) / 100)
     return {
       id, listingId: lid,
-      unit: lid ? ((names[lid] && names[lid].unit) || lid) : '—',
+      unit: lid && names[lid] ? names[lid].unit : (prop && prop.name ? prop.name : (lid || '—')),
       building: lid ? ((names[lid] && names[lid].building) || null) : null,
       ownerId: own ? own.ownerId : null,
       ownerName: own ? own.ownerName : 'Unassigned owner',
