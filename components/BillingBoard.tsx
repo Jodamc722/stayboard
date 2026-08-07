@@ -329,7 +329,9 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
         <div className="col-span-1 flex items-center justify-end gap-1.5">
           {!t.hasDetail ? <span title="Billing detail not pulled yet"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span> : null}
           {done ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : null}
-          {canEdit ? (
+          {t.reviewedBy === 'auto' ? (
+            <span title="Departure clean — auto-reviewed" className="rounded-md w-5 h-5 text-[11px] font-bold leading-none bg-emerald-100 text-emerald-600 inline-flex items-center justify-center">✓</span>
+          ) : canEdit ? (
             <button
               onClick={() => saveAdjust({ reviewed: !t.reviewedBy }, 'rev',
                 { reviewedBy: t.reviewedBy ? null : 'you', reviewedAt: t.reviewedBy ? null : new Date().toISOString() })}
