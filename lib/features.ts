@@ -60,6 +60,11 @@ export const FEATURES: Feature[] = [
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
   { key: 'custom-fields', label: 'Custom Fields',     path: '/settings/custom-fields', group: 'Admin' },
+  // Labor settings (2026-08-07): per-market labor% bands, clock-in grace, OT week, attribution
+  // gate. Registered here because the build gate caught it unregistered — these thresholds drive
+  // the Labor board, the Schedule strip AND the briefs, so it sits in Admin next to Custom Fields
+  // rather than being reachable by anyone who can see /labor.
+  { key: 'labor-settings', label: 'Labor Settings',   path: '/settings/labor', group: 'Admin' },
   // Connected apps (Slack, email). Deliberately LEFT OUT of the ops / cs / data bundles below, so
   // out of the box only Admin and GM can reach it — "a few people for now". To give it to someone
   // else, switch them to GM or flip it on for them individually on /users → Edit access.
