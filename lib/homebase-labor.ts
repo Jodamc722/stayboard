@@ -141,6 +141,7 @@ export function computeLaborKpis(opts: {
   timecards: Timecard[]
   weekShifts: (Shift & { date?: string })[]   // rest of the current workweek, for OT projection
   otWeeklyHours?: number
+  weekStartDate?: string   // YYYY-MM-DD start of current workweek; wtd/OT projection align to it
   cleansCompleted: number | null
   occupiedNights: number | null
   todayISO: string
@@ -159,7 +160,9 @@ export function computeLaborKpis(opts: {
     const actual = round1(myTc.reduce((a, t) => a + (t.hours ?? 0), 0))
     const ot = round1(myTc.reduce((a, t) => a + (t.overtimeHours ?? 0), 0))
     const costs = myTc.map(t => t.laborCost).filter((c): c is number => c != null)
-    const wtd = actual // caller passes a workweek-aligned range for the daily view
+    const wtd = opts.weekStartDate
+      ? round1(myTc.filter(t => t.date && t.date >= (opts.weekStartDate as string)).reduce((a, t) => a + (t.hours ?? 0), 0))
+      : actual
     const remaining = round1(
       weekShifts
         .filter(s => !s.open && nameMatches(s.name, name) && String(s.startAt) > todayISO)
