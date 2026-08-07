@@ -16,7 +16,7 @@ type Item = { key: string; description: string; amount: number; originalAmount: 
 type Task = {
   id: string; listingId: string | null; unit: string; building: string | null
   ownerId: string | null; ownerName: string
-  department: string; name: string; status: string
+  department: string; name: string; description: string | null; status: string
   assignees: { id: number | null; name: string | null }[]
   finishedBy: string | null
   scheduledDate: string | null; finishedAt: string | null
@@ -27,7 +27,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -80,6 +80,8 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
   const [rowH, setRowH] = useState<string | null>(null)
   const [rowR, setRowR] = useState<string | null>(null)
   const [rowA, setRowA] = useState<string | null>(null)
+  const [title, setTitle] = useState(t.name)
+  const [desc, setDesc] = useState(t.description || '')
 
   const post = useCallback(async (body: any, tag: string) => {
     setBusy(tag); setErr(null)
@@ -249,6 +251,38 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
       {open ? (
         <div className="px-10 pb-4 space-y-3">
           {err ? <div className="text-[12px] text-rose-600">{err}</div> : null}
+          <div className="space-y-1.5">
+            <div className="text-[11px] uppercase tracking-wide text-muted font-bold">Task — full title &amp; description (saves to Breezeway)</div>
+            <input value={title} onChange={e => setTitle(e.target.value)} disabled={!canEdit}
+              className="w-full rounded-lg border border-line px-2.5 py-1.5 text-[13px] font-semibold text-ink" />
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} disabled={!canEdit} rows={2}
+              placeholder="Description of the work performed (shows in Breezeway and available for the owner sheet)"
+              className="w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+            <div className="flex items-center gap-2">
+              <button onClick={() => post({ action: 'update', name: title, description: desc }, 'meta')}
+                disabled={!canEdit || busy === 'meta' || !title.trim()}
+                className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">
+                {busy === 'meta' ? 'Saving…' : 'Save title & description to Breezeway'}
+              </button>
+              <button
+                onClick={async () => {
+                  setBusy('ai'); setErr(null)
+                  try {
+                    const r = await fetch('/api/billing/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: title, description: desc, department: t.department, unit: t.unit }) })
+                    const j = await r.json().catch(() => ({}))
+                    if (!r.ok || !j.ok) throw new Error(j.error || 'AI polish failed')
+                    setTitle(j.title)
+                    if (j.description) setDesc(j.description)
+                  } catch (e: any) { setErr(String(e?.message || e)) }
+                  setBusy(null)
+                }}
+                disabled={!canEdit || busy === 'ai'}
+                title="Rewrite the tech's title/notes into a clean owner-facing service line — review, then save"
+                className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">
+                {busy === 'ai' ? 'Polishing…' : '✨ AI polish'}
+              </button>
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] uppercase tracking-wide text-muted font-bold">Rate</span>
             <input value={rate} onChange={e => setRate(e.target.value)} disabled={!canEdit} placeholder="0.00"
@@ -532,7 +566,9 @@ export function BillingBoard() {
       if (!showExcluded && t.excluded) return false
       if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt)) return false
       if (dept !== 'all' && t.department !== dept) return false
-      if (billableOnly && !(t.billedAmount > 0 || t.ratePaid != null || t.items.length || t.billTo)) return false
+      // Jon's rule: the billable view is tasks with a VALUE — anything over $0 goes on the owner
+      // statement; the $0 rows are noise here (they still show with the toggle off).
+      if (billableOnly && !(t.billedAmount > 0)) return false
       if (needle) {
         const hay = (t.name + ' ' + t.unit + ' ' + (t.building || '') + ' ' + t.ownerName + ' ' + t.assignees.map(a => a.name).join(' ')).toLowerCase()
         if (hay.indexOf(needle) < 0) return false
@@ -582,6 +618,17 @@ export function BillingBoard() {
     for (const id of ids) next[id] = on
     return next
   }), [])
+
+  // Review / close-out: an owner marked reviewed for the month moves to the "ready to download"
+  // section — the sign-off that their billables are checked and statement-ready.
+  const reviews = (data && data.reviews) || {}
+  const toggleReview = useCallback(async (ownerKey: string, reviewed: boolean) => {
+    try {
+      const r = await fetch('/api/billing/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month, ownerId: ownerKey, reviewed }) })
+      const j = await r.json().catch(() => ({}))
+      if (j.ok) setData(d => d ? { ...d, reviews: j.reviews } : d)
+    } catch { /* board still works without the flag */ }
+  }, [month])
 
   const runBulk = useCallback(async (label: string, body: (id: string) => any) => {
     setBulk({ doing: label, done: 0, total: selIds.length })
@@ -634,8 +681,12 @@ export function BillingBoard() {
           <a href={exportUrl('csv')} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <Download className="w-3.5 h-3.5" /> CSV
           </a>
-          <a href={exportUrl('xls')} className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
+          <a href={exportUrl('xls')} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <Download className="w-3.5 h-3.5" /> Excel by owner
+          </a>
+          <a href={exportUrl('zip')} title="One billable-labor sheet per owner, named for the owner, zipped"
+            className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
+            <Download className="w-3.5 h-3.5" /> All owners (ZIP)
           </a>
         </div>
       </div>
@@ -801,8 +852,9 @@ export function BillingBoard() {
 
       {view === 'owner' && data ? (
         <div className="space-y-3">
-          {byOwner.map(o => {
+          {byOwner.filter(o => !reviews[o.g.ownerId || 'unassigned']).map(o => {
             const k = o.g.ownerId || '—'
+            const rk = o.g.ownerId || 'unassigned'
             const open = openOwners[k] !== false
             const allSel = o.tasks.length > 0 && o.tasks.every(t => sel[t.id])
             return (
@@ -822,6 +874,12 @@ export function BillingBoard() {
                       <Download className="w-3 h-3" /> Export
                     </a>
                   ) : null}
+                  {canEdit ? (
+                    <button onClick={() => toggleReview(rk, true)} title="Sign off this owner for the month — moves them to Ready to download"
+                      className="rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 px-2.5 py-1 text-[12px] font-semibold inline-flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Mark reviewed
+                    </button>
+                  ) : null}
                 </div>
                 {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} defaultRate={data.defaultRate}
                   selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />) : null}
@@ -829,6 +887,38 @@ export function BillingBoard() {
             )
           })}
           {!byOwner.length && !loading ? <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
+
+          {byOwner.some(o => reviews[o.g.ownerId || 'unassigned']) ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 overflow-hidden">
+              <div className="px-4 py-3 flex items-center gap-3 flex-wrap border-b border-emerald-200">
+                <Check className="w-4 h-4 text-emerald-600" />
+                <span className="font-bold text-emerald-800">Reviewed &amp; closed out — ready to download</span>
+                <span className="text-[11.5px] text-emerald-700">{byOwner.filter(o => reviews[o.g.ownerId || 'unassigned']).length} owners · {money(byOwner.filter(o => reviews[o.g.ownerId || 'unassigned']).reduce((s, o) => s + o.billed, 0))}</span>
+                <span className="grow" />
+                <a href={exportUrl('zip') + '&reviewed=1'} className="rounded-lg bg-emerald-600 text-white px-2.5 py-1 text-[12px] font-semibold inline-flex items-center gap-1">
+                  <Download className="w-3 h-3" /> Download reviewed (ZIP)
+                </a>
+              </div>
+              {byOwner.filter(o => reviews[o.g.ownerId || 'unassigned']).map(o => {
+                const rk = o.g.ownerId || 'unassigned'
+                const rv = reviews[rk]
+                return (
+                  <div key={rk} className="px-4 py-2.5 flex items-center gap-3 flex-wrap border-t border-emerald-100 text-[12.5px]">
+                    <span className="font-semibold text-ink truncate">{o.g.ownerName}</span>
+                    <span className="text-[11px] text-muted">{o.tasks.length} tasks · reviewed by {(rv && rv.by ? rv.by.split('@')[0] : '')}{rv && rv.at ? ' · ' + rv.at.slice(0, 10) : ''}</span>
+                    <span className="grow" />
+                    <span className="font-bold text-ink tabular-nums">{money(o.billed)}</span>
+                    {o.g.ownerId ? (
+                      <a href={exportUrl('xls', o.g.ownerId)} className="text-[12px] text-emerald-700 font-semibold inline-flex items-center gap-1">
+                        <Download className="w-3 h-3" /> Download
+                      </a>
+                    ) : null}
+                    {canEdit ? <button onClick={() => toggleReview(rk, false)} className="text-[12px] text-muted font-semibold">Reopen</button> : null}
+                  </div>
+                )
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
