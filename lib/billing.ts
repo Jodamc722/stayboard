@@ -14,6 +14,7 @@
 // the Breezeway side ('owner' | 'guest') flags WHETHER a line is owner-billable.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { isDepartureCleanName } from './breezeway'
 import { getEmployeeNames, nameMatches } from './homebase'
 
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
@@ -338,6 +339,12 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
     const excluded = !!(a && a.excluded)
     const override = a && a.override_amount != null ? Number(a.override_amount) : null
     const billed = excluded ? 0 : (override != null ? override : Math.round((labor + itemsTotal) * 100) / 100)
+    // Departure cleans are routine — AUTO-REVIEWED (Jon 2026-08-07) so they never clog the
+    // To-review worklist. Guard: one that actually carries a billed amount still needs human
+    // eyes, and an explicit human review always wins over the auto mark.
+    let reviewedBy = a && a.reviewed_by ? String(a.reviewed_by) : null
+    let reviewedAt = a && a.reviewed_at ? String(a.reviewed_at) : null
+    if (!reviewedBy && billed === 0 && isDepartureCleanName(t.name)) { reviewedBy = 'auto'; reviewedAt = null }
     const doerName = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
     const crew: 'inhouse' | 'vendor' | null = doerName && staffNames.length
       ? (staffNames.some(s => nameMatches(doerName, s)) ? 'inhouse' : 'vendor')
@@ -366,8 +373,8 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
       note: a && a.note ? String(a.note) : null,
       overrideAmount: override,
       billedHours,
-      reviewedBy: a && a.reviewed_by ? String(a.reviewed_by) : null,
-      reviewedAt: a && a.reviewed_at ? String(a.reviewed_at) : null,
+      reviewedBy,
+      reviewedAt,
       crew,
       laborAmount: labor,
       billedAmount: billed,
