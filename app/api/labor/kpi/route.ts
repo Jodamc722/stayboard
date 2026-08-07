@@ -99,7 +99,7 @@ export async function GET(req: Request) {
       .split(',').map(s => s.trim()).filter(Boolean)
     const isSupervisor = (n: string) => SUP_NAMES.some(s => nameMatches(s, n))
 
-    const [dayShifts, timecards, weekShifts, listingRows] = await Promise.all([
+    const [dayShiftsAll, timecardsAll, weekShiftsAll, listingRows] = await Promise.all([
       shiftsForRange(start, end),
       getTimecards(start, end),
       shiftsForRange(week.start, week.end),
@@ -117,11 +117,11 @@ export async function GET(req: Request) {
       marketParam === 'all' || (lmap[String(listingId)]?.market === marketParam)
 
     // ---- Tasks in window ---------------------------------------------------
-    const taskRows = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
       .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
       .gte('finished_at', start).lte('finished_at', end + 'T23:59:59')
       .range(a, b)))
-      .filter(t => marketFilter(t.reference_property_id))
+    const taskRows = taskRowsAll.filter(t => marketFilter(t.reference_property_id))
 
     const classify = (t: any): 'clean' | 'inspection' | 'maintenance' | 'other' => {
       const s = `${t.type_department || ''} ${t.name || ''}`.toLowerCase()
@@ -131,6 +131,35 @@ export async function GET(req: Request) {
       return 'other'
     }
     const doer = (t: any): string | null => t.assignee_name || t.finished_by_name || null
+
+    // ---- Market scoping for PEOPLE (Jon 2026-08-07) ------------------------
+    // Homebase is one location with no market concept. A person belongs to the
+    // market where their Breezeway work actually happened this window (majority
+    // of their tasks, ALL markets considered). Payroll, hours, OT and rosters
+    // then parse out by market tab instead of showing the whole company everywhere.
+    const personMarketCount: Record<string, Record<string, number>> = {}
+    for (const t of taskRowsAll) {
+      const d0 = doer(t)
+      if (!d0) continue
+      const li0 = lmap[String(t.reference_property_id)]
+      if (!li0) continue
+      personMarketCount[d0] = personMarketCount[d0] || {}
+      personMarketCount[d0][li0.market] = (personMarketCount[d0][li0.market] || 0) + 1
+    }
+    const marketOfPerson = (name: string): string | null => {
+      const agg0: Record<string, number> = {}
+      for (const rawName of Object.keys(personMarketCount)) {
+        if (!nameMatches(rawName, name)) continue
+        for (const mk1 of Object.keys(personMarketCount[rawName])) agg0[mk1] = (agg0[mk1] || 0) + personMarketCount[rawName][mk1]
+      }
+      let best: string | null = null, bestN = 0
+      for (const mk1 of Object.keys(agg0)) if (agg0[mk1] > bestN) { best = mk1; bestN = agg0[mk1] }
+      return best
+    }
+    const inMarket = (name: string) => marketParam === 'all' || marketOfPerson(name) === marketParam
+    const timecards = marketParam === 'all' ? timecardsAll : timecardsAll.filter(t => inMarket(t.name))
+    const dayShifts = marketParam === 'all' ? dayShiftsAll : dayShiftsAll.filter((s: any) => s.name && inMarket(s.name))
+    const weekShifts = marketParam === 'all' ? weekShiftsAll : weekShiftsAll.filter((s: any) => s.name && inMarket(s.name))
 
     const tasks = { clean: 0, inspection: 0, maintenance: 0, other: 0, total: 0 }
     const cleanTasks: any[] = []
