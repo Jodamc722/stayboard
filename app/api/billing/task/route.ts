@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
     const sd = String(body?.scheduled_date || '')
     if (/^\d{4}-\d{2}-\d{2}$/.test(sd)) patch.scheduled_date = sd
     if (typeof body?.name === 'string' && body.name.trim()) patch.name = body.name.trim().slice(0, 200)
+    if (typeof body?.description === 'string') patch.description = body.description.slice(0, 4000)
     if (!Object.keys(patch).length) return NextResponse.json({ ok: false, error: 'Nothing to update.' }, { status: 400 })
     if (!patch.name) {
       // Breezeway's PATCH requires name — send the current one back unchanged.
