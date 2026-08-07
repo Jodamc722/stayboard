@@ -328,8 +328,20 @@ export async function GET(req: Request) {
       },
     }
 
+    // Team week from Homebase — names and shift times only (no dollars), for the planner.
+    const wsByDay: Record<string, { name: string; role: string | null; start: string | null; end: string | null }[]> = {}
+    for (const s of weekShifts as any[]) {
+      if (s.open || !s.name) continue
+      wsByDay[s.date] = wsByDay[s.date] || []
+      wsByDay[s.date].push({ name: s.name, role: (s as any).role ?? null, start: s.startAt ?? null, end: s.endAt ?? null })
+    }
+    const weekSchedule = Object.keys(wsByDay).sort().map(date => ({
+      date,
+      people: wsByDay[date].sort((a, b) => String(a.start).localeCompare(String(b.start))),
+    }))
+
     return NextResponse.json({
-      ok: true, market: marketParam, week: { ...week, weekStart }, departments,
+      ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
       ...kpis, tasks, economics, payroll, today: todayBlock,
       perCleaner, personTasks, attribution, unattributed, settings,
     })
