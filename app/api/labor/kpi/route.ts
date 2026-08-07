@@ -256,7 +256,7 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({
-      ok: true, market: marketParam, range: { start, end }, week: { ...week, weekStart },
+      ok: true, market: marketParam, week: { ...week, weekStart },
       ...kpis, tasks, economics, payroll, today: todayBlock,
       perCleaner, personTasks, attribution, unattributed, settings,
     })
