@@ -228,6 +228,7 @@ export function LaborPanel() {
               <th className="text-right font-semibold px-2 py-2">OT</th>
               <th className="text-right font-semibold px-2 py-2">$/hr</th>
               <th className="text-right font-semibold px-2 py-2">Payroll</th>
+              <th className="text-right font-semibold px-2 py-2">Revenue</th>
               <th className="text-right font-semibold px-2 py-2">Tasks</th>
               <th className="text-right font-semibold px-4 py-2">Wk proj</th>
             </tr>
@@ -251,12 +252,12 @@ export function LaborPanel() {
                   <td className={'px-4 py-2 text-right tabular-nums ' + (p.overtimeRisk ? 'text-rose-700 font-bold' : 'text-muted')}>{p.projectedWeekHours}h</td>
                 </tr>
                 {open === p.name && (
-                  <tr key={p.name + '-detail'}><td colSpan={8} className="p-0"><TaskList name={p.name} /></td></tr>
+                  <tr key={p.name + '-detail'}><td colSpan={9} className="p-0"><TaskList name={p.name} /></td></tr>
                 )}
               </>
             ))}
             {!people.length && !loading && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
             )}
           </tbody>
         </table>
@@ -304,16 +305,17 @@ export function LaborPanel() {
 }
  + (p as any).wageRate : '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-ink">{p.laborCost != null ? fmt$(p.laborCost) : '—'}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-ink">{(d as any)?.personRevenue?.[p.name] != null ? fmt$((d as any).personRevenue[p.name]) : '—'}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-muted">{(personTasks[p.name] || []).length || '—'}</td>
                   <td className={'px-4 py-2 text-right tabular-nums ' + (p.overtimeRisk ? 'text-rose-700 font-bold' : 'text-muted')}>{p.projectedWeekHours}h</td>
                 </tr>
                 {open === p.name && (
-                  <tr key={p.name + '-detail'}><td colSpan={8} className="p-0"><TaskList name={p.name} /></td></tr>
+                  <tr key={p.name + '-detail'}><td colSpan={9} className="p-0"><TaskList name={p.name} /></td></tr>
                 )}
               </>
             ))}
             {!people.length && !loading && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-muted">No Homebase data in this range.</td></tr>
             )}
           </tbody>
         </table>
