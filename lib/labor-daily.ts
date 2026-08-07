@@ -71,7 +71,7 @@ export function computeYesterdayLabor(
     lateClockIns: lateClockIns.sort((a, b) => b.minutesLate - a.minutesLate),
     overSchedule: overSchedule.sort((a, b) => b.overByHours - a.overByHours),
     noShows,
-    missedClockOuts: [...new Set(timecards.filter(t => t.open).map(t => t.name))],
+    missedClockOuts: Array.from(new Set(timecards.filter(t => t.open).map(t => t.name))),
   }
 }
 
