@@ -54,6 +54,7 @@ function monthLabel(m: string): string {
   const d = new Date(m + '-15T12:00:00Z')
   return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
+const initials = (s: string) => s.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w.charAt(0)).join('').toUpperCase() || '?'
 
 // ── Add a billable task (created in Breezeway, billed immediately when an amount is set) ────
 function AddTask({ units, month, onDone }: { units: { id: string; name: string }[]; month: string; onDone: () => void }) {
@@ -112,16 +113,31 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
       <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">{label}</div>
-      <div className="text-xl font-bold text-ink tabular-nums mt-1">{value}</div>
+      <div className="text-2xl font-bold text-ink tabular-nums mt-1 tracking-tight">{value}</div>
       {sub ? <div className="text-[11px] text-muted mt-0.5">{sub}</div> : null}
     </div>
   )
 }
 
 // ── Per-task editor row ─────────────────────────────────────────────────────
+// Shared column header for task tables (owner cards + All tasks). Keeps every row aligned.
+function ColsHeader({ withUnit }: { withUnit?: boolean }) {
+  return (
+    <div className="grid grid-cols-12 items-center gap-2 px-4 py-1.5 text-[10px] uppercase tracking-[0.1em] text-muted font-bold border-t border-line bg-neutral-50/40">
+      <div className="col-span-5">{withUnit ? 'Task · unit' : 'Task'}</div>
+      <div className="col-span-1">Dept</div>
+      <div className="col-span-2">Done by</div>
+      <div className="col-span-1 text-right">Hours</div>
+      <div className="col-span-1 text-right">Rate</div>
+      <div className="col-span-1 text-right">Billed</div>
+      <div className="col-span-1" />
+    </div>
+  )
+}
+
 // onPatch applies an OPTIMISTIC local update (row + totals move instantly, no page jump);
 // onSync schedules a quiet background refetch that trues everything up against the server.
-function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate }: { t: Task; canEdit: boolean; onPatch: (id: string, p: Partial<Task>) => void; onSync: () => void; selected?: boolean; onSelect?: () => void; defaultRate?: number }) {
+function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate, showUnit }: { t: Task; canEdit: boolean; onPatch: (id: string, p: Partial<Task>) => void; onSync: () => void; selected?: boolean; onSelect?: () => void; defaultRate?: number; showUnit?: boolean }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -254,21 +270,20 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate 
   const extras = t.items.filter(i => i.kind === 'extra')
 
   return (
-    <div className={'border-t border-line ' + (t.excluded ? 'opacity-50' : '')}>
+    <div className={'border-t border-line hover:bg-neutral-50/60 transition-colors ' + (t.excluded ? 'opacity-50' : '')}>
       <div className="grid grid-cols-12 items-center gap-2 px-4 py-2 text-[12.5px]">
-        <div className="col-span-4 flex items-center gap-2 min-w-0">
-        {onSelect ? <input type="checkbox" checked={!!selected} onChange={onSelect} className="shrink-0" aria-label="Select task" /> : null}
+        <div className="col-span-5 flex items-center gap-2 min-w-0">
+        {onSelect ? <input type="checkbox" checked={!!selected} onChange={onSelect} className="shrink-0 accent-ink" aria-label="Select task" /> : null}
         <button className="flex items-center gap-2 text-left min-w-0 grow" onClick={() => setOpen(v => !v)}>
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted" />}
           <span className="min-w-0">
             <span className="font-semibold text-ink block truncate">{t.name}</span>
-            <span className="text-[11px] text-muted block truncate">{t.unit}{t.building ? ' · ' + t.building : ''} · {t.scheduledDate || (t.finishedAt || '').slice(0, 10) || 'undated'}</span>
+            <span className="text-[11px] text-muted block truncate">{showUnit ? t.unit + (t.building ? ' · ' + t.building : '') + ' · ' : ''}{t.scheduledDate || (t.finishedAt || '').slice(0, 10) || 'undated'}{t.note ? ' · 📝 ' + t.note : ''}</span>
           </span>
         </button>
         </div>
-        <div className="col-span-2 min-w-0">
-          <span className={chip(deptCls)}>{t.department}</span>
-          {t.billTo ? <span className={chip('bg-emerald-50 text-emerald-700 ring-emerald-200') + ' ml-1'}>bill: {t.billTo}</span> : null}
+        <div className="col-span-1 min-w-0">
+          <span className={chip(deptCls) + ' truncate max-w-full'} title={t.department + (t.billTo ? ' · bills to ' + t.billTo : '')}>{t.department}</span>
         </div>
         <div className="col-span-2 truncate text-muted">{t.assignees.map(a => a.name).filter(Boolean).join(', ') || t.finishedBy || '—'}</div>
         <div className="col-span-1 text-right" title={'Billed hours = amount ÷ $' + chargeRate + '/h (crew clock: ' + hours(t.actualMinutes) + ') — click to edit'}>
@@ -843,8 +858,8 @@ export function BillingBoard() {
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
+      <div className="rounded-2xl border border-line bg-white shadow-soft px-3 py-2.5 flex flex-wrap items-center gap-2">
+        <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden">
           {(['owner', 'all', 'labor'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
               className={'px-3 py-1.5 text-[12.5px] font-semibold ' + (view === v ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
@@ -983,16 +998,8 @@ export function BillingBoard() {
 
       {view === 'all' && data ? (
         <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-          <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10.5px] uppercase tracking-wide text-muted font-bold">
-            <div className="col-span-4">Task · unit · date</div>
-            <div className="col-span-2">Dept · bill to</div>
-            <div className="col-span-2">Assignee</div>
-            <div className="col-span-1 text-right">Actual</div>
-            <div className="col-span-1 text-right">Rate</div>
-            <div className="col-span-1 text-right">Billed</div>
-            <div className="col-span-1"></div>
-          </div>
-          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate}
+          <ColsHeader withUnit />
+          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate} showUnit
             selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
           {!sortedFlat.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
         </div>
@@ -1005,20 +1012,27 @@ export function BillingBoard() {
             const rk = o.g.ownerId || 'unassigned'
             const open = openOwners[k] !== false
             const allSel = o.tasks.length > 0 && o.tasks.every(t => sel[t.id])
+            const unitMap: Record<string, Task[]> = {}
+            for (const t of o.tasks) { if (!unitMap[t.unit]) unitMap[t.unit] = []; unitMap[t.unit].push(t) }
+            const unitKeys = Object.keys(unitMap).sort((a, b) => a.localeCompare(b))
+            const revCount = o.tasks.filter(t => t.reviewedBy).length
             return (
               <div key={k} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
                 <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
                   {canEdit ? <input type="checkbox" checked={allSel} onChange={e => setMany(o.tasks.map(t => t.id), e.target.checked)}
-                    title="Select every task for this owner" aria-label="Select all tasks for this owner" /> : null}
-                  <button onClick={() => setOpenOwners(s => ({ ...s, [k]: !open }))} className="flex items-center gap-2 min-w-0">
-                    {open ? <ChevronDown className="w-4 h-4 text-muted" /> : <ChevronRight className="w-4 h-4 text-muted" />}
-                    <span className="font-bold text-ink truncate">{o.g.ownerName}</span>
+                    title="Select every task for this owner" aria-label="Select all tasks for this owner" className="accent-ink" /> : null}
+                  <span className="w-8 h-8 rounded-full bg-brand-50 text-brand-700 font-bold text-[12px] inline-flex items-center justify-center shrink-0">{initials(o.g.ownerName)}</span>
+                  <button onClick={() => setOpenOwners(s => ({ ...s, [k]: !open }))} className="flex items-center gap-2 min-w-0 text-left">
+                    {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
+                    <span className="min-w-0">
+                      <span className="font-bold text-ink block truncate">{o.g.ownerName}</span>
+                      <span className="text-[11px] text-muted block">{unitKeys.length} unit{unitKeys.length === 1 ? '' : 's'} · {o.tasks.length} tasks · {hours(o.minutes)} · <span className={revCount === o.tasks.length && o.tasks.length ? 'text-emerald-600 font-semibold' : ''}>{revCount}/{o.tasks.length} reviewed</span></span>
+                    </span>
                   </button>
-                  <span className="text-[11.5px] text-muted">{o.tasks.length} tasks · {hours(o.minutes)} · <span className={o.tasks.every(t => t.reviewedBy) && o.tasks.length ? 'text-emerald-600 font-semibold' : ''}>{o.tasks.filter(t => t.reviewedBy).length}/{o.tasks.length} ✓</span></span>
                   <span className="grow" />
-                  <span className="font-bold text-ink tabular-nums">{money(o.billed)}</span>
+                  <span className="font-bold text-ink tabular-nums text-[15px]">{money(o.billed)}</span>
                   {o.g.ownerId ? (
-                    <a href={exportUrl('xls', o.g.ownerId)} className="text-[12px] text-brand-600 font-semibold inline-flex items-center gap-1">
+                    <a href={exportUrl('xls', o.g.ownerId)} className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] text-brand-600 font-semibold inline-flex items-center gap-1">
                       <Download className="w-3 h-3" /> Export
                     </a>
                   ) : null}
@@ -1029,8 +1043,26 @@ export function BillingBoard() {
                     </button>
                   ) : null}
                 </div>
-                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate}
-                  selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />) : null}
+                {open ? <ColsHeader /> : null}
+                {open ? unitKeys.map(u => {
+                  const ts = unitMap[u]
+                  const unitTotal = ts.reduce((s, t) => s + t.billedAmount, 0)
+                  const building = ts[0] && ts[0].building
+                  return (
+                    <div key={u}>
+                      <div className="px-4 py-1.5 flex items-center gap-2 border-t border-line bg-neutral-50/70">
+                        <span className="text-[12px] font-bold text-ink">{u}</span>
+                        {building ? <span className="text-[11px] text-muted">{building}</span> : null}
+                        <span className="text-[11px] text-muted">· {ts.length} task{ts.length === 1 ? '' : 's'}</span>
+                        <span className="grow" />
+                        <span className="text-[12px] font-semibold text-ink tabular-nums">{money(unitTotal)}</span>
+                        <span className="w-[104px]" />
+                      </div>
+                      {ts.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate}
+                        selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
+                    </div>
+                  )
+                }) : null}
               </div>
             )
           })}
