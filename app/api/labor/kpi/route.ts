@@ -394,6 +394,7 @@ export async function GET(req: Request) {
         costPerTask: tasks.maintenance ? round2(mt.payroll / tasks.maintenance) : null,
         billableRevenue: mtBillable, // Breezeway billing: rate math + owner adjustments
         billableTasks: mtBilledTasks,
+        billableMargin: Math.round((mtBillable - mt.payroll) * 100) / 100, // billable vs wages
       },
     }
 
