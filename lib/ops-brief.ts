@@ -11,7 +11,8 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf, type Market } from './segments'
-import { rollupBuilding } from './optimize-score'
+import { rollupBuilding, ratingToStars } from './optimize-score'
+import { THEMES, looksNegative, sentenceAbout } from './review-themes'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
@@ -392,6 +393,58 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
     .map(r => ({ unit: nameOf[String(r.listing_id)] || 'Unit', nights: r.nights != null ? Number(r.nights) : null }))
     .filter(r => mine(r.unit))
 
+  // ---- Guest feedback for THEIR buildings (Jon 2026-08-07). Vendors were getting the day's work
+  // with no sense of how it landed, so this adds the two things they asked for: the review data
+  // itself, and what to watch for. Themes and the "look for" wording come from the same taxonomy
+  // the unit care panels use (lib/review-themes), filtered to what housekeeping actually owns —
+  // no point telling a cleaner about a noisy A/C compressor.
+  const REVIEW_DAYS = 60
+  const myIds = Object.keys(nameOf).filter(id => mine(nameOf[id]))
+  const revSince = new Date(Date.now() - REVIEW_DAYS * 86400000).toISOString()
+  let revRows: any[] = []
+  if (myIds.length) {
+    const { data } = await db.from('guesty_reviews')
+      .select('listing_id,rating,content,created_at,excluded_from_score')
+      .in('listing_id', myIds).gte('created_at', revSince)
+      .order('created_at', { ascending: false }).limit(500)
+    revRows = (data || []) as any[]
+  }
+  // Normalize before averaging — a Booking 9/10 must not average in as a 9 against Airbnb's 5.
+  const scored = revRows.filter(r => !r.excluded_from_score && ratingToStars(r.rating) != null)
+  const revAvg = scored.length
+    ? Math.round((scored.reduce((s, r) => s + (ratingToStars(r.rating) || 0), 0) / scored.length) * 100) / 100
+    : null
+
+  // Themes housekeeping owns, counted only where the guest was actually complaining.
+  const CLEAN_THEMES = THEMES.filter(t => t.owner === 'clean')
+  type Hit = { label: string; action: string; n: number; units: Set<string>; quote: string; quoteUnit: string }
+  const hits: Record<string, Hit> = {}
+  const lowlights: { unit: string; stars: number; quote: string }[] = []
+  for (const r of revRows) {
+    const txt = str(r.content); if (!txt) continue
+    const unit = nameOf[String(r.listing_id)] || 'Unit'
+    const stars = ratingToStars(r.rating)
+    for (const t of CLEAN_THEMES) {
+      if (!t.re.test(txt)) continue
+      const sentence = sentenceAbout(txt, t.re)
+      if (!looksNegative(sentence, stars == null ? 5 : stars)) continue
+      const h = hits[t.key] || (hits[t.key] = { label: t.label, action: t.action, n: 0, units: new Set(), quote: sentence, quoteUnit: unit })
+      h.n += 1; h.units.add(unit)
+      if (stars != null && stars <= 3 && lowlights.length < 4 && !lowlights.some(l => l.quote === sentence)) {
+        lowlights.push({ unit, stars, quote: sentence })
+      }
+    }
+  }
+  const topThemes = Object.values(hits).sort((a, b) => b.units.size - a.units.size || b.n - a.n).slice(0, 4)
+
+  const themeRows = topThemes.map(h => `
+    <tr><td style="${S.td}"><b>${esc(h.label)}</b><div style="font-size:12px;color:#6b7280;margin-top:2px">${h.n} mention${h.n === 1 ? '' : 's'} · ${h.units.size} unit${h.units.size === 1 ? '' : 's'}</div></td>
+    <td style="${S.td}">${esc(h.action)}<div style="font-size:12px;color:#6b7280;margin-top:4px">Guest, ${esc(h.quoteUnit)}: “${esc(h.quote)}”</div></td></tr>`).join('')
+
+  const lowRows = lowlights.map(l => `
+    <tr><td style="${S.td}"><b>${esc(l.unit)}</b><div style="font-size:12px;color:#6b7280;margin-top:2px">${l.stars.toFixed(1)}★</div></td>
+    <td style="${S.td}">“${esc(l.quote)}”</td></tr>`).join('')
+
   const subject = `${def.label} — Housekeeping for ${dateNice}: ${checkouts.length} checkout${checkouts.length === 1 ? '' : 's'}` +
     (arrivals.length ? ` · ${arrivals.length} arrival${arrivals.length === 1 ? '' : 's'}` : '') +
     (checkouts.filter((c: any) => sameDayIds.has(String(c.listingId))).length ? ` · SAME-DAY turns` : '')
@@ -419,10 +472,16 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
     { label: 'Checkouts to clean', value: String(checkouts.length), tone: checkouts.length ? 'amber' : 'green' },
     { label: 'Arrivals today', value: String(arrivals.length) },
     { label: 'Arriving tomorrow', value: String(tomorrowArrivals.length) },
+    { label: `Guest rating · ${REVIEW_DAYS}d`, value: revAvg != null ? revAvg.toFixed(2) + '★' : '—',
+      tone: revAvg == null ? undefined : revAvg >= 4.6 ? 'green' : revAvg >= 4.2 ? 'amber' : 'red',
+      note: scored.length ? `${scored.length} review${scored.length === 1 ? '' : 's'}` : 'no reviews yet' },
   ])}</div>
   ${card("Today's checkouts — please clean", checkouts.length, checkouts.length ? tbl(coRows) : emptyLine('No checkouts today.'), '#d97706')}
   ${arrivals.length ? card("Today's arrivals — must be guest-ready", arrivals.length, tbl(arrRows), '#dc2626') : ''}
   ${tomorrowArrivals.length ? card('Tomorrow — heads-up', tomorrowArrivals.length, tbl(tomRows)) : ''}
+  ${topThemes.length ? card(`Things to look for — what guests flagged in the last ${REVIEW_DAYS} days`, topThemes.length, tbl(themeRows), '#7c3aed') : ''}
+  ${lowlights.length ? card('In their words — recent low scores', lowlights.length, tbl(lowRows), '#0891b2') : ''}
+  ${scored.length && !topThemes.length ? card('Guest feedback', null, emptyLine(`${scored.length} review${scored.length === 1 ? '' : 's'} in the last ${REVIEW_DAYS} days, averaging ${revAvg != null ? revAvg.toFixed(2) : '—'}★, with no cleaning issues raised. Nice work.`), '#047857') : ''}
   <p style="${S.foot}">Sent automatically each morning by Stay Hospitality · questions: reply to this email.</p>
   </div></body></html>`
 
