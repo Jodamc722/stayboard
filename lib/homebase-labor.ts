@@ -61,15 +61,18 @@ export async function getTimecards(startDate: string, endDate: string): Promise<
       [pick(nested, 'first_name'), pick(nested, 'last_name')].filter(Boolean).join(' ') || 'Unknown'
     const clockIn = pick(t, 'clock_in', 'clock_in_at', 'start_at', 'clockIn')
     const clockOut = pick(t, 'clock_out', 'clock_out_at', 'end_at', 'clockOut')
-    let hours = num(pick(t, 'hours', 'total_hours', 'worked_hours', 'duration_hours'))
+    // Homebase nests the money under labor: costs, wage_rate, paid_hours, OT splits
+    const lab: Json = (t.labor && typeof t.labor === 'object') ? t.labor : {}
+    let hours = num(pick(lab, 'paid_hours')) ?? num(pick(t, 'hours', 'total_hours', 'worked_hours', 'duration_hours'))
     if (hours == null && clockIn && clockOut)
       hours = round2((new Date(clockOut).getTime() - new Date(clockIn).getTime()) / 36e5)
-    const regularHours = num(pick(t, 'regular_hours', 'regularHours'))
-    const overtimeHours = num(pick(t, 'overtime_hours', 'overtimeHours'))
-    const wageRate = num(pick(t, 'wage_rate', 'wage', 'hourly_wage', 'rate'))
-    let laborCost = num(pick(t, 'labor_cost', 'estimated_wages', 'total_wages', 'cost'))
+    const regularHours = num(pick(lab, 'regular_hours')) ?? num(pick(t, 'regular_hours', 'regularHours'))
+    const otSum = (num(pick(lab, 'weekly_overtime')) ?? 0) + (num(pick(lab, 'daily_overtime')) ?? 0) + (num(pick(lab, 'double_overtime')) ?? 0)
+    const overtimeHours = otSum > 0 ? round2(otSum) : num(pick(t, 'overtime_hours', 'overtimeHours'))
+    const wageRate = num(pick(lab, 'wage_rate')) ?? num(pick(t, 'wage_rate', 'wage', 'hourly_wage', 'rate'))
+    let laborCost = num(pick(lab, 'costs')) ?? num(pick(t, 'labor_cost', 'estimated_wages', 'total_wages', 'cost'))
     if (laborCost == null && wageRate != null && hours != null)
-      laborCost = round2(wageRate * hours) // approximation: ignores OT premium
+      laborCost = round2(wageRate * hours)
     return {
       name,
       role: pick(t, 'role', 'position', 'department'),
