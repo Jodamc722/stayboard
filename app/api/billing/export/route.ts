@@ -128,7 +128,10 @@ export async function GET(req: NextRequest) {
   const ownerId = String(sp.get('owner') || '')
   try {
     const { tasks } = await billingMonth(month)
-    const scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
+    // done=1 → completed work only (matches the board's "Completed only" default — you bill finished work).
+    const doneOnly = sp.get('done') === '1'
+    let scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
+    if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt)
     if (format === 'xls') {
       const body = toXls(month, scoped)
       return new NextResponse(body, {
