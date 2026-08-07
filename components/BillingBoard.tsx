@@ -477,7 +477,18 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
 // ── Labor tab ───────────────────────────────────────────────────────────────
 type PersonRow = { crew?: 'inhouse' | 'vendor' | null; key: string; tasks: number; completed: number; minutes: number; billed: number; depts: Record<string, number> }
 
-function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: Record<string, number>; canEdit: boolean; onRates: (r: Record<string, number>) => void }) {
+function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; rates: Record<string, number>; canEdit: boolean; onRates: (r: Record<string, number>) => void; month: string }) {
+  // Real wages from Homebase for the month - billable vs wages is the true margin.
+  const [wages, setWages] = useState<{ maintenance: number; housekeeping: number; total: number } | null>(null)
+  useEffect(() => {
+    let dead = false
+    const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()
+    fetch('/api/labor/kpi?from=' + month + '-01&to=' + month + '-' + String(lastDay).padStart(2, '0'), { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!dead && j && j.ok) setWages({ maintenance: j.departments?.maintenance?.payroll ?? 0, housekeeping: j.departments?.housekeeping?.payroll ?? 0, total: (j.payroll && j.payroll.actual) || 0 }) })
+      .catch(() => { /* wages tile just shows a dash */ })
+    return () => { dead = true }
+  }, [month])
   const [dept, setDept] = useState<string>('maintenance')
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -538,6 +549,7 @@ function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: R
   }
 
   const DEPTS = ['maintenance', 'housekeeping', 'inspection', 'safety', 'all']
+  const wagesFor = wages ? (dept === 'maintenance' ? wages.maintenance : dept === 'housekeeping' ? wages.housekeeping : wages.total) : null
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -553,11 +565,13 @@ function LaborView({ tasks, rates, canEdit, onRates }: { tasks: Task[]; rates: R
             className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">{saving ? 'Saving…' : 'Save rates'}</button>
         ) : null}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <Kpi label="Actual hours" value={(totals.minutes / 60).toFixed(1) + 'h'} sub="Breezeway time on task" />
         <Kpi label="Billable labor" value={money(totals.billed)} sub="rate math on these tasks" />
         <Kpi label="Labor cost" value={money(totals.cost)} sub={money(totals.costInhouse) + ' in-house · ' + money(totals.costVendor) + ' vendor'} />
         <Kpi label="Margin" value={money(totals.billed - totals.cost)} sub={totals.cost > 0 ? Math.round(((totals.billed - totals.cost) / totals.cost) * 100) + '% over cost' : 'set rates below'} />
+        <Kpi label="Wages · Homebase" value={wagesFor != null ? money(wagesFor) : '—'} sub={dept === 'all' ? 'whole team this month' : dept + ' crew this month'} />
+        <Kpi label="Billable vs wages" value={wagesFor != null ? money(totals.billed - wagesFor) : '—'} sub="true margin on payroll" />
       </div>
       <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
         <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10.5px] uppercase tracking-wide text-muted font-bold border-b border-line">
@@ -1030,7 +1044,7 @@ export function BillingBoard() {
       ) : null}
 
       {view === 'labor' && data ? (
-        <LaborView tasks={filtered.length ? filtered : data.tasks} rates={data.laborRates || {}} canEdit={canEdit}
+        <LaborView tasks={filtered.length ? filtered : data.tasks} rates={data.laborRates || {}} canEdit={canEdit} month={month}
           onRates={r => setData(d => d ? { ...d, laborRates: r } : d)} />
       ) : null}
 
