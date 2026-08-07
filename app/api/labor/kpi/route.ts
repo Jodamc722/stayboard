@@ -21,6 +21,8 @@ import { getShifts, nameMatches, type Shift } from '@/lib/homebase'
 import { getTimecards, computeLaborKpis } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -85,6 +87,10 @@ export async function GET(req: Request) {
     const weekStart = ((settings as any).week_start === 'monday' ? 'monday' : 'sunday') as 'sunday' | 'monday'
     const week = currentWorkweek(now, weekStart)
     const sb = supabaseAdmin()
+    // Same rule as the ops board: vendor-cleaned buildings (operator-editable in /users -> Ops presets)
+    // live in the vendor bucket, not inside their geographic market's numbers.
+    const presets = await getOpsPresets()
+    const VENDOR_RE = vendorRegex(presets.vendorBuildings)
 
     const [dayShifts, timecards, weekShifts, listingRows] = await Promise.all([
       shiftsForRange(start, end),
@@ -94,10 +100,11 @@ export async function GET(req: Request) {
         .select('id,nickname,title,building,address_city').range(a, b)),
     ])
 
-    const lmap: Record<string, { market: string; name: string }> = {}
+    const lmap: Record<string, { market: string; name: string; vendor: boolean }> = {}
     for (const l of listingRows) {
       const name = l.nickname || l.title || 'Unit'
-      lmap[String(l.id)] = { market: marketOf(l.building, l.address_city, name).toLowerCase(), name }
+      const vendor = VENDOR_RE.test(String(l.building || '')) || VENDOR_RE.test(String(name))
+      lmap[String(l.id)] = { market: vendor ? 'vendor' : marketOf(l.building, l.address_city, name).toLowerCase(), name, vendor }
     }
     const marketFilter = (listingId: any) =>
       marketParam === 'all' || (lmap[String(listingId)]?.market === marketParam)
@@ -137,7 +144,7 @@ export async function GET(req: Request) {
 
     // ---- Attribution join --------------------------------------------------
     const usedTask = new Set<string>()
-    type Attr = { fee: number | null; assignee: string | null; checkOut: string }
+    type Attr = { fee: number | null; assignee: string | null; checkOut: string; vendor: boolean }
     const attributions: Attr[] = []
     for (const r of resRows) {
       const co = String(r.check_out).slice(0, 10)
@@ -148,10 +155,13 @@ export async function GET(req: Request) {
         [co, coNext].includes(String(t.finished_at).slice(0, 10))
       )
       if (match) usedTask.add(String(match.id))
-      attributions.push({ fee: num(r.cleaning), assignee: match ? doer(match) : null, checkOut: co })
+      attributions.push({ fee: num(r.cleaning), assignee: match ? doer(match) : null, checkOut: co, vendor: !!lmap[String(r.listing_id)]?.vendor })
     }
 
     const totalFees = round2(attributions.reduce((a, x) => a + (x.fee ?? 0), 0))
+    // In-house vs vendor cleaning revenue — in-house margins are what we manage.
+    const inhouseFees = round2(attributions.filter(x => !x.vendor).reduce((a, x) => a + (x.fee ?? 0), 0))
+    const vendorFees = round2(totalFees - inhouseFees)
     const attributed = attributions.filter(x => x.assignee && x.fee != null)
     const attributedFees = round2(attributed.reduce((a, x) => a + (x.fee as number), 0))
 
@@ -221,7 +231,7 @@ export async function GET(req: Request) {
     // ---- Payroll vs revenue ------------------------------------------------
     const scheduledCost = round2(dayShifts.reduce((a, s: any) => a + (s.scheduledCost ?? 0), 0))
     const payrollTotal = kpis.totalLaborCost ?? 0
-    const laborPct = totalFees > 0 && payrollTotal > 0 ? round2((payrollTotal / totalFees) * 100) : null
+    const laborPct = inhouseFees > 0 && payrollTotal > 0 ? round2((payrollTotal / inhouseFees) * 100) : null
     const band = laborPct == null ? 'no_data'
       : laborPct <= Number(settings.pct_good) ? 'on_target'
       : laborPct <= Number(settings.pct_bad) ? 'watch' : 'over'
@@ -229,9 +239,11 @@ export async function GET(req: Request) {
       actual: payrollTotal,
       scheduled: scheduledCost,
       revenue: totalFees,
+      revenueInhouse: inhouseFees,
+      revenueVendor: vendorFees,
       laborPct, band,
       goalPct: Number(settings.pct_good),
-      note: 'payroll = Homebase timecard costs; revenue = guest cleaning fees in window',
+      note: 'payroll = Homebase timecard costs; labor % measured against in-house cleaning fees (vendor-cleaned units excluded)',
     }
 
     // ---- Today (in-day decisions) -----------------------------------------
@@ -249,9 +261,11 @@ export async function GET(req: Request) {
 
     const economics = {
       cleaningRevenue: totalFees,
+      cleaningRevenueInhouse: inhouseFees,
+      cleaningRevenueVendor: vendorFees,
       cleaningLaborCost: cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal,
-      cleaningMargin: round2(totalFees - (cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal)),
-      revenuePerLaborDollar: payrollTotal > 0 ? round2(totalFees / payrollTotal) : null,
+      cleaningMargin: round2(inhouseFees - (cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal)),
+      revenuePerLaborDollar: payrollTotal > 0 ? round2(inhouseFees / payrollTotal) : null,
       costBasis: cleaningTaskPay > 0 ? 'breezeway rate_paid' : 'homebase payroll',
     }
 
@@ -296,11 +310,12 @@ export async function GET(req: Request) {
     const departments = {
       housekeeping: {
         people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
-        revenue: totalFees,
-        margin: round2(totalFees - hk.payroll),
+        revenue: inhouseFees,
+        vendorRevenue: vendorFees,
+        margin: round2(inhouseFees - hk.payroll),
         costPerClean: tasks.clean ? round2(hk.payroll / tasks.clean) : null,
-        feePerClean: tasks.clean ? round2(totalFees / tasks.clean) : null,
-        laborPct: totalFees > 0 && hk.payroll > 0 ? round2((hk.payroll / totalFees) * 100) : null,
+        feePerClean: tasks.clean ? round2(inhouseFees / tasks.clean) : null,
+        laborPct: inhouseFees > 0 && hk.payroll > 0 ? round2((hk.payroll / inhouseFees) * 100) : null,
       },
       maintenance: {
         people: mt.people.size, hours: round2(mt.hours), payroll: round2(mt.payroll),
