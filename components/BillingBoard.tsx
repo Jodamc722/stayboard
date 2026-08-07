@@ -24,6 +24,7 @@ type Task = {
   ratePaid: number | null; rateType: string | null; billTo: string | null
   items: Item[]; hasDetail: boolean; detailSyncedAt: string | null
   excluded: boolean; note: string | null; overrideAmount: number | null; billedHours: number | null
+  reviewedBy: string | null; reviewedAt: string | null
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
@@ -307,6 +308,15 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate 
         <div className="col-span-1 flex items-center justify-end gap-1.5">
           {!t.hasDetail ? <span title="Billing detail not pulled yet"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span> : null}
           {done ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : null}
+          {canEdit ? (
+            <button
+              onClick={() => saveAdjust({ reviewed: !t.reviewedBy }, 'rev',
+                { reviewedBy: t.reviewedBy ? null : 'you', reviewedAt: t.reviewedBy ? null : new Date().toISOString() })}
+              title={t.reviewedBy ? 'Reviewed by ' + t.reviewedBy + (t.reviewedAt ? ' · ' + t.reviewedAt.slice(0, 10) : '') + ' — click to clear' : 'Mark this task reviewed (review as you go — no month-end audit)'}
+              className={'rounded-md w-5 h-5 text-[11px] font-bold leading-none ' + (t.reviewedBy ? 'bg-emerald-500 text-white' : 'border border-line text-muted hover:text-emerald-600 hover:border-emerald-300')}>
+              ✓
+            </button>
+          ) : (t.reviewedBy ? <span title={'Reviewed by ' + t.reviewedBy} className="rounded-md w-5 h-5 text-[11px] font-bold leading-none bg-emerald-500 text-white inline-flex items-center justify-center">✓</span> : null)}
           <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" title="Open this task in Breezeway"
             className="text-muted hover:text-brand-600"><ExternalLink className="w-3.5 h-3.5" /></a>
         </div>
@@ -578,6 +588,8 @@ export function BillingBoard() {
   // Billing is for FINISHED work — open/scheduled tasks stay hidden unless asked for.
   const [completedOnly, setCompletedOnly] = useState(true)
   const [showExcluded, setShowExcluded] = useState(false)
+  const [unreviewedOnly, setUnreviewedOnly] = useState(false)
+  const [translating, setTranslating] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [openOwners, setOpenOwners] = useState<Record<string, boolean>>({})
   const [pulling, setPulling] = useState<{ done: number; total: number } | null>(null)
@@ -645,6 +657,7 @@ export function BillingBoard() {
       // deliberate billable even while its Breezeway task is still open.
       if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)) return false
       if (dept !== 'all' && t.department !== dept) return false
+      if (unreviewedOnly && t.reviewedBy) return false
       // Jon's rule: the billable view is tasks with a VALUE — anything over $0 goes on the owner
       // statement; the $0 rows are noise here (they still show with the toggle off).
       if (billableOnly && !(t.billedAmount > 0)) return false
@@ -654,7 +667,7 @@ export function BillingBoard() {
       }
       return true
     })
-  }, [data, dept, billableOnly, completedOnly, showExcluded, q])
+  }, [data, dept, billableOnly, completedOnly, showExcluded, unreviewedOnly, q])
 
   const cmpTasks = useCallback((a: Task, b: Task) => {
     let r = 0
@@ -762,6 +775,30 @@ export function BillingBoard() {
               + Add task
             </button>
           ) : null}
+          {canEdit ? (
+            <button
+              onClick={async () => {
+                if (translating) return
+                setTranslating('Translating…')
+                let total = 0
+                for (let i = 0; i < 6; i++) {
+                  try {
+                    const r = await fetch('/api/billing/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }) })
+                    const j = await r.json().catch(() => ({}))
+                    if (!r.ok || !j.ok) break
+                    total += Number(j.translated || 0)
+                    setTranslating('Translated ' + total + (j.remaining ? '… (' + j.remaining + ' left)' : ''))
+                    if (!j.remaining) break
+                  } catch { break }
+                }
+                setTranslating(null)
+                reload()
+              }}
+              title="Find Spanish task titles this month, translate them to English with AI, and update the Breezeway tasks"
+              className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft disabled:opacity-50" disabled={!!translating}>
+              {translating || 'ES→EN titles'}
+            </button>
+          ) : null}
           <a href={exportUrl('csv')} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <Download className="w-3.5 h-3.5" /> CSV
           </a>
@@ -824,6 +861,9 @@ export function BillingBoard() {
             </label>
             <label className="flex items-center gap-1.5 text-[12px] text-muted">
               <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} /> Show excluded
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-muted" title="Only tasks nobody has reviewed yet">
+              <input type="checkbox" checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} /> Unreviewed only
             </label>
             <span className="flex items-center gap-1 text-[12px] text-muted">
               Sort
@@ -888,6 +928,8 @@ export function BillingBoard() {
             <span className="text-[12.5px] text-muted">{bulk.doing}… {bulk.done}/{bulk.total}</span>
           ) : (
             <>
+              <button onClick={() => runBulk('Reviewing', () => ({ action: 'adjust', reviewed: true }))}
+                className="rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 px-2.5 py-1 text-[12px] font-semibold">✓ Mark reviewed</button>
               <button onClick={() => runBulk('Excluding', () => ({ action: 'adjust', excluded: true }))}
                 className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold">Exclude from billing</button>
               <button onClick={() => runBulk('Including', () => ({ action: 'adjust', excluded: false }))}
@@ -965,7 +1007,7 @@ export function BillingBoard() {
                     {open ? <ChevronDown className="w-4 h-4 text-muted" /> : <ChevronRight className="w-4 h-4 text-muted" />}
                     <span className="font-bold text-ink truncate">{o.g.ownerName}</span>
                   </button>
-                  <span className="text-[11.5px] text-muted">{o.tasks.length} tasks · {hours(o.minutes)}</span>
+                  <span className="text-[11.5px] text-muted">{o.tasks.length} tasks · {hours(o.minutes)} · <span className={o.tasks.every(t => t.reviewedBy) && o.tasks.length ? 'text-emerald-600 font-semibold' : ''}>{o.tasks.filter(t => t.reviewedBy).length}/{o.tasks.length} ✓</span></span>
                   <span className="grow" />
                   <span className="font-bold text-ink tabular-nums">{money(o.billed)}</span>
                   {o.g.ownerId ? (
