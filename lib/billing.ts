@@ -29,6 +29,7 @@ export type BillingTask = {
   ownerName: string
   department: string
   name: string
+  description: string | null
   status: string
   assignees: { id: number | null; name: string | null }[]
   finishedBy: string | null
@@ -95,7 +96,9 @@ async function pageAll(build: (a: number, b: number) => any, cap = 12000): Promi
   return out
 }
 
-const MIRROR_COLS = 'id, reference_property_id, type_department, name, status, assignees, assignee_name, finished_by_name, finished_at, total_minutes, rate_paid, scheduled_date, report_url'
+// descr is the one raw->> scalar we pull (a single jsonb ->> extraction — never whole raw over
+// thousands of rows). It feeds the editable description on the billing row.
+const MIRROR_COLS = 'id, reference_property_id, type_department, name, status, assignees, assignee_name, finished_by_name, finished_at, total_minutes, rate_paid, scheduled_date, report_url, descr:raw->>description'
 
 /** All mirror tasks that belong to a month: scheduled in it, or (undated) finished in it. */
 export async function monthTasks(month: string): Promise<any[]> {
@@ -249,6 +252,7 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
       ownerName: own ? own.ownerName : 'Unassigned owner',
       department: String(t.type_department || 'other'),
       name: String(t.name || 'Task ' + id),
+      description: t.descr ? String(t.descr) : null,
       status: String(t.status || ''),
       assignees: Array.isArray(t.assignees) ? t.assignees : (t.assignee_name ? [{ id: null, name: String(t.assignee_name) }] : []),
       finishedBy: t.finished_by_name ? String(t.finished_by_name) : null,
