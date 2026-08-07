@@ -328,6 +328,7 @@ export async function GET(req: Request) {
     // ---- Department economics: housekeeping vs maintenance ----------------
     const deptOf = (r: string | null) => {
       const s = (r || '').toLowerCase()
+      if (/inspect|audit|quality/.test(s)) return 'inspection'
       if (/clean|housekeep|turn/.test(s)) return 'housekeeping'
       if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
       return 'other'
@@ -337,15 +338,17 @@ export async function GET(req: Request) {
     const deptOfPerson = (name: string, role: string | null) => {
       const byRole = deptOf(role)
       if (byRole !== 'other') return byRole
-      let m = 0, c = 0
+      let m = 0, c = 0, insp = 0
       for (const t of taskRows) {
         const d = doer(t)
         if (!d || !nameMatches(d, name)) continue
         const k = classify(t)
         if (k === 'maintenance') m++
-        else if (k === 'clean' || k === 'inspection') c++
+        else if (k === 'clean') c++
+        else if (k === 'inspection') insp++
       }
-      if (!m && !c) return 'other'
+      if (!m && !c && !insp) return 'other'
+      if (insp > c && insp > m) return 'inspection'
       return m > c ? 'maintenance' : 'housekeeping'
     }
     const agg: Record<string, { hours: number; payroll: number; people: Set<string> }> = {}
@@ -357,6 +360,7 @@ export async function GET(req: Request) {
       agg[k].people.add(t.name)
     }
     const hk = agg['housekeeping'] || { hours: 0, payroll: 0, people: new Set<string>() }
+    const insp = agg['inspection'] || { hours: 0, payroll: 0, people: new Set<string>() }
     const mt = agg['maintenance'] || { hours: 0, payroll: 0, people: new Set<string>() }
     const mtPeopleArr = Array.from(mt.people)
     const mtTaskMinutes = taskRows
@@ -403,6 +407,11 @@ export async function GET(req: Request) {
         costPerClean: tasks.clean ? round2(hk.payroll / tasks.clean) : null,
         feePerClean: tasks.clean ? round2(inhouseFees / tasks.clean) : null,
         laborPct: inhouseFees > 0 && hk.payroll > 0 ? round2((hk.payroll / inhouseFees) * 100) : null,
+      },
+      inspection: {
+        people: insp.people.size, hours: round2(insp.hours), payroll: round2(insp.payroll),
+        inspections: tasks.inspection,
+        costPerInspection: tasks.inspection ? round2(insp.payroll / tasks.inspection) : null,
       },
       maintenance: {
         people: mt.people.size, hours: round2(mt.hours), payroll: round2(mt.payroll),
