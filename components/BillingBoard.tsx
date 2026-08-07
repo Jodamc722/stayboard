@@ -8,7 +8,7 @@
 //   All tasks — the same rows flat, for search/scan.
 //   Labor     — billable labor vs ACTUAL hours worked per person (Breezeway Start/Complete time),
 //               against an editable per-person hourly cost, for the maintenance margin story.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Download, ChevronDown, ChevronRight, Search, ExternalLink, AlertTriangle, Check, X, Pencil } from 'lucide-react'
 import { useAccess } from '@/lib/useAccess'
 
@@ -27,7 +27,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -53,6 +53,59 @@ function monthLabel(m: string): string {
   return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
 
+// ── Add a billable task (created in Breezeway, billed immediately when an amount is set) ────
+function AddTask({ units, month, onDone }: { units: { id: string; name: string }[]; month: string; onDone: () => void }) {
+  const [listingId, setListingId] = useState('')
+  const [name, setName] = useState('')
+  const [dept, setDept] = useState('maintenance')
+  const [date, setDate] = useState(month + '-01')
+  const [amount, setAmount] = useState('')
+  const [descr, setDescr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const submit = async () => {
+    setBusy(true); setErr(null)
+    try {
+      const r = await fetch('/api/billing/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, name, department: dept, date, amount: amount ? Number(amount) : null, description: descr }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.error || j.message || 'Create failed')
+      onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="rounded-2xl border border-line bg-white p-4 shadow-soft space-y-2">
+      <div className="text-[11px] uppercase tracking-[0.14em] text-brand-600 font-bold">Add a billable task — created in Breezeway</div>
+      {err ? <div className="text-[12px] text-rose-600">{err}</div> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={listingId} onChange={e => setListingId(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px] max-w-[240px]">
+          <option value="">Unit…</option>
+          {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Task title (e.g. Owner onboarding clean)"
+          className="grow min-w-[220px] rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+        <select value={dept} onChange={e => setDept(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
+          <option value="maintenance">maintenance</option>
+          <option value="housekeeping">housekeeping</option>
+          <option value="inspection">inspection</option>
+          <option value="safety">safety</option>
+        </select>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="rounded-lg border border-line px-2 py-1.5 text-[12.5px]" />
+        <input value={amount} onChange={e => setAmount(e.target.value)} placeholder="Bill $ (flat, optional)"
+          className="w-32 rounded-lg border border-line px-2 py-1.5 text-[12.5px] tabular-nums" />
+      </div>
+      <div className="flex items-center gap-2">
+        <input value={descr} onChange={e => setDescr(e.target.value)} placeholder="Description (optional — goes to Breezeway)"
+          className="grow rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+        <button onClick={submit} disabled={busy || !listingId || !name.trim()}
+          className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">
+          {busy ? 'Creating…' : 'Create & bill'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
@@ -64,7 +117,9 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 }
 
 // ── Per-task editor row ─────────────────────────────────────────────────────
-function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: Task; canEdit: boolean; onSaved: () => void; selected?: boolean; onSelect?: () => void; defaultRate?: number }) {
+// onPatch applies an OPTIMISTIC local update (row + totals move instantly, no page jump);
+// onSync schedules a quiet background refetch that trues everything up against the server.
+function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate }: { t: Task; canEdit: boolean; onPatch: (id: string, p: Partial<Task>) => void; onSync: () => void; selected?: boolean; onSelect?: () => void; defaultRate?: number }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -83,19 +138,25 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
   const [title, setTitle] = useState(t.name)
   const [desc, setDesc] = useState(t.description || '')
 
-  const post = useCallback(async (body: any, tag: string) => {
+  const post = useCallback(async (body: any, tag: string, optimistic?: Partial<Task>) => {
+    if (optimistic) onPatch(t.id, optimistic)   // the UI moves NOW; the server catches up
     setBusy(tag); setErr(null)
     try {
       const r = await fetch('/api/billing/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, ...body }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || !j.ok) throw new Error(j.error || j.message || 'Save failed')
-      onSaved()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(null)
-  }, [t.id, onSaved])
+    onSync()   // quiet true-up (also reverts the optimistic patch if the save failed)
+  }, [t.id, onPatch, onSync])
 
-  const saveRate = () => post({ action: 'update', rate_paid: rate, rate_type: rateType }, 'rate')
-  const saveAdjust = (fields: any, tag: string) => post({ action: 'adjust', ...fields }, tag)
+  const itemsOwnerTotal = t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
+  const saveRate = () => {
+    const v = Number(rate)
+    post({ action: 'update', rate_paid: rate, rate_type: rateType }, 'rate',
+      Number.isFinite(v) ? { ratePaid: v, rateType } : undefined)
+  }
+  const saveAdjust = (fields: any, tag: string, optimistic?: Partial<Task>) => post({ action: 'adjust', ...fields }, tag, optimistic)
   const addExtra = () => {
     const next = (t.items.filter(i => i.kind === 'extra') as any[]).map(i => ({ description: i.description, amount: i.amount, bill_to: i.bill_to || 'owner' }))
     next.push({ description: extraDesc, amount: Number(extraAmt), bill_to: 'owner' })
@@ -148,20 +209,22 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
   const saveRowHours = () => {
     if (rowH == null) return
     const cur = shownHours
-    if (rowH === '') { setRowH(null); if (t.billedHours != null || t.overrideAmount != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowh'); return }
+    if (rowH === '') { setRowH(null); if (t.billedHours != null || t.overrideAmount != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowh', { billedHours: null, overrideAmount: null }); return }
     const v = Number(rowH)
     if (!Number.isFinite(v) || v < 0) { setRowH(null); return }
     if (v === cur && t.overrideAmount != null) { setRowH(null); return }
-    saveAdjust({ billed_hours: v, override_amount: Math.round(v * chargeRate * 100) / 100 }, 'rowh')
+    const amt = Math.round(v * chargeRate * 100) / 100
+    saveAdjust({ billed_hours: v, override_amount: amt }, 'rowh', { billedHours: v, overrideAmount: amt, billedAmount: t.excluded ? 0 : amt })
     setRowH(null)
   }
   const saveRowAmount = () => {
     if (rowA == null) return
-    if (rowA === '') { setRowA(null); if (t.overrideAmount != null || t.billedHours != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowa'); return }
+    if (rowA === '') { setRowA(null); if (t.overrideAmount != null || t.billedHours != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowa', { billedHours: null, overrideAmount: null }); return }
     const v = Number(rowA)
     if (!Number.isFinite(v) || v < 0) { setRowA(null); return }
     if (v === t.billedAmount) { setRowA(null); return }
-    saveAdjust({ override_amount: v, billed_hours: Math.round((v / chargeRate) * 100) / 100 }, 'rowa')
+    const h = Math.round((v / chargeRate) * 100) / 100
+    saveAdjust({ override_amount: v, billed_hours: h }, 'rowa', { overrideAmount: v, billedHours: h, billedAmount: t.excluded ? 0 : v })
     setRowA(null)
   }
   const saveRowRate = () => {
@@ -169,7 +232,7 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
     const v = rowR === '' ? (defaultRate != null ? defaultRate : null) : Number(rowR)
     if (v == null || !Number.isFinite(v)) { setRowR(null); return }
     if (t.ratePaid === v && String(t.rateType).toLowerCase() === 'hourly') { setRowR(null); return }
-    post({ action: 'update', rate_paid: v, rate_type: 'hourly' }, 'rowr')
+    post({ action: 'update', rate_paid: v, rate_type: 'hourly' }, 'rowr', { ratePaid: v, rateType: 'hourly' })
     setRowR(null)
   }
 
@@ -179,9 +242,9 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
       const r = await fetch('/api/billing/detail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskIds: [t.id] }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || !j.ok) throw new Error(j.error || 'Pull failed')
-      onSaved()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(null)
+    onSync()
   }
 
   const deptCls = DEPT_CLS[t.department] || 'bg-neutral-100 text-neutral-600 ring-neutral-200'
@@ -259,7 +322,7 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
               placeholder="Description of the work performed (shows in Breezeway and available for the owner sheet)"
               className="w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
             <div className="flex items-center gap-2">
-              <button onClick={() => post({ action: 'update', name: title, description: desc }, 'meta')}
+              <button onClick={() => post({ action: 'update', name: title, description: desc }, 'meta', { name: title, description: desc })}
                 disabled={!canEdit || busy === 'meta' || !title.trim()}
                 className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">
                 {busy === 'meta' ? 'Saving…' : 'Save title & description to Breezeway'}
@@ -359,16 +422,18 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
 
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-1.5 text-[12.5px]">
-              <input type="checkbox" checked={t.excluded} disabled={!canEdit} onChange={e => saveAdjust({ excluded: e.target.checked }, 'ex')} />
+              <input type="checkbox" checked={t.excluded} disabled={!canEdit}
+                onChange={e => saveAdjust({ excluded: e.target.checked }, 'ex',
+                  { excluded: e.target.checked, billedAmount: e.target.checked ? 0 : (t.overrideAmount != null ? t.overrideAmount : Math.round((t.laborAmount + itemsOwnerTotal) * 100) / 100) })} />
               Exclude from billing
             </label>
             <span className="flex items-center gap-1.5">
               <span className="text-[11px] text-muted">override billed total</span>
               <input value={override} onChange={e => setOverride(e.target.value)} disabled={!canEdit} placeholder="auto"
                 className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums" />
-              <button onClick={() => saveAdjust({ override_amount: override }, 'ov')} disabled={!canEdit || busy === 'ov'} className="text-[12px] font-semibold text-brand-600">Set</button>
+              <button onClick={() => { const v = Number(override); saveAdjust({ override_amount: override }, 'ov', Number.isFinite(v) && override !== '' ? { overrideAmount: v, billedAmount: t.excluded ? 0 : v } : undefined) }} disabled={!canEdit || busy === 'ov'} className="text-[12px] font-semibold text-brand-600">Set</button>
             </span>
-            <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => { if ((t.note || '') !== note) saveAdjust({ note }, 'note') }}
+            <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => { if ((t.note || '') !== note) saveAdjust({ note }, 'note', { note }) }}
               disabled={!canEdit} placeholder="Billing note (shows on the export)"
               className="grow min-w-[200px] rounded-lg border border-line px-2 py-1 text-[12.5px]" />
           </div>
@@ -516,6 +581,7 @@ export function BillingBoard() {
   const [q, setQ] = useState('')
   const [openOwners, setOpenOwners] = useState<Record<string, boolean>>({})
   const [pulling, setPulling] = useState<{ done: number; total: number } | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
   // Sorting — applies inside each owner group AND to the flat All-tasks view.
   const [sortKey, setSortKey] = useState<'date' | 'unit' | 'amount' | 'hours' | 'task'>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -525,20 +591,31 @@ export function BillingBoard() {
   const [bulk, setBulk] = useState<{ doing: string; done: number; total: number } | null>(null)
   const [bulkRate, setBulkRate] = useState('')
   const [bulkRateType, setBulkRateType] = useState('hourly')
+  const [bulkAmt, setBulkAmt] = useState('')
   const [rateDraft, setRateDraft] = useState<string | null>(null)
 
-  const load = useCallback(async (m: string) => {
-    setLoading(true); setErr(null)
+  const load = useCallback(async (m: string, quiet?: boolean) => {
+    if (!quiet) { setLoading(true); setErr(null) }
     try {
       const r = await fetch('/api/billing?month=' + m)
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || j.message || 'Load failed')
       setData(j)
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setLoading(false)
+    } catch (e: any) { if (!quiet) setErr(String(e?.message || e)) }
+    if (!quiet) setLoading(false)
   }, [])
   useEffect(() => { load(month) }, [month, load])
   const reload = useCallback(() => load(month), [load, month])
+  // Optimistic editing: patch one task locally (row + totals move instantly, nothing jumps),
+  // then a debounced QUIET refetch trues the board up against the server.
+  const patchTask = useCallback((id: string, p: Partial<Task>) => {
+    setData(d => d ? { ...d, tasks: d.tasks.map(t => t.id === id ? { ...t, ...p } : t) } : d)
+  }, [])
+  const syncTimer = useRef<any>(null)
+  const scheduleSync = useCallback(() => {
+    if (syncTimer.current) clearTimeout(syncTimer.current)
+    syncTimer.current = setTimeout(() => { load(month, true) }, 1200)
+  }, [load, month])
 
   const pullDetails = useCallback(async () => {
     if (!data) return
@@ -564,7 +641,9 @@ export function BillingBoard() {
     const needle = q.trim().toLowerCase()
     return data.tasks.filter(t => {
       if (!showExcluded && t.excluded) return false
-      if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt)) return false
+      // Completed-only keeps manually billed tasks (override set) — an added flat fee is a
+      // deliberate billable even while its Breezeway task is still open.
+      if (completedOnly && !(/complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)) return false
       if (dept !== 'all' && t.department !== dept) return false
       // Jon's rule: the billable view is tasks with a VALUE — anything over $0 goes on the owner
       // statement; the $0 rows are noise here (they still show with the toggle off).
@@ -678,6 +757,11 @@ export function BillingBoard() {
           <button onClick={reload} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin' : '')} /> Refresh
           </button>
+          {canEdit ? (
+            <button onClick={() => setAddOpen(v => !v)} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft">
+              + Add task
+            </button>
+          ) : null}
           <a href={exportUrl('csv')} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <Download className="w-3.5 h-3.5" /> CSV
           </a>
@@ -692,6 +776,8 @@ export function BillingBoard() {
       </div>
 
       {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div> : null}
+
+      {addOpen && data ? <AddTask units={data.units || []} month={month} onDone={() => { setAddOpen(false); reload() }} /> : null}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Kpi label="Billed to owners" value={money(kpis.billed)} sub={filtered.length + ' tasks in view'} />
@@ -807,6 +893,19 @@ export function BillingBoard() {
               <button onClick={() => runBulk('Including', () => ({ action: 'adjust', excluded: false }))}
                 className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold">Include</button>
               <span className="flex items-center gap-1.5">
+                <input value={bulkAmt} onChange={e => setBulkAmt(e.target.value)} placeholder="Amount 0.00"
+                  className="w-28 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums bg-white" />
+                <button onClick={() => {
+                  const v = Number(bulkAmt)
+                  if (Number.isFinite(v) && v >= 0 && bulkAmt !== '') {
+                    const h = Math.round((v / ((data && data.defaultRate) || 40)) * 100) / 100
+                    runBulk('Setting amount on', () => ({ action: 'adjust', override_amount: v, billed_hours: h }))
+                  }
+                }} disabled={bulkAmt === ''}
+                  title="Overwrite the billed total on every selected task (hours follow at the charge rate)"
+                  className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">Set amount</button>
+              </span>
+              <span className="flex items-center gap-1.5">
                 <input value={bulkRate} onChange={e => setBulkRate(e.target.value)} placeholder={data && data.defaultRate != null ? 'Rate ' + data.defaultRate : 'Rate 0.00'}
                   className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums bg-white" />
                 <select value={bulkRateType} onChange={e => setBulkRateType(e.target.value)} className="rounded-lg border border-line px-1.5 py-1 text-[12px] bg-white">
@@ -844,7 +943,7 @@ export function BillingBoard() {
             <div className="col-span-1 text-right">Billed</div>
             <div className="col-span-1"></div>
           </div>
-          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} defaultRate={data.defaultRate}
+          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate}
             selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
           {!sortedFlat.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
         </div>
@@ -881,7 +980,7 @@ export function BillingBoard() {
                     </button>
                   ) : null}
                 </div>
-                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onSaved={reload} defaultRate={data.defaultRate}
+                {open ? o.tasks.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate}
                   selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />) : null}
               </div>
             )
