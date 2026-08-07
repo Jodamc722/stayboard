@@ -118,8 +118,12 @@ function ownerSheet(month: string, ownerName: string, ts: BillingTask[], used: R
       const h = isLabor
         ? (t.billedHours != null && (l.kind === 'labor' || l.kind === 'override') ? t.billedHours.toFixed(2) : (l.amount / chargeRate).toFixed(2))
         : ''
+      // Type shows WHAT KIND of work this was: a maintenance task reads "Maintenance" on the
+      // owner statement (Jon), housekeeping reads "Housekeeping"; supplies stay "Supply".
+      const dept = String(t.department || 'labor')
+      const typeLabel = l.kind === 'supply' ? 'Supply' : (dept.charAt(0).toUpperCase() + dept.slice(1))
       rows.push(row([
-        cell(l.date), cell(l.unit), cell(service), cell(l.kind === 'supply' ? 'supply' : 'labor'),
+        cell(l.date), cell(l.unit), cell(service), cell(typeLabel),
         cell(h, h ? 'Number' : 'String', h ? 'num' : undefined),
         cell(h ? chargeRate.toFixed(2) : '', h ? 'Number' : 'String', h ? 'cur' : undefined),
         cell(money(l.amount), 'Number', 'cur'),
@@ -168,6 +172,64 @@ function toXls(month: string, tasks: BillingTask[], chargeRate: number): string 
     XLS_STYLES + sheets.join('') + '</Workbook>'
 }
 
+// ── Minimal ZIP writer (stored entries, no compression, no dependency) ──────
+// The repo ships without new packages, and a statement attachment is a few KB of XML — store is
+// fine. Standard ZIP: local headers + central directory + EOCD, CRC-32 per entry.
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+    t[n] = c >>> 0
+  }
+  return t
+})()
+function crc32(d: Buffer): number {
+  let c = 0xFFFFFFFF
+  for (let i = 0; i < d.length; i++) c = CRC_TABLE[(c ^ d[i]) & 0xFF] ^ (c >>> 8)
+  return (c ^ 0xFFFFFFFF) >>> 0
+}
+function buildZip(entries: { name: string; data: Buffer }[]): Buffer {
+  const now = new Date()
+  const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) | (Math.floor(now.getSeconds() / 2))) & 0xFFFF
+  const dosDate = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const e of entries) {
+    const nameB = Buffer.from(e.name, 'utf8')
+    const crc = crc32(e.data)
+    const lh = Buffer.alloc(30)
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(0, 8)
+    lh.writeUInt16LE(dosTime, 10); lh.writeUInt16LE(dosDate, 12); lh.writeUInt32LE(crc, 14)
+    lh.writeUInt32LE(e.data.length, 18); lh.writeUInt32LE(e.data.length, 22)
+    lh.writeUInt16LE(nameB.length, 26); lh.writeUInt16LE(0, 28)
+    locals.push(lh, nameB, e.data)
+    const ch = Buffer.alloc(46)
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(0, 10)
+    ch.writeUInt16LE(dosTime, 12); ch.writeUInt16LE(dosDate, 14); ch.writeUInt32LE(crc, 16)
+    ch.writeUInt32LE(e.data.length, 20); ch.writeUInt32LE(e.data.length, 24)
+    ch.writeUInt16LE(nameB.length, 28); ch.writeUInt16LE(0, 30); ch.writeUInt16LE(0, 32)
+    ch.writeUInt16LE(0, 34); ch.writeUInt16LE(0, 36); ch.writeUInt32LE(0, 38); ch.writeUInt32LE(offset, 42)
+    centrals.push(ch, nameB)
+    offset += 30 + nameB.length + e.data.length
+  }
+  const cd = Buffer.concat(centrals)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(0, 4); eocd.writeUInt16LE(0, 6)
+  eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10)
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(offset, 16); eocd.writeUInt16LE(0, 20)
+  return Buffer.concat([Buffer.concat(locals), cd, eocd])
+}
+
+// One standalone workbook for ONE owner (the file that goes into the ZIP / statement folder).
+function ownerWorkbook(month: string, ownerName: string, ts: BillingTask[], chargeRate: number): string {
+  return '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+    XLS_STYLES + ownerSheet(month, ownerName, ts, {}, chargeRate) + '</Workbook>'
+}
+const cleanName = (s: string) => String(s || 'Owner').replace(/[^A-Za-z0-9 ,&._-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('billing', 'view')
   if (!gate.ok) return gate.res
@@ -180,7 +242,47 @@ export async function GET(req: NextRequest) {
     // done=1 → completed work only (matches the board's "Completed only" default — you bill finished work).
     const doneOnly = sp.get('done') === '1'
     let scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
-    if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt)
+    if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)
+    // reviewed=1 → only owners marked "reviewed" for this month (the close-out set).
+    if (sp.get('reviewed') === '1') {
+      const reviews = await getSetting<Record<string, any>>('billing_review:' + month, {})
+      scoped = scoped.filter(t => !!reviews[String(t.ownerId || 'unassigned')])
+    }
+    if (format === 'zip') {
+      // One billable-labor sheet PER OWNER, zipped — each file named "<Owner> - Billable Labor -
+      // <Month>.xls" so it drops straight into that owner's statement. Owners with nothing billed
+      // are skipped: if there is a number on the report, it goes on the statement — $0 does not.
+      const def = await getSetting<{ rate: number }>('billing_default_rate', { rate: 40 })
+      const chargeRate = Number(def?.rate) > 0 ? Number(def.rate) : 40
+      const byOwner: Record<string, BillingTask[]> = {}
+      for (const t of scoped) {
+        if (t.excluded) continue
+        const k = t.ownerName
+        if (!byOwner[k]) byOwner[k] = []
+        byOwner[k].push(t)
+      }
+      const label = monthLabel(month)
+      const entries: { name: string; data: Buffer }[] = []
+      const usedNames: Record<string, boolean> = {}
+      for (const o of Object.keys(byOwner).sort((a, b) => a.localeCompare(b))) {
+        const ts = byOwner[o]
+        const billed = ts.reduce((s, t) => s + t.billedAmount, 0)
+        if (billed <= 0) continue
+        let base = cleanName(o) + ' - Billable Labor - ' + label
+        let name = base + '.xls'; let i = 2
+        while (usedNames[name]) { name = base + ' (' + i + ').xls'; i++ }
+        usedNames[name] = true
+        entries.push({ name, data: Buffer.from(ownerWorkbook(month, o, ts, chargeRate), 'utf8') })
+      }
+      if (!entries.length) return NextResponse.json({ ok: false, error: 'No owners with billable amounts in this month.' }, { status: 404 })
+      const zip = buildZip(entries)
+      return new NextResponse(zip as any, {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="billable-labor-${month || 'month'}.zip"`,
+        },
+      })
+    }
     if (format === 'xls') {
       const def = await getSetting<{ rate: number }>('billing_default_rate', { rate: 40 })
       const chargeRate = Number(def?.rate) > 0 ? Number(def.rate) : 40
