@@ -135,9 +135,17 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
   // Breezeway has no writable time field; their clock is the crew's taps. RATE edits push to
   // Breezeway (rate_paid + hourly).
   const chargeRate = defaultRate != null && defaultRate > 0 ? defaultRate : 40
+  // Jon's rule: the team enters FLAT AMOUNTS in Breezeway; we read them as billable labor at the
+  // charge rate — hours = amount ÷ rate, REGARDLESS of the clock time on the task. The crew's
+  // actual time stays in the tooltip and the Labor tab.
+  const shownHours: number | null = t.billedHours != null
+    ? t.billedHours
+    : (t.billedAmount > 0
+      ? Math.round((t.billedAmount / chargeRate) * 100) / 100
+      : (t.actualMinutes != null ? Math.round((t.actualMinutes / 60) * 100) / 100 : null))
   const saveRowHours = () => {
     if (rowH == null) return
-    const cur = t.billedHours != null ? t.billedHours : (t.actualMinutes != null ? Math.round((t.actualMinutes / 60) * 100) / 100 : null)
+    const cur = shownHours
     if (rowH === '') { setRowH(null); if (t.billedHours != null || t.overrideAmount != null) saveAdjust({ billed_hours: '', override_amount: '' }, 'rowh'); return }
     const v = Number(rowH)
     if (!Number.isFinite(v) || v < 0) { setRowH(null); return }
@@ -196,17 +204,17 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect, defaultRate }: { t: 
           {t.billTo ? <span className={chip('bg-emerald-50 text-emerald-700 ring-emerald-200') + ' ml-1'}>bill: {t.billTo}</span> : null}
         </div>
         <div className="col-span-2 truncate text-muted">{t.assignees.map(a => a.name).filter(Boolean).join(', ') || t.finishedBy || '—'}</div>
-        <div className="col-span-1 text-right" title={t.billedHours != null ? 'Billed hours (edited) — actual ' + hours(t.actualMinutes) : 'Hours billed (defaults to actual time on task) — click to edit'}>
+        <div className="col-span-1 text-right" title={'Billed hours = amount ÷ $' + chargeRate + '/h (crew clock: ' + hours(t.actualMinutes) + ') — click to edit'}>
           {canEdit ? (
             <input
-              value={rowH != null ? rowH : (t.billedHours != null ? String(t.billedHours) : (t.actualMinutes != null ? String(Math.round((t.actualMinutes / 60) * 100) / 100) : ''))}
+              value={rowH != null ? rowH : (shownHours != null ? String(shownHours) : '')}
               onChange={e => setRowH(e.target.value)}
               onBlur={saveRowHours}
               onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
               placeholder="0"
               className={'w-14 rounded-lg border px-1.5 py-0.5 text-right text-[12.5px] tabular-nums ' + (t.billedHours != null ? 'border-brand-300 text-brand-700 font-semibold' : 'border-line')}
             />
-          ) : (t.billedHours != null ? <span className="font-semibold text-brand-600 tabular-nums">{t.billedHours.toFixed(1)}h</span> : <span className="tabular-nums">{hours(t.actualMinutes)}</span>)}
+          ) : (shownHours != null ? <span className={'tabular-nums' + (t.billedHours != null ? ' font-semibold text-brand-600' : '')}>{shownHours.toFixed(1)}h</span> : <span className="tabular-nums">—</span>)}
         </div>
         <div className="col-span-1 text-right" title="Hourly rate billed — saving pushes to Breezeway">
           {canEdit ? (
