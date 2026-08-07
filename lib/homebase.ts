@@ -62,6 +62,8 @@ export type Shift = {
   endAt: string | null
   label: string            // "8:00 AM – 5:30 PM"
   open: boolean            // unfilled/open shift
+  wageRate?: number | null
+  scheduledCost?: number | null   // Homebase labor.scheduled_costs — forecast payroll for this shift
 }
 
 function fmt(t: string | null, tz: string): string {
@@ -97,6 +99,8 @@ export async function getShifts(date: string, tz = 'America/New_York'): Promise<
       startAt, endAt,
       label: `${fmt(startAt, tz)} – ${fmt(endAt, tz)}`,
       open: !name,
+      wageRate: Number.isFinite(Number(s.wage_rate)) ? Number(s.wage_rate) : null,
+      scheduledCost: s.labor && Number.isFinite(Number((s.labor as any).scheduled_costs)) ? Number((s.labor as any).scheduled_costs) : null,
     }
   })
   return shifts.sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
