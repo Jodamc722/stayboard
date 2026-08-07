@@ -54,6 +54,21 @@ export async function getLocationUuid(): Promise<string> {
   return String(uuid)
 }
 
+// Employee names for the location - used to tell in-house staff from outside vendors
+// (billing crew split) and anywhere else we need the roster.
+export async function getEmployeeNames(): Promise<string[]> {
+  const loc = await getLocationUuid()
+  const raw = arr(await hb('/locations/' + loc + '/employees'))
+  const out: string[] = []
+  for (const e of raw) {
+    const first = pick(e, 'first_name', 'firstName')
+    const last = pick(e, 'last_name', 'lastName')
+    const n = (String(first || '') + ' ' + String(last || '')).trim()
+    if (n) out.push(n)
+  }
+  return out
+}
+
 export type Shift = {
   name: string
   role: string | null
