@@ -101,6 +101,7 @@ export type PersonLabor = {
   actualHours: number
   varianceHours: number       // actual - scheduled; + = worked past schedule
   overtimeHours: number
+  wageRate: number | null      // $/hr from Homebase (highest seen on their cards)
   laborCost: number | null
   weekToDateHours: number
   remainingScheduledThisWeek: number
@@ -180,6 +181,7 @@ export function computeLaborKpis(opts: {
       actualHours: actual,
       varianceHours: round1(actual - scheduled),
       overtimeHours: ot,
+      wageRate: myTc.reduce((a: number | null, t) => (t.wageRate != null && (a == null || t.wageRate > a) ? t.wageRate : a), null as number | null),
       laborCost: costs.length ? round2(costs.reduce((a, c) => a + c, 0)) : null,
       weekToDateHours: wtd,
       remainingScheduledThisWeek: remaining,
