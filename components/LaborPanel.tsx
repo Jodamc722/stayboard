@@ -147,6 +147,33 @@ export function LaborPanel() {
         </div>
       </div>
 
+      {/* DEPARTMENTS: housekeeping economics + maintenance utilization */}
+      {d?.departments && (
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="rounded-xl border border-line bg-white px-3 py-4">
+            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping</p>
+            <div className="grid grid-cols-3 gap-y-3">
+              <Stat label="Revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="cleaning fees" />
+              <Stat label="Labor" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' people'} />
+              <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} />
+              <Stat label="Cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} />
+              <Stat label="Fee / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.feePerClean)} />
+              <Stat label="Labor %" value={loading ? '…' : (d.departments.housekeeping.laborPct != null ? d.departments.housekeeping.laborPct + '%' : '—')} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-line bg-white px-3 py-4">
+            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Maintenance</p>
+            <div className="grid grid-cols-3 gap-y-3">
+              <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.maintenance.payroll)} sub={d.departments.maintenance.hours + 'h · ' + d.departments.maintenance.people + ' people'} />
+              <Stat label="Tasks done" value={loading ? '…' : String(d.departments.maintenance.tasksCompleted ?? 0)} sub={(d.departments.maintenance.taskHours ?? 0) + 'h on tasks'} />
+              <Stat label="On-task %" value={loading ? '…' : (d.departments.maintenance.utilizationPct != null ? d.departments.maintenance.utilizationPct + '%' : '—')} sub="task time ÷ paid time" />
+              <Stat label="Cost / task" value={loading ? '…' : fmt$(d.departments.maintenance.costPerTask)} />
+              <Stat label="Billable" value="—" sub="billing link pending" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TASKS */}
       <div className="rounded-xl border border-line bg-white px-3 py-4">
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3 flex items-center gap-1">
