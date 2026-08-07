@@ -136,7 +136,7 @@ export async function GET(req: NextRequest) {
       '<td style="' + td + '">' + money(x.p) + '</td>' +
       '<td style="' + td + '">' + (x.cleans || '-') + '</td>' +
       '<td style="' + td + '">' + (x.rev ? money(x.rev) : '-') + '</td>' +
-      '<td style="' + td + '">' + (x.per != null && x.rev ? '$' + x.per.toFixed(2) : '-') + '</td></tr>').join('')
+      '</tr>').join('')
 
     const bandColor = band === 'over target' ? '#dc2626' : band === 'watch' ? '#d97706' : '#059669'
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">' +
@@ -150,7 +150,7 @@ export async function GET(req: NextRequest) {
       '<p style="margin:0;font-size:14px">Labor at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '-') + '</b> of in-house revenue - <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%)</p></div>' +
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px">' +
       '<p style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;font-weight:700">Per person - revenue generated vs labor cost</p>' +
-      '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Revenue</th><th style="' + th + '">Rev / $1</th></tr>' + rows + '</table>' +
+      '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Revenue</th></tr>' + rows + '</table>' +
       '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Revenue = guest cleaning fees on checkouts matched to that person&#39;s Breezeway cleans (in-house units only). People with hours but no cleans are maintenance/inspections or missing Breezeway assignees.</p></div>' +
       '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af">Sent automatically by Lighthouse every Monday. Full detail: /labor.</p>' +
       '</div></body></html>'
