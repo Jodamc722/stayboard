@@ -23,6 +23,7 @@ import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
+import { laborAmount } from '@/lib/billing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -91,6 +92,12 @@ export async function GET(req: Request) {
     // live in the vendor bucket, not inside their geographic market's numbers.
     const presets = await getOpsPresets()
     const VENDOR_RE = vendorRegex(presets.vendorBuildings)
+    // Supervisors / hybrid roles (Jon 2026-08-07): excluded from the per-cleaner
+    // rankings; still counted in dept payroll so cost-per-clean stays fully loaded.
+    // Override by adding a `supervisors` text column to labor_settings (comma-separated).
+    const SUP_NAMES = String((settings as any).supervisors || 'Ernesto Torres,Yoslenis Rodriguez,Roberto Chiriboga,Guillermo Hernandez')
+      .split(',').map(s => s.trim()).filter(Boolean)
+    const isSupervisor = (n: string) => SUP_NAMES.some(s => nameMatches(s, n))
 
     const [dayShifts, timecards, weekShifts, listingRows] = await Promise.all([
       shiftsForRange(start, end),
@@ -185,7 +192,8 @@ export async function GET(req: Request) {
         }))
     }
 
-    const cleanerNames = Array.from(new Set(cleanTasks.map(t => doer(t)).filter(Boolean))) as string[]
+    const cleanerNames = (Array.from(new Set(cleanTasks.map(t => doer(t)).filter(Boolean))) as string[])
+      .filter(n => !isSupervisor(n))   // supervisors/hybrids are not ranked as cleaners
     const perCleaner = cleanerNames.map(name => {
       const myTasks = cleanTasks.filter(t => doer(t) && nameMatches(doer(t) as string, name))
       const myPay = round2(myTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
@@ -307,9 +315,40 @@ export async function GET(req: Request) {
       .filter(t => classify(t) === 'maintenance')
       .filter(t => { const d = doer(t); return !!d && mtPeopleArr.some(p => nameMatches(d, p)) })
       .reduce((a, t) => a + Math.min(num(t.total_minutes) ?? 0, 480), 0) // cap runaway Breezeway timers at 8h/task
+    // Supervisor payroll inside housekeeping - shown separately, kept in cost/clean.
+    const hkSupPay = round2(Array.from(hk.people).filter(nm2 => isSupervisor(nm2))
+      .reduce((a, nm2) => a + timecards.filter(t => t.name === nm2).reduce((x, t) => x + (t.laborCost ?? 0), 0), 0))
+
+    // Billable maintenance work, straight from Breezeway billing (rates + adjustments).
+    const mtIds = taskRows.filter(t => classify(t) === 'maintenance').map(t => String(t.id))
+    let mtBillable = 0, mtBilledTasks = 0
+    if (mtIds.length) {
+      const dets: Record<string, any> = {}
+      const madj: Record<string, any> = {}
+      for (let i = 0; i < mtIds.length; i += 400) {
+        const chunk = mtIds.slice(i, i + 400)
+        try { const { data } = await sb.from('breezeway_billing_details').select('task_id,rate_type').in('task_id', chunk); for (const d0 of (data || []) as any[]) dets[String(d0.task_id)] = d0 } catch { /* no detail yet */ }
+        try { const { data } = await sb.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk); for (const a0 of (data || []) as any[]) madj[String(a0.task_id)] = a0 } catch { /* overlay optional */ }
+      }
+      for (const t of taskRows) {
+        if (classify(t) !== 'maintenance') continue
+        const adj = madj[String(t.id)]
+        if (adj && adj.excluded) continue
+        const det = dets[String(t.id)]
+        const cappedMin = t.total_minutes != null ? Math.min(Number(t.total_minutes), 480) : null
+        const amt = adj && adj.override_amount != null
+          ? Number(adj.override_amount)
+          : laborAmount(num(t.rate_paid), det && det.rate_type != null ? String(det.rate_type) : null, cappedMin, adj && adj.billed_hours != null ? Number(adj.billed_hours) : null)
+        if (amt > 0) { mtBillable += amt; mtBilledTasks++ }
+      }
+      mtBillable = Math.round(mtBillable * 100) / 100
+    }
+
     const departments = {
       housekeeping: {
         people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
+        supervisorPayroll: hkSupPay, cleanerPayroll: round2(hk.payroll - hkSupPay),
+        supervisors: SUP_NAMES,
         revenue: inhouseFees,
         vendorRevenue: vendorFees,
         margin: round2(inhouseFees - hk.payroll),
@@ -324,7 +363,8 @@ export async function GET(req: Request) {
         taskHours: round2(mtTaskMinutes / 60),
         utilizationPct: mt.hours > 0 ? round2((mtTaskMinutes / 60 / mt.hours) * 100) : null,
         costPerTask: tasks.maintenance ? round2(mt.payroll / tasks.maintenance) : null,
-        billableRevenue: null as number | null, // wire to billing line items when billable definition is confirmed
+        billableRevenue: mtBillable, // Breezeway billing: rate math + owner adjustments
+        billableTasks: mtBilledTasks,
       },
     }
 
