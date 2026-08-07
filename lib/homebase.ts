@@ -114,13 +114,47 @@ export async function getShifts(date: string, tz = 'America/New_York'): Promise<
 
 const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
 
+// Small edit distance for typo tolerance ('Rodiguez' vs 'Rodriguez',
+// 'Yunisleydi' vs 'Yunisleidy'). Names come from two systems typed by hand.
+function editDist(a: string, b: string): number {
+  const m = a.length, n = b.length
+  if (!m) return n
+  if (!n) return m
+  let prev: number[] = []
+  for (let j = 0; j <= n; j++) prev[j] = j
+  for (let i = 1; i <= m; i++) {
+    const cur: number[] = [i]
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    }
+    prev = cur
+  }
+  return prev[n]
+}
+
+const nearWord = (x: string, y: string): boolean => {
+  if (x === y) return true
+  if (x.length < 4 || y.length < 4) return false
+  return editDist(x, y) <= (Math.min(x.length, y.length) >= 6 ? 2 : 1)
+}
+
+// Same person if first names match (exact or a typo apart) and last names agree
+// (same word, a typo apart, or at least the same initial). Tolerates double
+// spaces, accents, and swapped first/last order.
 export function nameMatches(a: string, b: string): boolean {
-  const [af, ...ar] = norm(a).split(/\s+/)
-  const [bf, ...br] = norm(b).split(/\s+/)
-  if (!af || !bf || af !== bf) return false
-  const al = ar.join(' '), bl = br.join(' ')
-  if (!al || !bl) return true               // only a first name on one side
-  return al[0] === bl[0]                    // same first name + same last initial
+  const A = norm(a).split(/\s+/).filter(Boolean)
+  const B = norm(b).split(/\s+/).filter(Boolean)
+  if (!A.length || !B.length) return false
+  if (A.join(' ') === B.join(' ')) return true
+  const af = A[0], bf = B[0]
+  const al = A.length > 1 ? A[A.length - 1] : ''
+  const bl = B.length > 1 ? B[B.length - 1] : ''
+  const firstOk = nearWord(af, bf)
+  if (firstOk && (!al || !bl)) return true            // only a first name on one side
+  const lastOk = !!al && !!bl && (nearWord(al, bl) || al[0] === bl[0])
+  if (firstOk && lastOk) return true
+  // swapped order ('Perez Yunisleidy')
+  return !!al && !!bl && nearWord(af, bl) && nearWord(al, bf)
 }
 
 export type StaffingCheck = {
