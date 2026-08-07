@@ -7,6 +7,7 @@ import { Shell } from '@/components/Shell'
 import { useCachedFetch } from '@/lib/swr'
 import { OpsTaskPush } from '@/components/OpsTaskPush'
 import { TodayInOps } from '@/components/TodayInOps'
+import { LaborStrip } from '@/components/LaborStrip'
 import { AuditFollowUps } from '@/components/AuditFollowUps'
 import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
 
@@ -38,6 +39,8 @@ export default function OpsPlanPage() {
         </div>
         <p className="text-sm text-muted mt-1">Live field board &mdash; cleans, maintenance, inspections and active guest glitches by market. Assign, reschedule, and see what needs attention.</p>
       </header>
+
+      <LaborStrip />
 
       <TodayInOps />
 
