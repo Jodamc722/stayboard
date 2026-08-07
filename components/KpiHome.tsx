@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { SyncNowButton } from '@/components/SyncNowButton'
+import { LaborEconStrip } from '@/components/LaborEconStrip'
 import {
   LogIn, LogOut, Users, Sparkles, TrendingUp, TrendingDown, Minus, ArrowUpRight,
   Star, PhoneCall, AlertTriangle, Wrench, ClipboardCheck, Brush, Timer, DollarSign,
@@ -628,4 +629,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       </p>
     </div>
   )
-}
+}{/* labor economics - same numbers as /labor, the briefs and the schedule strip */}
+      <LaborEconStrip days={7} />
+
+      
