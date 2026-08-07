@@ -9,8 +9,12 @@
       "schedule": "0 */2 * * *"
     },
     {
-      "path": "/api/sync/guesty?only=reservations&fast=1",
-      "schedule": "*/10 * * * *"
+      "path": "/api/cron/reservations",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/reservations?full=1",
+      "schedule": "35 9 * * *"
     },
     {
       "path": "/api/eve/learn",
@@ -29,8 +33,24 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/reservation-notices",
+      "schedule": "*/20 * * * *"
+    },
+    {
       "path": "/api/sync/owner-statements",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/watchdog",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/claims",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/ops-brief",
+      "schedule": "0 11 * * *"
     },
     {
       "path": "/api/cron/guide-activations?slugs=garden",
