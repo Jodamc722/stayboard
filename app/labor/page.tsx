@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Shell } from '@/components/Shell'
 import { Timer, UploadCloud, RefreshCw } from 'lucide-react'
+import { LaborPanel } from '@/components/LaborPanel'
 
 type Person = { employee: string; hours: number; cost: number; days: number; cleans: number; hoursPerClean: number | null; costPerClean: number | null }
 type Data = { ok: boolean; from: string; to: string; totals: { hours: number; cost: number; cleans: number; people: number }; people: Person[]; hasData: boolean; error?: string }
@@ -51,8 +52,11 @@ export default function LaborPage() {
       <header className="mb-5">
         <div className="text-[11px] font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5"><Timer size={12} /> Team</div>
         <h1 className="text-3xl font-bold text-ink mt-1">Labor</h1>
-        <p className="text-sm text-muted mt-1">Upload the Homebase timesheet export, and this joins hours + wages against completed Breezeway cleans: hours per clean and cost per clean, per person.</p>
+        <p className="text-sm text-muted mt-1">Live from the Homebase API: scheduled vs actual hours, overtime risk, and per-person labor. CSV upload below remains as a fallback.</p>
       </header>
+
+      {/* Live from the Homebase API */}
+      <div className="mb-6"><LaborPanel /></div>
 
       <div className="rounded-2xl border border-line bg-white p-4 mb-4 flex items-center gap-3 flex-wrap">
         <label className={'inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg border border-line cursor-pointer hover:bg-app ' + (busy ? 'opacity-50 pointer-events-none' : '')}>
