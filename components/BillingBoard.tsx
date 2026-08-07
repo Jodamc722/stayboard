@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Download, ChevronDown, ChevronRight, Search, ExternalLink, AlertTriangle, Check, X, Pencil } from 'lucide-react'
 import { useAccess } from '@/lib/useAccess'
 
-type Item = { description: string; amount: number; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
+type Item = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
 type Task = {
   id: string; listingId: string | null; unit: string; building: string | null
   ownerId: string | null; ownerName: string
@@ -75,6 +75,7 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit
   const [billedH, setBilledH] = useState(t.billedHours != null ? String(t.billedHours) : '')
   const [extraDesc, setExtraDesc] = useState('')
   const [extraAmt, setExtraAmt] = useState('')
+  const [itemAmt, setItemAmt] = useState<Record<string, string>>({})
 
   const post = useCallback(async (body: any, tag: string) => {
     setBusy(tag); setErr(null)
@@ -99,6 +100,30 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit
     const cur = (t.items.filter(i => i.kind === 'extra') as any[]).map(i => ({ description: i.description, amount: i.amount, bill_to: i.bill_to || 'owner' }))
     cur.splice(idx, 1)
     saveAdjust({ extra_items: cur }, 'extra')
+  }
+  // Current full override map for this task's Breezeway line items (key → dollars).
+  const overrideMap = (except?: string) => {
+    const ov: Record<string, number> = {}
+    for (const i of t.items) if (i.kind !== 'extra' && i.originalAmount != null && i.key !== except) ov[i.key] = i.amount
+    return ov
+  }
+  const saveItemAmount = (it: Item) => {
+    const raw = itemAmt[it.key]
+    if (raw == null || raw === '') return
+    const v = Number(raw)
+    if (!Number.isFinite(v) || v < 0 || v === it.amount) return
+    if (it.kind === 'extra') {
+      const extras2 = t.items.filter(i => i.kind === 'extra').map(i => ({ description: i.description, amount: i.key === it.key ? v : i.amount, bill_to: i.bill_to || 'owner' }))
+      saveAdjust({ extra_items: extras2 }, 'item')
+    } else {
+      const ov = overrideMap()
+      ov[it.key] = v
+      saveAdjust({ item_overrides: ov }, 'item')
+    }
+  }
+  const resetItem = (it: Item) => {
+    setItemAmt(m => ({ ...m, [it.key]: '' }))
+    saveAdjust({ item_overrides: overrideMap(it.key) }, 'item')
   }
   const refreshDetail = async () => {
     setBusy('detail'); setErr(null)
@@ -179,13 +204,28 @@ function TaskRow({ t, canEdit, onSaved, selected, onSelect }: { t: Task; canEdit
             <div className="text-[11px] uppercase tracking-wide text-muted font-bold mb-1">Line items</div>
             {t.items.length ? (
               <div className="space-y-1">
-                {t.items.map((it, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[12.5px]">
+                {t.items.map(it => (
+                  <div key={it.key} className="flex items-center gap-2 text-[12.5px]">
                     <span className={chip(it.kind === 'extra' ? 'bg-brand-50 text-brand-700 ring-brand-200' : it.kind === 'supply' ? 'bg-teal-50 text-teal-700 ring-teal-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200')}>{it.kind}</span>
                     <span className="text-ink">{it.description}</span>
                     {it.bill_to ? <span className="text-[11px] text-muted">→ {it.bill_to}</span> : null}
+                    {it.originalAmount != null ? <span className="text-[11px] text-muted">was <span className="line-through tabular-nums">{money(it.originalAmount)}</span></span> : null}
                     <span className="grow" />
-                    <span className="tabular-nums font-semibold">{money(it.amount)}</span>
+                    {canEdit ? (
+                      <input
+                        value={itemAmt[it.key] != null && itemAmt[it.key] !== '' ? itemAmt[it.key] : String(it.amount)}
+                        onChange={e => setItemAmt(m => ({ ...m, [it.key]: e.target.value }))}
+                        onBlur={() => saveItemAmount(it)}
+                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        title={it.kind === 'extra' ? 'Edit this line item amount' : 'Edit the billed amount — stored as our adjustment, Breezeway keeps the original'}
+                        className={'w-20 rounded-lg border px-2 py-0.5 text-right text-[12.5px] tabular-nums font-semibold ' + (it.originalAmount != null ? 'border-brand-300 text-brand-700' : 'border-line')}
+                      />
+                    ) : (
+                      <span className="tabular-nums font-semibold">{money(it.amount)}</span>
+                    )}
+                    {it.originalAmount != null && canEdit ? (
+                      <button onClick={() => resetItem(it)} title="Reset to the Breezeway amount" className="text-[12px] text-muted hover:text-ink font-semibold">↺</button>
+                    ) : null}
                     {it.kind === 'extra' && canEdit ? (
                       <button onClick={() => removeExtra(extras.indexOf(it))} className="text-muted hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
                     ) : null}
