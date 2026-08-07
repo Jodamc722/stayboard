@@ -15,7 +15,7 @@ import { THEMES, looksNegative, sentenceAbout } from './review-themes'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
-import { getShifts } from './homebase'
+import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
 import { getTimecards } from './homebase-labor'
 import { getLaborSettings } from './labor-settings'
 import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
@@ -311,6 +311,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   // Full portfolio: hours + payroll + in-house revenue + labor %. Miami/Broward
   // (team-facing): the % band and the flags only - never dollar amounts.
   let laborCard = ''
+  let crewCard = ''
   let laborTile: Tile | null = null
   try {
     const yd = ymdET(new Date(Date.now() - 86400000))
@@ -349,6 +350,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       if (!info || info.vendor) continue
       const f = Number((r as any).cleaning); if (Number.isFinite(f)) fees += f
     }
+    let vendorFees = 0
+    for (const r of (rr2.data || []) as any[]) {
+      const info = mk2[String(r.listing_id)]
+      if (!info || !info.vendor) continue
+      const f = Number((r as any).cleaning)
+      if (Number.isFinite(f)) vendorFees += f
+    }
     const status = laborRevenueStatus(payroll > 0 ? payroll : null, fees > 0 ? fees : null, lset)
     const flagBits: string[] = []
     if (flags.noShows.length) flagBits.push(`<span style="${S.red}">${flags.noShows.length} scheduled, never clocked in</span> (${flags.noShows.slice(0, 4).map(x => esc(x.name)).join(', ')}${flags.noShows.length > 4 ? '…' : ''})`)
@@ -356,12 +364,105 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     if (flags.overSchedule.length) flagBits.push(`${flags.overSchedule.length} worked past schedule (${flags.overSchedule.slice(0, 4).map(x => `${esc(x.name)} +${x.overByHours}h`).join(', ')})`)
     if (flags.missedClockOuts.length) flagBits.push(`${flags.missedClockOuts.length} timecard${flags.missedClockOuts.length === 1 ? '' : 's'} left open`)
     const money = variant === 'full'
-      ? ` · <b>${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees`
+      ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
       : ''
     const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
     laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
+    // ---- Team economics yesterday (FULL brief only - carries dollars) --------
+    if (variant === 'full') {
+      const { data: tRows } = await db2.from('breezeway_tasks_sync')
+        .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
+        .gte('finished_at', yd).lte('finished_at', yd + 'T23:59:59').limit(3000)
+      const rows2 = (tRows || []) as any[]
+      const kindOf = (t: any) => {
+        const s2 = (String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()
+        if (/clean|housekeep|turn/.test(s2)) return 'clean'
+        if (/inspect|walk/.test(s2)) return 'inspection'
+        if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s2)) return 'maintenance'
+        return 'other'
+      }
+      const roster2: string[] = []
+      for (const t of yTc) if (roster2.indexOf(t.name) < 0) roster2.push(t.name)
+      const alias2: Record<string, string | null> = {}
+      const who = (t: any): string | null => {
+        const raw = t.assignee_name || t.finished_by_name || null
+        if (!raw) return null
+        if (!(raw in alias2)) alias2[raw] = nameMatchesRoster(String(raw), roster2)
+        return alias2[raw] || String(raw)
+      }
+      const usedT: Record<string, boolean> = {}
+      const revBy: Record<string, number> = {}
+      for (const r of (rr2.data || []) as any[]) {
+        const info = mk2[String(r.listing_id)]
+        if (!info || info.vendor) continue
+        const m2 = rows2.filter(t => !usedT[String(t.id)] && kindOf(t) === 'clean' && String(t.reference_property_id) === String(r.listing_id))[0]
+        if (!m2) continue
+        usedT[String(m2.id)] = true
+        const w = who(m2)
+        if (!w) continue
+        const f = Number((r as any).cleaning)
+        if (Number.isFinite(f)) revBy[w] = (revBy[w] || 0) + f
+      }
+      type PR = { name: string; market: string; cleans: number; insp: number; billable: number; cost: number }
+      const prs: Record<string, PR> = {}
+      const mkCount: Record<string, Record<string, number>> = {}
+      for (const t of rows2) {
+        const w = who(t)
+        if (!w) continue
+        prs[w] = prs[w] || { name: w, market: '', cleans: 0, insp: 0, billable: 0, cost: 0 }
+        const k2 = kindOf(t)
+        if (k2 === 'clean') prs[w].cleans++
+        else if (k2 === 'inspection') prs[w].insp++
+        else if (k2 === 'maintenance') { const rp = Number(t.rate_paid); if (Number.isFinite(rp)) prs[w].billable += rp }
+        const info = mk2[String(t.reference_property_id)]
+        if (info) { mkCount[w] = mkCount[w] || {}; const mk3 = info.vendor ? 'vendor' : info.m; mkCount[w][mk3] = (mkCount[w][mk3] || 0) + 1 }
+      }
+      for (const t of yTc) {
+        if (!t.laborCost) continue
+        const key2 = Object.keys(prs).filter(n2 => nameMatches(n2, t.name))[0] || t.name
+        prs[key2] = prs[key2] || { name: t.name, market: '', cleans: 0, insp: 0, billable: 0, cost: 0 }
+        prs[key2].cost += t.laborCost
+      }
+      for (const n2 of Object.keys(prs)) {
+        const cc = mkCount[n2] || {}
+        let best = '', bn = 0
+        for (const mk3 of Object.keys(cc)) if (cc[mk3] > bn) { best = mk3; bn = cc[mk3] }
+        prs[n2].market = best || 'no tasks'
+      }
+      const mkAgg: Record<string, { cost: number; cleans: number }> = {}
+      for (const n2 of Object.keys(prs)) {
+        const p2 = prs[n2]
+        if (!p2.cleans) continue
+        mkAgg[p2.market] = mkAgg[p2.market] || { cost: 0, cleans: 0 }
+        mkAgg[p2.market].cost += p2.cost
+        mkAgg[p2.market].cleans += p2.cleans
+      }
+      let allCost = 0, allCleans = 0
+      for (const mk3 of Object.keys(mkAgg)) { allCost += mkAgg[mk3].cost; allCleans += mkAgg[mk3].cleans }
+      const usd = (n3: number) => '$' + String(Math.round(n3))
+      const cpc = (x?: { cost: number; cleans: number }) => x && x.cleans && x.cost ? usd(x.cost / x.cleans) : 'n/a'
+      const mkLine = 'Cost / clean: Miami ' + cpc(mkAgg['miami']) + ', Broward ' + cpc(mkAgg['broward']) + ', North ' + cpc(mkAgg['north']) + ', All ' + (allCleans && allCost ? usd(allCost / allCleans) : 'n/a')
+      const list2 = Object.keys(prs).map(n2 => prs[n2]).filter(p2 => p2.cleans || p2.insp || p2.billable > 0 || p2.cost > 0)
+        .sort((a2, b2) => (revBy[b2.name] || 0) - (revBy[a2.name] || 0))
+      const trRows = list2.map(p2 => {
+        const rev = revBy[p2.name] || 0
+        const cpp = p2.cleans && p2.cost ? usd(p2.cost / p2.cleans) : 'n/a'
+        const ratio = p2.cost > 0 && rev > 0 ? usd(rev / p2.cost * 100) : 'n/a'
+        const ratioTxt = p2.cost > 0 && rev > 0 ? (rev / p2.cost).toFixed(2) : 'n/a'
+        return '<tr><td style="' + S.td + '"><b>' + esc(p2.name) + '</b><br><span style="color:#6b7280">' + esc(p2.market) + '</span></td>' +
+          '<td style="' + S.td + '">' + (p2.cleans || 0) + (p2.insp ? '<br><span style="color:#6b7280">' + p2.insp + ' insp</span>' : '') + '</td>' +
+          '<td style="' + S.td + '">' + (p2.cost ? usd(p2.cost) : 'n/a') + '</td>' +
+          '<td style="' + S.td + '">' + cpp + '</td>' +
+          '<td style="' + S.td + '">' + (rev ? usd(rev) : 'n/a') + '</td>' +
+          '<td style="' + S.td + '">' + ratioTxt + '</td>' +
+          '<td style="' + S.td + '">' + (p2.billable ? usd(p2.billable) : 'n/a') + '</td></tr>'
+      }).join('')
+      crewCard = list2.length ? card('Team economics yesterday: cost per clean, rev vs labor', list2.length,
+        '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + mkLine + '. Vendor revenue kept separate. Billables broken out.</p>' +
+        table(['Person', 'Cleans', 'Labor', 'Cost/clean', 'Revenue', 'Rev per $1', 'Billable (maint)'], trRows), '#0891b2') : ''
+    }
   } catch { /* Homebase down — the brief still sends */ }
 
   const tiles: Tile[] = [
@@ -393,6 +494,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${card("Departure cleans — who's on each door", d.cleans.length, d.cleans.length ? table(['Unit', 'Cleaner', 'Status'], cleansRows) : emptyLine('No departure cleans today.'))}
 
   ${laborCard}
+
+  ${crewCard}
 
   ${eyebrow('Today')}
   ${arrivals.length ? card('Arrivals', arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
