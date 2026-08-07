@@ -255,8 +255,45 @@ export async function GET(req: Request) {
       costBasis: cleaningTaskPay > 0 ? 'breezeway rate_paid' : 'homebase payroll',
     }
 
+    // ---- Department economics: housekeeping vs maintenance ----------------
+    const deptOf = (r: string | null) => {
+      const s = (r || '').toLowerCase()
+      if (/clean|housekeep|turn/.test(s)) return 'housekeeping'
+      if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
+      return 'other'
+    }
+    const agg: Record<string, { hours: number; payroll: number; people: Set<string> }> = {}
+    for (const t of timecards) {
+      const k = deptOf(t.role)
+      agg[k] = agg[k] || { hours: 0, payroll: 0, people: new Set() }
+      agg[k].hours += t.hours ?? 0
+      agg[k].payroll += t.laborCost ?? 0
+      agg[k].people.add(t.name)
+    }
+    const hk = agg['housekeeping'] || { hours: 0, payroll: 0, people: new Set<string>() }
+    const mt = agg['maintenance'] || { hours: 0, payroll: 0, people: new Set<string>() }
+    const mtTaskMinutes = taskRows.filter(t => classify(t) === 'maintenance').reduce((a, t) => a + (num(t.total_minutes) ?? 0), 0)
+    const departments = {
+      housekeeping: {
+        people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
+        revenue: totalFees,
+        margin: round2(totalFees - hk.payroll),
+        costPerClean: tasks.clean ? round2(hk.payroll / tasks.clean) : null,
+        feePerClean: tasks.clean ? round2(totalFees / tasks.clean) : null,
+        laborPct: totalFees > 0 && hk.payroll > 0 ? round2((hk.payroll / totalFees) * 100) : null,
+      },
+      maintenance: {
+        people: mt.people.size, hours: round2(mt.hours), payroll: round2(mt.payroll),
+        tasksCompleted: tasks.maintenance,
+        taskHours: round2(mtTaskMinutes / 60),
+        utilizationPct: mt.hours > 0 ? round2((mtTaskMinutes / 60 / mt.hours) * 100) : null,
+        costPerTask: tasks.maintenance ? round2(mt.payroll / tasks.maintenance) : null,
+        billableRevenue: null as number | null, // wire to billing line items when billable definition is confirmed
+      },
+    }
+
     return NextResponse.json({
-      ok: true, market: marketParam, week: { ...week, weekStart },
+      ok: true, market: marketParam, week: { ...week, weekStart }, departments,
       ...kpis, tasks, economics, payroll, today: todayBlock,
       perCleaner, personTasks, attribution, unattributed, settings,
     })
