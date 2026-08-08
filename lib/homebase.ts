@@ -69,6 +69,138 @@ export async function getEmployeeNames(): Promise<string[]> {
   return out
 }
 
+// FULL employee record — the roster spine (Jon 2026-08-08: "pull the employee, rate and agency
+// from Homebase"). getEmployeeNames above throws away everything but the name, which meant the
+// Staffing table could only ever show people who had punched recently. This returns everyone
+// Homebase knows, with the wage that lives on the employee record rather than on a timecard.
+//
+// `extra` is the important part. Homebase has no standard "agency" field, and field names differ
+// between accounts, so instead of guessing we carry every unrecognised scalar Homebase returned.
+// If the agency is written into a custom field, a group, or a job title, it shows up in here and
+// can be matched — see agencyFromText in lib/staffing.ts.
+export type Employee = {
+  id: string | null
+  name: string
+  email: string | null
+  role: string | null          // job title / position
+  department: string | null
+  wageRate: number | null      // $/hr on the employee record (not a punch)
+  active: boolean
+  extra: Record<string, string>
+}
+
+const KNOWN_EMPLOYEE_KEYS = new Set([
+  'id', 'uuid', 'employee_id', 'user_id', 'first_name', 'firstName', 'last_name', 'lastName',
+  'name', 'full_name', 'display_name', 'email', 'email_address', 'phone', 'phone_number',
+  'role', 'position', 'job_title', 'title', 'department', 'dept', 'wage_rate', 'default_wage_rate',
+  'hourly_rate', 'wage', 'rate', 'active', 'archived', 'deleted', 'status', 'employment_status',
+  'created_at', 'updated_at', 'hired_at', 'hire_date', 'avatar', 'avatar_url', 'photo_url',
+  'location_uuid', 'location_id', 'pin', 'level', 'permission_level',
+])
+
+// EVERY location, not just the first (Jon 2026-08-08: "make sure you pull all employees, Aljenador
+// is someone I don't see"). getLocationUuid returns locations[0], so on a multi-location Homebase
+// account every employee at the other locations was invisible. Falls back to the single fixed
+// location when HOMEBASE_LOCATION_UUID pins one.
+export async function getLocationUuids(): Promise<string[]> {
+  const fixed = process.env.HOMEBASE_LOCATION_UUID
+  if (fixed) return [fixed]
+  const locs = arr(await hb('/locations'))
+  const out: string[] = []
+  for (const l of locs) {
+    const u = pick(l, 'uuid', 'id', 'location_uuid')
+    if (u) out.push(String(u))
+  }
+  if (!out.length) throw new Error('No Homebase locations visible to this API key')
+  return out
+}
+
+// Walk a paginated Homebase collection. The public API returns a bare array and caps the page at
+// 100ish; without this we silently saw only the first page of a long roster.
+async function hbPaged(path: string, cap = 20): Promise<Json[]> {
+  const join = path.includes('?') ? '&' : '?'
+  const out: Json[] = []
+  for (let page = 1; page <= cap; page++) {
+    const batch = arr(await hb(`${path}${join}page=${page}&per_page=100`))
+    out.push(...batch)
+    if (batch.length < 100) break
+  }
+  return out
+}
+
+export async function getEmployees(): Promise<Employee[]> {
+  const locs = await getLocationUuids()
+  const raw: Json[] = []
+  const seenId = new Set<string>()
+  for (const loc of locs) {
+    // One bad location must not blank the whole roster.
+    let batch: Json[] = []
+    // Ask for archived people too — some accounts hide anyone not currently active, which is how
+    // a real person goes missing from this list. If the account rejects the flag, retry plain.
+    try { batch = await hbPaged('/locations/' + loc + '/employees?with_archived=true') }
+    catch {
+      try { batch = await hbPaged('/locations/' + loc + '/employees') } catch { continue }
+    }
+    for (const e of batch) {
+      // The same person can be staffed at two locations; keep one row.
+      const id = String(pick(e, 'uuid', 'id', 'employee_id') ?? '')
+      if (id && seenId.has(id)) continue
+      if (id) seenId.add(id)
+      raw.push(e)
+    }
+  }
+  const out: Employee[] = []
+  for (const e of raw) {
+    const name = (
+      String(pick(e, 'name', 'full_name', 'display_name') || '') ||
+      [pick(e, 'first_name', 'firstName'), pick(e, 'last_name', 'lastName')].filter(Boolean).join(' ')
+    ).trim()
+    if (!name) continue
+
+    // Wage can sit flat on the record, or inside a per-role array (Homebase lets one person hold
+    // several roles at different rates). Take the highest — under-quoting a rate is the costlier
+    // error on an invoice than over-quoting one, and it is visible either way.
+    let wageRate = num(pick(e, 'wage_rate', 'default_wage_rate', 'hourly_rate', 'wage', 'rate'))
+    let role = pick(e, 'role', 'position', 'job_title', 'title')
+    for (const k of ['roles', 'job_roles', 'wages', 'positions']) {
+      for (const r of (Array.isArray(e?.[k]) ? e[k] : [])) {
+        const w = num(pick(r, 'wage_rate', 'wage', 'rate', 'hourly_rate'))
+        if (w != null && (wageRate == null || w > wageRate)) { wageRate = w; role = pick(r, 'name', 'role', 'title') || role }
+        else if (!role) role = pick(r, 'name', 'role', 'title')
+      }
+    }
+
+    // Anything Homebase sent that we do not model — this is where an account-specific agency
+    // tag will be, if there is one. Scalars only; nested objects are not worth guessing at.
+    const extra: Record<string, string> = {}
+    for (const k of Object.keys(e || {})) {
+      if (KNOWN_EMPLOYEE_KEYS.has(k)) continue
+      const v = e[k]
+      if (v == null || v === '') continue
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') extra[k] = String(v)
+    }
+
+    const st = String(pick(e, 'status', 'employment_status') || '').toLowerCase()
+    out.push({
+      id: pick(e, 'uuid', 'id', 'employee_id') != null ? String(pick(e, 'uuid', 'id', 'employee_id')) : null,
+      name,
+      email: pick(e, 'email', 'email_address') != null ? String(pick(e, 'email', 'email_address')) : null,
+      role: role != null ? String(role) : null,
+      department: pick(e, 'department', 'dept') != null ? String(pick(e, 'department', 'dept')) : null,
+      wageRate,
+      active: !(e?.archived === true || e?.deleted === true || e?.active === false || /terminat|inactive|archiv/.test(st)),
+      extra,
+    })
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+const num = (v: Json): number | null => {
+  if (v == null || v === '') return null
+  const n = typeof v === 'number' ? v : Number(String(v).replace(/[^0-9.\-]/g, ''))
+  return Number.isFinite(n) ? n : null
+}
+
 export type Shift = {
   name: string
   role: string | null
