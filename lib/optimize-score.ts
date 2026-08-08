@@ -21,6 +21,25 @@ export function ratingToStars(r: number | null | undefined): number | null {
   return Math.max(0, Math.min(5, n))                    // 0-5 (Airbnb/Vrbo)
 }
 
+// How the GUEST actually saw their own score — use this any time a single review is quoted to a
+// human (team, owner, vendor), as opposed to averaged.
+//
+// Why this exists (Jon 2026-08-08): Booking.com scores out of 10, and the sync already halves it
+// on the way in, so every channel averages cleanly on one 0-5 scale. The maths is right. The
+// WORDS were wrong: a guest who gave Park Towers 1 out of 10 was quoted back to the vendor as
+// "0.5★" — a number that matches nothing anyone can look up on Booking. Averages stay on stars
+// (you cannot mix scales); individual scores get spoken in the channel's own language.
+export function ratingAsGuestSaw(stars: number | null | undefined, channel?: string | null): string | null {
+  if (stars == null || !Number.isFinite(Number(stars))) return null
+  const n = Number(stars)
+  // Booking + Expedia are 1-10 channels; ratingToStars documents the same pair.
+  if (/booking|expedia/i.test(String(channel || ''))) {
+    const outOf10 = Math.round(n * 2 * 10) / 10
+    return `${outOf10}/10 on ${String(channel).trim()}`
+  }
+  return `${n.toFixed(1)}★`
+}
+
 export type Band = 'good' | 'watch' | 'risk'
 export type Factor = { label: string; got: number; max: number; note: string; ok: 'good' | 'warn' | 'bad' }
 export type AmenitySuggestion = { name: string; tier: 1 | 2 | 3; reason: string }
