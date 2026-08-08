@@ -186,13 +186,29 @@ export async function GET(req: Request) {
     const dayShifts = marketParam === 'all' ? dayShiftsAll : dayShiftsAll.filter((s: any) => s.name && inMarket(s.name))
     const weekShifts = marketParam === 'all' ? weekShiftsAll : weekShiftsAll.filter((s: any) => s.name && inMarket(s.name))
 
+    // COST PER CLEAN IS DEPARTURE CLEANS ONLY (Jon, 2026-08-08).
+    // classify() calls anything in the housekeeping DEPARTMENT a "clean", which swept in common-area
+    // and building work — checked against the live month: 22 "clean common areas", 22 "17WEST pool
+    // and fitness center", 22 "trash pickup / takeout", 19 "Eden office cleaning", plus exterior and
+    // linen-refresh jobs. Counting those as cleans inflated the denominator and made every clean
+    // look cheaper than it is. A departure clean is the turnover the guest fee pays for, and it is
+    // named for itself in Breezeway ("Departure Clean Checklist", incl. same-day-turn and long-stay
+    // variants), so it is matched by name rather than by department.
+    const isDepartureClean = (t: any) => /departure clean|turnover clean|check-?out clean/i.test(String(t.name || ''))
     const tasks = { clean: 0, inspection: 0, maintenance: 0, other: 0, total: 0 }
     const cleanTasks: any[] = []
+    let hkNonDeparture = 0
     for (const t of taskRows) {
       const c = classify(t)
       ;(tasks as any)[c]++; tasks.total++
-      if (c === 'clean') cleanTasks.push(t)
+      if (c === 'clean') {
+        if (isDepartureClean(t)) cleanTasks.push(t)
+        else hkNonDeparture++
+      }
     }
+    // tasks.clean now means DEPARTURE cleans; the rest of the housekeeping work is kept separately
+    // so nothing is lost — it is real work, just not a turnover.
+    tasks.clean = cleanTasks.length
     const cleaningTaskPay = round2(cleanTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
 
     // ---- Checkouts + cleaning fees ----------------------------------------
@@ -421,6 +437,8 @@ export async function GET(req: Request) {
         margin: round2(inhouseFees - hk.payroll),
         costPerClean: tasks.clean ? round2(hk.payroll / tasks.clean) : null,
         feePerClean: tasks.clean ? round2(inhouseFees / tasks.clean) : null,
+        departureCleans: tasks.clean,
+        otherHkTasks: hkNonDeparture,   // common areas, pool, trash, office, linen refreshes
         laborPct: inhouseFees > 0 && hk.payroll > 0 ? round2((hk.payroll / inhouseFees) * 100) : null,
       },
       inspection: {
