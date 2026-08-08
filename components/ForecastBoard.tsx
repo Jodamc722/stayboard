@@ -74,6 +74,21 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
   const [nonce, setNonce] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [lastSync, setLastSync] = useState<number | null>(null)
+  // Who Homebase says is scheduled, by date - used to populate the planner grid.
+  const [hbWeek, setHbWeek] = useState<Record<string, string[]>>({})
+  useEffect(() => {
+    let dead = false
+    fetch('/api/labor/kpi?days=1', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => {
+        if (dead || !j || !Array.isArray(j.weekSchedule)) return
+        const m: Record<string, string[]> = {}
+        for (const d of j.weekSchedule) m[d.date] = (d.people || []).map((p: any) => String(p.name))
+        setHbWeek(m)
+      })
+      .catch(() => { /* planner still works without Homebase */ })
+    return () => { dead = true }
+  }, [])
   const dirty = useRef(false)
   const loadKey = useRef('')
   // Apply the saved staffing ratio / growth buffer once the presets arrive, without stomping a
@@ -193,6 +208,34 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
   function mutate(fn: () => void) { dirty.current = true; fn() }
   function setCell(member: string, date: string, val: string) {
     mutate(() => setCells(c => ({ ...c, [`${member}__${date}`]: val })))
+  }
+  // Populate the grid from Homebase: everyone scheduled there gets Working on that
+  // day (empty cells only - never overwrites a choice already made here), and
+  // scheduled people missing from the roster are added.
+  function fillFromHomebase() {
+    if (!data) return
+    const norm3 = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim()
+    const same = (a: string, b: string) => { const x = norm3(a), y = norm3(b); return x === y || x.split(' ')[0] === y.split(' ')[0] }
+    mutate(() => {
+      setMembers(ms => {
+        const out = ms.slice()
+        for (const d of data.week) for (const n of (hbWeek[d.date] || [])) {
+          if (!out.some(m => same(m, n))) out.push(n)
+        }
+        setCells(c => {
+          const next = { ...c }
+          for (const d of data.week) {
+            const names = hbWeek[d.date] || []
+            for (const m of out) {
+              const key = `${m}__${d.date}`
+              if (!next[key] && names.some(n => same(n, m))) next[key] = 'Working'
+            }
+          }
+          return next
+        })
+        return out
+      })
+    })
   }
   function addMember(name: string) {
     const n = name.trim()
@@ -357,6 +400,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
               <button onClick={() => { setLocked((x) => !x); dirty.current = true }} title="Lock this week so Generate won't overwrite it. Manual edits still save." className={`inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border ${locked ? 'bg-amber-100 border-amber-300 text-amber-800' : 'border-neutral-200 hover:bg-neutral-50'}`}>{locked ? 'Locked · tap to unlock' : 'Lock week'}</button>
             )}
             {view === 'week' && (
+            <button onClick={fillFromHomebase} disabled={locked || !Object.keys(hbWeek).length} title="Populate the grid from the Homebase schedule - fills empty cells with Working for everyone scheduled there and adds missing people" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-neutral-50 disabled:opacity-40">Fill from Homebase</button>
             <button onClick={generateWeek} disabled={locked} title="Draft the whole week — staffs each day to the projection (cleans already booked, raised to the 60-day weekday pace). Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
           )}
           {lastSync && <span className="text-[11px] text-neutral-400 self-center mr-0.5">Synced {new Date(lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
