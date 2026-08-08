@@ -9,7 +9,7 @@
 // Fees attach per agency and stack: % of wages, $ per hour, and a flat amount per invoice. Each
 // defaults to 0, so nothing is ever billed at a rate nobody chose.
 import { useCallback, useEffect, useState } from 'react'
-import { Users2, Loader2, Check, AlertTriangle, Save, Download, Plus, Building2 } from 'lucide-react'
+import { Users2, Loader2, Check, AlertTriangle, Save, Download, Plus, Building2, Wand2 } from 'lucide-react'
 
 type Agency = { key: string; label: string; fee_percent: number; fee_per_hour: number; fee_flat: number; active: boolean; notes?: string | null; sort?: number }
 type Staff = { name: string; agency: string | null; role: string | null; area: string | null; active: boolean }
@@ -55,6 +55,22 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
       if (!j.ok) throw new Error((j.errors || []).join('; ') || j.error || 'save failed')
       setAgencies(j.agencies || agencies); setStaff(j.staff || staff)
       setMsg({ tone: 'ok', text: `Saved ${j.saved} record${j.saved === 1 ? '' : 's'}.` })
+    } catch (e: any) { setMsg({ tone: 'bad', text: String(e.message || e) }) }
+    finally { setBusy(null) }
+  }
+
+  const autofill = async () => {
+    setBusy('autofill'); setMsg(null)
+    try {
+      const r = await fetch('/api/settings/staffing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days: 60 }),
+      })
+      const j = await r.json()
+      if (!j.ok) throw new Error(j.error || 'auto-fill failed')
+      setAgencies(j.agencies || agencies); setStaff(j.staff || staff)
+      const added = (j.changed || []).filter((c: any) => c.added).length
+      const upd = (j.changed || []).length - added
+      setMsg({ tone: 'ok', text: `Auto-filled from 60 days of work: ${added} added, ${upd} updated. Agency is never guessed — set it below.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: String(e.message || e) }) }
     finally { setBusy(null) }
   }
@@ -154,7 +170,14 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
       {/* ---------------- staff ---------------- */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <h4 className="text-[12px] font-semibold text-ink">Staff</h4>
+          <div className="flex items-center gap-2">
+            <h4 className="text-[12px] font-semibold text-ink">Staff</h4>
+            <button onClick={autofill} disabled={dis}
+              className="text-[11px] font-semibold text-brand-700 hover:text-brand-800 inline-flex items-center gap-1 disabled:opacity-50"
+              title="Create a row for everyone Homebase knows, with role and area worked out from their Breezeway history. Never overwrites what you set by hand.">
+              {busy === 'autofill' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Auto-fill roles &amp; areas
+            </button>
+          </div>
           {unassignedRoster.length > 0 && (
             <select disabled={dis} defaultValue="" onChange={e => { addFromRoster(e.target.value); e.currentTarget.value = '' }}
               className="text-[11px] bg-app border border-line rounded-lg px-2 py-1 disabled:opacity-50">
