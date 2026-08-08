@@ -790,6 +790,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const newBucket = (k: string): Bucket => ({ key: k, label: k, cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: null, hours: null })
   let buckets: Record<string, Bucket> = {}
   let payrollWin: number | null = null, hoursWin = 0, payrollPrev: number | null = null, hoursPrev = 0
+  let payrollAll: number | null = null, hoursAll = 0
+  const cleanersNoTimecard: string[] = []
   let cleansPrev = 0, feesPrev = 0
   let dailyCpc: { date: string; cpc: number | null }[] = []
   let billableKnown = false
@@ -818,7 +820,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
         .not('status', 'in', '("canceled","cancelled","declined")')
         .order('check_out', { ascending: false })),
       pageAll(() => db.from('breezeway_tasks_sync')
-        .select('reference_property_id,name,type_department,status,scheduled_date,finished_at,total_minutes')
+        .select('reference_property_id,name,type_department,status,scheduled_date,finished_at,total_minutes,assignees,assignee_name,finished_by_name')
         .gte('scheduled_date', prevFrom).lte('scheduled_date', winTo)
         .order('scheduled_date', { ascending: false })),
     ])
@@ -873,10 +875,62 @@ export async function buildGmBrief(): Promise<OpsBrief> {
         else b.maintMins += mins
       }
     }
+    // HOUSEKEEPING PAYROLL ONLY (audit fix, 2026-08-08).
+    // The first version summed EVERY timecard — maintenance techs and inspectors included — and
+    // divided by cleans, which put cost per clean at $86 when the Labor board, doing it properly,
+    // said $44.70. Two numbers for the same thing in one product is worse than no number, so the
+    // rule below is copied from app/api/labor/kpi (deptOf): classify by the Homebase role, and
+    // when the role is blank or ambiguous, fall back to what the person actually did in Breezeway.
+    const deptOfRole = (r: any) => {
+      const t2 = str(r).toLowerCase()
+      if (/inspect|audit|quality/.test(t2)) return 'inspection'
+      if (/clean|housekeep|turn/.test(t2)) return 'housekeeping'
+      if (/maint|tech|repair|handy/.test(t2)) return 'maintenance'
+      return 'other'
+    }
+    // what each person actually did this window, from the task mirror (assignee OR whoever closed it)
+    const didByName: Record<string, { c: number; m: number; i: number }> = {}
+    const bump = (nm: string, kind: 'c' | 'm' | 'i') => {
+      const key = str(nm).trim().toLowerCase(); if (!key) return
+      const e = didByName[key] = didByName[key] || { c: 0, m: 0, i: 0 }
+      e[kind]++
+    }
+    for (const t of (cl3 as any[])) {
+      const dte = str(t.scheduled_date).slice(0, 10)
+      if (!(dte >= prevFrom && dte <= winTo)) continue
+      const nm = str(t.name), dept = str(t.type_department)
+      const kind: 'c' | 'm' | 'i' = (/clean/i.test(nm) || /housekeep/i.test(dept)) ? 'c'
+        : (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept)) ? 'i' : 'm'
+      // A task can be ASSIGNED to one person and CLOSED by another (Jon, 2026-08-08). Credit both
+      // names so a person is never invisible just because someone else finished their job.
+      const who = ([] as string[])
+        .concat(Array.isArray((t as any).assignees) ? (t as any).assignees : [])
+        .concat([(t as any).finished_by_name, (t as any).assignee_name].filter(Boolean))
+      for (const w of who) bump(String(w), kind)
+    }
+    const isHkPerson = (nm: string, role: any): boolean => {
+      const byRole = deptOfRole(role)
+      if (byRole !== 'other') return byRole === 'housekeeping'
+      const e = didByName[str(nm).trim().toLowerCase()]
+      if (!e || (!e.c && !e.m && !e.i)) return false     // unknown → not counted as cleaning cost
+      if (e.i > e.c && e.i > e.m) return false
+      return e.c >= e.m
+    }
+    const hkOnly = (rows: any[]) => rows.filter((t: any) => isHkPerson(t.name, t.role))
     const sumPay = (rows: any[]) => rows.reduce((a: number, t: any) => a + (Number(t.laborCost) || 0), 0)
     const sumHrs = (rows: any[]) => rows.reduce((a: number, t: any) => a + (Number(t.hours) || 0), 0)
-    payrollWin = tcWin.length ? sumPay(tcWin) : null; hoursWin = sumHrs(tcWin)
-    payrollPrev = tcPrev.length ? sumPay(tcPrev) : null; hoursPrev = sumHrs(tcPrev)
+    const hkWin = hkOnly(tcWin), hkPrev = hkOnly(tcPrev)
+    payrollWin = hkWin.length ? sumPay(hkWin) : null; hoursWin = sumHrs(hkWin)
+    payrollPrev = hkPrev.length ? sumPay(hkPrev) : null; hoursPrev = sumHrs(hkPrev)
+    payrollAll = tcWin.length ? sumPay(tcWin) : null; hoursAll = sumHrs(tcWin)
+    // Everyone who did a clean but has NO timecard — vendors, contractors, or a name that does not
+    // match between Homebase and Breezeway. Their cleans are in the count but their cost is not.
+    const paidNames = new Set(tcWin.map((t: any) => str(t.name).trim().toLowerCase()).filter(Boolean))
+    for (const key of Object.keys(didByName)) {
+      if (!didByName[key].c) continue
+      if (paidNames.has(key)) continue
+      cleanersNoTimecard.push(key.replace(/\b\w/g, ch => ch.toUpperCase()))
+    }
 
     // ALLOCATE the measured payroll across the non-vendor columns by housekeeping minutes.
     // ALLOCATE BY CHECKOUTS, NOT BY BREEZEWAY MINUTES. Minutes only exist where somebody closed
@@ -1053,8 +1107,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${oursTot.billableHk ? `<b>${money0(oursTot.billableHk)}</b>` : `<span style="${S.muted}">none billed this week</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Total cleaning revenue</b></td>
       <td style="${S.td};text-align:right"><b>${money0(cleanRevWin)}</b> <span style="${S.muted}">${feePerClean != null ? money0(feePerClean) + '/clean' : ''}</span></td></tr>
-    <tr><td style="${S.td}">Payroll on the clock ${costSource ? `<span style="${S.muted}">${costSource}</span>` : ''}</td>
+    <tr><td style="${S.td}">Housekeeping payroll <span style="${S.muted}">clocked, cleaning staff only</span></td>
       <td style="${S.td};text-align:right">${payrollWin != null ? `<b>${money0(payrollWin)}</b> <span style="${S.muted}">${Math.round(hoursWin)} hrs</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
+    ${payrollAll != null && payrollWin != null && payrollAll > payrollWin ? `<tr><td style="${S.td};color:#9ca3af">All departments <span style="${S.muted}">maintenance &amp; inspection included</span></td>
+      <td style="${S.td};text-align:right;color:#9ca3af">${money0(payrollAll)} · ${Math.round(hoursAll)} hrs</td></tr>` : ''}
     <tr><td style="${S.td}"><b>Cost per clean</b> <span style="${S.muted}">${comparableWeeks ? 'vs the week before' : 'this week'}</span></td>
       <td style="${S.td};text-align:right">${cpcWin != null ? `<b>${money0(cpcWin)}</b> ${comparableWeeks ? deltaPill(cpcDelta, '%', false) + ` <span style="${S.muted}">was ${money0(cpcPrevWin)}</span>` : `<span style="${S.muted}">last week not comparable</span>`}` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Housekeeping margin</b></td>
@@ -1076,6 +1132,9 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <div style="line-height:1.9">${trendLine}</div></td></tr>` : ''}
     ${!comparableWeeks && cpcPrevWin != null ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
       <span style="${S.amber}">Week-over-week is withheld this time.</span> <span style="${S.muted}">Last week recorded ${hpcPrev != null ? hpcPrev.toFixed(1) : '—'} clocked hours per clean against ${hpcWin != null ? hpcWin.toFixed(1) : '—'} this week — that gap is timecard coverage changing, not the cost of a clean, so comparing the two would mislead.</span></td></tr>` : ''}
+    ${cleanersNoTimecard.length ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
+      <span style="${S.amber}">${cleanersNoTimecard.length} ${cleanersNoTimecard.length === 1 ? 'person' : 'people'} cleaned this week with no Homebase timecard.</span>
+      <span style="${S.muted}">${esc(cleanersNoTimecard.slice(0, 8).join(', '))}${cleanersNoTimecard.length > 8 ? ' and others' : ''}. Either they are a vendor or contractor (no payroll of ours, which is correct) or their name does not match between Homebase and Breezeway — in which case their hours are missing and the cost per clean above is too low. Worth a look.</span></td></tr>` : ''}
     <tr><td colspan="2" style="${S.td};background:#f8fafc">
       <span style="${S.muted}"><b>Why the numbers above do not depend on Breezeway.</b> Newer staff do not always close their tasks, so task counts and recorded department hours understate the real work. Every figure on this page is therefore built from sources that cannot be missed: <b>cleans are counted from checkouts</b> (a guest left, so a unit was cleaned) and <b>payroll and hours come from timecards</b>. The task count is shown only for comparison — it includes deep cleans, strips and mid-stay work, so it will not match the checkout count either way.</span></td></tr>
     ${coverageWarn ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
