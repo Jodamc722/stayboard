@@ -803,6 +803,11 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const feePerClean = (rev30 != null && cleans30) ? rev30 / cleans30 : null
   const laborPctOfClean = (cost30 != null && rev30) ? Math.round((cost30 / rev30) * 1000) / 10 : null
   const costSource = econ.payroll != null ? 'Homebase clocked payroll' : (clean.costKnown ? 'Breezeway recorded pay' : null)
+  // COVERAGE CHECK. Homebase is one location and not every cleaner is on a timecard there; if the
+  // clocked hours are materially below the hours Breezeway recorded finishing this work, the margin
+  // above is flattered. Say so on the page rather than letting an 80% margin read as fact.
+  const bwHours = Number(work.hours) || 0
+  const coverageWarn = econ.payroll != null && bwHours > 0 && econ.hours > 0 && econ.hours < bwHours * 0.8
   let claimsOpen = 0, claimsValue = 0, claimsWaiting = 0
   try {
     const { data } = await db.from('claims').select('stage,amount_requested,amount_paid,waiting_on').is('deleted_at', null).limit(500)
@@ -854,6 +859,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b> <span style="${S.muted}">${econ.hours ? Math.round(econ.hours) + ' hrs' : ''}</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
     ${econ.vendorFees ? `<tr><td style="${S.td}">Vendor-cleaned buildings <span style="${S.muted}">kept separate</span></td>
       <td style="${S.td};text-align:right"><span style="${S.muted}">${money0(econ.vendorFees)} in fees · we pay no crew on these</span></td></tr>` : ''}
+    ${coverageWarn ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
+      <span style="${S.amber}">Read this margin as a ceiling.</span> <span style="${S.muted}">Homebase shows ${Math.round(econ.hours)} clocked hours while Breezeway recorded ${Math.round(bwHours)} hours of completed work — so some of the crew doing these cleans is not on a Homebase timecard, and real payroll is higher than the figure above.</span></td></tr>` : ''}
     <tr><td style="${S.td};color:#9ca3af">Room revenue <span style="${S.muted}">Guesty · fuller numbers in your revenue app</span></td>
       <td style="${S.td};text-align:right;color:#9ca3af">${money0(rev.total)} ${deltaPill(rev.totalChange)} <span style="${S.muted}">ADR ${money0(rev.adr)}</span></td></tr>`
 
