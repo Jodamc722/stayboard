@@ -903,10 +903,22 @@ export async function buildGmBrief(): Promise<OpsBrief> {
         : (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept)) ? 'i' : 'm'
       // A task can be ASSIGNED to one person and CLOSED by another (Jon, 2026-08-08). Credit both
       // names so a person is never invisible just because someone else finished their job.
-      const who = ([] as string[])
+      // assignees comes back as a mix of plain names and {name}/{first_name,last_name} objects —
+      // stringifying blindly printed "[Object Object]" into the audit line.
+      const nameOfAny = (v: any): string => {
+        if (!v) return ''
+        if (typeof v === 'string') return v
+        if (typeof v === 'object') {
+          const n = v.name || v.full_name || [v.first_name, v.last_name].filter(Boolean).join(' ')
+          return str(n)
+        }
+        return ''
+      }
+      const who = ([] as any[])
         .concat(Array.isArray((t as any).assignees) ? (t as any).assignees : [])
-        .concat([(t as any).finished_by_name, (t as any).assignee_name].filter(Boolean))
-      for (const w of who) bump(String(w), kind)
+        .concat([(t as any).finished_by_name, (t as any).assignee_name])
+        .map(nameOfAny).filter(Boolean)
+      for (const w of who) bump(w, kind)
     }
     const isHkPerson = (nm: string, role: any): boolean => {
       const byRole = deptOfRole(role)
