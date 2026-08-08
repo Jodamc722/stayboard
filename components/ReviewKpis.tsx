@@ -123,8 +123,15 @@ export function ReviewKpis() {
   const atRisk = units.filter((u: any) => u.avg != null && u.avg < AT_RISK)
   const channels = d?.channels || []
   const worstCat = (d?.categories || [])[0]
+  // Scale rule: stored averages are ALWAYS /5. When the strip is filtered to Booking.com alone,
+  // the headline is a Booking-only number, so it reads on Booking's native /10 (×2). Everywhere
+  // a number could be mistaken for the other scale it carries an explicit /5 or /10 tag.
+  const bookingOnly = /booking/i.test(String(channel || ''))
+  const x2 = (v: any) => (v == null ? null : Math.round(Number(v) * 2 * 10) / 10)
+  const headAvg = bookingOnly ? x2(h.avg) : h.avg
+  const headScale = bookingOnly ? '/10' : '/5'
   const line = h.avg != null
-    ? h.avg + ' avg · ' + (h.fiveShare ?? 0) + '% five-star · ' + atRisk.length + ' below ' + AT_RISK
+    ? headAvg + headScale + ' avg · ' + (h.fiveShare ?? 0) + '% five-star · ' + atRisk.length + ' below ' + AT_RISK
     : 'no reviews in this window'
 
   return (
@@ -163,13 +170,14 @@ export function ReviewKpis() {
         <div className="px-3 pb-2">
           {/* THE SCORE */}
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2.5">
-            <span className="text-[34px] leading-none font-bold text-ink tabular-nums">{h.avg ?? '—'}</span>
-            <Star size={17} className="text-amber-500 fill-amber-400 -ml-1.5 self-center" />
+            <span className="text-[34px] leading-none font-bold text-ink tabular-nums">{headAvg ?? '—'}</span>
+            {headAvg != null && <span className="text-[15px] font-semibold text-muted -ml-1.5">{headScale}</span>}
+            <Star size={17} className="text-amber-500 fill-amber-400 -ml-0.5 self-center" />
             <Trend v={h.change ?? null} />
             <span className="text-[12.5px] text-muted">
               {h.fiveShare != null ? h.fiveShare + '% five-star' : ''}
               {h.n ? ' · ' + h.n + ' reviews' : ''}
-              {h.prevAvg != null ? ' · was ' + h.prevAvg : ''}
+              {h.prevAvg != null ? ' · was ' + (bookingOnly ? x2(h.prevAvg) : h.prevAvg) : ''}
             </span>
             <span className="ml-auto text-[12px]">
               <span className={atRisk.length ? 'text-rose-700 font-semibold' : 'text-muted'}>{atRisk.length} unit{atRisk.length === 1 ? '' : 's'} below {AT_RISK}</span>
@@ -184,7 +192,10 @@ export function ReviewKpis() {
                 <button key={c.channel} onClick={() => setChannel(channel === c.channel ? 'all' : c.channel)}
                   className={'flex items-baseline gap-1.5 px-2.5 py-1 rounded-lg border text-left ' + (channel === c.channel ? 'border-ink bg-ink text-white' : 'border-line hover:bg-app')}>
                   <span className="text-[11px] font-semibold uppercase tracking-wide opacity-70">{c.channel}</span>
-                  <span className="text-[15px] font-bold tabular-nums">{c.avg}</span>
+                  <span className="text-[15px] font-bold tabular-nums">
+                    {/booking/i.test(String(c.channel || '')) ? x2(c.avg) : c.avg}
+                    <span className="text-[10px] font-semibold opacity-60">{/booking/i.test(String(c.channel || '')) ? '/10' : '/5'}</span>
+                  </span>
                   <span className={'text-[11px] ' + (channel === c.channel ? 'opacity-70' : 'text-muted')}>{c.n}</span>
                 </button>
               ))}
