@@ -24,6 +24,7 @@ import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { laborAmount } from '@/lib/billing'
+import { staffByName, resolveStaff } from '@/lib/staffing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -162,7 +163,14 @@ export async function GET(req: Request) {
       personMarketCount[d0] = personMarketCount[d0] || {}
       personMarketCount[d0][li0.market] = (personMarketCount[d0][li0.market] || 0) + 1
     }
+    // The STAFF RECORD WINS (Jon 2026-08-08: "the user setting should apply that for labor").
+    // /users -> Staffing is where a human decides someone's area; majority-of-tasks is only the
+    // fallback for people nobody has classified yet. Without this the settings page would look
+    // authoritative while the board quietly ignored it.
+    const staffIdx = await staffByName().catch(() => ({} as Record<string, any>))
     const marketOfPerson = (name: string): string | null => {
+      const rec = resolveStaff(name, staffIdx)
+      if (rec?.area) return String(rec.area).toLowerCase()
       const agg0: Record<string, number> = {}
       for (const rawName of Object.keys(personMarketCount)) {
         if (!nameMatches(rawName, name)) continue
@@ -172,6 +180,7 @@ export async function GET(req: Request) {
       for (const mk1 of Object.keys(agg0)) if (agg0[mk1] > bestN) { best = mk1; bestN = agg0[mk1] }
       return best
     }
+    const roleOfPerson = (name: string): string | null => resolveStaff(name, staffIdx)?.role || null
     const inMarket = (name: string) => marketParam === 'all' || marketOfPerson(name) === marketParam
     const timecards = marketParam === 'all' ? timecardsAll : timecardsAll.filter(t => inMarket(t.name))
     const dayShifts = marketParam === 'all' ? dayShiftsAll : dayShiftsAll.filter((s: any) => s.name && inMarket(s.name))
@@ -256,7 +265,9 @@ export async function GET(req: Request) {
       const hours = round2(myCards.reduce((a, t) => a + (t.hours ?? 0), 0))
       const cost = payroll > 0 ? payroll : myPay
       return {
-        name, cleans: myTasks.length, checkoutsAttributed: mine.length,
+        // role/area straight off the staff record so the board labels people the way /users says.
+        name, role: roleOfPerson(name), area: marketOfPerson(name),
+        cleans: myTasks.length, checkoutsAttributed: mine.length,
         revenueGenerated: revenue, taskPay: myPay, payroll, hours,
         margin: round2(revenue - cost),
         revenuePerLaborDollar: cost > 0 ? round2(revenue / cost) : null,
