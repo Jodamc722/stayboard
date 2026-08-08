@@ -753,20 +753,39 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   //
   // Vendor-cleaned buildings are EXCLUDED from both sides: we do not pay our crew for those, so
   // leaving their fees in would flatter the margin.
+  // WINDOWS (2026-08-07, Jon: "payroll should be from the day before, not day of, and show a trend
+  // for the month we are in"). Today is always half-finished — a crew still clocked in makes payroll
+  // look tiny and the margin look wonderful — so nothing here counts today.
+  //   YESTERDAY   the closed day: what one day of housekeeping actually cost.
+  //   MONTH TO DATE  the 1st through yesterday: where the month is heading.
+  //   LAST MONTH, SAME DAYS  the honest comparison — comparing 7 days against a full 31 is noise.
   const db = supabaseAdmin()
-  const econFrom = ymdET(new Date(Date.now() - 30 * 86400000))
-  const econTo = ymdET(new Date(Date.now() - 86400000))   // through yesterday: today is incomplete
-  let econ: { payroll: number | null; fees: number | null; vendorFees: number; cleans: number; hours: number } =
-    { payroll: null, fees: null, vendorFees: 0, cleans: 0, hours: 0 }
+  const nowET = new Date()
+  const yEcon = ymdET(new Date(Date.now() - 86400000))
+  const monthStart = yEcon.slice(0, 8) + '01'
+  const dayOfMonth = Number(yEcon.slice(8, 10))
+  const prevMonthEndD = new Date(monthStart + 'T12:00:00'); prevMonthEndD.setDate(0)
+  const prevMonthEnd = ymdET(prevMonthEndD)
+  const prevMonthStart = prevMonthEnd.slice(0, 8) + '01'
+  // same number of days into the previous month, capped at that month's length
+  const prevSameDayD = new Date(prevMonthStart + 'T12:00:00'); prevSameDayD.setDate(dayOfMonth)
+  const prevSameDay = ymdET(prevSameDayD) > prevMonthEnd ? prevMonthEnd : ymdET(prevSameDayD)
+
+  type Econ = { payroll: number | null; fees: number | null; vendorFees: number; cleans: number; hours: number }
+  const emptyEcon = (): Econ => ({ payroll: null, fees: null, vendorFees: 0, cleans: 0, hours: 0 })
+  let econY = emptyEcon(), econMtd = emptyEcon(), econPrev = emptyEcon()
+  let dailyCpc: { date: string; cpc: number | null }[] = []
   try {
+    // ONE pull covering the previous month through yesterday, then bucketed by day in code —
+    // three separate round trips for three windows would triple the Homebase calls for no reason.
     const [tc, lr3, rr3, cl3] = await Promise.all([
-      getTimecards(econFrom, econTo),
+      getTimecards(prevMonthStart, yEcon),
       db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
       db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
-        .gte('check_out', econFrom).lte('check_out', econTo)
-        .not('status', 'in', '("canceled","cancelled","declined")').limit(4000),
-      db.from('breezeway_tasks_sync').select('reference_property_id,name,type_department,status,finished_at')
-        .gte('scheduled_date', econFrom).lte('scheduled_date', econTo).limit(8000),
+        .gte('check_out', prevMonthStart).lte('check_out', yEcon)
+        .not('status', 'in', '("canceled","cancelled","declined")').limit(6000),
+      db.from('breezeway_tasks_sync').select('reference_property_id,name,type_department,status,scheduled_date,finished_at')
+        .gte('scheduled_date', prevMonthStart).lte('scheduled_date', yEcon).limit(12000),
     ])
     const presets3 = await getOpsPresets()
     const VEN3 = vendorRegex(presets3.vendorBuildings)
@@ -775,23 +794,64 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       const nm = l.nickname || l.title || ''
       vend[String(l.id)] = VEN3.test(str(l.building)) || VEN3.test(str(nm))
     }
-    let fees = 0, vendorFees = 0
-    for (const r of ((rr3.data || []) as any[])) {
-      const f = Number((r as any).cleaning)
-      if (!Number.isFinite(f)) continue
-      if (vend[String(r.listing_id)]) vendorFees += f; else fees += f
+    // per-day buckets
+    type Day = { payroll: number; hours: number; fees: number; vendorFees: number; cleans: number }
+    const days: Record<string, Day> = {}
+    const dayOf = (k: string): Day => days[k] = days[k] || { payroll: 0, hours: 0, fees: 0, vendorFees: 0, cleans: 0 }
+    for (const t of (tc as any[])) {
+      const k = str(t.date).slice(0, 10); if (!k) continue
+      const b = dayOf(k)
+      b.payroll += Number(t.laborCost) || 0
+      b.hours += Number(t.hours) || 0
     }
-    let cleans = 0
+    for (const r of ((rr3.data || []) as any[])) {
+      const k = str(r.check_out).slice(0, 10); if (!k) continue
+      const f = Number((r as any).cleaning); if (!Number.isFinite(f)) continue
+      const b = dayOf(k)
+      if (vend[String(r.listing_id)]) b.vendorFees += f; else b.fees += f
+    }
     for (const t of ((cl3.data || []) as any[])) {
       if (vend[String(t.reference_property_id)]) continue
       const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
       if (!done) continue
-      if (/clean/i.test(str(t.name)) || /housekeep/i.test(str(t.type_department))) cleans++
+      if (!(/clean/i.test(str(t.name)) || /housekeep/i.test(str(t.type_department)))) continue
+      const k = str(t.scheduled_date).slice(0, 10); if (!k) continue
+      dayOf(k).cleans++
     }
-    const payroll = tc.reduce((a: number, t: any) => a + (t.laborCost ?? 0), 0)
-    const hours = tc.reduce((a: number, t: any) => a + (Number(t.hours) || 0), 0)
-    econ = { payroll: payroll > 0 ? payroll : null, fees: fees > 0 ? fees : null, vendorFees, cleans, hours }
+    const sum = (from: string, to: string): Econ => {
+      let payroll = 0, hours = 0, fees = 0, vendorFees = 0, cleans = 0, sawPay = false, sawFee = false
+      for (const k of Object.keys(days)) {
+        if (k < from || k > to) continue
+        const b = days[k]
+        payroll += b.payroll; hours += b.hours; fees += b.fees; vendorFees += b.vendorFees; cleans += b.cleans
+        if (b.payroll > 0) sawPay = true
+        if (b.fees > 0) sawFee = true
+      }
+      return { payroll: sawPay ? payroll : null, fees: sawFee ? fees : null, vendorFees, cleans, hours }
+    }
+    econY = sum(yEcon, yEcon)
+    econMtd = sum(monthStart, yEcon)
+    econPrev = sum(prevMonthStart, prevSameDay)
+    // Last 10 closed days of cost-per-clean — the shape of the trend, not just its endpoints.
+    dailyCpc = Object.keys(days).filter(k => k <= yEcon).sort().slice(-10).map(k => ({
+      date: k, cpc: days[k].cleans && days[k].payroll ? days[k].payroll / days[k].cleans : null,
+    }))
   } catch { /* Homebase down — the card falls back to whatever buildKpi could work out */ }
+  // The 30-day figures the rest of the card used are now the MONTH-TO-DATE figures.
+  const econ = econMtd
+
+  // ---- derived: cost per clean and margin, per window ----
+  const cpcOf = (e: Econ) => (e.payroll != null && e.cleans) ? e.payroll / e.cleans : null
+  const marginOf = (e: Econ) => (e.payroll != null && e.fees != null) ? e.fees - e.payroll : null
+  const marginPctOf = (e: Econ) => { const m = marginOf(e); return (m != null && e.fees) ? Math.round((m / e.fees) * 1000) / 10 : null }
+  const cpcY = cpcOf(econY), cpcMtd = cpcOf(econMtd), cpcPrev = cpcOf(econPrev)
+  const marginMtd = marginOf(econMtd), marginPctMtd = marginPctOf(econMtd)
+  const marginPctPrev = marginPctOf(econPrev)
+  // Cost per clean going UP is bad, so the pill's sense is inverted against the usual "up is good".
+  const cpcDelta = (cpcMtd != null && cpcPrev != null && cpcPrev > 0) ? ((cpcMtd - cpcPrev) / cpcPrev) * 100 : null
+  const marginDelta = (marginPctMtd != null && marginPctPrev != null) ? marginPctMtd - marginPctPrev : null
+  const monthName = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(monthStart + 'T12:00:00'))
+  const yNice = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(yEcon + 'T12:00:00'))
 
   // Prefer the measured pair; fall back to the KPI engine so the card is never blank.
   const cost30 = econ.payroll != null ? econ.payroll : (clean.costKnown ? clean.cost : null)
@@ -828,15 +888,15 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // top line is what ONLY this app knows: what a clean costs us, whether housekeeping is making
   // money, and whether the product and the guest are healthy. Room revenue drops to a footnote.
   const tiles: Tile[] = [
-    { label: 'Cost / clean · 30d', value: costPerClean != null ? money0(costPerClean) : '—',
-      tone: costPerClean == null ? undefined : (feePerClean != null && costPerClean > feePerClean) ? 'red' : 'green',
-      note: feePerClean != null ? 'we charge ' + money0(feePerClean) : (costSource ? 'no fee data' : 'connect Homebase') },
-    { label: 'Cleaning margin · 30d', value: marginPct30 != null ? pct1(marginPct30) : '—',
-      tone: marginPct30 == null ? undefined : marginPct30 >= 30 ? 'green' : marginPct30 >= 10 ? 'amber' : 'red',
-      note: margin30 != null ? money0(margin30) + ' on ' + cleans30 + ' cleans' : 'cost not available' },
-    { label: 'Labour % of cleaning', value: laborPctOfClean != null ? pct1(laborPctOfClean) : '—',
-      tone: laborPctOfClean == null ? undefined : laborPctOfClean <= 70 ? 'green' : laborPctOfClean <= 90 ? 'amber' : 'red',
-      note: econ.hours ? Math.round(econ.hours) + ' hrs clocked' : undefined },
+    { label: 'Cost / clean · yesterday', value: cpcY != null ? money0(cpcY) : '—',
+      tone: cpcY == null ? undefined : (cpcMtd != null && cpcY > cpcMtd * 1.25) ? 'red' : 'green',
+      note: cpcMtd != null ? 'month running ' + money0(cpcMtd) : (costSource ? undefined : 'connect Homebase') },
+    { label: `Cost / clean · ${monthName}`, value: cpcMtd != null ? money0(cpcMtd) : '—',
+      tone: cpcDelta == null ? undefined : cpcDelta > 10 ? 'red' : cpcDelta < -5 ? 'green' : 'amber',
+      note: cpcPrev != null ? 'was ' + money0(cpcPrev) + ' last month' : 'no comparison yet' },
+    { label: 'Housekeeping margin', value: marginPctMtd != null ? pct1(marginPctMtd) : '—',
+      tone: marginPctMtd == null ? undefined : marginPctMtd >= 30 ? 'green' : marginPctMtd >= 10 ? 'amber' : 'red',
+      note: marginMtd != null ? money0(marginMtd) + ' on ' + econMtd.cleans + ' cleans' : 'cost not available' },
     { label: 'Occupancy · 30d', value: rev.occupancy != null ? pct1(rev.occupancy) : '—',
       tone: rev.occupancy == null ? undefined : rev.occupancy >= 75 ? 'green' : rev.occupancy >= 60 ? 'amber' : 'red',
       note: rev.occupancyChange != null ? (rev.occupancyChange > 0 ? '+' : '') + rev.occupancyChange + ' pts vs prev' : undefined },
@@ -847,20 +907,40 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       note: claimsValue ? money0(claimsValue) + ' requested' : 'nothing outstanding' },
   ]
 
-  // ---- the housekeeping P&L: what we charged, what it cost, what is left ----
+  // A text sparkline: 10 closed days of cost per clean. Email clients will not draw a chart, but a
+  // row of numbers with the direction called out reads fine on a phone.
+  const trendPts = dailyCpc.filter(p => p.cpc != null)
+  const trendLine = trendPts.length >= 3
+    ? trendPts.map(p => `<span style="display:inline-block;margin:0 6px 0 0"><span style="font-size:10px;color:#9ca3af">${p.date.slice(5)}</span> <b style="font-size:12px">$${Math.round(p.cpc as number)}</b></span>`).join('')
+    : ''
+
   const moneyRows = `
-    <tr><td style="${S.td}">Cleaning fees collected <span style="${S.muted}">${cleans30} cleans</span></td>
-      <td style="${S.td};text-align:right"><b>${money0(rev30)}</b> <span style="${S.muted}">${feePerClean != null ? money0(feePerClean) + '/clean' : ''}</span></td></tr>
+    <tr><td style="${S.th}" colspan="2">Yesterday · ${yNice}</td></tr>
     <tr><td style="${S.td}">Payroll on the clock ${costSource ? `<span style="${S.muted}">${costSource}</span>` : ''}</td>
-      <td style="${S.td};text-align:right">${cost30 != null ? `<b>${money0(cost30)}</b> <span style="${S.muted}">${costPerClean != null ? money0(costPerClean) + '/clean' : ''}</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
+      <td style="${S.td};text-align:right">${econY.payroll != null ? `<b>${money0(econY.payroll)}</b> <span style="${S.muted}">${Math.round(econY.hours)} hrs${econY.cleans ? ' · ' + econY.cleans + ' cleans' : ''}</span>` : `<span style="${S.amber}">nobody clocked in Homebase</span>`}</td></tr>
+    <tr><td style="${S.td}">Cost per clean <span style="${S.muted}">yesterday</span></td>
+      <td style="${S.td};text-align:right">${cpcY != null ? `<b style="${cpcMtd != null && cpcY > cpcMtd * 1.25 ? S.red : S.green}">${money0(cpcY)}</b> <span style="${S.muted}">${cpcMtd != null ? 'month is running ' + money0(cpcMtd) : ''}</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    <tr><td style="${S.td}">Cleaning fees that day</td>
+      <td style="${S.td};text-align:right">${econY.fees != null ? `<b>${money0(econY.fees)}</b>${marginOf(econY) != null ? ` <span style="${S.muted}">· ${money0(marginOf(econY))} left after payroll</span>` : ''}` : `<span style="${S.muted}">—</span>`}</td></tr>
+
+    <tr><td style="${S.th}" colspan="2">${monthName} so far · 1st–${dayOfMonth}</td></tr>
+    <tr><td style="${S.td}">Cleaning fees collected <span style="${S.muted}">${econMtd.cleans} cleans</span></td>
+      <td style="${S.td};text-align:right"><b>${money0(econMtd.fees)}</b> <span style="${S.muted}">${econMtd.fees != null && econMtd.cleans ? money0(econMtd.fees / econMtd.cleans) + '/clean' : ''}</span></td></tr>
+    <tr><td style="${S.td}">Payroll month to date</td>
+      <td style="${S.td};text-align:right">${econMtd.payroll != null ? `<b>${money0(econMtd.payroll)}</b> <span style="${S.muted}">${Math.round(econMtd.hours)} hrs</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
+    <tr><td style="${S.td}"><b>Cost per clean</b> <span style="${S.muted}">vs same days last month</span></td>
+      <td style="${S.td};text-align:right">${cpcMtd != null ? `<b>${money0(cpcMtd)}</b> ${deltaPill(cpcDelta, '%', false)} <span style="${S.muted}">${cpcPrev != null ? 'was ' + money0(cpcPrev) : 'no comparison yet'}</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Housekeeping margin</b></td>
-      <td style="${S.td};text-align:right">${margin30 != null ? `<b style="${marginPct30 != null && marginPct30 < 10 ? S.red : S.green}">${money0(margin30)}${marginPct30 != null ? ' · ' + pct1(marginPct30) : ''}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
+      <td style="${S.td};text-align:right">${marginMtd != null ? `<b style="${marginPctMtd != null && marginPctMtd < 10 ? S.red : S.green}">${money0(marginMtd)}${marginPctMtd != null ? ' · ' + pct1(marginPctMtd) : ''}</b> ${deltaPill(marginDelta, ' pts')}` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}">Labour as a share of the fee</td>
-      <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b> <span style="${S.muted}">${econ.hours ? Math.round(econ.hours) + ' hrs' : ''}</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
-    ${econ.vendorFees ? `<tr><td style="${S.td}">Vendor-cleaned buildings <span style="${S.muted}">kept separate</span></td>
-      <td style="${S.td};text-align:right"><span style="${S.muted}">${money0(econ.vendorFees)} in fees · we pay no crew on these</span></td></tr>` : ''}
+      <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    ${econMtd.vendorFees ? `<tr><td style="${S.td}">Vendor-cleaned buildings <span style="${S.muted}">kept separate</span></td>
+      <td style="${S.td};text-align:right"><span style="${S.muted}">${money0(econMtd.vendorFees)} in fees · we pay no crew on these</span></td></tr>` : ''}
+    ${trendLine ? `<tr><td colspan="2" style="${S.td}">
+      <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Cost per clean · last ${trendPts.length} closed days</div>
+      <div style="line-height:1.9">${trendLine}</div></td></tr>` : ''}
     ${coverageWarn ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
-      <span style="${S.amber}">Read this margin as a ceiling.</span> <span style="${S.muted}">Homebase shows ${Math.round(econ.hours)} clocked hours while Breezeway recorded ${Math.round(bwHours)} hours of completed work — so some of the crew doing these cleans is not on a Homebase timecard, and real payroll is higher than the figure above.</span></td></tr>` : ''}
+      <span style="${S.amber}">Read this margin as a ceiling.</span> <span style="${S.muted}">Homebase shows ${Math.round(econMtd.hours)} clocked hours this month while Breezeway recorded ${Math.round(bwHours)} hours of completed work — so some of the crew doing these cleans is not on a Homebase timecard, and real payroll is higher than the figure above.</span></td></tr>` : ''}
     <tr><td style="${S.td};color:#9ca3af">Room revenue <span style="${S.muted}">Guesty · fuller numbers in your revenue app</span></td>
       <td style="${S.td};text-align:right;color:#9ca3af">${money0(rev.total)} ${deltaPill(rev.totalChange)} <span style="${S.muted}">ADR ${money0(rev.adr)}</span></td></tr>`
 
@@ -893,8 +973,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   const tbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
   const subject = `GM Brief ${dateNice}: ${occToday != null ? pct1(occToday) + ' occupied' : ''}`
-    + (marginPct30 != null ? ` · ${pct1(marginPct30)} clean margin` : '')
-    + (costPerClean != null ? ` · ${money0(costPerClean)}/clean` : '')
+    + (cpcY != null ? ` · ${money0(cpcY)}/clean yesterday` : '')
+    + (marginPctMtd != null ? ` · ${pct1(marginPctMtd)} margin MTD` : '')
     + (d.rep.avg != null ? ` · ${d.rep.avg.toFixed(2)}★` : '')
     + (claimsOpen ? ` · ${claimsOpen} claims` : '')
 
@@ -912,7 +992,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <tr><td style="${S.td}">Cleans today</td><td style="${S.td};text-align:right"><b>${tod.cleansDone || 0}</b> of ${tod.cleansScheduled || 0} done</td></tr>
     <tr><td style="${S.td}">Booked in the next 7 days</td><td style="${S.td};text-align:right"><b>${money0(tod.booked7)}</b> <span style="${S.muted}">${tod.arrivals7 || 0} arrivals</span></td></tr>`), '#4338ca')}
 
-  ${card('Housekeeping P&L · last 30 days', null, tbl(moneyRows), '#047857')}
+  ${card(`Housekeeping P&L · yesterday and ${monthName} to date`, null, tbl(moneyRows), '#047857')}
   ${repRows ? card('Guest score by market · last 30 days', null, tbl(repRows), '#d97706') : ''}
   ${card('Guest health', null, tbl(guestRows), '#0891b2')}
   ${card('Where money is leaking', null, tbl(riskRows), '#dc2626')}
