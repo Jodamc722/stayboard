@@ -782,12 +782,12 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     // count beside it — the GAP between the two is the compliance problem, shown as its own number.
     cleans: number; bzClosed: number; fees: number
     hkMins: number; maintMins: number; inspMins: number
-    billable: number
+    billable: number; billableHk: number
     payroll: number | null      // allocated (vendors: null — not ours to pay)
     hours: number | null        // allocated clocked hours, so hours-per-clean works per market
   }
   const MK_ORDER = ['Miami', 'Broward', 'North', 'Vendors']
-  const newBucket = (k: string): Bucket => ({ key: k, label: k, cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, payroll: null, hours: null })
+  const newBucket = (k: string): Bucket => ({ key: k, label: k, cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: null, hours: null })
   let buckets: Record<string, Bucket> = {}
   let payrollWin: number | null = null, hoursWin = 0, payrollPrev: number | null = null, hoursPrev = 0
   let cleansPrev = 0, feesPrev = 0
@@ -918,6 +918,11 @@ export async function buildGmBrief(): Promise<OpsBrief> {
           if (!amt) continue
           const b = bucketFor(String((t as any).listingId)); if (!b) continue
           b.billable += amt; billableKnown = true
+          // Jon, 2026-08-08: "departure cleans, owner cleans, deep cleans will have a value in
+          // Breezeway if we generate rev." So housekeeping-billable work is CLEANING REVENUE — an
+          // owner clean or a deep clean earns money that never appears as a guest cleaning fee,
+          // and leaving it out understated both the revenue and the margin.
+          if (/housekeep|clean/i.test(str((t as any).department))) b.billableHk += amt
         }
       }
     } catch { /* billing detail unavailable — the column simply reads as no data */ }
@@ -927,11 +932,12 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const tot = cols.reduce((a, b) => ({
     cleans: a.cleans + b.cleans, bzClosed: a.bzClosed + b.bzClosed, fees: a.fees + b.fees, hkMins: a.hkMins + b.hkMins,
     maintMins: a.maintMins + b.maintMins, inspMins: a.inspMins + b.inspMins,
-    billable: a.billable + b.billable, payroll: a.payroll + (b.payroll || 0),
-  }), { cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, payroll: 0 })
+    billable: a.billable + b.billable, billableHk: a.billableHk + b.billableHk, payroll: a.payroll + (b.payroll || 0),
+  }), { cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: 0 })
   const oursTot = cols.filter(c => c.key !== 'Vendors').reduce((a, b) => ({
-    cleans: a.cleans + b.cleans, bzClosed: a.bzClosed + b.bzClosed, fees: a.fees + b.fees, payroll: a.payroll + (b.payroll || 0),
-  }), { cleans: 0, bzClosed: 0, fees: 0, payroll: 0 })
+    cleans: a.cleans + b.cleans, bzClosed: a.bzClosed + b.bzClosed, fees: a.fees + b.fees,
+    billableHk: a.billableHk + b.billableHk, payroll: a.payroll + (b.payroll || 0),
+  }), { cleans: 0, bzClosed: 0, fees: 0, billableHk: 0, payroll: 0 })
   // NOT A PERCENTAGE. The first cut divided housekeeping tasks by checkouts and printed "116%",
   // because closed HK tasks include deep cleans, strips and mid-stay work — the numerator is not a
   // subset of the denominator. Both counts are shown side by side instead, with the caveat, and
@@ -941,18 +947,21 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const cpcY = null as number | null   // kept for the tile below; recomputed from the window
   const cpcWin = oursTot.cleans && payrollWin != null ? oursTot.payroll / oursTot.cleans : null
   const cpcPrevWin = cleansPrev && payrollPrev != null ? (payrollPrev as number) / cleansPrev : null
-  const marginWin = payrollWin != null ? oursTot.fees - oursTot.payroll : null
-  const marginPctWin = (marginWin != null && oursTot.fees) ? Math.round((marginWin / oursTot.fees) * 1000) / 10 : null
+  // TOTAL CLEANING REVENUE = the guest cleaning fee on checkouts PLUS the Breezeway billable value
+  // of owner cleans and deep cleans, which earn money outside the guest fee entirely.
+  const cleanRevWin = oursTot.fees + oursTot.billableHk
+  const marginWin = payrollWin != null ? cleanRevWin - oursTot.payroll : null
+  const marginPctWin = (marginWin != null && cleanRevWin) ? Math.round((marginWin / cleanRevWin) * 1000) / 10 : null
   const marginPrev = payrollPrev != null ? feesPrev - (payrollPrev as number) : null
   const marginPctPrev = (marginPrev != null && feesPrev) ? Math.round((marginPrev / feesPrev) * 1000) / 10 : null
-  const laborPctOfClean = (payrollWin != null && oursTot.fees) ? Math.round((oursTot.payroll / oursTot.fees) * 1000) / 10 : null
+  const laborPctOfClean = (payrollWin != null && cleanRevWin) ? Math.round((oursTot.payroll / cleanRevWin) * 1000) / 10 : null
   // Coverage differences between the two weeks make a comparison meaningless — same guard as before.
   const hpcWin = oursTot.cleans && hoursWin ? hoursWin / oursTot.cleans : null
   const hpcPrev = cleansPrev && hoursPrev ? hoursPrev / cleansPrev : null
   const comparableWeeks = hpcWin != null && hpcPrev != null && hpcPrev >= hpcWin * 0.6 && hpcPrev <= hpcWin * 1.6
   const cpcDelta = (comparableWeeks && cpcWin != null && cpcPrevWin != null && cpcPrevWin > 0) ? ((cpcWin - cpcPrevWin) / cpcPrevWin) * 100 : null
   const marginDelta = (comparableWeeks && marginPctWin != null && marginPctPrev != null) ? marginPctWin - marginPctPrev : null
-  const feePerClean = oursTot.cleans ? oursTot.fees / oursTot.cleans : null
+  const feePerClean = oursTot.cleans ? cleanRevWin / oursTot.cleans : null
   const costSource = payrollWin != null ? 'Homebase clocked payroll' : null
   const bwHours = (tot.hkMins + tot.maintMins + tot.inspMins) / 60
   const coverageWarn = payrollWin != null && bwHours > 0 && hoursWin > 0 && hoursWin < bwHours * 0.8
@@ -1008,15 +1017,16 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const marketRows = cols.map(b => {
     const isVendor = b.key === 'Vendors'
     const cpc = (!isVendor && b.payroll != null && b.cleans) ? b.payroll / b.cleans : null
-    const margin = (!isVendor && b.payroll != null) ? b.fees - b.payroll : null
-    const marginPct = (margin != null && b.fees) ? Math.round((margin / b.fees) * 1000) / 10 : null
+    const bRev = b.fees + b.billableHk
+    const margin = (!isVendor && b.payroll != null) ? bRev - b.payroll : null
+    const marginPct = (margin != null && bRev) ? Math.round((margin / bRev) * 1000) / 10 : null
     // TOTAL HK HOURS TO TOTAL CLEANS, per market — Jon's ask. Clocked hours (allocated) over
     // checkouts, so it holds up even where Breezeway tasks went unclosed.
     const hpcHrs = (!isVendor && b.hours != null && b.cleans) ? b.hours / b.cleans : null
     return `<tr>
       <td style="${S.td}"><b>${esc(b.label)}</b>${isVendor ? `<div style="font-size:11px;color:#9ca3af">outside crews</div>` : `<div style="font-size:11px;color:#9ca3af">${b.bzClosed} closed in BZ</div>`}</td>
       <td style="${S.td};text-align:right">${b.cleans || '—'}</td>
-      <td style="${S.td};text-align:right">${b.fees ? money0(b.fees) : '—'}</td>
+      <td style="${S.td};text-align:right">${bRev ? money0(bRev) : '—'}${b.billableHk ? `<div style="font-size:10px;color:#9ca3af">${money0(b.fees)} guest + ${money0(b.billableHk)} billable</div>` : ''}</td>
       <td style="${S.td};text-align:right">${isVendor ? `<span style="${S.muted}">vendor</span>` : (b.payroll != null ? money0(b.payroll) : '—')}</td>
       <td style="${S.td};text-align:right">${cpc != null ? `<b>${money0(cpc)}</b>` : (isVendor ? `<span style="${S.muted}">—</span>` : '—')}</td>
       <td style="${S.td};text-align:right">${hpcHrs != null ? `<b>${hpcHrs.toFixed(1)}</b>` : '—'}</td>
@@ -1037,8 +1047,12 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     </tr>`
 
   const moneyRows = `
-    <tr><td style="${S.td}">Cleaning fees collected <span style="${S.muted}">${oursTot.cleans} cleans (checkouts)</span></td>
-      <td style="${S.td};text-align:right"><b>${money0(oursTot.fees)}</b> <span style="${S.muted}">${feePerClean != null ? money0(feePerClean) + '/clean' : ''}</span></td></tr>
+    <tr><td style="${S.td}">Guest cleaning fees <span style="${S.muted}">${oursTot.cleans} checkouts</span></td>
+      <td style="${S.td};text-align:right"><b>${money0(oursTot.fees)}</b></td></tr>
+    <tr><td style="${S.td}">Owner &amp; deep cleans <span style="${S.muted}">billable value in Breezeway</span></td>
+      <td style="${S.td};text-align:right">${oursTot.billableHk ? `<b>${money0(oursTot.billableHk)}</b>` : `<span style="${S.muted}">none billed this week</span>`}</td></tr>
+    <tr><td style="${S.td}"><b>Total cleaning revenue</b></td>
+      <td style="${S.td};text-align:right"><b>${money0(cleanRevWin)}</b> <span style="${S.muted}">${feePerClean != null ? money0(feePerClean) + '/clean' : ''}</span></td></tr>
     <tr><td style="${S.td}">Payroll on the clock ${costSource ? `<span style="${S.muted}">${costSource}</span>` : ''}</td>
       <td style="${S.td};text-align:right">${payrollWin != null ? `<b>${money0(payrollWin)}</b> <span style="${S.muted}">${Math.round(hoursWin)} hrs</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Cost per clean</b> <span style="${S.muted}">${comparableWeeks ? 'vs the week before' : 'this week'}</span></td>
@@ -1053,8 +1067,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right"><b>${oursTot.bzClosed}</b> <span style="${S.muted}">against ${oursTot.cleans} checkouts</span></td></tr>
     <tr><td style="${S.td}">Hours by department <span style="${S.muted}">Breezeway recorded</span></td>
       <td style="${S.td};text-align:right"><b>${hrs(tot.hkMins)}</b> <span style="${S.muted}">housekeeping</span> · <b>${hrs(tot.maintMins)}</b> <span style="${S.muted}">maintenance</span> · <b>${hrs(tot.inspMins)}</b> <span style="${S.muted}">inspection</span></td></tr>
-    <tr><td style="${S.td}">Billable labour <span style="${S.muted}">owner-billable work</span></td>
-      <td style="${S.td};text-align:right">${billableKnown ? `<b>${money0(tot.billable)}</b> <span style="${S.muted}">on top of the cleaning fee</span>` : `<span style="${S.muted}">no billing detail synced</span>`}</td></tr>
+    <tr><td style="${S.td}">Billable labour <span style="${S.muted}">maintenance &amp; inspection, billed to owners</span></td>
+      <td style="${S.td};text-align:right">${billableKnown ? `<b>${money0(tot.billable - tot.billableHk)}</b> <span style="${S.muted}">separate from cleaning</span>` : `<span style="${S.muted}">no billing detail synced</span>`}</td></tr>
     ${cols.find(c => c.key === 'Vendors' && c.fees) ? `<tr><td style="${S.td}">Vendor buildings <span style="${S.muted}">kept out of the margin</span></td>
       <td style="${S.td};text-align:right"><span style="${S.muted}">${money0((cols.find(c => c.key === 'Vendors') as Bucket).fees)} in fees · outside crews clean these</span></td></tr>` : ''}
     ${trendLine ? `<tr><td colspan="2" style="${S.td}">
