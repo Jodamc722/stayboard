@@ -391,6 +391,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       }
       const kindOf = (t: any) => {
         const s2 = (String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()
+        // Strips/walkthroughs and delivery errands are NOT departure cleans.
+        if (/strip|walkthrough|walk-through|deliver|mattress/.test(s2)) return 'other'
         if (/clean|housekeep|turn/.test(s2)) return 'clean'
         if (/inspect|walk/.test(s2)) return 'inspection'
         if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s2)) return 'maintenance'
