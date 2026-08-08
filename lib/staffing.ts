@@ -179,6 +179,28 @@ export function suggestFromTasks(
   return out
 }
 
+// AGENCY FROM HOMEBASE (Jon 2026-08-08: "why are you not pulling the employee, rate and agency
+// from Homebase"). Homebase has no agency field of its own, so the only honest way to read one is
+// to look for an agency's NAME in the text Homebase does carry — job title, department, or any
+// custom field on the employee record. If Jon writes "Opal" anywhere on the person in Homebase,
+// this finds it. If he does not, this returns null and the agency stays a human decision rather
+// than becoming a guess that quietly puts hours on the wrong invoice.
+export function agencyFromText(texts: (string | null | undefined)[], agencies: Agency[]): string | null {
+  const hay = texts.filter(Boolean).join(' | ').toLowerCase()
+  if (!hay.trim()) return null
+  let best: string | null = null, bestLen = 0
+  for (const a of agencies) {
+    for (const cand of [a.label, a.key]) {
+      const c = String(cand || '').trim().toLowerCase()
+      // 3 chars minimum, on a word boundary — otherwise a key like "cb" matches half the roster.
+      if (c.length < 3) continue
+      const re = new RegExp('(^|[^a-z0-9])' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)')
+      if (re.test(hay) && c.length > bestLen) { best = a.key; bestLen = c.length }
+    }
+  }
+  return best
+}
+
 /** Apply a suggestion WITHOUT clobbering anything already set by hand. */
 export function mergeSuggestion(existing: StaffRow | null, s: StaffSuggestion, name: string): Partial<StaffRow> & { name: string } {
   return {
