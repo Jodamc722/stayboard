@@ -212,6 +212,39 @@ function card(title: string, count: number | null, inner: string, accent = '#636
 }
 const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:8px 0 2px">${t}</p>`
 
+// ── THE LIVE BOARD (2026-08-07, Jon: "attach the link for Botanica reservations, same for PT,
+// and Capri, Lucerne") ──────────────────────────────────────────────────────────────────────────
+// The email is a snapshot taken at 7am; the board at /vendor/<slug> is the same reservations LIVE,
+// with door codes, guest notes and later changes. So every vendor brief now leads with a link to
+// its own board rather than being the only copy of the day. No login — the slug is the key, and
+// each slug is scoped server-side to that vendor's buildings only.
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://stayboard-three.vercel.app').replace(/\/+$/, '')
+// Bulletproof-ish email button: a bordered table cell, because Outlook drops padding on <a>.
+function btn(href: string, label: string, sub?: string): string {
+  return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:2px 0 10px"><tr><td>
+    <table cellspacing="0" cellpadding="0"><tr>
+      <td style="background:#4338ca;border-radius:10px">
+        <a href="${href}" style="display:inline-block;padding:11px 20px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:.01em">${label}</a>
+      </td>
+    </tr></table>
+    ${sub ? `<div style="font-size:11.5px;color:#6b7280;margin-top:6px">${sub}</div>` : ''}
+  </td></tr></table>`
+}
+// "4:00 PM" and "16:00" both have to sort — the two formats come from different Guesty fields.
+function minsOfTime(t: any): number {
+  const s = str(t).trim()
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(s)
+  if (!m) return 9999
+  let h = Number(m[1]); const mi = Number(m[2]); const ap = (m[3] || '').toUpperCase()
+  if (ap === 'PM' && h < 12) h += 12
+  if (ap === 'AM' && h === 12) h = 0
+  return h * 60 + mi
+}
+// The order-of-work badge. A cleaning crew reads top-to-bottom, so the number IS the instruction.
+const numBadge = (n: number, hot: boolean) =>
+  `<span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:999px;font-size:11px;font-weight:700;` +
+  (hot ? 'background:#dc2626;color:#ffffff' : 'background:#eef2ff;color:#4338ca') + `">${n}</span>`
+
 export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const d = await gather(variant)
   const sheet: any = d.sheet || {}
@@ -589,10 +622,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
 // no money, no reviews, no glitches, no other buildings. Groups follow the vendor presets:
 //   botanica → Botanica · pt → Park Towers · north → Capri + Lucerne + Amrit
 export type VendorGroup = 'botanica' | 'pt' | 'north'
-export const VENDOR_GROUPS: { key: VendorGroup; label: string; presetIds: string[] }[] = [
-  { key: 'botanica', label: 'Botanica', presetIds: ['botanica'] },
-  { key: 'pt', label: 'Park Towers', presetIds: ['park-towers'] },
-  { key: 'north', label: 'Capri · Lucerne · Amrit', presetIds: ['capri', 'lucerne', 'amrit'] },
+// `board` is the slug of that group's LIVE reservations board (app/vendor/[v], scoped by the SCOPES
+// map in app/api/public/board/route.ts). Keep the two in step: a slug that does not exist there
+// renders an empty board, which is worse than no link at all.
+export const VENDOR_GROUPS: { key: VendorGroup; label: string; presetIds: string[]; board: string }[] = [
+  { key: 'botanica', label: 'Botanica', presetIds: ['botanica'], board: 'botanica' },
+  { key: 'pt', label: 'Park Towers', presetIds: ['park-towers'], board: 'pt' },
+  { key: 'north', label: 'Capri · Lucerne · Amrit', presetIds: ['capri', 'lucerne', 'amrit'], board: 'amrit-capri-lucerne' },
 ]
 
 export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: string; html: string; counts: { checkouts: number; arrivals: number } }> {
@@ -675,20 +711,49 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
     <tr><td style="${S.td}"><b>${esc(l.unit)}</b><div style="font-size:12px;color:#6b7280;margin-top:2px">${esc(ratingAsGuestSaw(l.stars, l.channel) || l.stars.toFixed(1) + '★')}</div></td>
     <td style="${S.td}">“${esc(l.quote)}”</td></tr>`).join('')
 
+  const boardUrl = `${APP_URL}/vendor/${def.board}`
+
+  // ---- ORDER OF WORK. The list used to arrive in whatever order the daysheet produced, which
+  // made the crew decide priority from a wall of equal-looking rows. Same-day turns come first
+  // (those cannot slip — a guest is arriving into that unit today), earliest arrival inside that
+  // group, then everything else by checkout time. The row number IS the instruction.
+  const arrivalFor = (c: any) => arrivals.find((a: any) => String(a.listingId) === String(c.listingId))
+  const orderedCheckouts = checkouts.slice().sort((a: any, b: any) => {
+    const sa = sameDayIds.has(String(a.listingId)) ? 0 : 1
+    const sb = sameDayIds.has(String(b.listingId)) ? 0 : 1
+    if (sa !== sb) return sa - sb
+    if (sa === 0) return minsOfTime((arrivalFor(a) || {}).checkInTime) - minsOfTime((arrivalFor(b) || {}).checkInTime)
+    return minsOfTime(a.checkOutTime) - minsOfTime(b.checkOutTime)
+  })
+  const sameDayCount = orderedCheckouts.filter((c: any) => sameDayIds.has(String(c.listingId))).length
+
+  // Subject leads with the number that changes the day's plan, not just the total.
   const subject = `${def.label} — Housekeeping for ${dateNice}: ${checkouts.length} checkout${checkouts.length === 1 ? '' : 's'}` +
-    (arrivals.length ? ` · ${arrivals.length} arrival${arrivals.length === 1 ? '' : 's'}` : '') +
-    (checkouts.filter((c: any) => sameDayIds.has(String(c.listingId))).length ? ` · SAME-DAY turns` : '')
+    (sameDayCount ? ` · ${sameDayCount} SAME-DAY turn${sameDayCount === 1 ? '' : 's'}` : '') +
+    (arrivals.length ? ` · ${arrivals.length} arrival${arrivals.length === 1 ? '' : 's'}` : '')
 
-  const coRows = checkouts.map((c: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(c.unit))}</b></td>
-    <td style="${S.td}">guest leaves ${c.checkOutTime ? 'by ' + esc(str(c.checkOutTime)) : 'today'}${sameDayIds.has(String(c.listingId)) ? ` — <span style="${S.red}">next guest arrives TODAY${(arrivals.find((a: any) => String(a.listingId) === String(c.listingId)) || {}).checkInTime ? ' at ' + esc(str((arrivals.find((a: any) => String(a.listingId) === String(c.listingId)) || {}).checkInTime)) : ''} — clean first</span>` : ''}</td></tr>`).join('')
+  const coRows = orderedCheckouts.map((c: any, i: number) => {
+    const hot = sameDayIds.has(String(c.listingId))
+    const arr = arrivalFor(c) || {}
+    const bg = hot ? ';background:#fff5f5' : ''
+    // The deadline is the whole point of the row: a same-day turn is due before that guest lands.
+    const due = hot
+      ? `<span style="${S.red}">READY BY ${arr.checkInTime ? esc(str(arr.checkInTime)) : '4:00 PM'}</span>`
+      : `<span style="${S.muted}">by 4:00 PM</span>`
+    return `<tr>
+      <td style="${S.td}${bg};width:34px;text-align:center">${numBadge(i + 1, hot)}</td>
+      <td style="${S.td}${bg}"><b>${esc(str(c.unit))}</b>${hot ? ' ' + pillRed('SAME-DAY TURN') : ''}
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">guest leaves ${c.checkOutTime ? esc(str(c.checkOutTime)) : 'today'}${c.nights ? ` · ${c.nights}-night stay` : ''}</div></td>
+      <td style="${S.td}${bg};text-align:right;white-space:nowrap">${due}${hot && arr.nights ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">${arr.nights}-night booking</div>` : ''}</td>
+    </tr>`
+  }).join('')
 
-  const arrRows = arrivals.map((a: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b></td>
-    <td style="${S.td}">arriving ${a.checkInTime ? esc(str(a.checkInTime)) : 'today'}${a.nights ? ` · ${a.nights} nights` : ''} — unit must be guest-ready.</td></tr>`).join('')
+  const arrRows = arrivals.slice().sort((a: any, b: any) => minsOfTime(a.checkInTime) - minsOfTime(b.checkInTime)).map((a: any) => `
+    <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${sameDayIds.has(String(a.listingId)) ? ' ' + pillAmber('AFTER A CLEAN') : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${a.checkInTime ? esc(str(a.checkInTime)) : 'today'}${a.nights ? ` <span style="${S.muted}">· ${a.nights} nights</span>` : ''}</td></tr>`).join('')
 
   const tomRows = tomorrowArrivals.map(t => `
-    <tr><td style="${S.td}"><b>${esc(t.unit)}</b></td><td style="${S.td}">arrival tomorrow${t.nights ? ` · ${t.nights} nights` : ''}</td></tr>`).join('')
+    <tr><td style="${S.td}"><b>${esc(t.unit)}</b></td><td style="${S.td};text-align:right;white-space:nowrap">${t.nights ? `${t.nights} nights` : 'arriving'}</td></tr>`).join('')
 
   const tbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
 
@@ -700,19 +765,28 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   </div>
   <div style="${S.tilesOuter}">${tileRow([
     { label: 'Checkouts to clean', value: String(checkouts.length), tone: checkouts.length ? 'amber' : 'green' },
-    { label: 'Arrivals today', value: String(arrivals.length) },
+    { label: 'Same-day turns', value: String(sameDayCount), tone: sameDayCount ? 'red' : undefined,
+      note: sameDayCount ? 'clean these first' : 'none today' },
     { label: 'Arriving tomorrow', value: String(tomorrowArrivals.length) },
     { label: `Guest rating · ${REVIEW_DAYS}d`, value: revAvg != null ? revAvg.toFixed(2) + '★' : '—',
       tone: revAvg == null ? undefined : revAvg >= 4.6 ? 'green' : revAvg >= 4.2 ? 'amber' : 'red',
       note: scored.length ? `${scored.length} review${scored.length === 1 ? '' : 's'}` : 'no reviews yet' },
   ])}</div>
-  ${card("Today's checkouts — please clean", checkouts.length, checkouts.length ? tbl(coRows) : emptyLine('No checkouts today.'), '#d97706')}
-  ${arrivals.length ? card("Today's arrivals — must be guest-ready", arrivals.length, tbl(arrRows), '#dc2626') : ''}
+  ${btn(boardUrl, 'Open your live reservations board →',
+    'Today, tomorrow and everything upcoming for ' + esc(def.label) + ' — with door codes, guest notes and any changes made after this email was sent. No password needed; bookmark it.')}
+  ${card(sameDayCount ? `Clean in this order — ${sameDayCount} same-day turn${sameDayCount === 1 ? '' : 's'} first` : "Today's checkouts — please clean",
+    checkouts.length,
+    checkouts.length ? tbl(coRows) : emptyLine('No checkouts today.'),
+    sameDayCount ? '#dc2626' : '#d97706')}
+  ${arrivals.length ? card("Arriving today — these units must be guest-ready", arrivals.length, tbl(arrRows), '#dc2626') : ''}
   ${tomorrowArrivals.length ? card('Tomorrow — heads-up', tomorrowArrivals.length, tbl(tomRows)) : ''}
   ${topThemes.length ? card(`Things to look for — what guests flagged in the last ${REVIEW_DAYS} days`, topThemes.length, tbl(themeRows), '#7c3aed') : ''}
   ${lowlights.length ? card('In their words — recent low scores', lowlights.length, tbl(lowRows), '#0891b2') : ''}
   ${scored.length && !topThemes.length ? card('Guest feedback', null, emptyLine(`${scored.length} review${scored.length === 1 ? '' : 's'} in the last ${REVIEW_DAYS} days, averaging ${revAvg != null ? revAvg.toFixed(2) : '—'}★, with no cleaning issues raised. Nice work.`), '#047857') : ''}
-  <p style="${S.foot}">Sent automatically each morning by Stay Hospitality · questions: reply to this email.</p>
+  <p style="${S.foot}">
+    Sent automatically each morning by Stay Hospitality · questions: reply to this email.<br>
+    Your live board: <a href="${boardUrl}" style="color:#4338ca">${boardUrl.replace(/^https:\/\//, '')}</a>
+  </p>
   </div></body></html>`
 
   return { subject, html, counts: { checkouts: checkouts.length, arrivals: arrivals.length } }
