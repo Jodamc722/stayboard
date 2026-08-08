@@ -400,10 +400,10 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
               <button onClick={() => { setLocked((x) => !x); dirty.current = true }} title="Lock this week so Generate won't overwrite it. Manual edits still save." className={`inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border ${locked ? 'bg-amber-100 border-amber-300 text-amber-800' : 'border-neutral-200 hover:bg-neutral-50'}`}>{locked ? 'Locked · tap to unlock' : 'Lock week'}</button>
             )}
             {view === 'week' && (
-            <button onClick={fillFromHomebase} disabled={locked || !Object.keys(hbWeek).length} title="Populate the grid from the Homebase schedule - fills empty cells with Working for everyone scheduled there and adds missing people" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-neutral-50 disabled:opacity-40">Fill from Homebase</button>
             <button onClick={generateWeek} disabled={locked} title="Draft the whole week — staffs each day to the projection (cleans already booked, raised to the 60-day weekday pace). Re-click anytime to re-balance." className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><Sparkles size={14} />Generate week</button>
           )}
           {lastSync && <span className="text-[11px] text-neutral-400 self-center mr-0.5">Synced {new Date(lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
+          <button onClick={fillFromHomebase} disabled={locked || !Object.keys(hbWeek).length} title="Populate the grid from the Homebase schedule - fills empty cells with Working for everyone scheduled there and adds missing people" className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-neutral-50 disabled:opacity-40">Fill from Homebase</button>
           <button onClick={refresh} title="Refresh cleans, forecast and fees" className="inline-flex items-center justify-center text-sm w-8 h-8 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
