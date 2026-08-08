@@ -10,7 +10,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf, type Market } from './segments'
-import { rollupBuilding, ratingToStars } from './optimize-score'
+import { rollupBuilding, ratingToStars, ratingAsGuestSaw } from './optimize-score'
 import { THEMES, looksNegative, sentenceAbout } from './review-themes'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
@@ -271,7 +271,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
 
   const newRevRows = d.newReviews.map(r => `
     <tr><td style="${S.td}"><b>${esc(r.unit)}</b><br><span style="color:#6b7280">${esc(r.channel)}${r.guest ? ' · ' + esc(r.guest) : ''}</span></td>
-    <td style="${S.td}"><span style="${r.rating <= 3 ? S.red : S.green}">${stars(r.rating)} ${r.rating}</span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
+    <td style="${S.td}"><span style="${r.rating <= 3 ? S.red : S.green}">${stars(r.rating)} ${esc(ratingAsGuestSaw(r.rating, r.channel) || String(r.rating))}</span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
 
   const bigRows = d.bigArrivals.map(b => `
     <tr><td style="${S.td}"><b>${esc(b.unit)}</b>${b.today ? ' ' + pillRed('TODAY') : ''} <span style="${S.muted};font-size:12px">· ${esc(b.guest)} · ${b.when}${b.nights ? ` · ${b.nights}n` : ''}</span></td>
@@ -634,7 +634,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   let revRows: any[] = []
   if (myIds.length) {
     const { data } = await db.from('guesty_reviews')
-      .select('listing_id,rating,content,created_at,excluded_from_score')
+      .select('listing_id,rating,content,channel,created_at,excluded_from_score')
       .in('listing_id', myIds).gte('created_at', revSince)
       .order('created_at', { ascending: false }).limit(500)
     revRows = (data || []) as any[]
@@ -649,7 +649,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   const CLEAN_THEMES = THEMES.filter(t => t.owner === 'clean')
   type Hit = { label: string; action: string; n: number; units: Set<string>; quote: string; quoteUnit: string }
   const hits: Record<string, Hit> = {}
-  const lowlights: { unit: string; stars: number; quote: string }[] = []
+  const lowlights: { unit: string; stars: number; quote: string; channel: string }[] = []
   for (const r of revRows) {
     const txt = str(r.content); if (!txt) continue
     const unit = nameOf[String(r.listing_id)] || 'Unit'
@@ -661,7 +661,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
       const h = hits[t.key] || (hits[t.key] = { label: t.label, action: t.action, n: 0, units: new Set(), quote: sentence, quoteUnit: unit })
       h.n += 1; h.units.add(unit)
       if (stars != null && stars <= 3 && lowlights.length < 4 && !lowlights.some(l => l.quote === sentence)) {
-        lowlights.push({ unit, stars, quote: sentence })
+        lowlights.push({ unit, stars, quote: sentence, channel: str(r.channel) })
       }
     }
   }
@@ -672,7 +672,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
     <td style="${S.td}">${esc(h.action)}<div style="font-size:12px;color:#6b7280;margin-top:4px">Guest, ${esc(h.quoteUnit)}: “${esc(h.quote)}”</div></td></tr>`).join('')
 
   const lowRows = lowlights.map(l => `
-    <tr><td style="${S.td}"><b>${esc(l.unit)}</b><div style="font-size:12px;color:#6b7280;margin-top:2px">${l.stars.toFixed(1)}★</div></td>
+    <tr><td style="${S.td}"><b>${esc(l.unit)}</b><div style="font-size:12px;color:#6b7280;margin-top:2px">${esc(ratingAsGuestSaw(l.stars, l.channel) || l.stars.toFixed(1) + '★')}</div></td>
     <td style="${S.td}">“${esc(l.quote)}”</td></tr>`).join('')
 
   const subject = `${def.label} — Housekeeping for ${dateNice}: ${checkouts.length} checkout${checkouts.length === 1 ? '' : 's'}` +
