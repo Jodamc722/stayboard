@@ -13,7 +13,12 @@ import { Users2, Loader2, Check, AlertTriangle, Save, Download, Plus, Building2,
 
 type Agency = { key: string; label: string; fee_percent: number; fee_per_hour: number; fee_flat: number; active: boolean; notes?: string | null; sort?: number }
 type Staff = { name: string; agency: string | null; role: string | null; area: string | null; active: boolean }
-type RosterPerson = { name: string; wageRate: number | null; role: string | null; days: number }
+type RosterPerson = {
+  name: string; wageRate: number | null; role: string | null; days: number
+  department?: string | null; active?: boolean; agencyHint?: string | null
+  source?: 'homebase' | 'punches'
+}
+type Diag = { locations: number; fromEmployeeList: number; punchesOnly: number; inactive: number; withAgencyHint: number }
 
 const AREAS = ['', 'miami', 'broward', 'north', 'vendor']
 const ROLES = ['', 'Housekeeper', 'Maintenance', 'Handyman', 'Supervisor', 'Inspector', 'Front desk', 'Office']
@@ -25,6 +30,7 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
   const [agencies, setAgencies] = useState<Agency[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
   const [roster, setRoster] = useState<RosterPerson[]>([])
+  const [diag, setDiag] = useState<Diag | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
@@ -38,7 +44,7 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/settings/staffing', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'load failed')
-      setAgencies(j.agencies || []); setStaff(j.staff || []); setRoster(j.roster || [])
+      setAgencies(j.agencies || []); setStaff(j.staff || []); setRoster(j.roster || []); setDiag(j.diag || null)
     } catch (e: any) { setMsg({ tone: 'bad', text: String(e.message || e) }) }
     finally { setBusy(null) }
   }, [])
@@ -68,9 +74,12 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (!j.ok) throw new Error(j.error || 'auto-fill failed')
       setAgencies(j.agencies || agencies); setStaff(j.staff || staff)
+      setRoster(j.roster || roster); setDiag(j.diag || diag)
       const added = (j.changed || []).filter((c: any) => c.added).length
       const upd = (j.changed || []).length - added
-      setMsg({ tone: 'ok', text: `Auto-filled from 60 days of work: ${added} added, ${upd} updated. Agency is never guessed — set it below.` })
+      const ag = Number(j.matchedAgency || 0)
+      setMsg({ tone: 'ok', text: `Auto-filled: ${added} added, ${upd} updated`
+        + (ag ? `, ${ag} matched to an agency from their Homebase name.` : '. No agency names found in Homebase — set those below.') })
     } catch (e: any) { setMsg({ tone: 'bad', text: String(e.message || e) }) }
     finally { setBusy(null) }
   }
@@ -99,7 +108,21 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
   const unassignedRoster = roster.filter(p => !staff.some(s => s.name.toLowerCase() === p.name.toLowerCase()))
   const addFromRoster = (name: string) => {
     if (!name || staff.some(s => s.name.toLowerCase() === name.toLowerCase())) return
-    setStaff(s => [...s, { name, agency: null, role: null, area: null, active: true }].sort((a, b) => a.name.localeCompare(b.name)))
+    const p = roster.find(r => r.name.toLowerCase() === name.toLowerCase())
+    setStaff(s => [...s, {
+      name, agency: p?.agencyHint || null, role: null, area: null, active: p?.active !== false,
+    }].sort((a, b) => a.name.localeCompare(b.name)))
+  }
+  // Jon 2026-08-08: "make sure you pull all employees, Aljenador is someone I don't see." Everyone
+  // Homebase knows now gets a visible row — people without a staff record show as a ghost row that
+  // is one click from real, so a missing person is obvious instead of buried in a dropdown.
+  const addAllFromRoster = () => {
+    const missing = unassignedRoster
+    if (!missing.length) return
+    setStaff(s => [...s, ...missing.map(p => ({
+      name: p.name, agency: p.agencyHint || null, role: null, area: null, active: p.active !== false,
+    }))].sort((a, b) => a.name.localeCompare(b.name)))
+    setMsg({ tone: 'ok', text: `Added ${missing.length} from Homebase — press Save to keep them.` })
   }
 
   // Rate comes from Homebase (never stored here). Agency cost is what that hour actually costs
@@ -179,13 +202,23 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
             </button>
           </div>
           {unassignedRoster.length > 0 && (
-            <select disabled={dis} defaultValue="" onChange={e => { addFromRoster(e.target.value); e.currentTarget.value = '' }}
-              className="text-[11px] bg-app border border-line rounded-lg px-2 py-1 disabled:opacity-50">
-              <option value="">+ Add from Homebase ({unassignedRoster.length})</option>
-              {unassignedRoster.map(p => <option key={p.name} value={p.name}>{p.name}{p.wageRate != null ? ` — ${money(p.wageRate)}/hr` : ''}</option>)}
-            </select>
+            <button onClick={addAllFromRoster} disabled={dis}
+              className="text-[11px] font-semibold text-brand-700 hover:text-brand-800 inline-flex items-center gap-1 disabled:opacity-50"
+              title="Create a staff row for every Homebase employee not yet listed here.">
+              <Plus size={12} /> Add all {unassignedRoster.length} from Homebase
+            </button>
           )}
         </div>
+        {diag && (
+          <p className="text-[11px] text-muted mb-1.5">
+            Homebase: <b className="text-ink">{roster.length}</b> people across{' '}
+            <b className="text-ink">{diag.locations}</b> location{diag.locations === 1 ? '' : 's'}
+            {diag.punchesOnly > 0 && <> · {diag.punchesOnly} seen only on punches, not on the employee list</>}
+            {diag.inactive > 0 && <> · {diag.inactive} archived</>}
+            {diag.withAgencyHint > 0 && <> · {diag.withAgencyHint} with an agency in their Homebase name</>}
+            {diag.locations === 0 && <span className="text-amber-700"> — could not reach Homebase; check the API key.</span>}
+          </p>
+        )}
         <div className="overflow-x-auto rounded-xl border border-line max-h-[420px] overflow-y-auto">
           <table className="w-full text-[12px]">
             <thead className="bg-app text-muted sticky top-0">
@@ -232,7 +265,33 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
                   </td>
                 </tr>
               ))}
-              {!staff.length && <tr><td colSpan={7} className="px-2.5 py-4 text-center text-muted">Nobody added yet — use “Add from Homebase”.</td></tr>}
+              {/* Homebase people with no staff row yet — visible, greyed, one click from real. */}
+              {unassignedRoster.map(p => (
+                <tr key={'ghost:' + p.name} className="bg-app/40">
+                  <td className="px-2.5 py-1.5 text-muted whitespace-nowrap">
+                    {p.name}
+                    {p.active === false && <span className="ml-1 text-[10px] text-muted">(archived)</span>}
+                  </td>
+                  <td className="px-2.5 py-1.5 text-[11px] text-muted">
+                    {p.agencyHint ? (agencies.find(a => a.key === p.agencyHint)?.label || p.agencyHint) : '—'}
+                  </td>
+                  <td className="px-2.5 py-1.5 text-[11px] text-muted">{p.role || '—'}</td>
+                  <td className="px-2.5 py-1.5 text-[11px] text-muted">—</td>
+                  <td className="px-2.5 py-1.5 text-right tabular-nums text-muted whitespace-nowrap">
+                    {p.wageRate == null ? '—' : money(p.wageRate)}
+                  </td>
+                  <td className="px-2.5 py-1.5 text-right tabular-nums text-muted whitespace-nowrap">—</td>
+                  <td className="px-2.5 py-1.5">
+                    <button onClick={() => addFromRoster(p.name)} disabled={dis}
+                      className="text-[11px] font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-50">Add</button>
+                  </td>
+                </tr>
+              ))}
+              {!staff.length && !unassignedRoster.length && (
+                <tr><td colSpan={7} className="px-2.5 py-4 text-center text-muted">
+                  No Homebase employees came back — check the API key and location access.
+                </td></tr>
+              )}
             </tbody>
           </table>
         </div>
