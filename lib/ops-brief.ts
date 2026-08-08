@@ -876,8 +876,17 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const marginMtd = marginOf(econMtd), marginPctMtd = marginPctOf(econMtd)
   const marginPctPrev = marginPctOf(econPrev)
   // Cost per clean going UP is bad, so the pill's sense is inverted against the usual "up is good".
-  const cpcDelta = (cpcMtd != null && cpcPrev != null && cpcPrev > 0) ? ((cpcMtd - cpcPrev) / cpcPrev) * 100 : null
-  const marginDelta = (marginPctMtd != null && marginPctPrev != null) ? marginPctMtd - marginPctPrev : null
+  // IS THE MONTH-OVER-MONTH COMPARISON EVEN FAIR?
+  // Homebase adoption is still growing, so an earlier month can look absurdly cheap purely because
+  // fewer people were clocking in — the first run of this card showed "cost per clean ▲354%", which
+  // was not a cost explosion but July logging a third of the hours per clean that August logs.
+  // When the two windows recorded very different hours per clean, the comparison is measuring
+  // timecard coverage rather than cost, so it is withheld and said out loud instead.
+  const hpc = (e: Econ) => (e.cleans && e.hours) ? e.hours / e.cleans : null
+  const hpcMtd = hpc(econMtd), hpcPrev = hpc(econPrev)
+  const comparableMonths = hpcMtd != null && hpcPrev != null && hpcPrev >= hpcMtd * 0.6 && hpcPrev <= hpcMtd * 1.6
+  const cpcDelta = (comparableMonths && cpcMtd != null && cpcPrev != null && cpcPrev > 0) ? ((cpcMtd - cpcPrev) / cpcPrev) * 100 : null
+  const marginDelta = (comparableMonths && marginPctMtd != null && marginPctPrev != null) ? marginPctMtd - marginPctPrev : null
   const monthName = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(monthStart + 'T12:00:00'))
   const yNice = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(yEcon + 'T12:00:00'))
 
@@ -921,7 +930,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       note: cpcMtd != null ? 'month running ' + money0(cpcMtd) : (costSource ? undefined : 'connect Homebase') },
     { label: `Cost / clean · ${monthName}`, value: cpcMtd != null ? money0(cpcMtd) : '—',
       tone: cpcDelta == null ? undefined : cpcDelta > 10 ? 'red' : cpcDelta < -5 ? 'green' : 'amber',
-      note: cpcPrev != null ? 'was ' + money0(cpcPrev) + ' last month' : 'no comparison yet' },
+      note: comparableMonths && cpcPrev != null ? 'was ' + money0(cpcPrev) + ' last month' : 'month to date' },
     { label: 'Housekeeping margin', value: marginPctMtd != null ? pct1(marginPctMtd) : '—',
       tone: marginPctMtd == null ? undefined : marginPctMtd >= 30 ? 'green' : marginPctMtd >= 10 ? 'amber' : 'red',
       note: marginMtd != null ? money0(marginMtd) + ' on ' + econMtd.cleans + ' cleans' : 'cost not available' },
@@ -939,7 +948,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // row of numbers with the direction called out reads fine on a phone.
   const trendPts = dailyCpc.filter(p => p.cpc != null)
   const trendLine = trendPts.length >= 3
-    ? trendPts.map(p => `<span style="display:inline-block;margin:0 6px 0 0"><span style="font-size:10px;color:#9ca3af">${p.date.slice(5)}</span> <b style="font-size:12px">$${Math.round(p.cpc as number)}</b></span>`).join('')
+    ? trendPts.map(p => `<span style="display:inline-block;margin:0 10px 0 0;white-space:nowrap"><span style="font-size:10px;color:#9ca3af">${p.date.slice(5)}</span>&nbsp;<b style="font-size:12px">$${Math.round(p.cpc as number)}</b></span>`).join('<span style="color:#d1d5db">·</span> ')
     : ''
 
   const moneyRows = `
@@ -956,8 +965,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right"><b>${money0(econMtd.fees)}</b> <span style="${S.muted}">${econMtd.fees != null && econMtd.cleans ? money0(econMtd.fees / econMtd.cleans) + '/clean' : ''}</span></td></tr>
     <tr><td style="${S.td}">Payroll month to date</td>
       <td style="${S.td};text-align:right">${econMtd.payroll != null ? `<b>${money0(econMtd.payroll)}</b> <span style="${S.muted}">${Math.round(econMtd.hours)} hrs</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
-    <tr><td style="${S.td}"><b>Cost per clean</b> <span style="${S.muted}">vs same days last month</span></td>
-      <td style="${S.td};text-align:right">${cpcMtd != null ? `<b>${money0(cpcMtd)}</b> ${deltaPill(cpcDelta, '%', false)} <span style="${S.muted}">${cpcPrev != null ? 'was ' + money0(cpcPrev) : 'no comparison yet'}</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    <tr><td style="${S.td}"><b>Cost per clean</b> <span style="${S.muted}">${comparableMonths ? 'vs same days last month' : 'month to date'}</span></td>
+      <td style="${S.td};text-align:right">${cpcMtd != null ? `<b>${money0(cpcMtd)}</b> ${comparableMonths ? deltaPill(cpcDelta, '%', false) + ` <span style="${S.muted}">was ${money0(cpcPrev)}</span>` : `<span style="${S.muted}">last month not comparable</span>`}` : `<span style="${S.muted}">—</span>`}</td></tr>
+    ${!comparableMonths && cpcPrev != null ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
+      <span style="${S.amber}">Month-over-month is withheld this time.</span> <span style="${S.muted}">Last month recorded ${hpcPrev != null ? hpcPrev.toFixed(1) : '—'} clocked hours per clean against ${hpcMtd != null ? hpcMtd.toFixed(1) : '—'} this month — that gap is timecard coverage changing, not the cost of a clean, so comparing the two would mislead. It settles once everyone is clocking in.</span></td></tr>` : ''}
     <tr><td style="${S.td}"><b>Housekeeping margin</b></td>
       <td style="${S.td};text-align:right">${marginMtd != null ? `<b style="${marginPctMtd != null && marginPctMtd < 10 ? S.red : S.green}">${money0(marginMtd)}${marginPctMtd != null ? ' · ' + pct1(marginPctMtd) : ''}</b> ${deltaPill(marginDelta, ' pts')}` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}">Labour as a share of the fee</td>
