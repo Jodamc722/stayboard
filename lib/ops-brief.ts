@@ -949,8 +949,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
     // Per-day cost per clean across the window — the shape of the week.
     if (payrollWin != null) {
+      // HK ONLY here too — the first cut charged the maintenance crew's day against the cleans and
+      // produced a $145 Monday that never happened.
       const byDayPay: Record<string, number> = {}
-      for (const t of (tcWin as any[])) { const k = str(t.date).slice(0, 10); if (k) byDayPay[k] = (byDayPay[k] || 0) + (Number(t.laborCost) || 0) }
+      for (const t of (hkWin as any[])) { const k = str(t.date).slice(0, 10); if (k) byDayPay[k] = (byDayPay[k] || 0) + (Number(t.laborCost) || 0) }
       const days: string[] = []
       for (let i = 6; i >= 0; i--) days.push(shiftDays(yEcon, -i))
       dailyCpc = days.map(k => {
@@ -1121,6 +1123,9 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${(hoursWin && oursTot.cleans) ? `<b>${(hoursWin / oursTot.cleans).toFixed(1)}</b> <span style="${S.muted}">hrs · ${Math.round(hoursWin)} hrs over ${oursTot.cleans} cleans</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}">Housekeeping tasks closed in Breezeway</td>
       <td style="${S.td};text-align:right"><b>${oursTot.bzClosed}</b> <span style="${S.muted}">against ${oursTot.cleans} checkouts</span></td></tr>
+    <tr><td colspan="2" style="${S.td};background:#f8fafc"><span style="${S.muted}">
+      <b>Which "clean" is the denominator.</b> Cost per clean above is per TURNOVER — payroll ÷ ${oursTot.cleans} checkouts — because a turnover is the unit of work the fee is charged for. The Labor board counts every housekeeping task instead (turnovers plus deep, owner and mid-stay cleans), so its cost per clean reads lower on the same payroll. Neither is wrong; they answer different questions, and both now use the same housekeeping-only payroll.
+    </span></td></tr>
     <tr><td style="${S.td}">Hours by department <span style="${S.muted}">Breezeway recorded</span></td>
       <td style="${S.td};text-align:right"><b>${hrs(tot.hkMins)}</b> <span style="${S.muted}">housekeeping</span> · <b>${hrs(tot.maintMins)}</b> <span style="${S.muted}">maintenance</span> · <b>${hrs(tot.inspMins)}</b> <span style="${S.muted}">inspection</span></td></tr>
     <tr><td style="${S.td}">Billable labour <span style="${S.muted}">maintenance &amp; inspection, billed to owners</span></td>
