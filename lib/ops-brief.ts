@@ -61,8 +61,11 @@ async function gather(variant: BriefVariant) {
     db.from('breezeway_tasks_sync')
       .select('reference_property_id,name,type_department,status,assignees,started_at,finished_at')
       .eq('scheduled_date', today).limit(2000),
+    // custom_fields carries the two-way reservation note the welcome-call and front-desk boards
+    // write into. A supervisor briefing their crew needs it: "guest arriving 11pm, leave the bag
+    // in the closet" changes how the day is run and is invisible everywhere else.
     db.from('guesty_reservations')
-      .select('listing_id,check_in,check_out,nights,status,guest_name,money_total')
+      .select('listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields')
       .gte('check_in', today).lte('check_in', in3).limit(1500),
     db.from('review_actions')
       .select('listing_id,unit,building,title,action,kind,severity,mentions,status')
@@ -156,6 +159,47 @@ async function gather(variant: BriefVariant) {
 
   const activeIds = Object.keys(meta).filter(id => meta[id].active && inVariant(id))
 
+  // ---- GUEST NOTES on today's arrivals. Same custom field the front-desk and welcome-call boards
+  // write, so a note left by whoever spoke to the guest reaches the crew that has to act on it.
+  const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
+  const cfVal = (cf: any, fieldId: string): string => {
+    if (!Array.isArray(cf)) return ''
+    for (const c of cf) {
+      const fid = String((c && c.fieldId && (c.fieldId._id || c.fieldId)) || (c && c._id) || '')
+      if (fid === fieldId) return str(c.value).trim()
+    }
+    return ''
+  }
+  const arrivalNotes: Record<string, string> = {}
+  for (const r of ((arrRes.data || []) as any[])) {
+    if (str(r.check_in).slice(0, 10) !== today) continue
+    const note = cfVal(r.custom_fields, RES_NOTES_FIELD)
+    if (note) arrivalNotes[String(r.listing_id)] = note.replace(/\s+/g, ' ').slice(0, 180)
+  }
+
+  // ---- YESTERDAY, in three numbers. Jon: "snapshot of kpi, like inspections completed the day
+  // before, hours worked in cleaning vs cleaning rev margins — not actuals, directional."
+  // Counted from the same Breezeway mirror the boards read; hours are Breezeway's recorded minutes,
+  // which is why every number here is labelled directional rather than presented as the books.
+  const yest = ymdET(new Date(Date.now() - 86400000))
+  let yesterday = { cleans: 0, inspections: 0, maintenance: 0, hours: 0, cleanMinutes: 0 }
+  try {
+    const { data: yRows } = await db.from('breezeway_tasks_sync')
+      .select('reference_property_id,name,type_department,status,finished_at,total_minutes')
+      .eq('scheduled_date', yest).limit(3000)
+    for (const t of ((yRows || []) as any[])) {
+      if (!inVariant(String(t.reference_property_id))) continue
+      const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
+      if (!done) continue
+      const nm = str(t.name), dept = str(t.type_department)
+      const mins = Number(t.total_minutes) || 0
+      yesterday.hours += mins / 60
+      if (/clean/i.test(nm) || /housekeep/i.test(dept)) { yesterday.cleans++; yesterday.cleanMinutes += mins }
+      else if (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept)) yesterday.inspections++
+      else yesterday.maintenance++
+    }
+  } catch { /* mirror unavailable — the brief still sends */ }
+
   // Reputation BY MARKET — Jon's GM ask. Same 30-day review set, split by the market the listing
   // sits in, so "Broward is carrying the score and Miami is dragging" is visible in one line.
   const byMarket: Record<string, { n: number; sum: number; low: number }> = {}
@@ -173,7 +217,7 @@ async function gather(variant: BriefVariant) {
   return {
     today, sheet, cleans, newReviews, inspect, bigArrivals, bigTodayIds,
     rep: { n: allRevs.length, avg, five, owed },
-    repByMarket,
+    repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
   }
 }
@@ -316,9 +360,25 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   for (const e of highExceptions) priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
   for (const g of glitches.slice(0, 3)) priorities.push(prio('amber', str(g.unit), `open guest issue`, str(g.overview)))
 
-  const arrivalsRows = arrivals.slice(0, 20).map((a: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? ` <span style="${S.muted};font-size:12px">· ${esc(str(a.checkInTime))}</span>` : ''}</td>
-    <td style="${S.td};text-align:right;white-space:nowrap"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber('BIG $') : ''}</td></tr>`).join('')
+  // Arrivals carry their TIME (the thing that sets the deadline) and, when somebody left one, the
+  // guest note — the difference between a unit being ready and a unit being ready correctly.
+  const arrivalsRows = arrivals.slice(0, 20).map((a: any) => {
+    const note = (d.arrivalNotes || {})[String(a.listingId)] || ''
+    return `
+    <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? ` <span style="${S.muted};font-size:12px">· ${esc(str(a.checkInTime))}</span>` : ''}${note ? `<div style="font-size:12px;color:#4338ca;margin-top:3px">📝 ${esc(note)}</div>` : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber('BIG $') : ''}</td></tr>`
+  }).join('')
+
+  // YESTERDAY — the supervisor's scoreboard. Directional on purpose: hours are Breezeway's recorded
+  // minutes on completed work, so they trend honestly but are not payroll.
+  const y = d.yesterday || { cleans: 0, inspections: 0, maintenance: 0, hours: 0, cleanMinutes: 0 }
+  const yHours = Math.round(y.hours * 10) / 10
+  const yMinsPerClean = y.cleans ? Math.round(y.cleanMinutes / y.cleans) : null
+  const yesterdayRows = `
+    <tr><td style="${S.td}">Cleans completed</td><td style="${S.td};text-align:right"><b>${y.cleans}</b>${yMinsPerClean ? ` <span style="${S.muted}">· ${yMinsPerClean} min average</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">Inspections completed</td><td style="${S.td};text-align:right"><b style="${y.inspections ? S.green : S.amber}">${y.inspections}</b>${!y.inspections ? ` <span style="${S.muted}">· none logged</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">Maintenance closed</td><td style="${S.td};text-align:right"><b>${y.maintenance}</b></td></tr>
+    <tr><td style="${S.td}">Hours on the clock <span style="${S.muted}">recorded in Breezeway</span></td><td style="${S.td};text-align:right"><b>${yHours || '—'}</b>${yHours ? ' <span style="' + S.muted + '">hrs</span>' : ''}</td></tr>`
 
   const cleansRows = d.cleans.map(c => `
     <tr><td style="${S.td}">${esc(c.unit)}${c.sameDayArrival ? ` <span style="${S.red}">← arrival today</span>` : ''}</td>
@@ -622,6 +682,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
   ${eyebrow('Good to know')}
+  ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
   ${d.newReviews.length ? card('New reviews since yesterday', d.newReviews.length, table(['Unit', 'Score'], newRevRows), lowNew.length ? '#dc2626' : '#059669') : ''}
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
@@ -683,8 +744,65 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const work = k.work || {}, wel = k.welcome || {}, sent = k.sentiment || {}, gl = k.glitches || {}
   const tod = k.today || {}
 
-  // Claims are money already lost — the one thing on this page nobody else is watching daily.
+  // ---- REAL COST AND MARGIN (2026-08-07, Jon: "not running all KPI accurately, need to see
+  // margins, cost"). buildKpi derives cleaning cost from what BREEZEWAY records as paid on a task,
+  // and Breezeway is not carrying pay — so margin came back empty. The money that actually left the
+  // business is in HOMEBASE (clocked payroll), and the money that came in is the guest cleaning fee
+  // on each checkout. That pair is what the Labor board and the ops brief already use for
+  // yesterday; here it runs over the same 30-day window as everything else on this page.
+  //
+  // Vendor-cleaned buildings are EXCLUDED from both sides: we do not pay our crew for those, so
+  // leaving their fees in would flatter the margin.
   const db = supabaseAdmin()
+  const econFrom = ymdET(new Date(Date.now() - 30 * 86400000))
+  const econTo = ymdET(new Date(Date.now() - 86400000))   // through yesterday: today is incomplete
+  let econ: { payroll: number | null; fees: number | null; vendorFees: number; cleans: number; hours: number } =
+    { payroll: null, fees: null, vendorFees: 0, cleans: 0, hours: 0 }
+  try {
+    const [tc, lr3, rr3, cl3] = await Promise.all([
+      getTimecards(econFrom, econTo),
+      db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
+      db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+        .gte('check_out', econFrom).lte('check_out', econTo)
+        .not('status', 'in', '("canceled","cancelled","declined")').limit(4000),
+      db.from('breezeway_tasks_sync').select('reference_property_id,name,type_department,status,finished_at')
+        .gte('scheduled_date', econFrom).lte('scheduled_date', econTo).limit(8000),
+    ])
+    const presets3 = await getOpsPresets()
+    const VEN3 = vendorRegex(presets3.vendorBuildings)
+    const vend: Record<string, boolean> = {}
+    for (const l of ((lr3.data || []) as any[])) {
+      const nm = l.nickname || l.title || ''
+      vend[String(l.id)] = VEN3.test(str(l.building)) || VEN3.test(str(nm))
+    }
+    let fees = 0, vendorFees = 0
+    for (const r of ((rr3.data || []) as any[])) {
+      const f = Number((r as any).cleaning)
+      if (!Number.isFinite(f)) continue
+      if (vend[String(r.listing_id)]) vendorFees += f; else fees += f
+    }
+    let cleans = 0
+    for (const t of ((cl3.data || []) as any[])) {
+      if (vend[String(t.reference_property_id)]) continue
+      const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
+      if (!done) continue
+      if (/clean/i.test(str(t.name)) || /housekeep/i.test(str(t.type_department))) cleans++
+    }
+    const payroll = tc.reduce((a: number, t: any) => a + (t.laborCost ?? 0), 0)
+    const hours = tc.reduce((a: number, t: any) => a + (Number(t.hours) || 0), 0)
+    econ = { payroll: payroll > 0 ? payroll : null, fees: fees > 0 ? fees : null, vendorFees, cleans, hours }
+  } catch { /* Homebase down — the card falls back to whatever buildKpi could work out */ }
+
+  // Prefer the measured pair; fall back to the KPI engine so the card is never blank.
+  const cost30 = econ.payroll != null ? econ.payroll : (clean.costKnown ? clean.cost : null)
+  const rev30 = econ.fees != null ? econ.fees : clean.revenue
+  const cleans30 = econ.cleans || clean.turns || 0
+  const margin30 = (cost30 != null && rev30 != null) ? rev30 - cost30 : null
+  const marginPct30 = (margin30 != null && rev30) ? Math.round((margin30 / rev30) * 1000) / 10 : null
+  const costPerClean = (cost30 != null && cleans30) ? cost30 / cleans30 : null
+  const feePerClean = (rev30 != null && cleans30) ? rev30 / cleans30 : null
+  const laborPctOfClean = (cost30 != null && rev30) ? Math.round((cost30 / rev30) * 1000) / 10 : null
+  const costSource = econ.payroll != null ? 'Homebase clocked payroll' : (clean.costKnown ? 'Breezeway recorded pay' : null)
   let claimsOpen = 0, claimsValue = 0, claimsWaiting = 0
   try {
     const { data } = await db.from('claims').select('stage,amount_requested,amount_paid,waiting_on').is('deleted_at', null).limit(500)
@@ -700,17 +818,23 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const ownerStays: any[] = (sheet.ownerStays || []).filter((o: any) => str(o.ownerFlag) === 'owner booking')
   const occToday = tod.occupancy != null ? tod.occupancy : null
 
-  // ---- tiles: the business in six numbers ----
+  // ---- tiles ----
+  // Jon, 2026-08-07: "revenue not as important — I have another app that sends that data." So the
+  // top line is what ONLY this app knows: what a clean costs us, whether housekeeping is making
+  // money, and whether the product and the guest are healthy. Room revenue drops to a footnote.
   const tiles: Tile[] = [
+    { label: 'Cost / clean · 30d', value: costPerClean != null ? money0(costPerClean) : '—',
+      tone: costPerClean == null ? undefined : (feePerClean != null && costPerClean > feePerClean) ? 'red' : 'green',
+      note: feePerClean != null ? 'we charge ' + money0(feePerClean) : (costSource ? 'no fee data' : 'connect Homebase') },
+    { label: 'Cleaning margin · 30d', value: marginPct30 != null ? pct1(marginPct30) : '—',
+      tone: marginPct30 == null ? undefined : marginPct30 >= 30 ? 'green' : marginPct30 >= 10 ? 'amber' : 'red',
+      note: margin30 != null ? money0(margin30) + ' on ' + cleans30 + ' cleans' : 'cost not available' },
+    { label: 'Labour % of cleaning', value: laborPctOfClean != null ? pct1(laborPctOfClean) : '—',
+      tone: laborPctOfClean == null ? undefined : laborPctOfClean <= 70 ? 'green' : laborPctOfClean <= 90 ? 'amber' : 'red',
+      note: econ.hours ? Math.round(econ.hours) + ' hrs clocked' : undefined },
     { label: 'Occupancy · 30d', value: rev.occupancy != null ? pct1(rev.occupancy) : '—',
       tone: rev.occupancy == null ? undefined : rev.occupancy >= 75 ? 'green' : rev.occupancy >= 60 ? 'amber' : 'red',
       note: rev.occupancyChange != null ? (rev.occupancyChange > 0 ? '+' : '') + rev.occupancyChange + ' pts vs prev' : undefined },
-    { label: 'RevPAR · 30d', value: money0(rev.revpar), note: rev.adr != null ? 'ADR ' + money0(rev.adr) : undefined },
-    { label: 'Revenue · 30d', value: money0(rev.total),
-      note: rev.totalChange != null ? (rev.totalChange > 0 ? '+' : '') + Number(rev.totalChange).toFixed(0) + '% vs prev' : undefined },
-    { label: 'Cleaning margin', value: clean.marginPct != null ? pct1(clean.marginPct) : '—',
-      tone: clean.marginPct == null ? undefined : clean.marginPct >= 30 ? 'green' : clean.marginPct >= 10 ? 'amber' : 'red',
-      note: clean.costPerTurn != null ? money0(clean.costPerTurn) + '/clean' : 'cost not recorded yet' },
     { label: 'Review score · 30d', value: d.rep.avg != null ? d.rep.avg.toFixed(2) : '—',
       tone: d.rep.avg == null ? undefined : d.rep.avg >= 4.6 ? 'green' : d.rep.avg >= 4.3 ? 'amber' : 'red',
       note: d.rep.n ? d.rep.n + ' reviews' : 'no reviews' },
@@ -718,20 +842,20 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       note: claimsValue ? money0(claimsValue) + ' requested' : 'nothing outstanding' },
   ]
 
-  // ---- money card ----
+  // ---- the housekeeping P&L: what we charged, what it cost, what is left ----
   const moneyRows = `
-    <tr><td style="${S.td}">Room revenue <span style="${S.muted}">30d</span></td>
-      <td style="${S.td};text-align:right"><b>${money0(rev.total)}</b> ${deltaPill(rev.totalChange)}</td></tr>
-    <tr><td style="${S.td}">ADR / RevPAR</td>
-      <td style="${S.td};text-align:right"><b>${money0(rev.adr)}</b> ${deltaPill(rev.adrChange)} <span style="${S.muted}">·</span> <b>${money0(rev.revpar)}</b> ${deltaPill(rev.revparChange)}</td></tr>
-    <tr><td style="${S.td}">Cleaning revenue <span style="${S.muted}">${clean.turns || 0} turns</span></td>
-      <td style="${S.td};text-align:right"><b>${money0(clean.revenue)}</b> <span style="${S.muted}">${clean.feePerTurn != null ? money0(clean.feePerTurn) + '/turn' : ''}</span></td></tr>
-    <tr><td style="${S.td}">Cleaning cost <span style="${S.muted}">directional</span></td>
-      <td style="${S.td};text-align:right">${clean.costKnown ? `<b>${money0(clean.cost)}</b> <span style="${S.muted}">${clean.costPerTurn != null ? money0(clean.costPerTurn) + '/clean' : ''}</span>` : `<span style="${S.muted}">not recorded</span>`}</td></tr>
-    <tr><td style="${S.td}"><b>Cleaning margin</b></td>
-      <td style="${S.td};text-align:right">${clean.margin != null ? `<b style="${clean.marginPct != null && clean.marginPct < 10 ? S.red : S.green}">${money0(clean.margin)} · ${pct1(clean.marginPct)}</b> ${deltaPill(clean.marginChange)}` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}">Labour <span style="${S.muted}">${lab.hours != null ? Math.round(lab.hours) + ' hrs' : ''}</span></td>
-      <td style="${S.td};text-align:right">${lab.known ? `<b>${money0(lab.cost)}</b> ${lab.costRatio != null ? `<span style="${S.muted}">${pct1(lab.costRatio)} of revenue</span>` : ''}` : `<span style="${S.muted}">connect Homebase for labour cost</span>`}</td></tr>`
+    <tr><td style="${S.td}">Cleaning fees collected <span style="${S.muted}">${cleans30} cleans</span></td>
+      <td style="${S.td};text-align:right"><b>${money0(rev30)}</b> <span style="${S.muted}">${feePerClean != null ? money0(feePerClean) + '/clean' : ''}</span></td></tr>
+    <tr><td style="${S.td}">Payroll on the clock ${costSource ? `<span style="${S.muted}">${costSource}</span>` : ''}</td>
+      <td style="${S.td};text-align:right">${cost30 != null ? `<b>${money0(cost30)}</b> <span style="${S.muted}">${costPerClean != null ? money0(costPerClean) + '/clean' : ''}</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
+    <tr><td style="${S.td}"><b>Housekeeping margin</b></td>
+      <td style="${S.td};text-align:right">${margin30 != null ? `<b style="${marginPct30 != null && marginPct30 < 10 ? S.red : S.green}">${money0(margin30)}${marginPct30 != null ? ' · ' + pct1(marginPct30) : ''}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    <tr><td style="${S.td}">Labour as a share of the fee</td>
+      <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b> <span style="${S.muted}">${econ.hours ? Math.round(econ.hours) + ' hrs' : ''}</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    ${econ.vendorFees ? `<tr><td style="${S.td}">Vendor-cleaned buildings <span style="${S.muted}">kept separate</span></td>
+      <td style="${S.td};text-align:right"><span style="${S.muted}">${money0(econ.vendorFees)} in fees · we pay no crew on these</span></td></tr>` : ''}
+    <tr><td style="${S.td};color:#9ca3af">Room revenue <span style="${S.muted}">Guesty · fuller numbers in your revenue app</span></td>
+      <td style="${S.td};text-align:right;color:#9ca3af">${money0(rev.total)} ${deltaPill(rev.totalChange)} <span style="${S.muted}">ADR ${money0(rev.adr)}</span></td></tr>`
 
   // ---- reputation by market ----
   const repRows = (d.repByMarket || []).map((m: any) => `
@@ -762,9 +886,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   const tbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
   const subject = `GM Brief ${dateNice}: ${occToday != null ? pct1(occToday) + ' occupied' : ''}`
-    + (rev.total != null ? ` · ${money0(rev.total)} 30d` : '')
+    + (marginPct30 != null ? ` · ${pct1(marginPct30)} clean margin` : '')
+    + (costPerClean != null ? ` · ${money0(costPerClean)}/clean` : '')
     + (d.rep.avg != null ? ` · ${d.rep.avg.toFixed(2)}★` : '')
-    + (claimsOpen ? ` · ${claimsOpen} claims open` : '')
+    + (claimsOpen ? ` · ${claimsOpen} claims` : '')
 
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
@@ -780,7 +905,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <tr><td style="${S.td}">Cleans today</td><td style="${S.td};text-align:right"><b>${tod.cleansDone || 0}</b> of ${tod.cleansScheduled || 0} done</td></tr>
     <tr><td style="${S.td}">Booked in the next 7 days</td><td style="${S.td};text-align:right"><b>${money0(tod.booked7)}</b> <span style="${S.muted}">${tod.arrivals7 || 0} arrivals</span></td></tr>`), '#4338ca')}
 
-  ${card('Money · last 30 days', null, tbl(moneyRows), '#047857')}
+  ${card('Housekeeping P&L · last 30 days', null, tbl(moneyRows), '#047857')}
   ${repRows ? card('Guest score by market · last 30 days', null, tbl(repRows), '#d97706') : ''}
   ${card('Guest health', null, tbl(guestRows), '#0891b2')}
   ${card('Where money is leaking', null, tbl(riskRows), '#dc2626')}
