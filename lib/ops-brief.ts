@@ -792,8 +792,20 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       }
       return out
     }
-    const [tc, lr3, rr3, cl3] = await Promise.all([
-      getTimecards(prevMonthStart, yEcon),
+    // TIMECARDS ARE FETCHED PER MONTH, AND SEPARATELY FROM EVERYTHING ELSE.
+    // Homebase rejects a range this wide (asking it for Jul 1 – Aug 7 in one call fails), and
+    // because the whole block shared one try, that single rejection wiped the fees and cleans too —
+    // the card rendered "0 cleans" for a month that plainly had them. Now each month is its own
+    // call, each failure is contained, and payroll simply reads as unavailable if Homebase is down.
+    const tcSafe = async (a: string, b: string): Promise<any[]> => {
+      try { return await getTimecards(a, b) } catch { return [] }
+    }
+    const [tcPrev, tcThis] = await Promise.all([
+      tcSafe(prevMonthStart, prevMonthEnd),
+      tcSafe(monthStart, yEcon),
+    ])
+    const tc = tcPrev.concat(tcThis)
+    const [lr3, rr3, cl3] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
       pageAll(() => db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
         .gte('check_out', prevMonthStart).lte('check_out', yEcon)
