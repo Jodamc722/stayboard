@@ -112,7 +112,13 @@ export function ReviewsPanel() {
   // Auto-drafting disabled: drafts are written on demand via the AI buttons below.
 
   const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
-  const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
+  // Booking.com shows the guest a 0-10 score, so its reviews read on that native scale here;
+  // everything else (and every combined average) stays out of 5.
+  const fmtRating = (n: number | null, ch?: string | null) => {
+    if (n == null) return '—'
+    if (/booking/i.test(String(ch || '')) && n <= 5) return `${Math.round(n * 2 * 10) / 10}/10`
+    return n <= 5 ? `${n}/5` : `${n}/10`
+  }
 
   // Reply SLA - bad reviews deserve an answer within a day, everything else within three.
   // The clock turns this queue from "a list" into "who has been waiting longest" (median first
@@ -342,7 +348,7 @@ export function ReviewsPanel() {
               <li key={r.id} className="px-4 py-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                    <Star size={11} /> {fmtRating(r.rating)}
+                    <Star size={11} /> {fmtRating(r.rating, r.channel)}
                   </span>
                   <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                   {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
@@ -377,7 +383,7 @@ export function ReviewsPanel() {
                 <li key={r.id} className="px-4 py-3 border-l-[3px] border-slate-300 bg-slate-50/40">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                      <Star size={11} /> {fmtRating(r.rating)}
+                      <Star size={11} /> {fmtRating(r.rating, r.channel)}
                     </span>
                     <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                     {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
@@ -402,7 +408,7 @@ export function ReviewsPanel() {
                 <li key={r.id} className="px-4 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                      <Star size={11} /> {fmtRating(r.rating)}
+                      <Star size={11} /> {fmtRating(r.rating, r.channel)}
                     </span>
                     <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                     {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
@@ -427,7 +433,7 @@ export function ReviewsPanel() {
                   {selected[r.id] ? <CheckSquare size={14} /> : <Square size={14} />} {selected[r.id] ? 'Selected' : 'Select'}
                 </button>
                 <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                  <Star size={11} /> {fmtRating(r.rating)}
+                  <Star size={11} /> {fmtRating(r.rating, r.channel)}
                 </span>
                 <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                 {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
