@@ -778,14 +778,30 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   try {
     // ONE pull covering the previous month through yesterday, then bucketed by day in code —
     // three separate round trips for three windows would triple the Homebase calls for no reason.
+    // PostgREST caps EVERY request at 1000 rows no matter what .limit() says. Widening this window
+    // to two months put both of these over that line, and the truncation is SILENT — the first run
+    // came back with "0 cleans" for August because the single page stopped inside July. Page them.
+    const pageAll = async (build: () => any, maxPages = 12): Promise<any[]> => {
+      const out: any[] = []
+      for (let i = 0; i < maxPages; i++) {
+        const { data, error } = await build().range(i * 1000, i * 1000 + 999)
+        if (error) break
+        const rows = (data || []) as any[]
+        out.push(...rows)
+        if (rows.length < 1000) break
+      }
+      return out
+    }
     const [tc, lr3, rr3, cl3] = await Promise.all([
       getTimecards(prevMonthStart, yEcon),
       db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
-      db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+      pageAll(() => db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
         .gte('check_out', prevMonthStart).lte('check_out', yEcon)
-        .not('status', 'in', '("canceled","cancelled","declined")').limit(6000),
-      db.from('breezeway_tasks_sync').select('reference_property_id,name,type_department,status,scheduled_date,finished_at')
-        .gte('scheduled_date', prevMonthStart).lte('scheduled_date', yEcon).limit(12000),
+        .not('status', 'in', '("canceled","cancelled","declined")')
+        .order('check_out', { ascending: false })),
+      pageAll(() => db.from('breezeway_tasks_sync').select('reference_property_id,name,type_department,status,scheduled_date,finished_at')
+        .gte('scheduled_date', prevMonthStart).lte('scheduled_date', yEcon)
+        .order('scheduled_date', { ascending: false })),
     ])
     const presets3 = await getOpsPresets()
     const VEN3 = vendorRegex(presets3.vendorBuildings)
@@ -804,13 +820,13 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       b.payroll += Number(t.laborCost) || 0
       b.hours += Number(t.hours) || 0
     }
-    for (const r of ((rr3.data || []) as any[])) {
+    for (const r of (rr3 as any[])) {
       const k = str(r.check_out).slice(0, 10); if (!k) continue
       const f = Number((r as any).cleaning); if (!Number.isFinite(f)) continue
       const b = dayOf(k)
       if (vend[String(r.listing_id)]) b.vendorFees += f; else b.fees += f
     }
-    for (const t of ((cl3.data || []) as any[])) {
+    for (const t of (cl3 as any[])) {
       if (vend[String(t.reference_property_id)]) continue
       const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
       if (!done) continue
