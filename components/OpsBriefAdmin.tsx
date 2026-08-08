@@ -6,12 +6,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] } }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] } }
 
-const LISTS: { key: 'miami' | 'broward' | 'full'; label: string; blurb: string }[] = [
-  { key: 'miami', label: 'Miami brief', blurb: 'Miami-market cleans & priorities only' },
-  { key: 'broward', label: 'Broward brief', blurb: 'Broward-market cleans & priorities only' },
-  { key: 'full', label: 'Full portfolio brief', blurb: 'Everything — for leadership' },
+// Four audiences, deliberately different documents (2026-08-07). The blurb is the promise each
+// one makes — if a brief stops matching its blurb, one of the two is wrong.
+const LISTS: { key: 'miami' | 'broward' | 'full' | 'gm'; label: string; blurb: string }[] = [
+  { key: 'miami', label: 'Miami · supervisors', blurb: "Today on the ground in Miami: cleans, same-day turns, arrivals" },
+  { key: 'broward', label: 'Broward · supervisors', blurb: 'Same, for the Broward market' },
+  { key: 'full', label: 'Ops manager · all markets', blurb: 'Every market, full operational detail' },
+  { key: 'gm', label: 'GM Brief · leadership', blurb: 'High level: money, occupancy, reputation, claims' },
 ]
 
 export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
@@ -25,7 +28,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
   const rawFromCfg = (c: Cfg): Record<string, string> => ({
-    miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '),
+    miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
   })
   const load = useCallback(async () => {
@@ -48,14 +51,14 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     try {
       const config: Cfg = {
         ...cfg,
-        miami: parse(raw.miami || ''), broward: parse(raw.broward || ''), full: parse(raw.full || ''),
+        miami: parse(raw.miami || ''), broward: parse(raw.broward || ''), full: parse(raw.full || ''), gm: parse(raw.gm || ''),
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
       }
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
       setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true }))
-      const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length
+      const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
@@ -98,10 +101,14 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           its Google connection — if the test says the Gmail permission is missing, reconnect Google from Owner Reports and approve the send-email permission.
         </p>
 
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {LISTS.map(l => (
-            <div key={l.key} className="rounded-xl border border-line p-3">
-              <div className="text-[12px] font-bold text-ink">{l.label}</div>
+            <div key={l.key} className={'rounded-xl border p-3 ' + (l.key === 'gm' ? 'border-brand-200 bg-brand-50/40' : 'border-line')}>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-bold text-ink">{l.label}</span>
+                <a href={`/api/cron/ops-brief?preview=${l.key === 'gm' ? 'GM' : l.key}`} target="_blank" rel="noreferrer"
+                  className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview</a>
+              </div>
               <div className="text-[11px] text-muted mb-1.5">{l.blurb}</div>
               <textarea rows={2} disabled={!isOwner} value={raw[l.key] ?? ''} onChange={e => setRaw(x => ({ ...x, [l.key]: e.target.value }))}
                 placeholder="emails, comma separated"
