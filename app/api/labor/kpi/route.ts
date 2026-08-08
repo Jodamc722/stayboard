@@ -125,6 +125,10 @@ export async function GET(req: Request) {
 
     const classify = (t: any): 'clean' | 'inspection' | 'maintenance' | 'other' => {
       const s = `${t.type_department || ''} ${t.name || ''}`.toLowerCase()
+      // Strips/walkthroughs and delivery errands are NOT departure cleans - they must
+      // never collect a cleaning fee (a strip on a checkout day was stealing the
+      // fee from the real cleaner).
+      if (/strip|walkthrough|walk-through|deliver|mattress/.test(s)) return 'other'
       if (/clean|housekeep|turn/.test(s)) return 'clean'
       if (/inspect|walk/.test(s)) return 'inspection'
       if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s)) return 'maintenance'
