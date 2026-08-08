@@ -8,7 +8,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 export const dynamic = 'force-dynamic'
 
 const KEY = 'ops_brief'
-const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[] }
+const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[], gm: [] as string[] }
 
 const cleanEmails = (v: any): string[] =>
   (Array.isArray(v) ? v : []).map(x => String(x || '').trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 30)
@@ -24,7 +24,7 @@ export async function GET() {
     config: {
       enabled: s.enabled === true,
       fromEmail: typeof s.fromEmail === 'string' && s.fromEmail ? s.fromEmail : DEFAULTS.fromEmail,
-      miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full),
+      miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm: cleanEmails(s.gm),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
     },
   })
@@ -39,7 +39,7 @@ export async function PUT(req: NextRequest) {
   const config = {
     enabled: c.enabled === true,
     fromEmail: typeof c.fromEmail === 'string' && /@/.test(c.fromEmail) ? c.fromEmail.trim().toLowerCase() : DEFAULTS.fromEmail,
-    miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full),
+    miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full), gm: cleanEmails(c.gm),
     vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
   }
   const res = await setSetting(KEY, config, access.email)
