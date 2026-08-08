@@ -179,9 +179,19 @@ export async function GET(req: Request) {
         : (Array.isArray(replies) ? (replies.map((x: any) => x?.reply ?? x?.text ?? x?.reviewReply ?? x?.body ?? '').find((s: any) => s && String(s).trim()) || '') : '')
       const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? null
       const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? null
+      // Same scale rule as the sync path: stored/served ratings are ALWAYS out of 5 — Booking's
+      // 0-10 (content.scoring.review_score or a raw 10-scale value) is halved here.
+      let ratingNum: number | null = typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null)
+      if (ratingNum != null && Number.isNaN(ratingNum)) ratingNum = null
+      if (ratingNum == null && rr.scoring?.review_score != null) {
+        const sc = Number(rr.scoring.review_score)
+        ratingNum = Number.isFinite(sc) ? sc / 2 : null
+      }
+      if (ratingNum != null && ratingNum > 5 && /booking/i.test(String(channel))) ratingNum = ratingNum / 2
+      if (ratingNum != null) ratingNum = Math.round(ratingNum * 10) / 10
       return {
         id: v._id ?? v.id ?? v.externalReviewId ?? Math.random().toString(36).slice(2),
-        rating: typeof rating === 'number' ? rating : (rating != null && rating !== '' ? Number(rating) : null),
+        rating: ratingNum,
         content: String(typeof content === 'string' ? content : '').slice(0, 4000),
         channel, listingId, guest,
         created_at: v.createdAt ?? rr.created_at ?? v.updatedAt ?? v.date ?? null,
