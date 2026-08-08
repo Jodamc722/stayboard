@@ -82,8 +82,12 @@ export async function GET(req: NextRequest) {
       lmap[String(l.id)] = { vendor: VEN.test(String(l.building || '')) || VEN.test(nm) }
     }
 
-    const cleanTasks = ((tr.data || []) as any[]).filter(t =>
-      /clean|housekeep|turn/.test((String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()))
+    const cleanTasks = ((tr.data || []) as any[]).filter(t => {
+      const s = (String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()
+      // Strips/walkthroughs and delivery errands are NOT departure cleans.
+      if (/strip|walkthrough|walk-through|deliver|mattress/.test(s)) return false
+      return /clean|housekeep|turn/.test(s)
+    })
     // Canonicalize Breezeway doers to Homebase names (fuzzy + unique-first-name).
     const aliasCache: Record<string, string | null> = {}
     const roster: string[] = []
