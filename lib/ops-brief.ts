@@ -1136,7 +1136,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <tr><td style="${S.td}">Housekeeping tasks closed in Breezeway</td>
       <td style="${S.td};text-align:right"><b>${oursTot.bzClosed}</b> <span style="${S.muted}">against ${oursTot.cleans} checkouts</span></td></tr>
     <tr><td colspan="2" style="${S.td};background:#f8fafc"><span style="${S.muted}">
-      <b>Which "clean" is the denominator.</b> Cost per clean above is per TURNOVER — payroll ÷ ${oursTot.cleans} checkouts — because a turnover is the unit of work the fee is charged for. The Labor board counts every housekeeping task instead (turnovers plus deep, owner and mid-stay cleans), so its cost per clean reads lower on the same payroll. Neither is wrong; they answer different questions, and both now use the same housekeeping-only payroll.
+      <b>A clean means a DEPARTURE clean.</b> Cost per clean is housekeeping payroll ÷ ${oursTot.cleans} checkouts — the turnover the guest cleaning fee actually pays for. Common-area work, pool and trash routes, office cleaning and linen refreshes are real housekeeping hours but are NOT turnovers, so they never enter the denominator. The Labor board counts it the same way.
     </span></td></tr>
     <tr><td style="${S.td}">Hours by department <span style="${S.muted}">Breezeway recorded</span></td>
       <td style="${S.td};text-align:right"><b>${hrs(tot.hkMins)}</b> <span style="${S.muted}">housekeeping</span> · <b>${hrs(tot.maintMins)}</b> <span style="${S.muted}">maintenance</span> · <b>${hrs(tot.inspMins)}</b> <span style="${S.muted}">inspection</span></td></tr>
