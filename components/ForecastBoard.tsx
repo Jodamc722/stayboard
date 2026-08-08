@@ -231,6 +231,23 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
               if (!next[key] && names.some(n => same(n, m))) next[key] = 'Working'
             }
           }
+          // On Call: when a day expects more cleans than the Working crew covers,
+          // put available people on call - empty cells only, non-cleaners skipped,
+          // fewest working days first so the extra load is spread fairly.
+          const daysWorking = (m: string) => data.week.filter(d2 => next[`${m}__${d2.date}`] === 'Working').length
+          for (const d of data.week) {
+            const workingNow = out.filter(m => next[`${m}__${d.date}`] === 'Working').length
+            let shortfall = needOn(d) - workingNow
+            if (shortfall <= 0) continue
+            const cand = out
+              .filter(m => !NON_CLEANERS.some((nc: string) => same(nc, m)) && !next[`${m}__${d.date}`])
+              .sort((a, b) => daysWorking(a) - daysWorking(b))
+            for (const m of cand) {
+              if (shortfall <= 0) break
+              next[`${m}__${d.date}`] = 'On Call'
+              shortfall--
+            }
+          }
           return next
         })
         return out
