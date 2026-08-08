@@ -27,7 +27,13 @@ function ymdET(d: Date): string {
 }
 const LIVE = new Set(['confirmed', 'checked_in', 'checked_out'])
 
-export type BriefVariant = 'Miami' | 'Broward' | 'full'
+// Four audiences, three shapes (2026-08-07, Jon):
+//   Miami / Broward → the SUPERVISOR's day: what's happening on the ground in that market.
+//   full           → the OPERATIONS MANAGER: the same operational detail across every market.
+//   GM             → JON: high level, the whole business — money, occupancy, reputation, risk.
+// 'GM' is deliberately a different document, not a longer ops brief: an owner reading a list of
+// today's cleans is reading the wrong altitude.
+export type BriefVariant = 'Miami' | 'Broward' | 'full' | 'GM'
 
 export type OpsBrief = {
   date: string
@@ -48,7 +54,7 @@ async function gather(variant: BriefVariant) {
   const in3 = ymdET(new Date(Date.now() + 3 * 86400000))
 
   // The daysheet does the heavy lifting — same engine as the boards.
-  const sheetMarket = variant === 'full' ? 'all' : variant
+  const sheetMarket = (variant === 'full' || variant === 'GM') ? 'all' : variant
   const [sheet, lRes, tRes, arrRes, actRes, revRes] = await Promise.all([
     buildDaySheet(today, sheetMarket),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000),
@@ -77,10 +83,12 @@ async function gather(variant: BriefVariant) {
       active: str(l.status).trim().toLowerCase() === 'active',
     }
   }
+  // 'GM' sees the whole portfolio, exactly like 'full' — the two differ in what they SAY about it,
+  // not in what they cover.
   const inVariant = (lid: string): boolean => {
     const m = meta[lid]
-    if (!m) return variant === 'full'
-    if (variant === 'full') return true
+    if (!m) return variant === 'full' || variant === 'GM'
+    if (variant === 'full' || variant === 'GM') return true
     if (VENDOR.test(m.name) || VENDOR.test(m.building)) return false
     return m.market === variant
   }
@@ -148,9 +156,24 @@ async function gather(variant: BriefVariant) {
 
   const activeIds = Object.keys(meta).filter(id => meta[id].active && inVariant(id))
 
+  // Reputation BY MARKET — Jon's GM ask. Same 30-day review set, split by the market the listing
+  // sits in, so "Broward is carrying the score and Miami is dragging" is visible in one line.
+  const byMarket: Record<string, { n: number; sum: number; low: number }> = {}
+  for (const r of allRevs) {
+    const m = meta[String(r.listing_id)]?.market || 'Other'
+    const e = byMarket[m] = byMarket[m] || { n: 0, sum: 0, low: 0 }
+    e.n++; e.sum += Number(r.rating)
+    if (Number(r.rating) <= 3) e.low++
+  }
+  const repByMarket = Object.keys(byMarket).map(m => ({
+    market: m, n: byMarket[m].n, low: byMarket[m].low,
+    avg: byMarket[m].n ? Math.round((byMarket[m].sum / byMarket[m].n) * 100) / 100 : null,
+  })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
+
   return {
     today, sheet, cleans, newReviews, inspect, bigArrivals, bigTodayIds,
     rep: { n: allRevs.length, avg, five, owed },
+    repByMarket,
     activeCount: activeIds.length,
   }
 }
@@ -614,6 +637,168 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   }
 }
 
+
+// ---------------------------------------------------------------- GM BRIEF
+// Jon, 2026-08-07: "the one that goes out for me — make it much more high level and cover all
+// aspects of the business."
+//
+// So this is NOT the ops brief with extra rows. It answers an owner's five questions in order:
+//   1. Is the business full?          occupancy, ADR, RevPAR, booked-ahead
+//   2. Are we making money on ops?    cleaning revenue vs cost, margin, cost per clean, labour %
+//   3. Is the product good?           review score by market, new reviews, what guests keep saying
+//   4. Is anything bleeding?          claims, glitches, unhappy guests, awaiting replies
+//   5. Who is in the buildings?       big reservations, owner stays
+//
+// Everything comes from lib/kpi.ts — the same engine behind the KPI home board — so a number in
+// this email and the same number on screen can never disagree. Money is DIRECTIONAL by design:
+// cleaning cost is what Breezeway records as paid, which trends correctly but is not the books.
+const gmAccess = (): any => ({
+  user: { email: 'brief@stay-hospitality.com' }, email: 'jon@stay-hospitality.com',
+  role: 'admin', allowed: true, bootstrap: false, features: {}, workspace: 'admin',
+  profile: {}, prefs: {}, accessRole: 'admin', levels: {}, landing: '/command',
+})
+
+const money0 = (n: any) => (n == null || !Number.isFinite(Number(n))) ? '—' : '$' + Math.round(Number(n)).toLocaleString('en-US')
+const pct1 = (n: any) => (n == null || !Number.isFinite(Number(n))) ? '—' : Number(n).toFixed(1) + '%'
+// Change pills read as WORDS, never colour alone — half the team reads these on a phone in sun.
+function deltaPill(v: any, suffix = '%', goodIsUp = true): string {
+  if (v == null || !Number.isFinite(Number(v)) || Math.abs(Number(v)) < 0.05) return `<span style="${S.pill};background:#f3f4f6;color:#6b7280">flat</span>`
+  const up = Number(v) > 0
+  const good = goodIsUp ? up : !up
+  const txt = (up ? '▲ ' : '▼ ') + Math.abs(Number(v)).toFixed(1) + suffix
+  return `<span style="${S.pill};background:${good ? '#dcfce7' : '#fee2e2'};color:${good ? '#166534' : '#b91c1c'}">${txt}</span>`
+}
+
+export async function buildGmBrief(): Promise<OpsBrief> {
+  const { buildKpi } = await import('./kpi')
+  const d = await gather('GM')
+  const sheet: any = d.sheet || {}
+  const today = d.today
+  const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
+
+  // 30-day window: long enough for ADR and margin to mean something, short enough to be news.
+  let k: any = {}
+  try { k = await buildKpi(new URLSearchParams({ days: '30' }), gmAccess()) } catch { k = {} }
+  const rev = k.revenue || {}, clean = k.cleaning || {}, lab = k.labor || {}
+  const work = k.work || {}, wel = k.welcome || {}, sent = k.sentiment || {}, gl = k.glitches || {}
+  const tod = k.today || {}
+
+  // Claims are money already lost — the one thing on this page nobody else is watching daily.
+  const db = supabaseAdmin()
+  let claimsOpen = 0, claimsValue = 0, claimsWaiting = 0
+  try {
+    const { data } = await db.from('claims').select('stage,amount_requested,amount_paid,waiting_on').is('deleted_at', null).limit(500)
+    for (const c of ((data || []) as any[])) {
+      const st = str(c.stage)
+      if (st === 'closed') continue
+      claimsOpen++
+      claimsValue += Number(c.amount_requested) || 0
+      if (c.waiting_on) claimsWaiting++
+    }
+  } catch { /* claims table optional — the brief still sends */ }
+
+  const ownerStays: any[] = (sheet.ownerStays || []).filter((o: any) => str(o.ownerFlag) === 'owner booking')
+  const occToday = tod.occupancy != null ? tod.occupancy : null
+
+  // ---- tiles: the business in six numbers ----
+  const tiles: Tile[] = [
+    { label: 'Occupancy · 30d', value: rev.occupancy != null ? pct1(rev.occupancy) : '—',
+      tone: rev.occupancy == null ? undefined : rev.occupancy >= 75 ? 'green' : rev.occupancy >= 60 ? 'amber' : 'red',
+      note: rev.occupancyChange != null ? (rev.occupancyChange > 0 ? '+' : '') + rev.occupancyChange + ' pts vs prev' : undefined },
+    { label: 'RevPAR · 30d', value: money0(rev.revpar), note: rev.adr != null ? 'ADR ' + money0(rev.adr) : undefined },
+    { label: 'Revenue · 30d', value: money0(rev.total),
+      note: rev.totalChange != null ? (rev.totalChange > 0 ? '+' : '') + Number(rev.totalChange).toFixed(0) + '% vs prev' : undefined },
+    { label: 'Cleaning margin', value: clean.marginPct != null ? pct1(clean.marginPct) : '—',
+      tone: clean.marginPct == null ? undefined : clean.marginPct >= 30 ? 'green' : clean.marginPct >= 10 ? 'amber' : 'red',
+      note: clean.costPerTurn != null ? money0(clean.costPerTurn) + '/clean' : 'cost not recorded yet' },
+    { label: 'Review score · 30d', value: d.rep.avg != null ? d.rep.avg.toFixed(2) : '—',
+      tone: d.rep.avg == null ? undefined : d.rep.avg >= 4.6 ? 'green' : d.rep.avg >= 4.3 ? 'amber' : 'red',
+      note: d.rep.n ? d.rep.n + ' reviews' : 'no reviews' },
+    { label: 'Open claims', value: String(claimsOpen), tone: claimsOpen ? 'amber' : 'green',
+      note: claimsValue ? money0(claimsValue) + ' requested' : 'nothing outstanding' },
+  ]
+
+  // ---- money card ----
+  const moneyRows = `
+    <tr><td style="${S.td}">Room revenue <span style="${S.muted}">30d</span></td>
+      <td style="${S.td};text-align:right"><b>${money0(rev.total)}</b> ${deltaPill(rev.totalChange)}</td></tr>
+    <tr><td style="${S.td}">ADR / RevPAR</td>
+      <td style="${S.td};text-align:right"><b>${money0(rev.adr)}</b> ${deltaPill(rev.adrChange)} <span style="${S.muted}">·</span> <b>${money0(rev.revpar)}</b> ${deltaPill(rev.revparChange)}</td></tr>
+    <tr><td style="${S.td}">Cleaning revenue <span style="${S.muted}">${clean.turns || 0} turns</span></td>
+      <td style="${S.td};text-align:right"><b>${money0(clean.revenue)}</b> <span style="${S.muted}">${clean.feePerTurn != null ? money0(clean.feePerTurn) + '/turn' : ''}</span></td></tr>
+    <tr><td style="${S.td}">Cleaning cost <span style="${S.muted}">directional</span></td>
+      <td style="${S.td};text-align:right">${clean.costKnown ? `<b>${money0(clean.cost)}</b> <span style="${S.muted}">${clean.costPerTurn != null ? money0(clean.costPerTurn) + '/clean' : ''}</span>` : `<span style="${S.muted}">not recorded</span>`}</td></tr>
+    <tr><td style="${S.td}"><b>Cleaning margin</b></td>
+      <td style="${S.td};text-align:right">${clean.margin != null ? `<b style="${clean.marginPct != null && clean.marginPct < 10 ? S.red : S.green}">${money0(clean.margin)} · ${pct1(clean.marginPct)}</b> ${deltaPill(clean.marginChange)}` : `<span style="${S.muted}">—</span>`}</td></tr>
+    <tr><td style="${S.td}">Labour <span style="${S.muted}">${lab.hours != null ? Math.round(lab.hours) + ' hrs' : ''}</span></td>
+      <td style="${S.td};text-align:right">${lab.known ? `<b>${money0(lab.cost)}</b> ${lab.costRatio != null ? `<span style="${S.muted}">${pct1(lab.costRatio)} of revenue</span>` : ''}` : `<span style="${S.muted}">connect Homebase for labour cost</span>`}</td></tr>`
+
+  // ---- reputation by market ----
+  const repRows = (d.repByMarket || []).map((m: any) => `
+    <tr><td style="${S.td}"><b>${esc(m.market)}</b></td>
+      <td style="${S.td};text-align:right"><b style="${m.avg != null && m.avg < 4.3 ? S.red : m.avg != null && m.avg < 4.6 ? S.amber : S.green}">${m.avg != null ? m.avg.toFixed(2) : '—'}</b>
+        <span style="${S.muted}">· ${m.n} review${m.n === 1 ? '' : 's'}${m.low ? ' · ' + m.low + ' at 3★ or below' : ''}</span></td></tr>`).join('')
+
+  // ---- guest health ----
+  const guestRows = `
+    <tr><td style="${S.td}">New reviews since yesterday</td><td style="${S.td};text-align:right"><b>${d.newReviews.length}</b>${d.rep.owed ? ` <span style="${S.amber}">· ${d.rep.owed} awaiting a reply</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">Welcome calls done</td><td style="${S.td};text-align:right">${wel.pct != null ? `<b>${pct1(wel.pct)}</b> <span style="${S.muted}">${wel.done || 0} of ${wel.arrivals || 0}</span>` : '—'}${wel.dueNow ? ` <span style="${S.red}">· ${wel.dueNow} due now</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">Guests sounding unhappy</td><td style="${S.td};text-align:right">${sent.unhappy != null ? `<b>${sent.unhappy}</b> <span style="${S.muted}">of ${sent.scanned || 0} conversations</span>` : '—'}</td></tr>
+    <tr><td style="${S.td}">Inspections completed <span style="${S.muted}">30d</span></td><td style="${S.td};text-align:right"><b>${work.inspections || 0}</b> ${deltaPill(work.completedChange)}</td></tr>`
+
+  // ---- risk ----
+  const riskRows = `
+    <tr><td style="${S.td}">Guest issues open</td><td style="${S.td};text-align:right"><b style="${(gl.open || 0) > 0 ? S.amber : S.green}">${gl.open || 0}</b> <span style="${S.muted}">${gl.opened || 0} raised / ${gl.closed || 0} closed in 30d</span></td></tr>
+    <tr><td style="${S.td}">Claims open</td><td style="${S.td};text-align:right"><b>${claimsOpen}</b> <span style="${S.muted}">${money0(claimsValue)} requested${claimsWaiting ? ' · ' + claimsWaiting + ' waiting on a channel' : ''}</span></td></tr>
+    <tr><td style="${S.td}">Work overdue</td><td style="${S.td};text-align:right"><b style="${(tod.overdueWork || 0) > 0 ? S.red : S.green}">${tod.overdueWork || 0}</b> <span style="${S.muted}">${tod.openWork || 0} open in total</span></td></tr>
+    ${gl.cost != null ? `<tr><td style="${S.td}">Cost of guest issues <span style="${S.muted}">30d</span></td><td style="${S.td};text-align:right"><b>${money0(gl.cost)}</b> ${deltaPill(gl.costChange, '%', false)}</td></tr>` : ''}`
+
+  // ---- who is in the buildings ----
+  const bigRows = (d.bigArrivals || []).slice(0, 6).map((b: any) => `
+    <tr><td style="${S.td}"><b>${esc(b.unit)}</b> ${b.today ? pillRed('TODAY') : `<span style="${S.muted}">${esc(b.when)}</span>`}</td>
+      <td style="${S.td};text-align:right"><b>${money0(b.total)}</b> <span style="${S.muted}">${b.nights ? b.nights + ' nights · ' : ''}${esc(b.guest)}</span></td></tr>`).join('')
+  const ownRows = ownerStays.slice(0, 6).map((o: any) => `
+    <tr><td style="${S.td}"><b>${esc(str(o.unit))}</b></td><td style="${S.td};text-align:right"><span style="${S.muted}">${esc(str(o.guest || 'Owner'))}${o.checkOut ? ' · out ' + esc(str(o.checkOut).slice(5)) : ''}</span></td></tr>`).join('')
+
+  const tbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
+  const subject = `GM Brief ${dateNice}: ${occToday != null ? pct1(occToday) + ' occupied' : ''}`
+    + (rev.total != null ? ` · ${money0(rev.total)} 30d` : '')
+    + (d.rep.avg != null ? ` · ${d.rep.avg.toFixed(2)}★` : '')
+    + (claimsOpen ? ` · ${claimsOpen} claims open` : '')
+
+  const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
+  <div style="${S.bandOuter}">
+    <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="${S.bandTitle}">GM Brief</p>
+    <p style="${S.bandSub}">${dateNice} · whole portfolio · ${d.activeCount} active units</p>
+  </div>
+  <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
+
+  ${card('Today', null, tbl(`
+    <tr><td style="${S.td}">In the buildings tonight</td><td style="${S.td};text-align:right"><b>${tod.inHouse || 0}</b> <span style="${S.muted}">of ${tod.units || d.activeCount} units · ${occToday != null ? pct1(occToday) : '—'}</span></td></tr>
+    <tr><td style="${S.td}">Arrivals / departures</td><td style="${S.td};text-align:right"><b>${tod.arrivals || 0}</b> in <span style="${S.muted}">·</span> <b>${tod.departures || 0}</b> out${tod.sameDayTurns ? ` <span style="${S.red}">· ${tod.sameDayTurns} same-day turns</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">Cleans today</td><td style="${S.td};text-align:right"><b>${tod.cleansDone || 0}</b> of ${tod.cleansScheduled || 0} done</td></tr>
+    <tr><td style="${S.td}">Booked in the next 7 days</td><td style="${S.td};text-align:right"><b>${money0(tod.booked7)}</b> <span style="${S.muted}">${tod.arrivals7 || 0} arrivals</span></td></tr>`), '#4338ca')}
+
+  ${card('Money · last 30 days', null, tbl(moneyRows), '#047857')}
+  ${repRows ? card('Guest score by market · last 30 days', null, tbl(repRows), '#d97706') : ''}
+  ${card('Guest health', null, tbl(guestRows), '#0891b2')}
+  ${card('Where money is leaking', null, tbl(riskRows), '#dc2626')}
+  ${bigRows ? card('Big reservations · next 3 days', (d.bigArrivals || []).length, tbl(bigRows), '#7c3aed') : ''}
+  ${ownRows ? card('Owner stays in-house', ownerStays.length, tbl(ownRows), '#4338ca') : ''}
+
+  ${btn(APP_URL + '/command', 'Open Command Center →', 'Every number here is live in the app — this email is the 7am snapshot.')}
+  <p style="${S.foot}">
+    GM Brief · sent each morning by Stay Hospitality.<br>
+    Money is directional: cleaning cost is what Breezeway records as paid on completed housekeeping tasks, not the books.
+  </p>
+  </div></body></html>`
+
+  return {
+    date: today, variant: 'GM', subject, html,
+    counts: { cleans: d.cleans.length, unassigned: 0, sameDay: tod.sameDayTurns || 0, inspect: d.inspect.length, occupiedTonight: tod.inHouse || 0, activeUnits: d.activeCount },
+  }
+}
 
 // ---------------------------------------------------------------- VENDOR BRIEFS
 // A different product for a different audience: the OUTSIDE cleaning companies for the vendor
