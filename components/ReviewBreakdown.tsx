@@ -106,13 +106,17 @@ function ChannelChips({ chs }: { chs: Ch[] }) {
   if (!chs || !chs.length) return null
   return (
     <span className="inline-flex flex-wrap gap-1">
-      {chs.slice(0, 4).map(c => (
+      {chs.slice(0, 4).map(c => {
+        // Booking's own average reads on its native /10; the combined number stays out of 5.
+        const disp = /booking/i.test(c.channel) ? (Math.round(c.avg * 2 * 10) / 10) + '/10' : String(c.avg)
+        return (
         <span key={c.channel}
-          title={c.channel + ': ' + c.n + ' review' + (c.n === 1 ? '' : 's') + ', average ' + c.avg + (c.low ? ', ' + c.low + ' at 3★ or below' : '')}
+          title={c.channel + ': ' + c.n + ' review' + (c.n === 1 ? '' : 's') + ', average ' + disp + (c.low ? ', ' + c.low + ' at 3★ or below' : '')}
           className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border tabular-nums ' + (c.low > 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-app text-muted border-line')}>
-          {c.channel} {c.avg}
+          {c.channel} {disp}
         </span>
-      ))}
+        )
+      })}
     </span>
   )
 }

@@ -103,7 +103,7 @@ function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => 
             <div key={i} className="text-[11.5px] border-l-2 border-rose-200 pl-2">
               <span className="text-ink">{'“'}{e.quote}{'”'}</span>
               <div className="text-[10.5px] text-muted">
-                {e.at}{e.channel ? ' · ' + e.channel : ''}{e.rating ? ' · ' + e.rating + '★' : ''}
+                {e.at}{e.channel ? ' · ' + e.channel : ''}{e.rating ? ' · ' + (/booking/i.test(String(e.channel || '')) ? (Math.round(e.rating * 2 * 10) / 10) + '/10' : e.rating + '★') : ''}
               </div>
             </div>
           ))}

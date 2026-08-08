@@ -57,7 +57,7 @@ function Quote({ s }: { s: any }) {
       <span className="text-ink">{'“'}{s.comment}{'”'}</span>
       <div className="text-[10.5px] text-muted">
         {s.unit}{s.at ? ' · ' + s.at : ''}{s.channel ? ' · ' + s.channel : ''}
-        {s.rating != null ? ' · ' + s.rating + '★' : ''}
+        {s.rating != null ? ' · ' + (/booking/i.test(String(s.channel || '')) ? (Math.round(s.rating * 2 * 10) / 10) + '/10' : s.rating + '★') : ''}
       </div>
     </div>
   )
