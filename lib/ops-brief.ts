@@ -932,9 +932,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const oursTot = cols.filter(c => c.key !== 'Vendors').reduce((a, b) => ({
     cleans: a.cleans + b.cleans, bzClosed: a.bzClosed + b.bzClosed, fees: a.fees + b.fees, payroll: a.payroll + (b.payroll || 0),
   }), { cleans: 0, bzClosed: 0, fees: 0, payroll: 0 })
-  // How much of the work got closed in Breezeway. Low = paperwork, not effort — but it is the
-  // reason the recorded HOURS below understate reality, so it is stated plainly.
-  const closureRate = oursTot.cleans ? Math.round((oursTot.bzClosed / oursTot.cleans) * 1000) / 10 : null
+  // NOT A PERCENTAGE. The first cut divided housekeeping tasks by checkouts and printed "116%",
+  // because closed HK tasks include deep cleans, strips and mid-stay work — the numerator is not a
+  // subset of the denominator. Both counts are shown side by side instead, with the caveat, and
+  // nothing on this page is derived from the task count.
 
   // Window-level headline numbers (our crew only — vendor fees are not ours to earn a margin on).
   const cpcY = null as number | null   // kept for the tile below; recomputed from the window
@@ -1048,8 +1049,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Housekeeping hours per clean</b> <span style="${S.muted}">clocked hours ÷ checkouts</span></td>
       <td style="${S.td};text-align:right">${(hoursWin && oursTot.cleans) ? `<b>${(hoursWin / oursTot.cleans).toFixed(1)}</b> <span style="${S.muted}">hrs · ${Math.round(hoursWin)} hrs over ${oursTot.cleans} cleans</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}">Tasks closed in Breezeway <span style="${S.muted}">paperwork, not effort</span></td>
-      <td style="${S.td};text-align:right">${closureRate != null ? `<b style="${closureRate < 70 ? S.red : closureRate < 90 ? S.amber : S.green}">${pct1(closureRate)}</b> <span style="${S.muted}">${oursTot.bzClosed} of ${oursTot.cleans} cleans</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    <tr><td style="${S.td}">Housekeeping tasks closed in Breezeway</td>
+      <td style="${S.td};text-align:right"><b>${oursTot.bzClosed}</b> <span style="${S.muted}">against ${oursTot.cleans} checkouts</span></td></tr>
     <tr><td style="${S.td}">Hours by department <span style="${S.muted}">Breezeway recorded</span></td>
       <td style="${S.td};text-align:right"><b>${hrs(tot.hkMins)}</b> <span style="${S.muted}">housekeeping</span> · <b>${hrs(tot.maintMins)}</b> <span style="${S.muted}">maintenance</span> · <b>${hrs(tot.inspMins)}</b> <span style="${S.muted}">inspection</span></td></tr>
     <tr><td style="${S.td}">Billable labour <span style="${S.muted}">owner-billable work</span></td>
@@ -1061,8 +1062,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <div style="line-height:1.9">${trendLine}</div></td></tr>` : ''}
     ${!comparableWeeks && cpcPrevWin != null ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
       <span style="${S.amber}">Week-over-week is withheld this time.</span> <span style="${S.muted}">Last week recorded ${hpcPrev != null ? hpcPrev.toFixed(1) : '—'} clocked hours per clean against ${hpcWin != null ? hpcWin.toFixed(1) : '—'} this week — that gap is timecard coverage changing, not the cost of a clean, so comparing the two would mislead.</span></td></tr>` : ''}
-    ${closureRate != null && closureRate < 90 ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
-      <span style="${S.amber}">${pct1(100 - closureRate)} of cleans were never closed in Breezeway.</span> <span style="${S.muted}">Newer staff often do not close their tasks, so the DEPARTMENT HOURS above are understated and any per-task metric is unreliable. The cleans, fees, payroll and cost-per-clean on this page deliberately do not depend on that — cleans are counted from checkouts and payroll from timecards, both of which are complete.</span></td></tr>` : ''}
+    <tr><td colspan="2" style="${S.td};background:#f8fafc">
+      <span style="${S.muted}"><b>Why the numbers above do not depend on Breezeway.</b> Newer staff do not always close their tasks, so task counts and recorded department hours understate the real work. Every figure on this page is therefore built from sources that cannot be missed: <b>cleans are counted from checkouts</b> (a guest left, so a unit was cleaned) and <b>payroll and hours come from timecards</b>. The task count is shown only for comparison — it includes deep cleans, strips and mid-stay work, so it will not match the checkout count either way.</span></td></tr>
     ${coverageWarn ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
       <span style="${S.amber}">Read this margin as a ceiling.</span> <span style="${S.muted}">Homebase shows ${Math.round(hoursWin)} clocked hours this week while Breezeway recorded ${Math.round(bwHours)} hours of completed work — so some of the crew is not on a timecard, and real payroll is higher than the figure above.</span></td></tr>` : ''}
     <tr><td style="${S.td};color:#9ca3af">Room revenue <span style="${S.muted}">Guesty · fuller numbers in your revenue app</span></td>
