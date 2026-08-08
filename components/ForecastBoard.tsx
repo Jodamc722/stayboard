@@ -240,7 +240,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
             let shortfall = needOn(d) - workingNow
             if (shortfall <= 0) continue
             const cand = out
-              .filter(m => !NON_CLEANERS.some((nc: string) => same(nc, m)) && !next[`${m}__${d.date}`])
+              .filter(m => !Object.keys(NON_CLEANERS).some(nc => same(nc, m)) && !next[`${m}__${d.date}`])
               .sort((a, b) => daysWorking(a) - daysWorking(b))
             for (const m of cand) {
               if (shortfall <= 0) break
