@@ -11,14 +11,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'
-import { buildOpsBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
+import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
 import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export const OPS_BRIEF_KEY = 'ops_brief'
-type BriefCfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; vendors?: Partial<Record<VendorGroup, string[]>> }
+type BriefCfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: Partial<Record<VendorGroup, string[]>> }
+
+// One builder for every variant, so preview / test / cron can never drift apart.
+const build = (v: BriefVariant) => v === 'GM' ? buildGmBrief() : buildOpsBrief(v)
+const ALL_VARIANTS: BriefVariant[] = ['Miami', 'Broward', 'full', 'GM']
 
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
 
@@ -49,8 +53,8 @@ export async function GET(req: NextRequest) {
       const vb = await buildVendorBrief(vg.key)
       return new NextResponse(vb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     }
-    const v = (['Miami', 'Broward', 'full'] as BriefVariant[]).find(x => x.toLowerCase() === preview.toLowerCase()) || 'full'
-    const b = await buildOpsBrief(v)
+    const v = ALL_VARIANTS.find(x => x.toLowerCase() === preview.toLowerCase()) || 'full'
+    const b = await build(v)
     return new NextResponse(b.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
   }
 
@@ -58,8 +62,11 @@ export async function GET(req: NextRequest) {
   if (sp.get('test')) {
     if (!me) return NextResponse.json({ error: 'sign in to test' }, { status: 401 })
     const out: any[] = []
-    for (const v of ['Miami', 'Broward', 'full'] as BriefVariant[]) {
-      const b = await buildOpsBrief(v)
+    // ?test=1&only=GM sends just one variant — the GM brief is the slow one (full KPI pass).
+    const only = String(sp.get('only') || '').toLowerCase()
+    const pick = only ? ALL_VARIANTS.filter(v => v.toLowerCase() === only) : ALL_VARIANTS
+    for (const v of pick) {
+      const b = await build(v)
       const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html })
       out.push({ variant: v, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
     }
@@ -75,11 +82,12 @@ export async function GET(req: NextRequest) {
     { v: 'Miami', to: (cfg.miami || []).filter(Boolean) },
     { v: 'Broward', to: (cfg.broward || []).filter(Boolean) },
     { v: 'full', to: (cfg.full || []).filter(Boolean) },
+    { v: 'GM', to: (cfg.gm || []).filter(Boolean) },
   ]
   const out: any[] = []
   for (const { v, to } of lists) {
     if (!to.length) { out.push({ variant: v, skipped: 'no recipients' }); continue }
-    const b = await buildOpsBrief(v)
+    const b = await build(v)
     const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
     out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
   }
