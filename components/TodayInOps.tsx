@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { RefreshCw, AlertTriangle, Plus, Clock, DoorOpen, ChevronUp, ChevronDown, X, ClipboardCheck, MessageSquare, Search, MapPin, Wrench } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
 import RowMenu, { type RowAction } from '@/components/RowMenu'
+import { StaffingCheck } from '@/components/StaffingCheck'
 import { clusterAreas } from '@/lib/geo-areas'
 
 type Task = { id: string; listingId: string; unit: string; market: string; market2?: string | null; dept: string; type: string; name: string; status: string; assignees: string[]; assigneeIds?: number[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; reportUrl: string | null; done: boolean; running: boolean; clocked: boolean; late: boolean; atRisk: boolean; missed: boolean; untracked?: boolean; guestyOnly?: boolean }
@@ -634,6 +635,10 @@ export function TodayInOps() {
           </div>
         </div>
       )}
+
+      {/* STAFFING CHECK — clocked in (Homebase) vs assigned (Breezeway). Catches the person who
+          showed up to work and got nothing, before they have to tell us. */}
+      <StaffingCheck date={dateSel || undefined} />
 
       {/* WORK FILTERS — two axes together: WHAT kind of job, and WHERE it stands. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-4">
