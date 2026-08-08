@@ -129,3 +129,63 @@ export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Prom
     return error ? { ok: false, error: error.message } : { ok: true }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
+
+// ---------------------------------------------------------------- inference
+// AUTO-FILL (Jon 2026-08-08): "auto populate that in the user setting... help determine role,
+// market area". Nobody should hand-type 40 people. Role and area are both derivable from work
+// that already happened, so we derive them and let the settings page hold the answer:
+//
+//   area  — the market where a person's Breezeway tasks actually happened (majority vote). This is
+//           the SAME rule the Labor board used to compute inline; now it is computed once, stored,
+//           and read back, so the board and the settings page can never disagree.
+//   role  — what they actually do, by task department, not by whatever was typed in Homebase.
+//   agency— NEVER inferred. It is the one fact no system observes; guessing it would put hours on
+//           the wrong invoice, so it stays blank until a human sets it.
+//
+// Suggestions never overwrite a value a human already chose — see mergeSuggestion below.
+export type StaffSuggestion = { name: string; role: string | null; area: string | null; tasks: number }
+
+export function roleFromDepartment(dept: string, taskName = ''): string | null {
+  const s = `${dept || ''} ${taskName || ''}`.toLowerCase()
+  if (/clean|housekeep|turn|laundry/.test(s)) return 'Housekeeper'
+  if (/inspect|walk|qc\b/.test(s)) return 'Inspector'
+  if (/maint|repair|fix|hvac|plumb|electric|pest|handy/.test(s)) return 'Maintenance'
+  return null
+}
+
+/** Majority-vote role + area per person from their finished Breezeway tasks. */
+export function suggestFromTasks(
+  tasks: { doer: string | null; market: string | null; dept: string; name: string }[],
+): Record<string, StaffSuggestion> {
+  const acc: Record<string, { roles: Record<string, number>; areas: Record<string, number>; n: number }> = {}
+  for (const t of tasks) {
+    const who = String(t.doer || '').trim()
+    if (!who) continue
+    const a = acc[who] || (acc[who] = { roles: {}, areas: {}, n: 0 })
+    a.n += 1
+    const r = roleFromDepartment(t.dept, t.name)
+    if (r) a.roles[r] = (a.roles[r] || 0) + 1
+    if (t.market) a.areas[t.market] = (a.areas[t.market] || 0) + 1
+  }
+  const top = (m: Record<string, number>): string | null => {
+    let best: string | null = null, n = 0
+    for (const k of Object.keys(m)) if (m[k] > n) { best = k; n = m[k] }
+    return best
+  }
+  const out: Record<string, StaffSuggestion> = {}
+  for (const name of Object.keys(acc)) {
+    out[name] = { name, role: top(acc[name].roles), area: top(acc[name].areas), tasks: acc[name].n }
+  }
+  return out
+}
+
+/** Apply a suggestion WITHOUT clobbering anything already set by hand. */
+export function mergeSuggestion(existing: StaffRow | null, s: StaffSuggestion, name: string): Partial<StaffRow> & { name: string } {
+  return {
+    name: existing?.name || name,
+    role: existing?.role || s.role || null,
+    area: existing?.area || s.area || null,
+    agency: existing?.agency ?? null,     // never inferred
+    active: existing ? existing.active : true,
+  }
+}
