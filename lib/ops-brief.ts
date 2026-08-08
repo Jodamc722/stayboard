@@ -19,6 +19,7 @@ import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
 import { getTimecards } from './homebase-labor'
 import { getLaborSettings } from './labor-settings'
 import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
+import { laborAmount } from './billing'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -371,17 +372,40 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
     // ---- Team economics yesterday (FULL brief only - carries dollars) --------
+    // Sections by role: HK / Maintenance / Other. Rev = guest cleaning fees.
+    // Billable = billable labor from Breezeway tasks (rates + billing adjustments,
+    // same math as the Billable Hours sheet). Margins = revenue totals minus labor.
     if (variant === 'full') {
       const { data: tRows } = await db2.from('breezeway_tasks_sync')
         .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
         .gte('finished_at', yd).lte('finished_at', yd + 'T23:59:59').limit(3000)
       const rows2 = (tRows || []) as any[]
+      const ids2 = rows2.map(t => String(t.id))
+      const dets2: Record<string, any> = {}
+      const adjs2: Record<string, any> = {}
+      for (let i2 = 0; i2 < ids2.length; i2 += 400) {
+        const chunk2 = ids2.slice(i2, i2 + 400)
+        if (!chunk2.length) break
+        try { const { data } = await db2.from('breezeway_billing_details').select('task_id,rate_type').in('task_id', chunk2); for (const d3 of (data || []) as any[]) dets2[String(d3.task_id)] = d3 } catch { /* no detail yet */ }
+        try { const { data } = await db2.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk2); for (const a3 of (data || []) as any[]) adjs2[String(a3.task_id)] = a3 } catch { /* overlay optional */ }
+      }
       const kindOf = (t: any) => {
         const s2 = (String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()
         if (/clean|housekeep|turn/.test(s2)) return 'clean'
         if (/inspect|walk/.test(s2)) return 'inspection'
         if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s2)) return 'maintenance'
         return 'other'
+      }
+      // Billable labor for a task, same math as the billing sheet. Cleans are
+      // excluded - their money is the guest cleaning fee, already in Rev.
+      const billableOf = (t: any): number => {
+        if (kindOf(t) === 'clean') return 0
+        const adj = adjs2[String(t.id)]
+        if (adj && adj.excluded) return 0
+        if (adj && adj.override_amount != null) return Number(adj.override_amount) || 0
+        const det = dets2[String(t.id)]
+        const capped = t.total_minutes != null ? Math.min(Number(t.total_minutes), 480) : null
+        return laborAmount(t.rate_paid != null ? Number(t.rate_paid) : null, det && det.rate_type != null ? String(det.rate_type) : null, capped, adj && adj.billed_hours != null ? Number(adj.billed_hours) : null)
       }
       const roster2: string[] = []
       for (const t of yTc) if (roster2.indexOf(t.name) < 0) roster2.push(t.name)
@@ -415,7 +439,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const k2 = kindOf(t)
         if (k2 === 'clean') prs[w].cleans++
         else if (k2 === 'inspection') prs[w].insp++
-        else if (k2 === 'maintenance') { const rp = Number(t.rate_paid); if (Number.isFinite(rp)) prs[w].billable += rp }
+        prs[w].billable += billableOf(t)
         const info = mk2[String(t.reference_property_id)]
         if (info) { mkCount[w] = mkCount[w] || {}; const mk3 = info.vendor ? 'vendor' : info.m; mkCount[w][mk3] = (mkCount[w][mk3] || 0) + 1 }
       }
@@ -424,6 +448,17 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const key2 = Object.keys(prs).filter(n2 => nameMatches(n2, t.name))[0] || t.name
         prs[key2] = prs[key2] || { name: t.name, market: '', cleans: 0, insp: 0, billable: 0, cost: 0 }
         prs[key2].cost += t.laborCost
+      }
+      // Role per person: Homebase role first, then what they actually did.
+      const roleOf = (name: string): string => {
+        const card2 = yTc.filter(t => nameMatches(t.name, name))[0]
+        const s3 = card2 && card2.role ? String(card2.role).toLowerCase() : ''
+        if (/clean|housekeep|turn/.test(s3)) return 'hk'
+        if (/maint|tech|repair|handy/.test(s3)) return 'maint'
+        const p3 = prs[name]
+        if (p3 && p3.cleans > 0) return 'hk'
+        if (p3 && p3.billable > 0) return 'maint'
+        return 'other'
       }
       for (const n2 of Object.keys(prs)) {
         const cc = mkCount[n2] || {}
@@ -439,26 +474,55 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         mkAgg[p2.market].cost += p2.cost
         mkAgg[p2.market].cleans += p2.cleans
       }
-      let allCost = 0, allCleans = 0
-      for (const mk3 of Object.keys(mkAgg)) { allCost += mkAgg[mk3].cost; allCleans += mkAgg[mk3].cleans }
+      let allCost0 = 0, allCleans0 = 0
+      for (const mk3 of Object.keys(mkAgg)) { allCost0 += mkAgg[mk3].cost; allCleans0 += mkAgg[mk3].cleans }
       const usd = (n3: number) => '$' + String(Math.round(n3))
       const cpc = (x?: { cost: number; cleans: number }) => x && x.cleans && x.cost ? usd(x.cost / x.cleans) : 'n/a'
-      const mkLine = 'Cost / clean: Miami ' + cpc(mkAgg['miami']) + ', Broward ' + cpc(mkAgg['broward']) + ', North ' + cpc(mkAgg['north']) + ', All ' + (allCleans && allCost ? usd(allCost / allCleans) : 'n/a')
+      const mkLine = 'Cost / clean: Miami ' + cpc(mkAgg['miami']) + ', Broward ' + cpc(mkAgg['broward']) + ', North ' + cpc(mkAgg['north']) + ', All ' + (allCleans0 && allCost0 ? usd(allCost0 / allCleans0) : 'n/a')
       const list2 = Object.keys(prs).map(n2 => prs[n2]).filter(p2 => p2.cleans || p2.insp || p2.billable > 0 || p2.cost > 0)
-        .sort((a2, b2) => (revBy[b2.name] || 0) - (revBy[a2.name] || 0))
-      const trRows = list2.map(p2 => {
+      const sections: { key: string; title: string; people: PR[] }[] = [
+        { key: 'hk', title: 'HOUSEKEEPING', people: [] },
+        { key: 'maint', title: 'MAINTENANCE', people: [] },
+        { key: 'other', title: 'OTHER', people: [] },
+      ]
+      for (const p2 of list2) {
+        const rk = roleOf(p2.name)
+        const sec = sections.filter(s4 => s4.key === rk)[0] || sections[2]
+        sec.people.push(p2)
+      }
+      let grandCost = 0, grandRev = 0, grandBill = 0
+      const personRow = (p2: PR) => {
         const rev = revBy[p2.name] || 0
         const cpp = p2.cleans && p2.cost ? usd(p2.cost / p2.cleans) : 'n/a'
-        return '<tr><td style="' + S.td + '"><b>' + esc(p2.name) + '</b><br><span style="color:#6b7280">' + esc(p2.market) + '</span></td>' +
+        return '<tr><td style="' + S.td + '">' + esc(p2.name) + '<br><span style="color:#6b7280">' + esc(p2.market) + '</span></td>' +
           '<td style="' + S.td + '">' + (p2.cleans || 0) + (p2.insp ? '<br><span style="color:#6b7280">' + p2.insp + ' insp</span>' : '') + '</td>' +
           '<td style="' + S.td + '">' + (p2.cost ? usd(p2.cost) : 'n/a') + '</td>' +
           '<td style="' + S.td + '">' + cpp + '</td>' +
           '<td style="' + S.td + '">' + (rev ? usd(rev) : 'n/a') + '</td>' +
           '<td style="' + S.td + '">' + (p2.billable ? usd(p2.billable) : 'n/a') + '</td></tr>'
-      }).join('')
-      crewCard = list2.length ? card('Team economics yesterday: cost per clean, rev vs labor', list2.length,
-        '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + mkLine + '. Vendor revenue kept separate. Billables broken out.</p>' +
-        table(['Person', 'Cleans', 'Labor', 'Cost/clean', 'Revenue', 'Billable (maint)'], trRows), '#0891b2') : ''
+      }
+      let trRows = ''
+      for (const sec of sections) {
+        if (!sec.people.length) continue
+        sec.people.sort((a2, b2) => ((revBy[b2.name] || 0) + b2.billable) - ((revBy[a2.name] || 0) + a2.billable))
+        const sCost = sec.people.reduce((a2, p2) => a2 + p2.cost, 0)
+        const sRev = sec.people.reduce((a2, p2) => a2 + (revBy[p2.name] || 0), 0)
+        const sBill = sec.people.reduce((a2, p2) => a2 + p2.billable, 0)
+        const sCleans = sec.people.reduce((a2, p2) => a2 + p2.cleans, 0)
+        grandCost += sCost; grandRev += sRev; grandBill += sBill
+        const sMargin = sRev + sBill - sCost
+        let label = sec.title + ': ' + usd(sCost) + ' labor'
+        if (sec.key === 'hk') label += ', ' + sCleans + ' cleans, ' + usd(sRev) + ' cleaning rev'
+        if (sBill > 0) label += ', ' + usd(sBill) + ' billable labor'
+        label += ' - margin ' + (sMargin < 0 ? '-$' + Math.abs(Math.round(sMargin)) : usd(sMargin))
+        trRows += '<tr><td colspan="6" style="' + S.td + ';background:#f5f5f4;font-weight:bold">' + label + '</td></tr>'
+        trRows += sec.people.map(personRow).join('')
+      }
+      const grandMargin = grandRev + grandBill - grandCost
+      trRows += '<tr><td colspan="6" style="' + S.td + ';font-weight:bold;border-top:2px solid #111827">TOTAL: ' + usd(grandCost) + ' labor vs ' + usd(grandRev + grandBill) + ' revenue (' + usd(grandRev) + ' cleaning + ' + usd(grandBill) + ' billable) - margin ' + (grandMargin < 0 ? '-$' + Math.abs(Math.round(grandMargin)) : usd(grandMargin)) + '</td></tr>'
+      crewCard = trRows ? card('Team economics yesterday: cost per clean, rev vs labor', list2.length,
+        '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + mkLine + '. Vendor revenue kept separate.</p>' +
+        table(['Person', 'Cleans', 'Labor', 'Cost/clean', 'Cleaning rev', 'Billable labor'], trRows), '#0891b2') : ''
     }
   } catch { /* Homebase down — the brief still sends */ }
 
