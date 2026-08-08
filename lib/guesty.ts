@@ -532,6 +532,10 @@ function mapReview(v: any) {
     else { const alt = rr.starRatingOverall ?? rr.starRating ?? rr.overallSatisfaction ?? null; ratingNum = alt != null ? Number(alt) : null }
   }
   if (ratingNum != null && Number.isNaN(ratingNum)) ratingNum = null
+  // SAFETY NET: Booking publishes 0-10. The scoring.review_score/2 above normalizes the usual
+  // shape, but if a raw 10-scale value slips through the primary field chain (score/average_score),
+  // halve it here — the stored column is ALWAYS the 5-star scale (combined stats depend on it).
+  if (ratingNum != null && ratingNum > 5 && /booking/i.test(String(rawChannel || ''))) ratingNum = ratingNum / 2
   if (ratingNum != null) ratingNum = Math.round(ratingNum * 10) / 10
 
   return {
