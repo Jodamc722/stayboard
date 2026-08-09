@@ -112,6 +112,49 @@ function humanTag(t: string): string {
     .toLowerCase()
     .replace(/^(.)/, (m) => m.toUpperCase())
 }
+// IS THIS TAG A COMPLAINT OR A COMPLIMENT? (Jon 2026-08-09: "why on the review page are some of
+// these positives")
+//
+// It used to be decided by the CATEGORY SCORE alone — anything scored 4 or less had all of its
+// tags filed as complaints. But a guest who scores cleanliness 4/5 and tags CLEANLINESS_FREE_OF_
+// CLUTTER is praising the unit, and "Free of clutter" and "Responsive host" were being counted as
+// things to fix. Worse, humanTag strips the POSITIVE/NEGATIVE marker off the tag before anything
+// looks at it, so the one reliable signal was thrown away first.
+//
+// Order matters: the tag's own polarity is authoritative, then an explicit list of the sub-tags
+// Airbnb ships without a marker (CLEANLINESS_*, ACCURACY_* and friends), then null — and only a
+// null falls back to the score. Explicit lists beat clever pattern-matching here because
+// NOT_HELPFUL contains "helpful" and DID_NOT_MATCH_PHOTOS contains "match".
+const POSITIVE_TAGS = new Set([
+  'FREE_OF_CLUTTER', 'SPOTLESS', 'FRESH_LINENS', 'SMELLED_GREAT', 'WELL_MAINTAINED',
+  'RESPONSIVE_HOST', 'HELPFUL', 'QUICK_RESPONSES', 'GREAT_COMMUNICATION',
+  'AS_DESCRIBED', 'ACCURATE_PHOTOS', 'MATCHED_PHOTOS', 'BETTER_THAN_EXPECTED',
+  'EASY_TO_FIND', 'CLEAR_INSTRUCTIONS', 'EASY_CHECK_IN', 'SELF_CHECK_IN', 'SMOOTH_CHECK_IN',
+  'GREAT_NEIGHBORHOOD', 'GREAT_LOCATION', 'CONVENIENT', 'QUIET', 'FELT_SAFE', 'WALKABLE',
+  'GOOD_VALUE', 'GREAT_VALUE', 'GREAT_AMENITIES', 'COMFORTABLE_BEDS', 'WELCOMING',
+])
+const NEGATIVE_TAGS = new Set([
+  'NOTICEABLE_SMELL', 'DIRTY', 'DIRTY_FLOORS', 'DUSTY_SURFACES', 'MOLD_OR_MILDEW', 'PESTS',
+  'TRASH_LEFT_BEHIND', 'DIRTY_LINENS', 'DIRTY_BATHROOM', 'DIRTY_KITCHEN',
+  'NOT_HELPFUL', 'SLOW_TO_RESPOND', 'UNRESPONSIVE', 'POOR_COMMUNICATION',
+  'DID_NOT_MATCH_PHOTOS', 'SMALLER_THAN_EXPECTED', 'NEEDS_MAINTENANCE', 'MISSING_AMENITIES',
+  'INACCURATE_DESCRIPTION', 'DIFFICULT_TO_FIND', 'HARD_TO_FIND', 'CONFUSING_INSTRUCTIONS',
+  'LOCKED_OUT', 'NOISY', 'FELT_UNSAFE', 'BAD_NEIGHBORHOOD', 'OVERPRICED', 'UNEXPECTED_FEES',
+])
+
+function tagPolarity(rawTag: string): 'positive' | 'negative' | null {
+  const t = str(rawTag).toUpperCase()
+  // 1. Airbnb's own marker, read BEFORE humanTag strips it.
+  if (t.includes('_POSITIVE_')) return 'positive'
+  if (t.includes('_NEGATIVE_')) return 'negative'
+  // 2. Category sub-tags carry no marker — match on the part after the category prefix.
+  const body = t.replace(/^(CLEANLINESS|ACCURACY|COMMUNICATION|CHECK_?IN|LOCATION|VALUE|AMENITIES)_/, '')
+  if (NEGATIVE_TAGS.has(body)) return 'negative'
+  if (POSITIVE_TAGS.has(body)) return 'positive'
+  // 3. Genuinely unknown (CLEANLINESS_OTHER and the like) — the caller uses the score instead.
+  return null
+}
+
 function replyMinutes(raw: any): number | null {
   const rr = (raw && (raw.rawReview || raw.raw)) || {}
   const a = new Date(str(rr.submitted_at || rr.submittedAt || (raw && raw.createdAt))).getTime()
@@ -227,6 +270,10 @@ export async function GET(req: NextRequest) {
   // theme and every category we also keep WHICH units it came from and a few of the guests' own words,
   // so clicking the number lands on the listings that caused it.
   const tagDetail: Record<string, { byUnit: Record<string, number>; samples: any[] }> = {}
+  // Praise is kept in its own pair of accumulators, not as a sign flag on the complaint ones, so a
+  // theme can never be double-counted and the two lists sort independently.
+  const praiseCount: Record<string, number> = {}
+  const praiseDetail: Record<string, { byUnit: Record<string, number>; samples: any[] }> = {}
   const catByUnit: Record<string, Record<string, { n: number; sum: number }>> = {}
   const replyTimes: number[] = []
   let replied = 0
@@ -308,11 +355,17 @@ export async function GET(req: NextRequest) {
       const cu = catByUnit[k] = catByUnit[k] || {}
       const cue = cu[lid] = cu[lid] || { n: 0, sum: 0 }
       cue.n++; cue.sum += c.rating
-      // only NEGATIVE experiences are worth counting as themes
-      if (c.rating <= 4) for (const t of c.tags) {
+      // Split the tags by what they actually SAY, not by the score they arrived with. The tag's own
+      // polarity decides; only an unmarked tag falls back to the category score, and there a 4/5
+      // still reads as a gripe (the old rule) while a 5/5 reads as praise.
+      for (const t of c.tags) {
+        const pol = tagPolarity(t) || (c.rating <= 4 ? 'negative' : 'positive')
         const h = humanTag(t)
-        tagCount[h] = (tagCount[h] || 0) + 1
-        const td = tagDetail[h] = tagDetail[h] || { byUnit: {}, samples: [] }
+        const [count, detail] = pol === 'positive'
+          ? [praiseCount, praiseDetail] as const
+          : [tagCount, tagDetail] as const
+        count[h] = (count[h] || 0) + 1
+        const td = detail[h] = detail[h] || { byUnit: {}, samples: [] }
         td.byUnit[lid] = (td.byUnit[lid] || 0) + 1
         if (td.samples.length < 6) td.samples.push({
           listingId: lid, unit: li.name, at: str(r.created_at).slice(0, 10),
@@ -579,6 +632,20 @@ export async function GET(req: NextRequest) {
   const stays = ((resRes.data || []) as any[]).filter(r => !/cancel|declin|inquir|expire/i.test(str(r.status)) && inScope(String(r.listing_id)))
   const months = Object.keys(byMonth).sort().slice(-13).map(m => ({ month: m, ...summarise(byMonth[m], mean) }))
 
+  // One builder for both lists — complaints and praise are the same shape, so they can never
+  // disagree about how a row is counted or how the drill-down is capped.
+  const tagRows = (
+    counts: Record<string, number>,
+    detail: Record<string, { byUnit: Record<string, number>; samples: any[] }>,
+  ) => Object.keys(counts).map(t => {
+    const td = detail[t] || { byUnit: {}, samples: [] }
+    const uRows = Object.keys(td.byUnit).map(lid => ({
+      listingId: lid, unit: (lmap[lid] || {}).name || 'Unknown unit',
+      building: (lmap[lid] || {}).building || 'Other', n: td.byUnit[lid],
+    })).sort((a, b) => b.n - a.n)
+    return { tag: t, n: counts[t], units: uRows.slice(0, 10), unitCount: uRows.length, samples: td.samples.slice(0, 4) }
+  }).sort((a, b) => b.n - a.n).slice(0, 12)
+
   return NextResponse.json({
     ok: true, days, from, to, market, building, channel,
     channelList: Array.from(new Set(((rRes.data || []) as any[]).map(r => str(r.channel)).filter(Boolean))).sort(),
@@ -620,14 +687,10 @@ export async function GET(req: NextRequest) {
         units: uRows.slice(0, 10), unitCount: uRows.length,
       }
     }).sort((a, b) => a.avg - b.avg),
-    themes: Object.keys(tagCount).map(t => {
-      const td = tagDetail[t] || { byUnit: {}, samples: [] }
-      const uRows = Object.keys(td.byUnit).map(lid => ({
-        listingId: lid, unit: (lmap[lid] || {}).name || 'Unknown unit',
-        building: (lmap[lid] || {}).building || 'Other', n: td.byUnit[lid],
-      })).sort((a, b) => b.n - a.n)
-      return { tag: t, n: tagCount[t], units: uRows.slice(0, 10), unitCount: uRows.length, samples: td.samples.slice(0, 4) }
-    }).sort((a, b) => b.n - a.n).slice(0, 12),
+    themes: tagRows(tagCount, tagDetail),
+    // What guests call out as GOOD. Same shape as themes so the UI renders it with the same
+    // component — the only difference is which bucket it came from.
+    praise: tagRows(praiseCount, praiseDetail),
     cleaners: canSeeCleaners ? cleaners : null,
     inspectors: canSeeCleaners ? inspectors : null,
     inspectorHoldRate: canSeeCleaners ? ((inspectors as any).portfolioHoldRate ?? null) : null,
