@@ -25,6 +25,15 @@ const build = (v: BriefVariant) => v === 'GM' ? buildGmBrief() : buildOpsBrief(v
 const ALL_VARIANTS: BriefVariant[] = ['Miami', 'Broward', 'full', 'GM']
 
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
+// STANDING CC (Jon, 2026-08-09): the operations manager sees every brief that goes out — team,
+// leadership and vendor alike — so nothing reaches a crew or an outside company that he has not
+// also received. Dropped automatically when he is already a named recipient, so he is never
+// double-sent, and configurable in one place rather than sprinkled through each send.
+const STANDING_CC = ['roberto@stay-hospitality.com']
+const ccFor = (to: string[]): string[] => {
+  const already = new Set(to.map(t => String(t || '').trim().toLowerCase()))
+  return STANDING_CC.filter(c => !already.has(c.toLowerCase()))
+}
 
 async function currentUser(): Promise<string | null> {
   try {
@@ -88,7 +97,7 @@ export async function GET(req: NextRequest) {
   for (const { v, to } of lists) {
     if (!to.length) { out.push({ variant: v, skipped: 'no recipients' }); continue }
     const b = await build(v)
-    const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
+    const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
     out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
   }
   // Vendor briefs — external companies, so each group only ever sees its own buildings.
@@ -96,7 +105,7 @@ export async function GET(req: NextRequest) {
     const to = ((cfg.vendors || {})[g.key] || []).filter(Boolean)
     if (!to.length) { out.push({ variant: 'vendor:' + g.key, skipped: 'no recipients' }); continue }
     const b = await buildVendorBrief(g.key)
-    const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
+    const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
     out.push({ variant: 'vendor:' + g.key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
   }
   return NextResponse.json({ ok: out.every(o => o.sent || o.skipped), from: fromEmail, results: out })
