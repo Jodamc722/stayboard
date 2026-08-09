@@ -84,6 +84,42 @@ function Sub({ children }: { children: any }) {
   return <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-1.5 mb-0.5">{children}</div>
 }
 
+// Complaints and praise are the same list with the sign flipped, so they share one renderer —
+// there is no way for the two sections to drift apart in layout or in how a row is counted.
+// Only the colour and the sub-headings change, because a red bar next to "Responsive host" is
+// what made this confusing in the first place.
+function TagFold({ title, rows, tone }: { title: string; rows: any[]; tone: 'bad' | 'good' }) {
+  if (!rows.length) return null
+  const bar = tone === 'good' ? 'bg-emerald-500' : 'bg-rose-500'
+  const num = tone === 'good' ? 'text-emerald-700' : 'text-rose-700'
+  const max = Math.max(1, rows[0].n)
+  return (
+    <Fold title={title} summary={rows.slice(0, 3).map(t => t.tag.toLowerCase() + ' ' + t.n).join(' · ')}>
+      {rows.map((t: any) => (
+        <Drill key={t.tag} canOpen={!!(t.units || []).length}
+          head={() => (<>
+            <span className="flex-1 text-ink truncate">{t.tag}</span>
+            <span className="text-[10.5px] text-muted flex-shrink-0">{t.unitCount} unit{t.unitCount === 1 ? '' : 's'}</span>
+            <span className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
+              <span className={'block h-full ' + bar} style={{ width: Math.max(4, (t.n / max) * 100) + '%' }} />
+            </span>
+            <span className="w-7 text-right text-muted tabular-nums flex-shrink-0">{t.n}</span>
+          </>)}>
+          <Sub>Which units {'·'} most mentions first</Sub>
+          {(t.units || []).map((u: any) => (
+            <UnitLink key={u.listingId} id={u.listingId}>
+              <span className="flex-1 truncate text-ink">{u.unit} <span className="text-muted">· {u.building}</span></span>
+              <span className={num + ' font-semibold tabular-nums w-8 text-right'}>{u.n}×</span>
+            </UnitLink>
+          ))}
+          {!!(t.samples || []).length && <Sub>What guests said</Sub>}
+          <div className="space-y-1">{(t.samples || []).map((s: any, i: number) => <Quote key={i} s={s} />)}</div>
+        </Drill>
+      ))}
+    </Fold>
+  )
+}
+
 export function ReviewKpis() {
   const [open, setOpen] = useState(true)
   const [days, setDays] = useState(90)
@@ -234,31 +270,8 @@ export function ReviewKpis() {
             })}
           </Fold>
 
-          {!!(d?.themes || []).length && (
-            <Fold title="Complaints" summary={(d.themes || []).slice(0, 3).map((t: any) => t.tag.toLowerCase() + ' ' + t.n).join(' · ')}>
-              {(d.themes || []).map((t: any) => (
-                <Drill key={t.tag} canOpen={!!(t.units || []).length}
-                  head={() => (<>
-                    <span className="flex-1 text-ink truncate">{t.tag}</span>
-                    <span className="text-[10.5px] text-muted flex-shrink-0">{t.unitCount} unit{t.unitCount === 1 ? '' : 's'}</span>
-                    <span className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
-                      <span className="block h-full bg-rose-500" style={{ width: Math.max(4, (t.n / Math.max(1, d.themes[0].n)) * 100) + '%' }} />
-                    </span>
-                    <span className="w-7 text-right text-muted tabular-nums flex-shrink-0">{t.n}</span>
-                  </>)}>
-                  <Sub>Which units {'·'} most mentions first</Sub>
-                  {(t.units || []).map((u: any) => (
-                    <UnitLink key={u.listingId} id={u.listingId}>
-                      <span className="flex-1 truncate text-ink">{u.unit} <span className="text-muted">· {u.building}</span></span>
-                      <span className="text-rose-700 font-semibold tabular-nums w-8 text-right">{u.n}×</span>
-                    </UnitLink>
-                  ))}
-                  {!!(t.samples || []).length && <Sub>What guests said</Sub>}
-                  <div className="space-y-1">{(t.samples || []).map((s: any, i: number) => <Quote key={i} s={s} />)}</div>
-                </Drill>
-              ))}
-            </Fold>
-          )}
+          <TagFold title="Complaints" rows={d?.themes || []} tone="bad" />
+          <TagFold title="What guests praise" rows={d?.praise || []} tone="good" />
 
           {d?.cleaners && (
             <Fold title="Cleaning team" summary={(d.cleaners || []).filter((c: any) => c.ranked).length + ' with ' + d.minTurns + '+ turns'}>
