@@ -23,7 +23,7 @@ import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
-import { laborAmount } from '@/lib/billing'
+import { laborAmount, billingMonth } from '@/lib/billing'
 import { staffByName, resolveStaff } from '@/lib/staffing'
 
 export const dynamic = 'force-dynamic'
@@ -402,30 +402,35 @@ export async function GET(req: Request) {
     const hkSupPay = round2(Array.from(hk.people).filter(nm2 => isSupervisor(nm2))
       .reduce((a, nm2) => a + timecards.filter(t => t.name === nm2).reduce((x, t) => x + (t.laborCost ?? 0), 0), 0))
 
-    // Billable maintenance work, straight from Breezeway billing (rates + adjustments).
-    const mtIds = taskRows.filter(t => classify(t) === 'maintenance').map(t => String(t.id))
+    // BILLABLE MAINTENANCE — read from the SAME engine as the Billable Hours sheet (lib/billing).
+    //
+    // The old version here priced each task with laborAmount(rate_paid, ...) alone. Breezeway
+    // carries a rate on ZERO tasks (verified against live data 2026-08-09), so that returned ~$0
+    // and this board reported $35 of billable maintenance in a week where the Billable Hours sheet
+    // showed $1,565. It looked like a "reviewed-only" filter; it was not — review status has never
+    // been part of either calculation. The real cause: the team enters FLAT AMOUNTS in Breezeway,
+    // which arrive as billing-detail cost/supply items, and those were being ignored here.
+    // billingMonth() applies the whole rule — labor + items, owner-billable only, honouring
+    // exclusions and overrides — so calling it is the only way the two screens can agree.
     let mtBillable = 0, mtBilledTasks = 0
-    if (mtIds.length) {
-      const dets: Record<string, any> = {}
-      const madj: Record<string, any> = {}
-      for (let i = 0; i < mtIds.length; i += 400) {
-        const chunk = mtIds.slice(i, i + 400)
-        try { const { data } = await sb.from('breezeway_billing_details').select('task_id,rate_type').in('task_id', chunk); for (const d0 of (data || []) as any[]) dets[String(d0.task_id)] = d0 } catch { /* no detail yet */ }
-        try { const { data } = await sb.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk); for (const a0 of (data || []) as any[]) madj[String(a0.task_id)] = a0 } catch { /* overlay optional */ }
+    try {
+      const mtIdSet = new Set(taskRows.filter(t => classify(t) === 'maintenance').map(t => String(t.id)))
+      if (mtIdSet.size) {
+        const months = Array.from(new Set([String(start).slice(0, 7), String(end).slice(0, 7)]))
+        const seen = new Set<string>()
+        for (const m of months) {
+          const bm = await billingMonth(m)
+          for (const bt of (bm.tasks || [])) {
+            const id = String((bt as any).id)
+            if (!mtIdSet.has(id) || seen.has(id)) continue
+            seen.add(id)
+            const amt = Number((bt as any).billedAmount) || 0
+            if (amt > 0) { mtBillable += amt; mtBilledTasks++ }
+          }
+        }
+        mtBillable = Math.round(mtBillable * 100) / 100
       }
-      for (const t of taskRows) {
-        if (classify(t) !== 'maintenance') continue
-        const adj = madj[String(t.id)]
-        if (adj && adj.excluded) continue
-        const det = dets[String(t.id)]
-        const cappedMin = t.total_minutes != null ? Math.min(Number(t.total_minutes), 480) : null
-        const amt = adj && adj.override_amount != null
-          ? Number(adj.override_amount)
-          : laborAmount(num(t.rate_paid), det && det.rate_type != null ? String(det.rate_type) : null, cappedMin, adj && adj.billed_hours != null ? Number(adj.billed_hours) : null)
-        if (amt > 0) { mtBillable += amt; mtBilledTasks++ }
-      }
-      mtBillable = Math.round(mtBillable * 100) / 100
-    }
+    } catch { /* billing detail unavailable — billable simply reads as zero, never blocks the board */ }
 
     const departments = {
       housekeeping: {
