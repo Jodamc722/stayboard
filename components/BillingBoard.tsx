@@ -29,7 +29,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string } | null; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -887,6 +887,27 @@ export function BillingBoard() {
         <Kpi label="Costs + supplies" value={money(kpis.items)} sub="owner-billable line items" />
         <Kpi label="Actual hours" value={(kpis.minutes / 60).toFixed(1) + 'h'} sub="time on task (crew taps)" />
       </div>
+
+      {/* MAINTENANCE COST VS BILLABLE (Jon, 2026-08-09). Billable alone only shows what the owner
+          pays us; without the wage bill beside it nobody can see whether the work earned anything.
+          Payroll is Homebase clocked time for the maintenance crew this month. */}
+      {data && data.maintenancePayroll ? (() => {
+        const mp = data.maintenancePayroll!
+        const billedAll = (data.tasks || []).filter(t => /maint/i.test(String(t.department || ''))).reduce((a, t) => a + (Number(t.billedAmount) || 0), 0)
+        const margin = billedAll - mp.cost
+        return (
+          <div className="rounded-xl border border-line bg-white px-4 py-3 mb-3 flex items-center gap-x-6 gap-y-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted">Maintenance this month</span>
+            <span className="text-[13px]"><span className="text-muted">Billable to owners</span> <b className="tabular-nums">${Math.round(billedAll).toLocaleString()}</b></span>
+            <span className="text-[13px]"><span className="text-muted">Payroll</span> <b className="tabular-nums">${Math.round(mp.cost).toLocaleString()}</b>
+              <span className="text-muted"> · {mp.hours} hrs · {mp.people} {mp.people === 1 ? 'person' : 'people'}</span></span>
+            <span className={'text-[13px] font-bold tabular-nums ' + (margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+              {margin >= 0 ? '+' : '−'}${Math.abs(Math.round(margin)).toLocaleString()} <span className="font-normal text-muted">margin</span>
+            </span>
+            <span className="ml-auto text-[11px] text-muted">{mp.source} · billable counts every task, reviewed or not</span>
+          </div>
+        )
+      })() : null}
 
       {data && data.missingDetail > 0 && canEdit ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 flex-wrap">
