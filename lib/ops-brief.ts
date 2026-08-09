@@ -280,6 +280,74 @@ function card(title: string, count: number | null, inner: string, accent = '#636
 }
 const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:8px 0 2px">${t}</p>`
 
+// ── THE ACCESS NOTICE (Jon, 2026-08-09) ─────────────────────────────────────────────────────────
+// "This is auto generated and need to confirm access before entering units. This is not a green
+// light." A brief lists units and times; it does NOT know whether a guest extended, whether a late
+// checkout was granted, or whether somebody is still inside. Nobody should read a row here as
+// permission to open a door, so every brief carries this above the footer, in plain sight.
+const accessNotice = (): string =>
+  `<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:12px;padding:12px 16px;margin-bottom:12px">
+    <p style="margin:0;font-size:12.5px;line-height:1.6;color:#92400e">
+      <b>Confirm access before entering any unit.</b> This brief is generated automatically from
+      last night's data — it is <b>not a green light</b>. Guests extend, late checkouts get approved
+      and plans change after this is sent. Always confirm the unit is clear before you enter.
+    </p>
+  </div>`
+
+// ── A HOSPITALITY THOUGHT, ONE PER DAY ──────────────────────────────────────────────────────────
+// Picked by the DATE, not at random, so everyone who opens the brief on the same morning reads the
+// same line and it changes exactly once a day. The list is long enough not to repeat inside a
+// season; add to it freely — the rotation adjusts itself.
+const HOSPITALITY_QUOTES: { text: string; who: string }[] = [
+  { text: 'People will forget what you said, people will forget what you did, but people will never forget how you made them feel.', who: 'Maya Angelou' },
+  { text: 'Service is the rent we pay for the privilege of living on this earth.', who: 'Shirley Chisholm' },
+  { text: 'We are ladies and gentlemen serving ladies and gentlemen.', who: 'The Ritz-Carlton credo' },
+  { text: 'Hospitality is almost impossible to teach. It is all about hiring the right people.', who: 'Danny Meyer' },
+  { text: 'The little things are the big things.', who: 'Conrad Hilton' },
+  { text: 'Take care of your employees and they will take care of your customers.', who: 'Richard Branson' },
+  { text: 'Excellence is not a skill, it is an attitude.', who: 'Ralph Marston' },
+  { text: 'Quality is never an accident; it is always the result of intelligent effort.', who: 'John Ruskin' },
+  { text: 'A guest never forgets a clean room; they only remember a dirty one.', who: 'Hotelier proverb' },
+  { text: 'Being on par in terms of price and quality only gets you into the game. Service wins it.', who: 'Tony Alessandra' },
+  { text: 'You do not build a business. You build people, and then people build the business.', who: 'Zig Ziglar' },
+  { text: 'Hospitality is when someone knows they are welcome before you say a word.', who: 'Unknown' },
+  { text: 'Details create the big picture.', who: 'Sanford I. Weill' },
+  { text: 'Make the guest the hero of their own trip.', who: 'Chip Conley' },
+  { text: 'How you do anything is how you do everything.', who: 'Unknown' },
+  { text: 'The first duty of a host is to make the guest feel at ease.', who: 'Escoffier' },
+  { text: 'Consistency is the true foundation of trust.', who: 'Roy T. Bennett' },
+  { text: 'Do the common things uncommonly well.', who: 'John D. Rockefeller Jr.' },
+  { text: 'It is not the hotel that welcomes the guest, it is the person at the door.', who: 'Unknown' },
+  { text: 'Great service is not what you do when someone is watching.', who: 'Unknown' },
+  { text: 'Every guest arrives carrying a day you know nothing about. Be the easy part of it.', who: 'Unknown' },
+  { text: 'Perfection is a lot of little things done well.', who: 'Fernand Point' },
+  { text: 'Teamwork makes the dream work, but a vision becomes a nightmare when the leader has a big dream and a bad team.', who: 'John C. Maxwell' },
+  { text: 'Courtesy is the one coin you can never have too much of, nor be stingy with.', who: 'John Wanamaker' },
+  { text: 'Clean is not a task. It is a promise you keep to the next guest.', who: 'Unknown' },
+  { text: 'Nobody notices what we do until we do not do it.', who: 'Housekeeping proverb' },
+  { text: 'The standard you walk past is the standard you accept.', who: 'David Morrison' },
+  { text: 'Hospitality is making your guests feel at home, even when you wish they were.', who: 'Unknown' },
+  { text: 'Small acts, done consistently, become a reputation.', who: 'Unknown' },
+  { text: 'Pride in your work shows up in the corners no one checks.', who: 'Unknown' },
+  { text: 'A team that communicates finishes the day together.', who: 'Unknown' },
+]
+// Day-of-year so it advances once per day and lands on the same quote for everyone that morning.
+function quoteOfDay(ymd: string): { text: string; who: string } {
+  const d = new Date(ymd + 'T12:00:00')
+  const start = new Date(d.getFullYear(), 0, 0)
+  const day = Math.floor((d.getTime() - start.getTime()) / 86400000)
+  const idx = ((day % HOSPITALITY_QUOTES.length) + HOSPITALITY_QUOTES.length) % HOSPITALITY_QUOTES.length
+  return HOSPITALITY_QUOTES[idx] || HOSPITALITY_QUOTES[0]
+}
+const closingNote = (ymd: string): string => {
+  const q = quoteOfDay(ymd)
+  return `<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;text-align:center">
+    <p style="margin:0 0 6px;font-size:13.5px;line-height:1.6;color:#0b1220;font-style:italic">${'“'}${esc(q.text)}${'”'}</p>
+    <p style="margin:0 0 10px;font-size:11px;color:#9ca3af;letter-spacing:.04em">${'—'} ${esc(q.who)}</p>
+    <p style="margin:0;font-size:12.5px;color:#374151"><b>Thank you for everything you do.</b></p>
+  </div>`
+}
+
 // ── THE LIVE BOARD (2026-08-07, Jon: "attach the link for Botanica reservations, same for PT,
 // and Capri, Lucerne") ──────────────────────────────────────────────────────────────────────────
 // The email is a snapshot taken at 7am; the board at /vendor/<slug> is the same reservations LIVE,
@@ -666,6 +734,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <p style="${S.bandSub}">${dateNice} · ${d.activeCount} active units</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tilesAll)}</div>
+  ${accessNotice()}
 
   ${eyebrow('Act now')}
   ${priorities.length
@@ -690,6 +759,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
   ${card('Reputation — last 30 days', null, `<p style="font-size:13px;margin:8px 0 2px">${repLine}</p>`)}
 
+  ${closingNote(d.today)}
   <p style="${S.foot}">Sent automatically by Lighthouse every morning · the boards have the live picture.</p>
   </div></body></html>`
 
@@ -1208,6 +1278,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <p style="${S.bandSub}">${dateNice} · whole portfolio · ${d.activeCount} active units</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
+  ${accessNotice()}
 
   ${card('Today', null, tbl(`
     <tr><td style="${S.td}">In the buildings tonight</td><td style="${S.td};text-align:right"><b>${tod.inHouse || 0}</b> <span style="${S.muted}">of ${tod.units || d.activeCount} units · ${occToday != null ? pct1(occToday) : '—'}</span></td></tr>
@@ -1223,6 +1294,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   ${bigRows ? card('Big reservations · next 3 days', (d.bigArrivals || []).length, tbl(bigRows), '#7c3aed') : ''}
   ${ownRows ? card('Owner stays in-house', ownerStays.length, tbl(ownRows), '#4338ca') : ''}
 
+  ${closingNote(today)}
   ${btn(APP_URL + '/command', 'Open Command Center →', 'Every number here is live in the app — this email is the 7am snapshot.')}
   <p style="${S.foot}">
     GM Brief · sent each morning by Stay Hospitality.<br>
@@ -1395,6 +1467,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   ])}</div>
   ${btn(boardUrl, 'Open your live reservations board →',
     'Today, tomorrow and everything upcoming for ' + esc(def.label) + ' — with door codes, guest notes and any changes made after this email was sent. No password needed; bookmark it.')}
+  ${accessNotice()}
   ${card(sameDayCount ? `Clean in this order — ${sameDayCount} same-day turn${sameDayCount === 1 ? '' : 's'} first` : "Today's checkouts — please clean",
     checkouts.length,
     checkouts.length ? tbl(coRows) : emptyLine('No checkouts today.'),
@@ -1404,6 +1477,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   ${topThemes.length ? card(`Things to look for — what guests flagged in the last ${REVIEW_DAYS} days`, topThemes.length, tbl(themeRows), '#7c3aed') : ''}
   ${lowlights.length ? card('In their words — recent low scores', lowlights.length, tbl(lowRows), '#0891b2') : ''}
   ${scored.length && !topThemes.length ? card('Guest feedback', null, emptyLine(`${scored.length} review${scored.length === 1 ? '' : 's'} in the last ${REVIEW_DAYS} days, averaging ${revAvg != null ? revAvg.toFixed(2) : '—'}★, with no cleaning issues raised. Nice work.`), '#047857') : ''}
+  ${closingNote(today)}
   <p style="${S.foot}">
     Sent automatically each morning by Stay Hospitality · questions: reply to this email.<br>
     Your live board: <a href="${boardUrl}" style="color:#4338ca">${boardUrl.replace(/^https:\/\//, '')}</a>
