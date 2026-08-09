@@ -866,11 +866,14 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       if (!done) continue
       const mins = Number(t.total_minutes) || 0
       const nm = str(t.name), dept = str(t.type_department)
+      // Same rule as the Labor board: a departure clean names itself. Common-area, pool, trash,
+      // office and linen jobs live in the housekeeping department too, but they are not turnovers.
+      const isDeparture = /departure clean|turnover clean|check-?out clean/i.test(nm)
       const isClean = /clean/i.test(nm) || /housekeep/i.test(dept)
       const isInsp = !isClean && (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept))
       if (inWin(dte)) {
         const b = bucketFor(String(t.reference_property_id)); if (!b) continue
-        if (isClean) { b.bzClosed++; b.hkMins += mins; if (b.key !== 'Vendors') { const d2 = perDay[dte] = perDay[dte] || { mins: 0, cleans: 0 }; d2.mins += mins } }
+        if (isClean) { if (isDeparture) b.bzClosed++; b.hkMins += mins; if (b.key !== 'Vendors') { const d2 = perDay[dte] = perDay[dte] || { mins: 0, cleans: 0 }; d2.mins += mins } }
         else if (isInsp) b.inspMins += mins
         else b.maintMins += mins
       }
@@ -1133,8 +1136,11 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Housekeeping hours per clean</b> <span style="${S.muted}">clocked hours ÷ checkouts</span></td>
       <td style="${S.td};text-align:right">${(hoursWin && oursTot.cleans) ? `<b>${(hoursWin / oursTot.cleans).toFixed(1)}</b> <span style="${S.muted}">hrs · ${Math.round(hoursWin)} hrs over ${oursTot.cleans} cleans</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}">Housekeeping tasks closed in Breezeway</td>
-      <td style="${S.td};text-align:right"><b>${oursTot.bzClosed}</b> <span style="${S.muted}">against ${oursTot.cleans} checkouts</span></td></tr>
+    <tr><td style="${S.td}">Departure cleans closed in Breezeway <span style="${S.muted}">paperwork compliance</span></td>
+      <td style="${S.td};text-align:right">${oursTot.cleans ? `<b style="${(oursTot.bzClosed / oursTot.cleans) < 0.8 ? S.red : (oursTot.bzClosed / oursTot.cleans) < 0.95 ? S.amber : S.green}">${pct1((oursTot.bzClosed / oursTot.cleans) * 100)}</b> <span style="${S.muted}">${oursTot.bzClosed} closed of ${oursTot.cleans} checkouts</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
+    ${oursTot.cleans && oursTot.bzClosed < oursTot.cleans * 0.95 ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
+      <span style="${S.amber}">${oursTot.cleans - oursTot.bzClosed} departure cleans were done but never closed in Breezeway.</span>
+      <span style="${S.muted}">The guest checked out, so the unit was cleaned — the task just never got marked complete. That is why the Labor board's cost per clean runs higher than this page: it divides the same payroll by the ${oursTot.bzClosed} closed tasks, while this divides by all ${oursTot.cleans} turnovers that actually happened.</span></td></tr>` : ''}
     <tr><td colspan="2" style="${S.td};background:#f8fafc"><span style="${S.muted}">
       <b>A clean means a DEPARTURE clean.</b> Cost per clean is housekeeping payroll ÷ ${oursTot.cleans} checkouts — the turnover the guest cleaning fee actually pays for. Common-area work, pool and trash routes, office cleaning and linen refreshes are real housekeeping hours but are NOT turnovers, so they never enter the denominator. The Labor board counts it the same way.
     </span></td></tr>
