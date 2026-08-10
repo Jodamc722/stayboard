@@ -109,8 +109,13 @@ const MIRROR_COLS = 'id, home_id, reference_property_id, type_department, name, 
 
 /** All mirror tasks that belong to a month: scheduled in it, or (undated) finished in it. */
 export async function monthTasks(month: string): Promise<any[]> {
-  const db = supabaseAdmin()
   const { from, to } = monthRange(month)
+  return rangeTasks(from, to)
+}
+
+/** The same pull over ANY date window (Jon, 2026-08-10: a week, a pay period, a quarter). */
+export async function rangeTasks(from: string, to: string): Promise<any[]> {
+  const db = supabaseAdmin()
   const scheduled = await pageAll((a, b) => db.from('breezeway_tasks_sync')
     .select(MIRROR_COLS)
     .gte('scheduled_date', from).lte('scheduled_date', to)
@@ -269,8 +274,14 @@ function ownerFromName(name: string, tokens: TokenOwner): { ownerId: string; own
 
 /** Assemble the month's billing view: mirror ⋈ details ⋈ adjustments ⋈ owners ⋈ listing names. */
 export async function billingMonth(month: string): Promise<{ tasks: BillingTask[]; owners: OwnerGroup[]; missingDetail: number }> {
+  const { from, to } = monthRange(month)
+  return billingRange(from, to)
+}
+
+/** Assemble the billing view for ANY date window. billingMonth is this with a month's endpoints. */
+export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks: BillingTask[]; owners: OwnerGroup[]; missingDetail: number }> {
   const db = supabaseAdmin()
-  const [raw, owners] = await Promise.all([monthTasks(month), ownerMap()])
+  const [raw, owners] = await Promise.all([rangeTasks(rFrom, rTo), ownerMap()])
   // Homebase roster - a task's doer that matches an employee is in-house labor,
   // a named doer that matches nobody is an outside vendor. No roster (API down)
   // means crew stays null everywhere rather than mislabelling.
