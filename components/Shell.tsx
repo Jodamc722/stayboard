@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
-  Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList, KanbanSquare,
+  Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
   Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Radar, Receipt, CalendarOff } from 'lucide-react'
 
@@ -46,9 +46,6 @@ const SECTIONS: {
       { to: '/inspections', label: 'Inspections', Icon: ClipboardCheck }, // gated 2026-08-06 — was URL-only
       { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
       { to: '/requests', label: 'Work Orders', Icon: ClipboardList },
-      // Projects (2026-08-10, Jon): the work that is NOT a task — renovations, rollouts,
-      // onboarding. Next to Work Orders because that is its closest neighbour.
-      { to: '/projects', label: 'Projects', Icon: KanbanSquare },
     ],
   },
   {
@@ -77,6 +74,7 @@ const SECTIONS: {
     items: [
       { to: '/cleaners', label: 'Cleaners', Icon: Users },
       { to: '/labor',    label: 'Labor', Icon: Timer },
+      { to: '/labor/dashboard', label: 'Labor Dashboard', Icon: Gauge }, // 2026-08-10
     ],
   },
   {
