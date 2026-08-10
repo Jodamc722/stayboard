@@ -122,6 +122,84 @@ export async function getListingCalendar(listingId: string, startDate: string, e
   return Array.isArray(days) ? (days as CalDay[]) : []
 }
 
+// ── MULTI-CALENDAR (Jon, 2026-08-10: "pull that data from Guesty multi cal") ────────────────
+// One call covers many listings, which is the only practical way to ask "what is blocked across
+// the whole portfolio this month" — 233 single-listing calls would time out long before it
+// finished. Guesty caps the listingIds per request, so this chunks and stitches.
+//
+// The response shape has moved around between Guesty API versions, so every path is read
+// defensively and a day is normalised to { listingId, date, status, blocks, note }. A chunk that
+// fails is skipped rather than taking the whole pull down — a partial blocked list still beats no
+// blocked list on a morning brief.
+export type MultiCalDay = {
+  listingId: string
+  date: string
+  status: string
+  blocks: Record<string, any>
+  note: string | null
+  reservationId: string | null
+  raw?: any
+}
+const CAL_CHUNK = 20
+
+export async function getMultiCalendar(listingIds: string[], startDate: string, endDate: string): Promise<MultiCalDay[]> {
+  const ids = Array.from(new Set(listingIds.map(x => String(x || '')).filter(Boolean)))
+  const out: MultiCalDay[] = []
+  for (let i = 0; i < ids.length; i += CAL_CHUNK) {
+    const chunk = ids.slice(i, i + CAL_CHUNK)
+    try {
+      const qs = new URLSearchParams({ listingIds: chunk.join(','), startDate, endDate })
+      const payload = await api<any>(`/availability-pricing/api/calendar/listings?${qs.toString()}`)
+      const rows: any[] =
+        (Array.isArray(payload?.data?.days) ? payload.data.days : null)
+        ?? (Array.isArray(payload?.data?.days?.calendar) ? payload.data.days.calendar : null)
+        ?? (Array.isArray(payload?.data?.calendar) ? payload.data.calendar : null)
+        ?? (Array.isArray(payload?.data) ? payload.data : null)
+        ?? (Array.isArray(payload) ? payload : [])
+      for (const d of rows) {
+        const lid = String(d?.listingId || d?.listing?._id || d?.listing_id || '')
+        const date = String(d?.date || d?.day || '').slice(0, 10)
+        if (!lid || !date) continue
+        const blocks = (d?.blocks && typeof d.blocks === 'object') ? d.blocks : {}
+        out.push({
+          listingId: lid,
+          date,
+          status: String(d?.status || '').toLowerCase(),
+          blocks,
+          note: d?.note ? String(d.note) : (d?.blockRef?.note ? String(d.blockRef.note) : null),
+          reservationId: d?.reservationId || d?.reservation?._id || d?.blockRef?.reservationId || null,
+          raw: d,
+        })
+      }
+    } catch { /* this chunk is missing; the rest of the portfolio still reports */ }
+    await new Promise(r => setTimeout(r, 120))
+  }
+  return out
+}
+
+// A day the OPS team needs to know about: the unit cannot be sold and it is not because a guest
+// booked it. Guesty flags reservation days on the same `unavailable` status as an owner block or a
+// maintenance hold, so the reservation markers have to be excluded explicitly or every occupied
+// night reads as "blocked".
+const RESERVATION_KEYS = ['r', 'reserved', 'reservation', 'booked', 'b']
+// Blocks that are a pricing/policy artifact rather than someone taking the unit out of service.
+const NON_OPS_KEYS = ['bw', 'bookingwindow', 'a', 'advancenotice', 'an', 'lm', 'lead']
+export function isOpsBlock(d: MultiCalDay): boolean {
+  const st = d.status
+  const unavailable = st === 'unavailable' || st === 'blocked' || st === 'booked'
+  if (!unavailable) return false
+  if (d.reservationId) return false
+  const on = Object.keys(d.blocks || {}).filter(k => {
+    const v = (d.blocks as any)[k]
+    return v === true || (v && typeof v === 'object')
+  }).map(k => k.toLowerCase())
+  if (on.some(k => RESERVATION_KEYS.includes(k))) return false
+  // Nothing but booking-window / advance-notice flags is not an ops problem.
+  const meaningful = on.filter(k => !NON_OPS_KEYS.includes(k))
+  if (on.length && !meaningful.length) return false
+  return true
+}
+
 // "Bookable" for our horizon = the date is within the listing's booking window. Guesty marks dates
 // beyond the booking window with a `bw` block; other blocks (b/reservations/manual) still sit INSIDE
 // the window, so we ignore them here - we only care how far ahead a guest could place a booking.
