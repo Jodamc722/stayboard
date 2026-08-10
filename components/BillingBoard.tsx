@@ -29,7 +29,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[]; rate: number; tasks: number; tasksWithTime: number; hoursOnTask: number; laborBillable: number; materials: number } | null; maintenanceByMarket?: { market: string; tasks: number; tasksWithTime: number; minutes: number; laborBillable: number; materials: number }[]; error?: string }
+type Data = { ok: boolean; month: string; from?: string; to?: string; custom?: boolean; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[]; rate: number; tasks: number; tasksWithTime: number; hoursOnTask: number; laborBillable: number; materials: number } | null; maintenanceByMarket?: { market: string; tasks: number; tasksWithTime: number; minutes: number; laborBillable: number; materials: number }[]; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -44,6 +44,12 @@ const chip = (cls: string) => 'inline-flex items-center rounded-full px-2 py-0.5
 
 function etMonth(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
+}
+/** First and last calendar day of a month, used to seed the custom range with what is on screen. */
+function monthEdges(m: string): { from: string; to: string } {
+  const [y, mo] = m.split('-').map(Number)
+  const last = new Date(Date.UTC(y, mo, 0)).getUTCDate()
+  return { from: m + '-01', to: m + '-' + String(last).padStart(2, '0') }
 }
 function shiftMonth(m: string, by: number): string {
   const y = Number(m.slice(0, 4)); const mo = Number(m.slice(5, 7)) - 1 + by
@@ -109,11 +115,12 @@ function AddTask({ units, month, onDone }: { units: { id: string; name: string }
   )
 }
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'bad' }) {
+  const v = tone === 'bad' ? 'text-rose-600' : tone === 'good' ? 'text-emerald-700' : 'text-ink'
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
       <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">{label}</div>
-      <div className="text-2xl font-bold text-ink tabular-nums mt-1 tracking-tight">{value}</div>
+      <div className={'text-2xl font-bold tabular-nums mt-1 tracking-tight ' + v}>{value}</div>
       {sub ? <div className="text-[11px] text-muted mt-0.5">{sub}</div> : null}
     </div>
   )
@@ -641,6 +648,12 @@ export function BillingBoard() {
   const acc = useAccess()
   const canEdit = acc.atLeast('billing', 'edit')
   const [month, setMonth] = useState(etMonth())
+  // CUSTOM DATE WINDOW (Jon, 2026-08-10: "make this date selection as well"). The month arrows
+  // stay the default because month-end billing is the common case; ticking Custom swaps them for
+  // a from/to pair so the same board can answer "this pay period" or "this quarter".
+  const [rangeOn, setRangeOn] = useState(false)
+  const [rFrom, setRFrom] = useState('')
+  const [rTo, setRTo] = useState('')
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -670,18 +683,23 @@ export function BillingBoard() {
   const [bulkAmt, setBulkAmt] = useState('')
   const [rateDraft, setRateDraft] = useState<string | null>(null)
 
-  const load = useCallback(async (m: string, quiet?: boolean) => {
+  // One query string for every fetch on this board, so the tiles, the table below them and the
+  // task list can never be looking at different windows.
+  const winQS = (rangeOn && rFrom && rTo && rFrom <= rTo)
+    ? 'from=' + rFrom + '&to=' + rTo + '&month=' + month
+    : 'month=' + month
+  const load = useCallback(async (qs: string, quiet?: boolean) => {
     if (!quiet) { setLoading(true); setErr(null) }
     try {
-      const r = await fetch('/api/billing?month=' + m)
+      const r = await fetch('/api/billing?' + qs)
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || j.message || 'Load failed')
       setData(j)
     } catch (e: any) { if (!quiet) setErr(String(e?.message || e)) }
     if (!quiet) setLoading(false)
   }, [])
-  useEffect(() => { load(month) }, [month, load])
-  const reload = useCallback(() => load(month), [load, month])
+  useEffect(() => { load(winQS) }, [winQS, load])
+  const reload = useCallback(() => load(winQS), [load, winQS])
   // Optimistic editing: patch one task locally (row + totals move instantly, nothing jumps),
   // then a debounced QUIET refetch trues the board up against the server.
   const patchTask = useCallback((id: string, p: Partial<Task>) => {
@@ -690,8 +708,8 @@ export function BillingBoard() {
   const syncTimer = useRef<any>(null)
   const scheduleSync = useCallback(() => {
     if (syncTimer.current) clearTimeout(syncTimer.current)
-    syncTimer.current = setTimeout(() => { load(month, true) }, 1200)
-  }, [load, month])
+    syncTimer.current = setTimeout(() => { load(winQS, true) }, 1200)
+  }, [load, winQS])
 
   const pullDetails = useCallback(async () => {
     if (!data) return
@@ -833,7 +851,7 @@ export function BillingBoard() {
   }, [filtered])
 
   const exportUrl = (format: string, ownerId?: string | null) =>
-    '/api/billing/export?month=' + month + '&format=' + format + (completedOnly ? '&done=1' : '') + (ownerId ? '&owner=' + encodeURIComponent(ownerId) : '')
+    '/api/billing/export?' + winQS + '&format=' + format + (completedOnly ? '&done=1' : '') + (ownerId ? '&owner=' + encodeURIComponent(ownerId) : '')
 
   const DEPTS = ['all', 'maintenance', 'housekeeping', 'inspection', 'safety']
 
@@ -846,11 +864,33 @@ export function BillingBoard() {
           <p className="text-[12.5px] text-muted mt-0.5">Breezeway tasks organized for billing — review the cost, fix the rate, export by billing owner.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
-            <button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label="Previous month">‹</button>
-            <span className="px-2 text-[12.5px] font-semibold text-ink whitespace-nowrap">{monthLabel(month)}</span>
-            <button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Next month">›</button>
-          </div>
+          {/* DATE WINDOW. Months by default because that is how owners are billed; Custom opens a
+              from/to pair for a week, a pay period or a quarter. Everything on the page — tiles,
+              market table, task list, exports — reads the same window. */}
+          {rangeOn ? (
+            <div className="flex items-center gap-1.5 rounded-xl border border-brand-300 bg-white shadow-soft px-2 py-1">
+              <input type="date" value={rFrom} max={rTo || undefined} onChange={e => setRFrom(e.target.value)}
+                className="text-[12.5px] font-semibold text-ink bg-transparent focus:outline-none" aria-label="From date" />
+              <span className="text-muted text-[12px]">to</span>
+              <input type="date" value={rTo} min={rFrom || undefined} onChange={e => setRTo(e.target.value)}
+                className="text-[12.5px] font-semibold text-ink bg-transparent focus:outline-none" aria-label="To date" />
+              <button onClick={() => setRangeOn(false)} title="Back to whole months"
+                className="ml-1 text-muted hover:text-ink"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          ) : (
+            <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
+              <button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label="Previous month">‹</button>
+              <span className="px-2 text-[12.5px] font-semibold text-ink whitespace-nowrap">{monthLabel(month)}</span>
+              <button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Next month">›</button>
+            </div>
+          )}
+          {!rangeOn ? (
+            <button onClick={() => { const r = monthEdges(month); setRFrom(r.from); setRTo(r.to); setRangeOn(true) }}
+              title="Pick any date range instead of a whole month"
+              className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft">
+              Custom range
+            </button>
+          ) : null}
           <button onClick={reload} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin' : '')} /> Refresh
           </button>
@@ -900,73 +940,72 @@ export function BillingBoard() {
 
       {addOpen && data ? <AddTask units={data.units || []} month={month} onDone={() => { setAddOpen(false); reload() }} /> : null}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Kpi label="Billed to owners" value={money(kpis.billed)} sub={filtered.length + ' tasks in view'} />
-        <Kpi label="Labor" value={money(kpis.labor)} sub="rate × work" />
-        <Kpi label="Costs + supplies" value={money(kpis.items)} sub="owner-billable line items" />
-        <Kpi label="Actual hours" value={(kpis.minutes / 60).toFixed(1) + 'h'} sub="time on task (crew taps)" />
-      </div>
+      {/* THE ROW (Jon, 2026-08-10: "labor should be payroll"). The old Labor tile multiplied a
+          Breezeway rate by hours and read $0.00 on every single task, because not one task in
+          the system carries a rate — it was a tile that could never say anything. It is replaced
+          by the three numbers that actually decide whether this work makes money: what we can
+          bill for the labor, what the crew cost us, and the gap. Every tile covers the SELECTED
+          WINDOW, not the filtered view, so nothing on this screen is scoped differently to
+          anything else on it. */}
+      {(() => {
+        const mp = data && data.maintenancePayroll ? data.maintenancePayroll : null
+        const winLabel = data && data.custom
+          ? new Date(String(data.from) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            + ' – ' + new Date(String(data.to) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : new Date(String(data?.month || month) + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        const margin = mp ? mp.laborBillable - mp.cost : null
+        return (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <Kpi label="Billed to owners" value={money(kpis.billed)} sub={filtered.length + ' tasks in view'} />
+            <Kpi label="Billable labor" value={mp ? money(mp.laborBillable) : '—'}
+              sub={mp ? mp.hoursOnTask + 'h × $' + mp.rate + '/h' : 'no maintenance data'} />
+            <Kpi label="Payroll" value={mp ? money(mp.cost) : '—'}
+              sub={mp ? mp.hours + 'h clocked · ' + mp.people + (mp.people === 1 ? ' person' : ' people') : 'Homebase unavailable'} />
+            <Kpi label="Labor margin" value={margin == null ? '—' : (margin < 0 ? '−' : '') + money(Math.abs(margin))}
+              sub={winLabel} tone={margin == null ? undefined : margin < 0 ? 'bad' : 'good'} />
+            <Kpi label="Costs + supplies" value={money(kpis.items)} sub="owner-billable line items" />
+            <Kpi label="Actual hours" value={(kpis.minutes / 60).toFixed(1) + 'h'} sub="time on task (crew taps)" />
+          </div>
+        )
+      })()}
 
-      {/* MAINTENANCE \u2014 BILLABLE LABOR VS PAYROLL (Jon, 2026-08-10). Labor is time on task at
-          our charge rate, because no Breezeway task carries a rate and the labor side of every
-          bill was computing to zero. Materials sit beside it rather than inside it \u2014 they are a
-          pass-through, not labor. Payroll is the crew's clocked Homebase pay. */}
+      {/* Coverage caveat + the per-market split. The summary strip that used to sit here is gone —
+          its numbers are the tiles above now, and repeating them was the only thing it did. */}
       {data && data.maintenancePayroll ? (() => {
         const mp = data.maintenancePayroll!
-        const margin = mp.laborBillable - mp.cost
         const noTime = mp.tasks - mp.tasksWithTime
         const pct = mp.hours > 0 ? Math.round((mp.hoursOnTask / mp.hours) * 100) : null
-        const mo = new Date(String(data.month || '') + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
         return (
-          <div className="rounded-xl border border-line bg-white px-4 py-3 mb-3">
-            <div className="flex items-center gap-x-6 gap-y-2 flex-wrap">
-              <span className="text-[11px] uppercase tracking-wider font-semibold text-muted">Maintenance {'\u00b7'} {mo}</span>
-              <span className="text-[13px]"><span className="text-muted">Billable labor</span> <b className="tabular-nums">${Math.round(mp.laborBillable).toLocaleString()}</b>
-                <span className="text-muted"> {'\u00b7'} {mp.hoursOnTask}h {'\u00d7'} ${mp.rate}/h</span></span>
-              <span className="text-[13px]"><span className="text-muted">Payroll</span> <b className="tabular-nums">${Math.round(mp.cost).toLocaleString()}</b>
-                <span className="text-muted"> {'\u00b7'} {mp.hours}h clocked {'\u00b7'} {mp.people} {mp.people === 1 ? 'person' : 'people'}</span></span>
-              <span className={'text-[13px] font-bold tabular-nums ' + (margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
-                {margin >= 0 ? '+' : '\u2212'}${Math.abs(Math.round(margin)).toLocaleString()} <span className="font-normal text-muted">labor margin</span>
-              </span>
-              <span className="text-[13px] text-muted">Materials billed <b className="tabular-nums text-ink">${Math.round(mp.materials).toLocaleString()}</b></span>
-              <span className="ml-auto text-[11px] text-muted" title={(mp.roster || []).map(p2 => p2.name + ' \u00b7 ' + p2.hours + 'h \u00b7 $' + Math.round(p2.cost)).join('  \u00b7  ')}>
-                {mp.source}
-              </span>
-            </div>
-
-            {/* Honesty line: the margin is only as good as the time that got logged. */}
+          <div className="rounded-xl border border-line bg-white px-4 py-3">
             {(noTime > 0 || (pct != null && pct < 90)) && (
-              <div className="mt-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+              <div className="mb-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                 {noTime > 0 ? <><b>{noTime}</b> of {mp.tasks} maintenance tasks have no time logged, so they bill $0 labor. </> : null}
-                {pct != null ? <>Only <b>{mp.hoursOnTask}h</b> of the crew&apos;s <b>{mp.hours}h</b> clocked ({pct}%) landed on a task {'\u2014'} read this margin as a floor, not a verdict.</> : null}
+                {pct != null ? <>Only <b>{mp.hoursOnTask}h</b> of the crew&apos;s <b>{mp.hours}h</b> clocked ({pct}%) landed on a task {'\u2014'} read the margin above as a floor, not a verdict.</> : null}
               </div>
             )}
-
             {(data.maintenanceByMarket || []).length > 0 && (
-              <div className="mt-2 pt-2 border-t border-line">
-                <table className="w-full text-[12.5px]">
-                  <thead>
-                    <tr className="text-[10px] uppercase tracking-wider text-muted">
-                      <th className="text-left font-semibold py-1">Market</th>
-                      <th className="text-right font-semibold py-1">Tasks</th>
-                      <th className="text-right font-semibold py-1">Hours on task</th>
-                      <th className="text-right font-semibold py-1">Billable labor</th>
-                      <th className="text-right font-semibold py-1">Materials</th>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wider text-muted">
+                    <th className="text-left font-semibold py-1">Market</th>
+                    <th className="text-right font-semibold py-1">Tasks</th>
+                    <th className="text-right font-semibold py-1">Hours on task</th>
+                    <th className="text-right font-semibold py-1">Billable labor</th>
+                    <th className="text-right font-semibold py-1">Materials</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.maintenanceByMarket || []).map(r => (
+                    <tr key={r.market} className="border-t border-line/60">
+                      <td className="py-1 font-semibold text-ink">{r.market}</td>
+                      <td className="py-1 text-right tabular-nums text-muted" title={r.tasksWithTime + ' with time logged'}>{r.tasks}<span className="text-[10px]"> ({r.tasksWithTime} timed)</span></td>
+                      <td className="py-1 text-right tabular-nums text-muted">{(r.minutes / 60).toFixed(1)}h</td>
+                      <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.laborBillable).toLocaleString()}</td>
+                      <td className="py-1 text-right tabular-nums text-muted">${Math.round(r.materials).toLocaleString()}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {(data.maintenanceByMarket || []).map(r => (
-                      <tr key={r.market} className="border-t border-line/60">
-                        <td className="py-1 font-semibold text-ink">{r.market}</td>
-                        <td className="py-1 text-right tabular-nums text-muted" title={r.tasksWithTime + ' with time logged'}>{r.tasks}<span className="text-[10px]"> ({r.tasksWithTime} timed)</span></td>
-                        <td className="py-1 text-right tabular-nums text-muted">{(r.minutes / 60).toFixed(1)}h</td>
-                        <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.laborBillable).toLocaleString()}</td>
-                        <td className="py-1 text-right tabular-nums text-muted">${Math.round(r.materials).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )
