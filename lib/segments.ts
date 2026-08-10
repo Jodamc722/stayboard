@@ -40,7 +40,10 @@ const BUILDINGS: BuildingDef[] = [
   { label: 'Park Towers', market: 'Miami', vendor: true, re: /\bpark\s*towers?\b|\bpt\b/ },
   { label: 'Miami House', market: 'Miami', re: /\bmiami\s*house\b/ },
   // ── Broward ───────────────────────────────────────────────────────────────
-  { label: 'Botanica', market: 'Broward', re: /\bbotanica\b/ },
+  // Botanica sits in Broward geographically but an outside vendor cleans it (and does not close
+  // Breezeway tasks — see DEFAULT_VENDOR_BUILDINGS in lib/ops-presets.ts, where it has always been
+  // listed). Without this flag the two vendor lists disagreed and Botanica read as one of ours.
+  { label: 'Botanica', market: 'Broward', vendor: true, re: /\bbotanica\b/ },
   { label: 'Eden', market: 'Broward', re: /\beden\b/ },
   { label: 'Rustic', market: 'Broward', re: /\brustic\b/ },
   { label: 'Hendricks', market: 'Broward', re: /\bhendricks?\b/ },
