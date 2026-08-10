@@ -1009,7 +1009,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
                     const p = o.items ? Math.round((o.done / o.items) * 100) : 100
                     return (
-                      <tr key={o.ownerId} onClick={() => { setStmtOwner(o.ownerId); window.scrollTo({ top: 0 }) }}
+                      <tr key={o.ownerId} onClick={() => { setStmtOwner(o.ownerId); document.querySelector('main')?.scrollTo({ top: 0 }) }}
                         className="cursor-pointer hover:bg-app/60 transition">
                         <td className="px-4 py-2.5">
                           <div className="font-medium text-ink">{o.ownerName}</div>
@@ -1065,9 +1065,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <ArrowLeft size={13} /> All statements
                   </button>
                   <span className="ml-auto text-[11px] text-muted">Statement {stmtIdx + 1} of {data.owners.length}</span>
-                  <button disabled={stmtIdx <= 0} onClick={() => { setStmtOwner(data.owners[stmtIdx - 1].ownerId); window.scrollTo({ top: 0 }) }}
+                  <button disabled={stmtIdx <= 0} onClick={() => { setStmtOwner(data.owners[stmtIdx - 1].ownerId); document.querySelector('main')?.scrollTo({ top: 0 }) }}
                     className="p-1.5 rounded-lg border border-line bg-white hover:bg-app disabled:opacity-30"><ChevronLeft size={14} className="text-muted" /></button>
-                  <button disabled={stmtIdx >= data.owners.length - 1} onClick={() => { setStmtOwner(data.owners[stmtIdx + 1].ownerId); window.scrollTo({ top: 0 }) }}
+                  <button disabled={stmtIdx >= data.owners.length - 1} onClick={() => { setStmtOwner(data.owners[stmtIdx + 1].ownerId); document.querySelector('main')?.scrollTo({ top: 0 }) }}
                     className="p-1.5 rounded-lg border border-line bg-white hover:bg-app disabled:opacity-30"><ChevronRight size={14} className="text-muted" /></button>
                 </div>
                 <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
