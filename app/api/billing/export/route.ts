@@ -9,7 +9,7 @@
 // reviewed for the month (the close-out set).
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { billingMonth, type BillingTask } from '@/lib/billing'
+import { billingMonth, billingRange, type BillingTask } from '@/lib/billing'
 import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -330,8 +330,12 @@ export async function GET(req: NextRequest) {
   const month = String(sp.get('month') || '').slice(0, 7)
   const format = String(sp.get('format') || 'csv')
   const ownerId = String(sp.get('owner') || '')
+  // Honour the board's custom date window so an export always matches what was on screen.
+  const isYmd = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))
+  const xFrom = String(sp.get('from') || ''), xTo = String(sp.get('to') || '')
+  const xCustom = isYmd(xFrom) && isYmd(xTo) && xFrom <= xTo
   try {
-    const { tasks } = await billingMonth(month)
+    const { tasks } = xCustom ? await billingRange(xFrom, xTo) : await billingMonth(month)
     const doneOnly = sp.get('done') === '1'
     let scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
     if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)
