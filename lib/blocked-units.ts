@@ -145,6 +145,33 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     }
     flush()
   }
+  // WHAT ELSE A BLOCK COSTS US — but ONLY where the listings genuinely overlap in space.
+  //
+  // A shared room number is NOT enough. "906/2" through "906/9" are eight separate studios in one
+  // building; blocking one has no effect on the others, and an earlier version of this claimed a
+  // single block took seven other units offline. A real parent/child set has a WHOLE-UNIT listing
+  // in it: "Arya 1418 Full - 2BR" beside "Arya 1418/1" and "/2", or "Capri 115/116" beside
+  // "Capri 115". So a set only counts when it contains a parent, and then:
+  //   • blocking the PARENT takes every child offline
+  //   • blocking a CHILD takes the parent offline — but not its sibling children
+  const isParentName = (n: string) =>
+    /\bfull\b/i.test(n) || /\b\d{3,4}\s*\/\s*\d{3,4}\b/.test(n)
+  const collateralFor = (lid: string): string[] => {
+    const me = meta[lid]
+    if (!me) return []
+    const k = roomKeyOf(me.building, me.unit)
+    if (!k) return []
+    const set = (roomSets[k] || []).filter(id => meta[id])
+    if (set.length < 2) return []
+    const parents = set.filter(id => isParentName(meta[id].unit))
+    if (!parents.length) return []                       // just unit numbering, not a shared space
+    const iAmParent = parents.includes(lid)
+    const affected = iAmParent
+      ? set.filter(id => id !== lid)                     // the whole unit is down: every part is
+      : parents.filter(id => id !== lid)                 // a part is down: only the whole unit is
+    return affected.map(id => meta[id].unit).filter(Boolean)
+  }
+
   // WHY THIS IS NOT INFERRED FROM SIBLING BOOKINGS. The first version marked a block as
   // "linked" whenever any sibling listing happened to be booked over the same dates, and it
   // immediately hid the wrong things: "3316/1 - 2BR" carries the note "ac issue" and was pulled
@@ -154,14 +181,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
   // row, and a person typing "ac issue" is always something to chase.
   for (const r of runs) {
     r.linked = r.keys.some(k => k === 'bd' || k === 'sr')
-    const k = roomKeyOf(r.building, r.unit)
-    // WHAT ELSE THIS BLOCK COSTS US. A room sold both whole and in parts — "3316 Full - 4 BR"
-    // beside "3316/1" and "3316/2", "Capri 115/116" beside "Capri 115" — cannot sell the whole
-    // while a part is down. Naming the collateral makes the true cost of leaving a block up
-    // visible: one AC repair can be holding three listings off the market.
-    r.alsoBlocks = k
-      ? (roomSets[k] || []).filter(id => id !== r.listingId).map(id => (meta[id] || {}).unit).filter(Boolean)
-      : []
+    r.alsoBlocks = collateralFor(r.listingId)
   }
 
   const outOfService = runs.filter(r => !r.linked)
