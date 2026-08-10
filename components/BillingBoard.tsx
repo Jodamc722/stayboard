@@ -29,7 +29,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; from?: string; to?: string; custom?: boolean; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[]; rate: number; tasks: number; tasksWithTime: number; hoursOnTask: number; laborBillable: number; materials: number } | null; maintenanceByMarket?: { market: string; tasks: number; tasksWithTime: number; minutes: number; laborBillable: number; materials: number }[]; error?: string }
+type Data = { ok: boolean; month: string; from?: string; to?: string; custom?: boolean; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[]; tasks: number; tasksWithBilling: number; tasksWithTime: number; hoursOnTask: number; billed: number } | null; maintenanceByMarket?: { market: string; tasks: number; tasksWithBilling: number; tasksWithTime: number; minutes: number; billed: number }[]; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -953,12 +953,12 @@ export function BillingBoard() {
           ? new Date(String(data.from) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
             + ' – ' + new Date(String(data.to) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
           : new Date(String(data?.month || month) + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        const margin = mp ? mp.laborBillable - mp.cost : null
+        const margin = mp ? mp.billed - mp.cost : null
         return (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <Kpi label="Billed to owners" value={money(kpis.billed)} sub={filtered.length + ' tasks in view'} />
-            <Kpi label="Billable labor" value={mp ? money(mp.laborBillable) : '—'}
-              sub={mp ? mp.hoursOnTask + 'h × $' + mp.rate + '/h' : 'no maintenance data'} />
+            <Kpi label="Billable" value={mp ? money(mp.billed) : '—'}
+              sub={mp ? mp.tasksWithBilling + ' of ' + mp.tasks + ' tasks carry a cost' : 'no maintenance data'} />
             <Kpi label="Payroll" value={mp ? money(mp.cost) : '—'}
               sub={mp ? mp.hours + 'h clocked · ' + mp.people + (mp.people === 1 ? ' person' : ' people') : 'Homebase unavailable'} />
             <Kpi label="Labor margin" value={margin == null ? '—' : (margin < 0 ? '−' : '') + money(Math.abs(margin))}
@@ -979,7 +979,7 @@ export function BillingBoard() {
           <div className="rounded-xl border border-line bg-white px-4 py-3">
             {(noTime > 0 || (pct != null && pct < 90)) && (
               <div className="mb-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                {noTime > 0 ? <><b>{noTime}</b> of {mp.tasks} maintenance tasks have no time logged, so they bill $0 labor. </> : null}
+                {mp.tasks > mp.tasksWithBilling ? <><b>{mp.tasks - mp.tasksWithBilling}</b> of {mp.tasks} maintenance tasks have no cost entered in Breezeway, so they bill the owner nothing. </> : null}
                 {pct != null ? <>Only <b>{mp.hoursOnTask}h</b> of the crew&apos;s <b>{mp.hours}h</b> clocked ({pct}%) landed on a task {'\u2014'} read the margin above as a floor, not a verdict.</> : null}
               </div>
             )}
@@ -990,8 +990,8 @@ export function BillingBoard() {
                     <th className="text-left font-semibold py-1">Market</th>
                     <th className="text-right font-semibold py-1">Tasks</th>
                     <th className="text-right font-semibold py-1">Hours on task</th>
-                    <th className="text-right font-semibold py-1">Billable labor</th>
-                    <th className="text-right font-semibold py-1">Materials</th>
+                    <th className="text-right font-semibold py-1">Billed</th>
+                    <th className="text-right font-semibold py-1">Tasks w/ cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1000,8 +1000,8 @@ export function BillingBoard() {
                       <td className="py-1 font-semibold text-ink">{r.market}</td>
                       <td className="py-1 text-right tabular-nums text-muted" title={r.tasksWithTime + ' with time logged'}>{r.tasks}<span className="text-[10px]"> ({r.tasksWithTime} timed)</span></td>
                       <td className="py-1 text-right tabular-nums text-muted">{(r.minutes / 60).toFixed(1)}h</td>
-                      <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.laborBillable).toLocaleString()}</td>
-                      <td className="py-1 text-right tabular-nums text-muted">${Math.round(r.materials).toLocaleString()}</td>
+                      <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.billed).toLocaleString()}</td>
+                      <td className="py-1 text-right tabular-nums text-muted">{r.tasksWithBilling} of {r.tasks}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -29,7 +29,7 @@ type Report = {
   costPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
   cleaningMargin: number | null; cleaningMarginPct: number | null
   laborPctOfRevenue: number | null; band: 'on_target' | 'watch' | 'over' | 'no_data'
-  billable: { from: string; to: string; days: number; hours: number; rate: number; labor: number; materials: number; tasks: number; tasksMissingDetail: number; maintenancePayroll: number; margin: number }
+  billable: { from: string; to: string; days: number; billed: number; tasks: number; tasksWithBilling: number; tasksMissingDetail: number; hours: number; maintenancePayroll: number; margin: number }
   people: PersonRow[]
   flags: Flag[]
   settings: { pct_good: number; pct_bad: number }
@@ -292,16 +292,17 @@ export function LaborDashboard() {
               <span className="text-sm font-bold text-ink">Billable work</span>
               <span className="text-[11px] text-muted">rolling {data.billable.days} days · {data.billable.from} → {data.billable.to} · re-read on every load</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-brand-200/60">
-              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Billable labor</div><div className="text-lg font-bold tabular-nums">{money(data.billable.labor)}</div><div className="text-[11px] text-muted">{data.billable.hours}h × ${data.billable.rate}/h</div></div>
-              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Materials</div><div className="text-lg font-bold tabular-nums">{money(data.billable.materials)}</div><div className="text-[11px] text-muted">pass-through</div></div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-brand-200/60">
+              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Billed to owners</div><div className="text-lg font-bold tabular-nums">{money(data.billable.billed)}</div><div className="text-[11px] text-muted">entered on the tasks in Breezeway</div></div>
+              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Tasks with a cost</div><div className={'text-lg font-bold tabular-nums ' + (data.billable.tasksWithBilling < data.billable.tasks / 2 ? 'text-amber-600' : '')}>{data.billable.tasksWithBilling}<span className="text-muted font-normal"> / {data.billable.tasks}</span></div><div className="text-[11px] text-muted">the rest bill nothing</div></div>
               <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Maint payroll</div><div className="text-lg font-bold tabular-nums">{money(data.billable.maintenancePayroll)}</div><div className="text-[11px] text-muted">clocked wages</div></div>
-              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Margin</div><div className={'text-lg font-bold tabular-nums ' + (data.billable.margin < 0 ? 'text-rose-600' : 'text-emerald-700')}>{money(data.billable.margin)}</div><div className="text-[11px] text-muted">{data.billable.tasks} billable tasks</div></div>
-              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Missing detail</div><div className={'text-lg font-bold tabular-nums ' + (data.billable.tasksMissingDetail ? 'text-amber-600' : '')}>{data.billable.tasksMissingDetail}</div><div className="text-[11px] text-muted">bills nothing until pulled</div></div>
+              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Margin</div><div className={'text-lg font-bold tabular-nums ' + (data.billable.margin < 0 ? 'text-rose-600' : 'text-emerald-700')}>{money(data.billable.margin)}</div><div className="text-[11px] text-muted">billed less wages</div></div>
             </div>
             <p className="px-4 py-2 text-[11px] text-muted border-t border-brand-200/60">
-              Billing detail gets edited days after the work, so this window is deliberately wider than the rest of the page —
-              a correction made this morning to a task from five weeks ago shows up here immediately.
+              This is the amount actually entered against each task in Breezeway — nothing priced or estimated. Only {data.billable.tasksWithBilling} of {data.billable.tasks} tasks
+              carry one, so the margin is a floor. {data.billable.hours}h of time was logged on these tasks, shown for context only.
+              Billing gets edited days after the work, so this window is deliberately wider than the rest of the page — a correction
+              made this morning to a task from five weeks ago shows up here immediately.
             </p>
           </div>
 

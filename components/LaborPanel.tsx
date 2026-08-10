@@ -293,7 +293,12 @@ export function LaborPanel() {
                     <ChevronRight size={12} className={'inline mr-1 -mt-0.5 text-muted transition-transform ' + (open === p.name ? 'rotate-90' : '')} />
                     {p.name}
                     {p.overtimeRisk && <span className="ml-2 text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">OT risk</span>}
-                    {p.openTimecard && <span className="ml-2 text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">clocked in</span>}
+                    {p.openTimecard && <span className="ml-2 text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">on shift now</span>}
+                    {!p.openTimecard && p.missedClockOuts && p.missedClockOuts.length > 0 && (
+                      <span title={'Clocked in on ' + p.missedClockOuts.join(', ') + ' and never clocked out — their hours and cost are understated until the card is closed'}
+                        className="ml-2 text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                        never clocked out{p.missedClockOuts.length > 1 ? ' ×' + p.missedClockOuts.length : ''}</span>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums text-muted">{p.scheduledHours}</td>
                   <td className="px-2 py-2 text-right tabular-nums font-semibold text-ink">{p.actualHours}</td>
