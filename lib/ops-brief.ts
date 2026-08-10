@@ -375,7 +375,7 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
   // moment a sibling sells — that is the system working. Those are counted in a footnote instead
   // of padding a list that is supposed to be a worklist.
   const linkedNote = opts?.linked
-    ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${opts.linked} more ${opts.linked === 1 ? 'unit is' : 'units are'} unavailable because a linked listing is booked over the same dates \u2014 normal, nothing to chase.</p>`
+    ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${opts.linked} more ${opts.linked === 1 ? 'listing was' : 'listings were'} closed automatically by Guesty because a linked listing sold \u2014 normal, nothing to chase.</p>`
     : ''
   if (!runs.length) {
     return card('Blocked units — off the calendar', null,
@@ -391,9 +391,15 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
       ? dNice(r.from) + ' \u2192 no end date'
       : dNice(r.from) + ' \u2013 ' + dNice(r.to)
     const why = esc(r.note ? r.note.replace(/\s+/g, ' ').trim().slice(0, 140) : r.reason)
+    // A room sold whole AND in parts cannot sell the whole while a part is down. Naming the
+    // collateral shows the true cost of leaving a block up: one AC repair can be holding three
+    // listings off the market (Jon, 2026-08-10: "some are parent listing").
+    const also = r.alsoBlocks && r.alsoBlocks.length
+      ? `<div style="font-size:10.5px;color:#b45309;margin-top:2px">Also unsellable while this is down: ${esc(r.alsoBlocks.slice(0, 3).join(', '))}</div>`
+      : ''
     return `<tr>
       <td style="${S.td}"><b>${esc(r.unit)}</b>${opts?.showMarket ? `<span style="${S.muted}"> \u00b7 ${esc(r.market)}</span>` : ''}
-        <div style="font-size:11px;color:#6b7280">${why}</div></td>
+        <div style="font-size:11px;color:#6b7280">${why}</div>${also}</td>
       <td style="${S.td};text-align:right;white-space:nowrap">${when}</td>
       <td style="${S.td};text-align:right"><b>${r.nights}</b><span style="${S.muted}">n</span></td>
       <td style="${S.td};text-align:right">${r.live ? pillRed('down now') : pillAmber('in ' + r.startsInDays + 'd')}</td>

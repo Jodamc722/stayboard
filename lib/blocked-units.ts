@@ -15,7 +15,6 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getMultiCalendar, isOpsBlock } from './guesty'
 import { marketOf, buildingOf } from './segments'
-import { isLiveStay } from './stay-status'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const str = (v: any) => (v == null ? '' : String(v))
@@ -41,15 +40,15 @@ export type BlockedRun = {
   // "3316/1" and "3316/2", or "Capri 115/116" alongside "Capri 115" — goes unavailable the moment
   // a sibling sells. That is the system working, not a unit out of service, and mixing the two
   // buries the blocks that actually need chasing.
-  linked: boolean          // unavailable because a linked listing is booked over these dates
-  linkedBy: string | null  // which sibling is booked
+  linked: boolean          // Guesty blocked this automatically because a linked listing sold
+  alsoBlocks: string[]     // other listings on the same room that this block also takes offline
 }
 
 export type BlockedReport = {
   from: string; to: string; days: number
   listingsChecked: number; calendarDays: number
   liveNow: number; upcoming: number; nightsBlocked: number
-  linkedCount: number      // excluded from liveNow/upcoming/nightsBlocked — reported separately
+  linkedCount: number      // Guesty auto-blocks, reported separately from work to chase
   byMarket: Record<string, { units: number; nights: number }>
   runs: BlockedRun[]       // out-of-service only
   linkedRuns: BlockedRun[] // blocked by a booked sibling
@@ -127,7 +126,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
         live: cur.from <= today && cur.to >= today,
         openEnded: cur.to >= end,
         reason: reasonLabel(keys), note: cur.note, keys,
-        linked: false, linkedBy: null,
+        linked: false, alsoBlocks: [],
       })
       cur = null
     }
@@ -146,39 +145,23 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     }
     flush()
   }
-  // IS THIS BLOCK JUST A SIBLING BEING SOLD? For every run on a unit that belongs to a linked set,
-  // look for a live reservation on any sibling that overlaps these dates. If one exists, the
-  // calendar is doing its job and there is nothing for anyone to chase.
-  const linkedCandidates = runs.filter(r => {
+  // WHY THIS IS NOT INFERRED FROM SIBLING BOOKINGS. The first version marked a block as
+  // "linked" whenever any sibling listing happened to be booked over the same dates, and it
+  // immediately hid the wrong things: "3316/1 - 2BR" carries the note "ac issue" and was pulled
+  // off the actionable list purely because 3316/2 was sold that week. A genuine automatic block
+  // is flagged BY GUESTY (bd = blocked by another listing, sr = same-unit reservation) — it never
+  // arrives as a manual block with a human-typed note. So only Guesty's own flags reclassify a
+  // row, and a person typing "ac issue" is always something to chase.
+  for (const r of runs) {
+    r.linked = r.keys.some(k => k === 'bd' || k === 'sr')
     const k = roomKeyOf(r.building, r.unit)
-    return !!k && (roomSets[k] || []).length > 1
-  })
-  if (linkedCandidates.length) {
-    const sibIds = new Set<string>()
-    for (const r of linkedCandidates) {
-      const k = roomKeyOf(r.building, r.unit)!
-      for (const id of roomSets[k]) if (id !== r.listingId) sibIds.add(id)
-    }
-    let stays: any[] = []
-    try {
-      const { data } = await db.from('guesty_reservations')
-        .select('listing_id,listing_name,check_in,check_out,status')
-        .in('listing_id', Array.from(sibIds))
-        .lte('check_in', end).gte('check_out', today).limit(2000)
-      stays = ((data || []) as any[]).filter(x => isLiveStay(x.status))
-    } catch { /* no reservation read = nothing reclassified, which errs toward showing more */ }
-    for (const r of linkedCandidates) {
-      const k = roomKeyOf(r.building, r.unit)!
-      const sibs = new Set((roomSets[k] || []).filter(id => id !== r.listingId))
-      // Overlap: the stay starts before this block ends AND ends after this block starts.
-      const hit = stays.find(x => sibs.has(String(x.listing_id))
-        && String(x.check_in).slice(0, 10) <= r.to
-        && String(x.check_out).slice(0, 10) > r.from)
-      if (hit) {
-        r.linked = true
-        r.linkedBy = String(hit.listing_name || (meta[String(hit.listing_id)] || {}).unit || 'a linked listing')
-      }
-    }
+    // WHAT ELSE THIS BLOCK COSTS US. A room sold both whole and in parts — "3316 Full - 4 BR"
+    // beside "3316/1" and "3316/2", "Capri 115/116" beside "Capri 115" — cannot sell the whole
+    // while a part is down. Naming the collateral makes the true cost of leaving a block up
+    // visible: one AC repair can be holding three listings off the market.
+    r.alsoBlocks = k
+      ? (roomSets[k] || []).filter(id => id !== r.listingId).map(id => (meta[id] || {}).unit).filter(Boolean)
+      : []
   }
 
   const outOfService = runs.filter(r => !r.linked)
