@@ -145,7 +145,7 @@ function render(r: LaborReport): { subject: string; html: string } {
 
   ${card('Payroll by department', table(['Department', 'Hours', 'Payroll'], deptRows), '#4338ca')}
 
-  ${card('Work completed', table(['Kind of work', 'Tasks', 'Hours', 'Materials'], mixRows)
+  ${card('Work completed', table(['Kind of work', 'Tasks', 'Hours', 'Billed'], mixRows)
     + `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">${r.checkouts} in-house checkouts owed a clean and ${r.departureClosed} departure cleans were closed in Breezeway.
       ${r.departureClosed < r.checkouts
         ? 'Cost per clean counts the checkouts, not the closed tasks — a guest leaving is proof the unit needed cleaning, whether or not the paperwork followed.'
