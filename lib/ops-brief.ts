@@ -1207,7 +1207,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${b.cleans || '—'}</td>
       <td style="${S.td};text-align:right">${bRev ? money0(bRev) : '—'}${b.billableHk ? `<div style="font-size:10px;color:#9ca3af">${money0(b.fees)} guest + ${money0(b.billableHk)} billable</div>` : ''}</td>
       <td style="${S.td};text-align:right">${fpc != null ? `<b>${money0(fpc)}</b>` : '—'}</td>
-      <td style="${S.td};text-align:right">${isVendor ? `<span style="${S.muted}">vendor</span>` : (b.payroll != null ? money0(b.payroll) : '—')}</td>
+      <td style="${S.td};text-align:right">${(isVendor || b.vendorRun) ? `<span style="${S.muted}">vendor</span>` : (b.payroll ? money0(b.payroll) : '—')}</td>
       <td style="${S.td};text-align:right">${marginPct != null ? `<b style="${marginPct < 10 ? S.red : S.green}">${pct1(marginPct)}</b>` : '—'}</td>
       <td style="${S.td};text-align:right">${hrs(b.maintMins) || '—'}</td>
       <td style="${S.td};text-align:right">${b.billable ? money0(b.billable) : '—'}</td>
