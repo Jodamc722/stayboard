@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { buildingOf } from '@/lib/geo-areas'
+import { buildingOf } from '@/lib/segments'
 import { THEMES, THEME_BY_KEY, sentenceAbout, looksNegative } from '@/lib/review-themes'
 
 export const dynamic = 'force-dynamic'
@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
   const lmap: Record<string, { name: string; building: string }> = {}
   for (const l of ((lRows || []) as any[])) {
     const name = l.nickname || l.title || 'Unit'
-    lmap[str(l.id)] = { name, building: buildingOf(str(l.building)) || buildingOf(name) || str(l.building) || 'Other' }
+    lmap[str(l.id)] = { name, building: buildingOf(str(l.building), name) || 'Other' }
   }
 
   // Bucket every themed mention by unit.
