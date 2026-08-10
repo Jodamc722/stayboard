@@ -140,7 +140,7 @@ const computeHealth = unstable_cache(async () => {
     for (const b of Object.keys(revparByBuilding)) { const m = median(revparByBuilding[b]); if (m != null) bMedianRevpar[b] = m }
 
     const scored = active.map((l: any) => {
-      const building = rollupBuilding(l.building)
+      const building = rollupBuilding(l.building, l.nickname || l.title || null)
       const reviews = byListing.get(l.id) || []
       const occPct = occPctByListing[String(l.id)] ?? null
       const med = bMedianOcc[building]
