@@ -285,7 +285,7 @@ const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:
 // light." A brief lists units and times; it does NOT know whether a guest extended, whether a late
 // checkout was granted, or whether somebody is still inside. Nobody should read a row here as
 // permission to open a door, so every brief carries this above the footer, in plain sight.
-const accessNotice = (): string =>
+export const accessNotice = (): string =>
   `<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:12px;padding:12px 16px;margin-bottom:12px">
     <p style="margin:0;font-size:12.5px;line-height:1.6;color:#92400e">
       <b>Confirm access before entering any unit.</b> This brief is generated automatically from
@@ -343,7 +343,7 @@ function quoteOfDay(ymd: string): { text: string; who: string } {
 // better"). It sits directly under the masthead, before a single number — the first thing anyone
 // reads is why the work matters, not how much of it there is. Built as a bordered table cell with
 // a heavy left rule: Outlook drops background-image and CSS borders on divs, but honours these.
-const quoteBanner = (ymd: string): string => {
+export const quoteBanner = (ymd: string): string => {
   const q = quoteOfDay(ymd)
   return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 4px">
     <tr><td style="background:#fffbeb;border-left:4px solid #d97706;border-top:1px solid #fde68a;border-right:1px solid #fde68a;border-bottom:1px solid #fde68a;border-radius:0 10px 10px 0;padding:14px 18px">
@@ -789,7 +789,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
 //
 // So this is NOT the ops brief with extra rows. It answers an owner's five questions in order:
 //   1. Is the business full?          occupancy, ADR, RevPAR, booked-ahead
-//   2. Are we making money on ops?    cleaning revenue vs cost, margin, cost per clean, labour %
+//   2. Are we making money on ops?    cleaning revenue vs cost, margin, cost per clean, labor %
 //   3. Is the product good?           review score by market, new reviews, what guests keep saying
 //   4. Is anything bleeding?          claims, glitches, unhappy guests, awaiting replies
 //   5. Who is in the buildings?       big reservations, owner stays
@@ -846,7 +846,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // WHY LABOUR PER MARKET IS AN ALLOCATION, NOT A MEASUREMENT.
   // Checked against live data 2026-08-08: Breezeway carries a pay rate on ZERO of 1,086 tasks, and
   // Homebase is a single location that cannot be split by market. So the only honest way to show
-  // Miami vs Broward vs North labour is to take the real clocked payroll and divide it across the
+  // Miami vs Broward vs North labor is to take the real clocked payroll and divide it across the
   // markets in proportion to the housekeeping MINUTES each one actually consumed. The total is
   // measured; the split is modelled, and the card says so. Vendor buildings are excluded from the
   // split entirely — an outside company cleans those, so none of our payroll belongs to them.
@@ -867,10 +867,13 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     hkMins: number; maintMins: number; inspMins: number
     billable: number; billableHk: number
     payroll: number | null      // allocated (vendors: null — not ours to pay)
-    hours: number | null        // allocated clocked hours, so hours-per-clean works per market
+    hours: number | null        // allocated clocked hours
+    // TRUE when every unit in this market is cleaned by an outside company, so its row is empty
+    // by design rather than by failure. North (Capri, Lucerne, Amrit) is entirely vendor-run.
+    vendorRun: boolean
   }
   const MK_ORDER = ['Miami', 'Broward', 'North', 'Vendors']
-  const newBucket = (k: string): Bucket => ({ key: k, label: k, cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: null, hours: null })
+  const newBucket = (k: string): Bucket => ({ key: k, label: k, cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: null, hours: null, vendorRun: false })
   let buckets: Record<string, Bucket> = {}
   let payrollWin: number | null = null, hoursWin = 0, payrollPrev: number | null = null, hoursPrev = 0
   let payrollAll: number | null = null, hoursAll = 0
@@ -912,12 +915,23 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     // listing -> which column it belongs in. Vendor beats geography: Jon asked for Vendors as its
     // own column, and mixing vendor units into Broward would corrupt the cost-per-clean there.
     const colOf: Record<string, string> = {}
+    // Which geographic markets exist at all, and which of them are 100% outside-cleaned. Without
+    // this, North renders as a row of dashes that reads like a broken feed rather than what it is:
+    // a market whose every building is cleaned by a vendor and therefore lives in the Vendors row.
+    const mktUnits: Record<string, { own: number; vendor: number }> = {}
     for (const l of ((lr3.data || []) as any[])) {
       const nm = l.nickname || l.title || ''
-      colOf[String(l.id)] = (VEN3.test(str(l.building)) || VEN3.test(str(nm)))
-        ? 'Vendors' : String(marketOf(l.building, l.address_city, nm) || 'Other')
+      const geo = String(marketOf(l.building, l.address_city, nm) || 'Other')
+      const isVen = VEN3.test(str(l.building)) || VEN3.test(str(nm))
+      const e = mktUnits[geo] = mktUnits[geo] || { own: 0, vendor: 0 }
+      if (isVen) e.vendor++; else e.own++
+      colOf[String(l.id)] = isVen ? 'Vendors' : geo
     }
     for (const k of MK_ORDER) buckets[k] = newBucket(k)
+    for (const k of MK_ORDER) {
+      const u = mktUnits[k]
+      if (u && u.vendor > 0 && u.own === 0) buckets[k].vendorRun = true
+    }
     const bucketFor = (lid: string): Bucket | null => {
       const k = colOf[lid]
       if (!k) return null
@@ -1147,10 +1161,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     { label: 'Housekeeping margin · 7d', value: marginPctWin != null ? pct1(marginPctWin) : '—',
       tone: marginPctWin == null ? undefined : marginPctWin >= 30 ? 'green' : marginPctWin >= 10 ? 'amber' : 'red',
       note: marginWin != null ? money0(marginWin) + ' on ' + oursTot.cleans + ' cleans' : 'cost not available' },
-    { label: 'Labour % of fee', value: laborPctOfClean != null ? pct1(laborPctOfClean) : '—',
+    { label: 'Labor % of fee', value: laborPctOfClean != null ? pct1(laborPctOfClean) : '—',
       tone: laborPctOfClean == null ? undefined : laborPctOfClean <= 70 ? 'green' : laborPctOfClean <= 90 ? 'amber' : 'red',
       note: hoursWin ? Math.round(hoursWin) + ' hrs clocked' : undefined },
-    { label: 'Billable labour · 7d', value: billableKnown ? money0(tot.billable) : '—',
+    { label: 'Billable labor · 7d', value: billableKnown ? money0(tot.billable) : '—',
       note: billableKnown ? 'owner-billable work' : 'no billing detail' },
     { label: 'Review score · 30d', value: d.rep.avg != null ? d.rep.avg.toFixed(2) : '—',
       tone: d.rep.avg == null ? undefined : d.rep.avg >= 4.6 ? 'green' : d.rep.avg >= 4.3 ? 'amber' : 'red',
@@ -1168,37 +1182,54 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   // ---- BY MARKET. Miami / Broward / North / Vendors, side by side for the week. ----
   const hrs = (m: number) => m ? Math.round(m / 60) : 0
+  // WHAT THIS TABLE MAY AND MAY NOT CLAIM (audited 2026-08-10).
+  // Payroll per market is allocated by each market's share of CHECKOUTS (line ~1042). That makes
+  // cost-per-clean and hours-per-clean IDENTICAL in every market by construction — Miami read $56
+  // and Broward read $56 and neither number had measured anything. Both columns are gone. What
+  // replaces cost-per-clean is FEE PER CLEAN, which is genuinely measured per market: fees come
+  // off the reservation, so they split exactly, and Miami charging more per turn than Broward is a
+  // real fact the table can carry. Allocated labor and the margin it implies are still shown —
+  // they are the best available — but both are labelled as estimates so nobody reads a modelled
+  // split as a measurement.
   const marketRows = cols.map(b => {
     const isVendor = b.key === 'Vendors'
-    const cpc = (!isVendor && b.payroll != null && b.cleans) ? b.payroll / b.cleans : null
     const bRev = b.fees + b.billableHk
+    const fpc = (b.cleans && bRev) ? bRev / b.cleans : null
     const margin = (!isVendor && b.payroll != null) ? bRev - b.payroll : null
     const marginPct = (margin != null && bRev) ? Math.round((margin / bRev) * 1000) / 10 : null
-    // TOTAL HK HOURS TO TOTAL CLEANS, per market — Jon's ask. Clocked hours (allocated) over
-    // checkouts, so it holds up even where Breezeway tasks went unclosed.
-    const hpcHrs = (!isVendor && b.hours != null && b.cleans) ? b.hours / b.cleans : null
+    // A market with no cleans of ours is not a broken row — it is a market an outside company
+    // runs. Say so, instead of printing a line of dashes that reads like a data failure.
+    const sub = isVendor ? 'outside crews'
+      : (!b.cleans && b.vendorRun) ? 'run by outside crews \u2014 see Vendors'
+      : b.bzClosed + ' closed in BZ'
     return `<tr>
-      <td style="${S.td}"><b>${esc(b.label)}</b>${isVendor ? `<div style="font-size:11px;color:#9ca3af">outside crews</div>` : `<div style="font-size:11px;color:#9ca3af">${b.bzClosed} closed in BZ</div>`}</td>
+      <td style="${S.td}"><b>${esc(b.label)}</b><div style="font-size:11px;color:#9ca3af">${sub}</div></td>
       <td style="${S.td};text-align:right">${b.cleans || '—'}</td>
       <td style="${S.td};text-align:right">${bRev ? money0(bRev) : '—'}${b.billableHk ? `<div style="font-size:10px;color:#9ca3af">${money0(b.fees)} guest + ${money0(b.billableHk)} billable</div>` : ''}</td>
+      <td style="${S.td};text-align:right">${fpc != null ? `<b>${money0(fpc)}</b>` : '—'}</td>
       <td style="${S.td};text-align:right">${isVendor ? `<span style="${S.muted}">vendor</span>` : (b.payroll != null ? money0(b.payroll) : '—')}</td>
-      <td style="${S.td};text-align:right">${cpc != null ? `<b>${money0(cpc)}</b>` : (isVendor ? `<span style="${S.muted}">—</span>` : '—')}</td>
-      <td style="${S.td};text-align:right">${hpcHrs != null ? `<b>${hpcHrs.toFixed(1)}</b>` : '—'}</td>
       <td style="${S.td};text-align:right">${marginPct != null ? `<b style="${marginPct < 10 ? S.red : S.green}">${pct1(marginPct)}</b>` : '—'}</td>
       <td style="${S.td};text-align:right">${hrs(b.maintMins) || '—'}</td>
       <td style="${S.td};text-align:right">${b.billable ? money0(b.billable) : '—'}</td>
     </tr>`
-  }).join('') + `<tr>
-      <td style="${S.td};border-top:2px solid #111827"><b>All</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${tot.cleans}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${money0(tot.fees)}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${payrollWin != null ? money0(payrollWin) : '—'}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${cpcWin != null ? money0(cpcWin) : '—'}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${(hoursWin && oursTot.cleans) ? (hoursWin / oursTot.cleans).toFixed(1) : '—'}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${marginPctWin != null ? pct1(marginPctWin) : '—'}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${hrs(tot.maintMins) || '—'}</b></td>
-      <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${billableKnown ? money0(tot.billable) : '—'}</b></td>
+  }).join('') + (() => {
+    // The All row must total the same quantity the market rows show. It was printing guest fees
+    // only while every market row printed fees + billable, so the column did not add up (Broward
+    // showed $9,305, the total counted $9,185 of it).
+    const allRev = tot.fees + tot.billableHk
+    const allFpc = tot.cleans ? allRev / tot.cleans : null
+    const bt = ';border-top:2px solid #111827'
+    return `<tr>
+      <td style="${S.td}${bt}"><b>All</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${tot.cleans}</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${money0(allRev)}</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${allFpc != null ? money0(allFpc) : '—'}</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${payrollWin != null ? money0(payrollWin) : '—'}</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${marginPctWin != null ? pct1(marginPctWin) : '—'}</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${hrs(tot.maintMins) || '—'}</b></td>
+      <td style="${S.td};text-align:right${bt}"><b>${billableKnown ? money0(tot.billable) : '—'}</b></td>
     </tr>`
+  })()
 
   const moneyRows = `
     <tr><td style="${S.td}">Guest cleaning fees <span style="${S.muted}">${oursTot.cleans} checkouts</span></td>
@@ -1215,7 +1246,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <td style="${S.td};text-align:right">${cpcWin != null ? `<b>${money0(cpcWin)}</b> ${comparableWeeks ? deltaPill(cpcDelta, '%', false) + ` <span style="${S.muted}">was ${money0(cpcPrevWin)}</span>` : `<span style="${S.muted}">last week not comparable</span>`}` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Housekeeping margin</b></td>
       <td style="${S.td};text-align:right">${marginWin != null ? `<b style="${marginPctWin != null && marginPctWin < 10 ? S.red : S.green}">${money0(marginWin)}${marginPctWin != null ? ' · ' + pct1(marginPctWin) : ''}</b> ${comparableWeeks ? deltaPill(marginDelta, ' pts') : ''}` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}">Labour as a share of the fee</td>
+    <tr><td style="${S.td}">Labor as a share of the fee</td>
       <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
     <tr><td style="${S.td}"><b>Housekeeping hours per clean</b> <span style="${S.muted}">clocked hours ÷ checkouts</span></td>
       <td style="${S.td};text-align:right">${(hoursWin && oursTot.cleans) ? `<b>${(hoursWin / oursTot.cleans).toFixed(1)}</b> <span style="${S.muted}">hrs · ${Math.round(hoursWin)} hrs over ${oursTot.cleans} cleans</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
@@ -1229,7 +1260,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     </span></td></tr>
     <tr><td style="${S.td}">Hours by department <span style="${S.muted}">Breezeway recorded</span></td>
       <td style="${S.td};text-align:right"><b>${hrs(tot.hkMins)}</b> <span style="${S.muted}">housekeeping</span> · <b>${hrs(tot.maintMins)}</b> <span style="${S.muted}">maintenance</span> · <b>${hrs(tot.inspMins)}</b> <span style="${S.muted}">inspection</span></td></tr>
-    <tr><td style="${S.td}">Billable labour <span style="${S.muted}">maintenance &amp; inspection, billed to owners</span></td>
+    <tr><td style="${S.td}">Billable labor <span style="${S.muted}">maintenance &amp; inspection, billed to owners</span></td>
       <td style="${S.td};text-align:right">${billableKnown ? `<b>${money0(tot.billable - tot.billableHk)}</b> <span style="${S.muted}">separate from cleaning</span>` : `<span style="${S.muted}">no billing detail synced</span>`}</td></tr>
     ${cols.find(c => c.key === 'Vendors' && c.fees) ? `<tr><td style="${S.td}">Vendor buildings <span style="${S.muted}">kept out of the margin</span></td>
       <td style="${S.td};text-align:right"><span style="${S.muted}">${money0((cols.find(c => c.key === 'Vendors') as Bucket).fees)} in fees · outside crews clean these</span></td></tr>` : ''}
@@ -1301,7 +1332,11 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <tr><td style="${S.td}">Booked in the next 7 days</td><td style="${S.td};text-align:right"><b>${money0(tod.booked7)}</b> <span style="${S.muted}">${tod.arrivals7 || 0} arrivals</span></td></tr>`), '#4338ca')}
 
   ${card(`Housekeeping P&L · last 7 days (${winNice})`, null, tbl(moneyRows), '#047857')}
-  ${card('By market · last 7 days', null, table(['Market', 'Cleans', 'Fees', 'Labour', '$/clean', 'Hrs/clean', 'Margin', 'Maint hrs', 'Billable'], marketRows), '#4338ca')}
+  ${card('By market · last 7 days', null,
+    table(['Market', 'Cleans', 'Revenue', 'Rev/clean', 'Labor (est)', 'Margin (est)', 'Maint hrs', 'Billable'], marketRows) +
+    `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af;line-height:1.5">Cleans, revenue and revenue per clean are measured — a checkout belongs to exactly one market.
+     <b>Labor and margin are estimates:</b> Homebase is one location with no market on a timecard, so the real clocked payroll is divided across markets by each market's share of checkouts. Use them to compare revenue per turn, not to judge one crew against another.</p>`,
+    '#4338ca')}
   ${repRows ? card('Guest score by market · last 30 days', null, tbl(repRows), '#d97706') : ''}
   ${card('Guest health', null, tbl(guestRows), '#0891b2')}
   ${card('Where money is leaking', null, tbl(riskRows), '#dc2626')}
