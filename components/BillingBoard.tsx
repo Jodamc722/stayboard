@@ -29,7 +29,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[] } | null; maintenanceByMarket?: { market: string; billed: number; tasks: number; minutes: number }[]; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[]; rate: number; tasks: number; tasksWithTime: number; hoursOnTask: number; laborBillable: number; materials: number } | null; maintenanceByMarket?: { market: string; tasks: number; tasksWithTime: number; minutes: number; laborBillable: number; materials: number }[]; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -907,28 +907,43 @@ export function BillingBoard() {
         <Kpi label="Actual hours" value={(kpis.minutes / 60).toFixed(1) + 'h'} sub="time on task (crew taps)" />
       </div>
 
-      {/* MAINTENANCE: WHAT THE OWNERS PAY US VS WHAT THE CREW COST US (Jon, 2026-08-10 — "just take
-          payroll for maintenance and take billable labor on tasks. That's all"). Two measured
-          numbers and the gap between them. Billable splits by market because every task has a
-          listing; payroll does not, because Homebase has no market on a timecard. */}
+      {/* MAINTENANCE \u2014 BILLABLE LABOR VS PAYROLL (Jon, 2026-08-10). Labor is time on task at
+          our charge rate, because no Breezeway task carries a rate and the labor side of every
+          bill was computing to zero. Materials sit beside it rather than inside it \u2014 they are a
+          pass-through, not labor. Payroll is the crew's clocked Homebase pay. */}
       {data && data.maintenancePayroll ? (() => {
         const mp = data.maintenancePayroll!
-        const billedAll = (data.tasks || []).filter(t => /maint/i.test(String(t.department || ''))).reduce((a, t) => a + (Number(t.billedAmount) || 0), 0)
-        const margin = billedAll - mp.cost
+        const margin = mp.laborBillable - mp.cost
+        const noTime = mp.tasks - mp.tasksWithTime
+        const pct = mp.hours > 0 ? Math.round((mp.hoursOnTask / mp.hours) * 100) : null
+        const mo = new Date(String(data.month || '') + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
         return (
-          <div className="rounded-xl border border-line bg-white px-4 py-3 mb-3 flex items-center gap-x-6 gap-y-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted">Maintenance {'\u00b7'} {new Date(String(data.month || '') + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
-            <span className="text-[13px]"><span className="text-muted">Billable labor on tasks</span> <b className="tabular-nums">${Math.round(billedAll).toLocaleString()}</b></span>
-            <span className="text-[13px]"><span className="text-muted">Maintenance payroll</span> <b className="tabular-nums">${Math.round(mp.cost).toLocaleString()}</b>
-              <span className="text-muted"> {'\u00b7'} {mp.hours} hrs {'\u00b7'} {mp.people} {mp.people === 1 ? 'person' : 'people'}</span></span>
-            <span className={'text-[13px] font-bold tabular-nums ' + (margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
-              {margin >= 0 ? '+' : '\u2212'}${Math.abs(Math.round(margin)).toLocaleString()} <span className="font-normal text-muted">margin</span>
-            </span>
-            <span className="ml-auto text-[11px] text-muted" title={(mp.roster || []).map(p2 => p2.name + ' \u00b7 ' + p2.hours + ' hrs \u00b7 $' + Math.round(p2.cost)).join('  \u00b7  ')}>
-              {mp.source} {'\u00b7'} billable counts every task, reviewed or not
-            </span>
+          <div className="rounded-xl border border-line bg-white px-4 py-3 mb-3">
+            <div className="flex items-center gap-x-6 gap-y-2 flex-wrap">
+              <span className="text-[11px] uppercase tracking-wider font-semibold text-muted">Maintenance {'\u00b7'} {mo}</span>
+              <span className="text-[13px]"><span className="text-muted">Billable labor</span> <b className="tabular-nums">${Math.round(mp.laborBillable).toLocaleString()}</b>
+                <span className="text-muted"> {'\u00b7'} {mp.hoursOnTask}h {'\u00d7'} ${mp.rate}/h</span></span>
+              <span className="text-[13px]"><span className="text-muted">Payroll</span> <b className="tabular-nums">${Math.round(mp.cost).toLocaleString()}</b>
+                <span className="text-muted"> {'\u00b7'} {mp.hours}h clocked {'\u00b7'} {mp.people} {mp.people === 1 ? 'person' : 'people'}</span></span>
+              <span className={'text-[13px] font-bold tabular-nums ' + (margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                {margin >= 0 ? '+' : '\u2212'}${Math.abs(Math.round(margin)).toLocaleString()} <span className="font-normal text-muted">labor margin</span>
+              </span>
+              <span className="text-[13px] text-muted">Materials billed <b className="tabular-nums text-ink">${Math.round(mp.materials).toLocaleString()}</b></span>
+              <span className="ml-auto text-[11px] text-muted" title={(mp.roster || []).map(p2 => p2.name + ' \u00b7 ' + p2.hours + 'h \u00b7 $' + Math.round(p2.cost)).join('  \u00b7  ')}>
+                {mp.source}
+              </span>
+            </div>
+
+            {/* Honesty line: the margin is only as good as the time that got logged. */}
+            {(noTime > 0 || (pct != null && pct < 90)) && (
+              <div className="mt-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                {noTime > 0 ? <><b>{noTime}</b> of {mp.tasks} maintenance tasks have no time logged, so they bill $0 labor. </> : null}
+                {pct != null ? <>Only <b>{mp.hoursOnTask}h</b> of the crew&apos;s <b>{mp.hours}h</b> clocked ({pct}%) landed on a task {'\u2014'} read this margin as a floor, not a verdict.</> : null}
+              </div>
+            )}
+
             {(data.maintenanceByMarket || []).length > 0 && (
-              <div className="w-full mt-1 pt-2 border-t border-line">
+              <div className="mt-2 pt-2 border-t border-line">
                 <table className="w-full text-[12.5px]">
                   <thead>
                     <tr className="text-[10px] uppercase tracking-wider text-muted">
@@ -936,15 +951,17 @@ export function BillingBoard() {
                       <th className="text-right font-semibold py-1">Tasks</th>
                       <th className="text-right font-semibold py-1">Hours on task</th>
                       <th className="text-right font-semibold py-1">Billable labor</th>
+                      <th className="text-right font-semibold py-1">Materials</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(data.maintenanceByMarket || []).map(r => (
                       <tr key={r.market} className="border-t border-line/60">
                         <td className="py-1 font-semibold text-ink">{r.market}</td>
-                        <td className="py-1 text-right tabular-nums text-muted">{r.tasks}</td>
+                        <td className="py-1 text-right tabular-nums text-muted" title={r.tasksWithTime + ' with time logged'}>{r.tasks}<span className="text-[10px]"> ({r.tasksWithTime} timed)</span></td>
                         <td className="py-1 text-right tabular-nums text-muted">{(r.minutes / 60).toFixed(1)}h</td>
-                        <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.billed).toLocaleString()}</td>
+                        <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.laborBillable).toLocaleString()}</td>
+                        <td className="py-1 text-right tabular-nums text-muted">${Math.round(r.materials).toLocaleString()}</td>
                       </tr>
                     ))}
                   </tbody>
