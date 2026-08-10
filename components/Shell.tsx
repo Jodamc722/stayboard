@@ -144,7 +144,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
     : (workspace ? workspaceDef(workspace).label : null)
 
   return (
-    <div className="min-h-screen flex bg-app">
+    // APP SHELL, NOT A LONG PAGE. This was min-h-screen, so the wrapper grew to the height of the
+    // content and the WINDOW did the scrolling — which meant main's overflow-auto never engaged and
+    // every position:sticky inside it silently did nothing (sticky binds to the nearest scrolling
+    // ancestor, and that ancestor was not scrolling). h-screen makes main the real scroller, so the
+    // sidebar stays put and sticky headers work on every page.
+    <div className="h-screen overflow-hidden flex bg-app">
       {/* Sidebar */}
       <aside className="w-60 bg-white border-r border-line flex flex-col">
         <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
