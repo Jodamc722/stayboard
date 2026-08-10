@@ -31,6 +31,11 @@ for (const k of ['revenue', 'payroll', 'margin', 'wageRate', 'laborCost', 'taskP
   'personRevenue', 'costPerTask', 'costPerInspection', 'vendorRevenue'])
   ok('money: ' + k, isMoneyKey(k) === true)
 
+// Counts and known-flags whose names contain a money word but which are not amounts. Nulling any
+// of these makes the board read "no data" instead of "withheld".
+for (const k of ['turnsFromListingFee', 'turnsUnpriced', 'costKnown', 'labourKnown'])
+  ok('kept (not an amount): ' + k, isMoneyKey(k) === false)
+
 for (const k of ['laborPct', 'goalPct', 'marginPct', 'sharePct', 'payrollSharePct',
   'billableCoveragePct', 'utilizationPct', 'scheduledVsActualPct', 'vendorMixPct',
   'supervisorSharePct', 'costDataCoverage', 'revenuePerLaborDollar', 'billableTasks',
@@ -214,6 +219,22 @@ ok('SUPERADMIN constant still matches lib/access.ts',
 const usersSrc = readFileSync(new URL('../app/api/users/route.ts', import.meta.url), 'utf8')
 ok('users API stores extra perms', /isExtraPerm\(k\)\s*\)\s*\{\s*clean\[k\]\s*=\s*body\.features\[k\]\s*===\s*true/.test(usersSrc.replace(/\s+/g, ' ')) || usersSrc.includes('isExtraPerm(k)'), 'no isExtraPerm branch in app/api/users/route.ts')
 ok('users API stores extra perms as strict booleans', usersSrc.includes("body.features[k] === true"))
+// The KPI home board must use the SHARED rule, not its own. It carried a second definition
+// (admin OR workspace admin/gm/data) that survived the 2026-08-10 change and disagreed with the
+// labor board about the same person — and it read `workspace`, which defaults to 'gm'.
+const kpiSrc = readFileSync(new URL('../lib/kpi.ts', import.meta.url), 'utf8')
+ok('KPI board uses the shared canSeeMoney', /canSeeMoney\(access\)/.test(kpiSrc))
+ok('KPI board no longer defines its own money rule',
+  !/access\.workspace === 'gm'/.test(kpiSrc) && !/canSeeMoney = access\.role/.test(kpiSrc))
+ok('KPI board redacts the payload when money is hidden', /redactMoney\(payload\)/.test(kpiSrc))
+// KpiHome renders against payload.canSeeMoney. Emitting it as bare shorthand now resolves to the
+// IMPORTED FUNCTION, which JSON.stringify drops — the board would then hide money from everyone,
+// owner included. It has to be the boolean.
+ok('KPI board sends canSeeMoney as the boolean, not the imported function',
+  /canSeeMoney: showMoney/.test(kpiSrc) && !/^\s*canSeeMoney,\s*$/m.test(kpiSrc))
+// marketRows / buildingRows were never wrapped in money(); the redactor is what covers them.
+ok('KPI market rows still emit a cost field for the redactor to strip', /market: m, units, done: w\.done, cost:/.test(kpiSrc))
+
 const featSrc = readFileSync(new URL('../lib/features.ts', import.meta.url), 'utf8')
 ok('money is registered in EXTRA_PERMS', /EXTRA_PERMS[\s\S]{0,400}?key:\s*'money'/.test(featSrc))
 // check-tabs.mjs scrapes this file for `path: '...'` to build the route census — an extra perm
