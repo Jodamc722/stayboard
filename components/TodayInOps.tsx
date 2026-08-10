@@ -305,11 +305,15 @@ export function TodayInOps() {
       </div>
     )
     return (
-          <div key={u.listingId} style={{ borderLeftWidth: 4 }} className={'rounded-2xl border bg-white overflow-hidden ' + accent(u)}>
-            {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE. */}
-            <div className={'px-4 pt-2.5 pb-2 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-app/60')}>
+          <div key={u.listingId} style={{ borderLeftWidth: 3 }} className={'rounded-xl border bg-white overflow-hidden ' + accent(u)}>
+            {/* HEADER — one line that says WHAT and HOW BAD, one quiet line that says WHERE.
+                DENSITY (Jon 2026-08-10: "clean, easy to use"). Each unit was costing ~136px of
+                screen for a single task, so four of a hundred-and-two were visible at once and
+                the board could not be scanned — only scrolled. Padding, radius and type came down
+                until roughly half again as many fit, without shrinking a single hit target. */}
+            <div className={'px-3 pt-2 pb-1.5 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-app/60')}>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-bold text-[16px] text-ink leading-none">{u.unit}</span>
+                <span className="font-bold text-[14px] text-ink leading-none">{u.unit}</span>
                 {u.sameDayTurn && <span title="A guest checks in here today — this clean cannot slip" className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white">Same-day turn</span>}
                 {(() => {
                   const LS = data.longStayNights || 10
@@ -367,7 +371,7 @@ export function TodayInOps() {
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
                 <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : ti % 2 ? 'bg-app/40' : 'bg-white')}>
-                <div className="group flex items-center gap-3 px-4 py-2.5 text-sm">
+                <div className="group flex items-center gap-3 px-3 py-1.5 text-sm">
                   <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
                     <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
@@ -476,8 +480,13 @@ export function TodayInOps() {
       <datalist id="ppl-all">
         {people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}
       </datalist>
-      {/* CONTROL BAR — everything you SET, one tidy line */}
-      <div className="flex items-center gap-2 flex-wrap mb-3">
+      {/* CONTROL BAR — every control in ONE sticky block, because the list below runs to 100+
+          units. Filters that scroll away are filters you stop using: you scroll to the bottom,
+          decide you want only the unassigned ones, and have to travel back to the top to say so.
+          Where and what-kind were also split across two rows with two alert panels between them,
+          so they never read as the same tool. One block, pinned. */}
+      <div className="sticky top-0 z-30 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm border-b border-line pt-1 pb-2 mb-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shadow-soft">
           {markets.map(m => (
             <button key={m} onClick={() => setMarket(m)} className={'text-[13px] font-medium px-3 py-1.5 transition ' + (market === m ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
@@ -501,6 +510,18 @@ export function TodayInOps() {
           {data.isToday === false && <button onClick={() => { setDateSel(''); setLoading(true) }} className="text-[13px] font-medium px-2.5 py-1.5 bg-ink text-white">Today</button>}
           <button onClick={() => { setLoading(true); load() }} title="Refresh" className="px-2.5 py-1.5 bg-white text-muted hover:bg-app hover:text-ink"><RefreshCw size={13} /></button>
         </span>
+      </div>
+
+      {/* WORK FILTERS — two axes together: WHAT kind of job, and WHERE it stands. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Show</span>
+        {JOBS.map(j => <Chip key={j[0]} label={j[1]} n={jobCount(j[0])} active={jf === j[0]} onClick={() => setJf(j[0])} />)}
+        <span className="h-5 w-px bg-line mx-1" />
+        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Status</span>
+        {STATUSES.map(s => <Chip key={s[0]} label={s[1]} n={statusCount(s[0])} warn={s[0] === 'unassigned'} active={sf === s[0]} onClick={() => setSf(s[0])} />)}
+        {sf === 'behind' && <Chip label="Checked out, not started" n={bhIds.size} warn active onClick={() => setSf('all')} />}
+        {filtering && <button onClick={() => { setJf('all'); setSf('all') }} className="text-[12px] font-medium text-muted hover:text-ink underline ml-1">Clear</button>}
+      </div>
       </div>
 
       {/* STATUS STRIP — the numbers you READ, big enough to read from across the room.
@@ -669,16 +690,6 @@ export function TodayInOps() {
           showed up to work and got nothing, before they have to tell us. */}
       <StaffingCheck date={dateSel || undefined} />
 
-      {/* WORK FILTERS — two axes together: WHAT kind of job, and WHERE it stands. */}
-      <div className="flex items-center gap-1.5 flex-wrap mb-4">
-        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Show</span>
-        {JOBS.map(j => <Chip key={j[0]} label={j[1]} n={jobCount(j[0])} active={jf === j[0]} onClick={() => setJf(j[0])} />)}
-        <span className="h-5 w-px bg-line mx-1" />
-        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Status</span>
-        {STATUSES.map(s => <Chip key={s[0]} label={s[1]} n={statusCount(s[0])} warn={s[0] === 'unassigned'} active={sf === s[0]} onClick={() => setSf(s[0])} />)}
-        {sf === 'behind' && <Chip label="Checked out, not started" n={bhIds.size} warn active onClick={() => setSf('all')} />}
-        {filtering && <button onClick={() => { setJf('all'); setSf('all') }} className="text-[12px] font-medium text-muted hover:text-ink underline ml-1">Clear</button>}
-      </div>
 
       {units.length === 0 && (
         <div className="text-sm text-muted py-10 text-center">
@@ -688,11 +699,11 @@ export function TodayInOps() {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-1.5">
         {/* BY AREA: units grouped into mini-markets worked out from coordinates, each block a run. */}
         {groupBy === 'area' && areas.map(a => (
           <div key={a.key} className="space-y-2">
-            <div className="flex items-center gap-2 px-1">
+            <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm">
               <MapPin size={13} className="text-muted" />
               <span className="text-[13px] font-bold text-ink">{a.label}</span>
               {a.city && a.city !== a.label && <span className="text-[11px] text-muted">{a.city}</span>}
@@ -701,7 +712,7 @@ export function TodayInOps() {
               {a.units.filter((u: any) => u.late).length > 0 && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">{a.units.filter((u: any) => u.late).length} late</span>}
               <span className="text-[11px] text-muted">{a.units.reduce((s: number, u: any) => s + u.tasks.filter((t: any) => !t.done).length, 0)} open</span>
             </div>
-            <div className="space-y-3">{(a.units as Unit[]).map(u => renderUnit(u))}</div>
+            <div className="space-y-1.5">{(a.units as Unit[]).map(u => renderUnit(u))}</div>
           </div>
         ))}
         {/* THE ONLY RED SECTION. Units that need a human sit together at the top, expanded; the
@@ -713,14 +724,14 @@ export function TodayInOps() {
           if (!needs.length || !rest.length) return units.map(u => renderUnit(u))
           return (
             <>
-              <div className="flex items-center gap-2 px-1">
+              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm">
                 <AlertTriangle size={13} className="text-rose-600" />
                 <span className="text-[13px] font-bold text-rose-700">Needs attention</span>
                 <span className="text-[11px] font-semibold text-muted">{needs.length} unit{needs.length === 1 ? '' : 's'} {'—'} late, same-day, unassigned or guest issue</span>
                 <span className="flex-1 h-px bg-rose-200" />
               </div>
               {needs.map(u => renderUnit(u))}
-              <div className="flex items-center gap-2 px-1 pt-2">
+              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 mt-2 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm">
                 <span className="text-[13px] font-bold text-ink">On track</span>
                 <span className="text-[11px] font-semibold text-muted">{rest.length} unit{rest.length === 1 ? '' : 's'} {'·'} click a row for detail</span>
                 <span className="flex-1 h-px bg-line" />
