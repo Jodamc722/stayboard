@@ -30,6 +30,12 @@ const RATIO_RE = /(pct|percent|ratio|coverage|perlabordollar)/i
 const KEEP = new Set([
   'billableTasks', 'billedTasks', 'checkoutsWithNoFeeData', 'cleansWithNoMatchedCheckout',
   'feesWithNoMatchedCleanCount', 'paidTasks', 'unpaidTasks',
+  // Counts of turns, not amounts: how many turns were priced off the listing's default fee, and
+  // how many carried no fee at all. Nulling these would make the board read "no turns".
+  'turnsFromListingFee', 'turnsUnpriced',
+  // Booleans that say whether an amount is KNOWN. The answer stays true even when the amount
+  // itself is hidden — nulling it makes the UI claim the data is missing rather than withheld.
+  'costKnown', 'labourKnown', 'laborKnown', 'revenueKnown',
 ])
 
 // Blocks whose NAME says money but whose CONTENTS are mixed — `payroll` holds the amounts AND the
