@@ -287,9 +287,9 @@ export function TodayInOps() {
     const total = (u.fullTasks || u.tasks).length
     const doneN = (u.fullTasks || u.tasks).filter(t => t.done).length
     if (!isOpen(u)) return (
-      <div key={u.listingId} style={{ borderLeftWidth: 4 }} className={'rounded-2xl border bg-white overflow-hidden ' + accent(u)}>
-        <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: true }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-app/40 transition">
-          <span className="font-bold text-[14px] text-ink leading-none">{u.unit}</span>
+      <div key={u.listingId} style={{ borderLeftWidth: 3 }} className={'rounded-xl border bg-white overflow-hidden ' + accent(u)}>
+        <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: true }))} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-app/40 transition">
+          <span className="font-bold text-[15px] tracking-tight text-ink leading-none">{u.unit}</span>
           <span className="text-[11px] text-muted hidden sm:inline">{u.market}{u.city ? ' · ' + u.city : ''}</span>
           {u.sameDayTurn && !u.allDone && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Same-day</span>}
           {u.unassigned && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 shrink-0">Unassigned</span>}
@@ -311,9 +311,16 @@ export function TodayInOps() {
                 screen for a single task, so four of a hundred-and-two were visible at once and
                 the board could not be scanned — only scrolled. Padding, radius and type came down
                 until roughly half again as many fit, without shrinking a single hit target. */}
-            <div className={'px-3 pt-2 pb-1.5 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-app/60')}>
+            {/* TONE ORDER (Jon 2026-08-10: "the title part is grey, make it brighter, more
+                distinguished, to show separation of property"). The header was bg-app/60 over
+                white — about five values off pure white — so it did not read as a header at all,
+                and the alternating task rows I added landed closer still, flattening the card to
+                one wash. Inverted: the property band is now the brightest surface in the card and
+                the work sits on grey beneath it, so each property reads as a titled block.
+                Late/at-risk keep their tint — that outranks the hierarchy. */}
+            <div className={'px-3 pt-2 pb-1.5 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-white')}>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-bold text-[14px] text-ink leading-none">{u.unit}</span>
+                <span className="font-bold text-[15px] tracking-tight text-ink leading-none">{u.unit}</span>
                 {u.sameDayTurn && <span title="A guest checks in here today — this clean cannot slip" className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white">Same-day turn</span>}
                 {(() => {
                   const LS = data.longStayNights || 10
@@ -370,7 +377,7 @@ export function TodayInOps() {
                 its red to a grey stripe. */}
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : ti % 2 ? 'bg-app/40' : 'bg-white')}>
+                <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : ti % 2 ? 'bg-app/55' : 'bg-app')}>
                 <div className="group flex items-center gap-3 px-3 py-1.5 text-sm">
                   <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
