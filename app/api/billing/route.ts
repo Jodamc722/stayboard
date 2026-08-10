@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { billingMonth, listingNames, monthRange } from '@/lib/billing'
 import { getTimecards } from '@/lib/homebase-labor'
+import { marketOf } from '@/lib/segments'
 import { getSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -41,21 +42,61 @@ export async function GET(req: NextRequest) {
     // one side of it. Homebase is the source — Breezeway carries no pay. Best-effort: if Homebase
     // is unreachable the board renders exactly as before, just without the cost column.
     let maintenancePayroll: { cost: number; hours: number; people: number; source: string } | null = null
+    // BY MARKET (Jon, 2026-08-09: "the way we bill in Miami is different"). Billable is per task, so
+    // it splits EXACTLY — each task belongs to a listing, and the listing belongs to a market.
+    // Payroll cannot: Homebase is a single location with no market on a timecard, so the per-market
+    // figure is the real total apportioned by the maintenance MINUTES each market consumed, and it
+    // is labelled as apportioned wherever it is shown. The totals row is always measured.
+    let maintenanceByMarket: { market: string; billed: number; tasks: number; minutes: number; payroll: number | null }[] = []
     try {
       const { from, to } = monthRange(monthKey)
       const tc = await getTimecards(from, to)
       const isMaint = (r: any) => /maint|tech|repair|handy/i.test(String(r || ''))
       const mine = tc.filter((t: any) => isMaint(t.role))
+      const payrollTotal = mine.length
+        ? Math.round(mine.reduce((a: number, t: any) => a + (Number(t.laborCost) || 0), 0) * 100) / 100
+        : null
       if (mine.length) {
         maintenancePayroll = {
-          cost: Math.round(mine.reduce((a: number, t: any) => a + (Number(t.laborCost) || 0), 0) * 100) / 100,
+          cost: payrollTotal as number,
           hours: Math.round(mine.reduce((a: number, t: any) => a + (Number(t.hours) || 0), 0) * 10) / 10,
           people: new Set(mine.map((t: any) => String(t.name))).size,
           source: 'Homebase clocked payroll',
         }
       }
-    } catch { /* payroll column simply absent */ }
-    return NextResponse.json({ ok: true, month: monthKey, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews, units, maintenancePayroll })
+      // listing -> market for every task in the month
+      const mtTasks = (data.tasks || []).filter((t: any) => /maint/i.test(String(t.department || '')))
+      const lids = Array.from(new Set(mtTasks.map((t: any) => String(t.listingId || '')).filter(Boolean)))
+      const mkOf: Record<string, string> = {}
+      if (lids.length) {
+        const { data: ls } = await supabaseAdmin().from('guesty_listings')
+          .select('id,nickname,title,building,address_city').in('id', lids).limit(2000)
+        for (const l of ((ls || []) as any[])) {
+          const nm = l.nickname || l.title || ''
+          mkOf[String(l.id)] = String(marketOf(l.building, l.address_city, nm) || 'Other')
+        }
+      }
+      const agg: Record<string, { billed: number; tasks: number; minutes: number }> = {}
+      for (const t of mtTasks) {
+        const mk = mkOf[String((t as any).listingId || '')] || 'Other'
+        const e = agg[mk] = agg[mk] || { billed: 0, tasks: 0, minutes: 0 }
+        e.billed += Number((t as any).billedAmount) || 0
+        e.tasks += 1
+        e.minutes += Number((t as any).actualMinutes) || 0
+      }
+      const totMin = Object.values(agg).reduce((a, b) => a + b.minutes, 0)
+      const ORDER = ['Miami', 'Broward', 'North', 'Other']
+      maintenanceByMarket = Object.keys(agg)
+        .sort((a, b) => (ORDER.indexOf(a) < 0 ? 9 : ORDER.indexOf(a)) - (ORDER.indexOf(b) < 0 ? 9 : ORDER.indexOf(b)))
+        .map(mk => ({
+          market: mk,
+          billed: Math.round(agg[mk].billed * 100) / 100,
+          tasks: agg[mk].tasks,
+          minutes: agg[mk].minutes,
+          payroll: (payrollTotal != null && totMin > 0) ? Math.round(payrollTotal * (agg[mk].minutes / totMin) * 100) / 100 : null,
+        }))
+    } catch { /* payroll / market split simply absent */ }
+    return NextResponse.json({ ok: true, month: monthKey, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews, units, maintenancePayroll, maintenanceByMarket })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
