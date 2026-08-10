@@ -21,6 +21,7 @@ import { billingMonth } from './billing'
 import { getLaborSettings } from './labor-settings'
 import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
 import { laborAmount } from './billing'
+import { blockedUnits, type BlockedRun } from './blocked-units'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -360,6 +361,47 @@ const closingNote = (_ymd: string): string => {
   </div>`
 }
 
+// ── BLOCKED UNITS (Jon, 2026-08-10: "we need to show all blocked units... that would be urgent")
+// A unit off the calendar is revenue already lost, and nothing announces it — blocks routinely
+// outlive their reason. So every brief carries the list, with the note whoever created the block
+// typed into Guesty, because that note is the whole story ("AC issues reported by Jean Leger",
+// "Building manager using it", "Do not sell"). Live blocks lead; the longest come first inside
+// that, since the oldest block is the one nobody remembers creating.
+//
+// `markets` scopes the card to a supervisor's own patch; pass null for the whole portfolio.
+function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: boolean }): string {
+  if (!runs.length) {
+    return card('Blocked units — off the calendar', null,
+      `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing blocked.</span> <span style="${S.muted}">Every unit is sellable for the next 30 days.</span></p>`, '#059669')
+  }
+  const limit = opts?.limit ?? 12
+  const live = runs.filter(r => r.live)
+  const later = runs.filter(r => !r.live)
+  const nights = runs.reduce((a, r) => a + r.nights, 0)
+  const dNice = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const row = (r: BlockedRun) => {
+    const when = r.openEnded
+      ? dNice(r.from) + ' \u2192 no end date'
+      : dNice(r.from) + ' \u2013 ' + dNice(r.to)
+    const why = esc(r.note ? r.note.replace(/\s+/g, ' ').trim().slice(0, 140) : r.reason)
+    return `<tr>
+      <td style="${S.td}"><b>${esc(r.unit)}</b>${opts?.showMarket ? `<span style="${S.muted}"> \u00b7 ${esc(r.market)}</span>` : ''}
+        <div style="font-size:11px;color:#6b7280">${why}</div></td>
+      <td style="${S.td};text-align:right;white-space:nowrap">${when}</td>
+      <td style="${S.td};text-align:right"><b>${r.nights}</b><span style="${S.muted}">n</span></td>
+      <td style="${S.td};text-align:right">${r.live ? pillRed('down now') : pillAmber('in ' + r.startsInDays + 'd')}</td>
+    </tr>`
+  }
+  const shown = live.concat(later).slice(0, limit)
+  const more = runs.length - shown.length
+  return card('Blocked units — off the calendar', runs.length,
+    `<p style="margin:0 0 8px;font-size:12.5px;color:#374151"><b>${live.length}</b> down right now, <b>${later.length}</b> starting soon, <b>${nights}</b> nights off the calendar in the next 30 days.
+      Every one of these is either work that needs finishing or a block that should come off.</p>` +
+    `<table width="100%" cellspacing="0" cellpadding="0"><tr>${['Unit', 'Dates', 'Nights', ''].map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${shown.map(row).join('')}</table>` +
+    (more > 0 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${more} more \u2014 full list on the board</p>` : ''),
+    '#dc2626')
+}
+
 // ── THE LIVE BOARD (2026-08-07, Jon: "attach the link for Botanica reservations, same for PT,
 // and Capri, Lucerne") ──────────────────────────────────────────────────────────────────────────
 // The email is a snapshot taken at 7am; the board at /vendor/<slug> is the same reservations LIVE,
@@ -395,6 +437,14 @@ const numBadge = (n: number, hot: boolean) =>
 
 export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const d = await gather(variant)
+  // BLOCKED UNITS (Jon, 2026-08-10 — "urgent"). Scoped to this brief's market so a Miami
+  // supervisor gets Miami's blocks and not a portfolio-wide list they cannot act on. Best-effort:
+  // if the Guesty calendar call fails the rest of the brief still goes out on time.
+  let blocked: BlockedRun[] = []
+  try {
+    const rep = await blockedUnits(30)
+    blocked = variant === 'full' ? rep.runs : rep.runs.filter(r => r.market === variant)
+  } catch { /* card renders as absent rather than blocking the send */ }
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
@@ -750,6 +800,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${accessNotice()}
 
   ${eyebrow('Act now')}
+  ${blockedCard(blocked, { showMarket: variant === 'full' })}
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
@@ -817,6 +868,10 @@ function deltaPill(v: any, suffix = '%', goodIsUp = true): string {
 export async function buildGmBrief(): Promise<OpsBrief> {
   const { buildKpi } = await import('./kpi')
   const d = await gather('GM')
+  // Blocked units, whole portfolio. On the leadership brief this is a revenue question as much as
+  // an ops one — every night here is inventory that was never for sale.
+  let blocked: BlockedRun[] = []
+  try { blocked = (await blockedUnits(30)).runs } catch { /* brief still sends */ }
   const sheet: any = d.sheet || {}
   const today = d.today
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
@@ -1324,6 +1379,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   ${quoteBanner(today)}
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
   ${accessNotice()}
+
+  ${blockedCard(blocked, { showMarket: true, limit: 10 })}
 
   ${card('Today', null, tbl(`
     <tr><td style="${S.td}">In the buildings tonight</td><td style="${S.td};text-align:right"><b>${tod.inHouse || 0}</b> <span style="${S.muted}">of ${tod.units || d.activeCount} units · ${occToday != null ? pct1(occToday) : '—'}</span></td></tr>
