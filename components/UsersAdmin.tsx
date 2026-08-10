@@ -10,7 +10,7 @@ import {
   UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2,
   KeyRound, ChevronDown, ChevronRight, BellOff, Bell, IdCard, Clock, SlidersHorizontal, ShieldCheck
 } from 'lucide-react'
-import { workspaceDef, normWorkspace, FEATURES, LEVELS, roleLevel, userOverride, overriddenKeys, type Level } from '@/lib/features'
+import { workspaceDef, normWorkspace, FEATURES, EXTRA_PERMS, LEVELS, roleLevel, userOverride, overriddenKeys, type Level } from '@/lib/features'
 
 type Row = {
   email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'
@@ -276,6 +276,52 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
             )}
           </div>
 
+          {/* WHAT THEY MAY SEE, as opposed to which tabs they may open (Jon 2026-08-10: "only view
+              of that data should be me … meaning i should be able to toggle on and off per user").
+              Deliberately NOT part of any role: promoting somebody to admin must not quietly hand
+              them the payroll. Sits above the tab table because it is a different question, and
+              outside the rolesReady guard because it does not depend on the roles table at all. */}
+          {!isOwnerRow && (
+            <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2">
+              <div className="text-[12px] font-bold text-ink mb-2 inline-flex items-center gap-1.5">
+                <ShieldCheck size={13} className="text-brand-600" /> What {name || u.email} may see
+              </div>
+              <div className="rounded-lg border border-line bg-white divide-y divide-line">
+                {EXTRA_PERMS.map(p => {
+                  const on = (u.features as any)?.[p.key] === true
+                  return (
+                    <div key={p.key} className="flex items-start gap-3 px-3 py-2">
+                      <button
+                        role="switch" aria-checked={on} aria-label={p.label}
+                        disabled={!isOwner || me}
+                        onClick={() => {
+                          const next: Record<string, any> = { ...(u.features || {}) }
+                          if (on) delete next[p.key]; else next[p.key] = true
+                          onPatch(u.email, { features: next },
+                            on ? `${p.label} off for ${name || u.email} — percentages only.`
+                               : `${p.label} on for ${name || u.email}.`)
+                        }}
+                        className={'mt-0.5 relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ' +
+                          (on ? 'bg-brand-600' : 'bg-slate-300')}>
+                        <span className={'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ' + (on ? 'left-[18px]' : 'left-0.5')} />
+                      </button>
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold text-ink">
+                          {p.label}
+                          <span className={'ml-2 text-[10px] font-bold uppercase tracking-wide ' + (on ? 'text-brand-700' : 'text-muted')}>{on ? 'on' : 'off'}</span>
+                        </div>
+                        <div className="text-[10.5px] text-muted">{p.blurb}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-[10px] text-muted mt-1.5">
+                Off for everyone until you switch it on — no role grants it, and you always have it.
+              </p>
+            </div>
+          )}
+
           {/* PER-PERSON TABS (Jon 2026-08-10: "individual settings for user … customise their
               views vs having to assign a role as the only option"). The role fills every row; a
               row only stops following the role once you set it here, and "Use role" puts it back.
@@ -289,7 +335,14 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
                   {overrideCount > 0 && <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-full px-1.5 py-0.5">{overrideCount} customised</span>}
                 </div>
                 {overrideCount > 0 && isOwner && !me && (
-                  <button onClick={() => onPatch(u.email, { features: {} }, 'Back to the role for every tab.')}
+                  // Clears the TAB overrides only. Sending {} would also wipe the Dollar amounts
+                  // switch above — "put the tabs back" must not quietly revoke something the owner
+                  // turned on deliberately in a different control.
+                  <button onClick={() => {
+                    const keep: Record<string, any> = {}
+                    for (const p of EXTRA_PERMS) if ((u.features as any)?.[p.key] === true) keep[p.key] = true
+                    onPatch(u.email, { features: keep }, 'Back to the role for every tab.')
+                  }}
                     className="text-[11px] font-semibold text-muted hover:text-ink underline">Reset all to role</button>
                 )}
               </div>
