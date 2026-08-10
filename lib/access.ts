@@ -106,6 +106,29 @@ export function isSuperadmin(email: string | null | undefined): boolean {
   return String(email || '').toLowerCase() === SUPERADMIN
 }
 
+// ---- Who may see dollar amounts (Jon 2026-08-10: "unless you're the GM or admin"). -------------
+// Percentages are for everyone; amounts are for the people who own the P&L. Roles that qualify:
+// 'admin' (owner/admin) and 'manager' — migration 023 mapped every GM and every unclassified
+// full-access person onto 'manager', so that key IS the GM seat.
+//
+// Deliberately NOT fail-open. Everywhere else in this file a missing table or a bad row resolves to
+// MORE access, because locking the team out of a board is worse than showing them one. Money runs
+// the other way, so every unresolved case lands on percentages. In particular the legacy path never
+// consults `workspace`: normWorkspace() turns a missing column into 'gm', so trusting it would hand
+// dollars to every un-migrated user — the exact leak this function exists to close. If app_roles
+// isn't live yet, only a true admin sees amounts, and the fix is to run migration 023 (or set the
+// per-person flag below), not to widen the default.
+//
+// features.money on the user row is the per-person escape hatch: true grants, false denies, and it
+// beats the role either way.
+export function canSeeMoney(access: Pick<Access, 'role' | 'accessRole' | 'workspace' | 'features'>): boolean {
+  const flag = (access.features as any)?.money
+  if (flag === true) return true
+  if (flag === false) return false
+  if (access.role === 'admin') return true
+  return access.accessRole === 'admin' || access.accessRole === 'manager'
+}
+
 // ---- Central write guard for API routes. ----
 // Usage:  const g = await requireLevel('glitches', 'edit'); if (!g.ok) return g.res
 // Semantics: signed-out → 401. Signed in but below the needed level on that feature → 403 with a
