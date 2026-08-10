@@ -649,7 +649,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       for (let i2 = 0; i2 < ids2.length; i2 += 400) {
         const chunk2 = ids2.slice(i2, i2 + 400)
         if (!chunk2.length) break
-        try { const { data } = await db2.from('breezeway_billing_details').select('task_id,rate_type').in('task_id', chunk2); for (const d3 of (data || []) as any[]) dets2[String(d3.task_id)] = d3 } catch { /* no detail yet */ }
+        try { const { data } = await db2.from('breezeway_billing_details').select('task_id,rate_type,costs,supplies').in('task_id', chunk2); for (const d3 of (data || []) as any[]) dets2[String(d3.task_id)] = d3 } catch { /* no detail yet */ }
         try { const { data } = await db2.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk2); for (const a3 of (data || []) as any[]) adjs2[String(a3.task_id)] = a3 } catch { /* overlay optional */ }
       }
       const kindOf = (t: any) => {
@@ -663,14 +663,26 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       }
       // Billable labor for a task, same math as the billing sheet. Cleans are
       // excluded - their money is the guest cleaning fee, already in Rev.
+      // WHAT WE CHARGE FOR THE TASK, AS ENTERED (Jon, 2026-08-10: "billable labor is the actual
+      // number in the Breezeway task, not $40 x hours worked — that's just how we charge for the
+      // task"). This used to run laborAmount(rate_paid...), and rate_paid is 0 on every task in
+      // this account, so the column read $0 for everyone. The cost line item IS the price of the
+      // job — several are literally described "Labor" at $40 — so it is summed as-is.
+      const ownerAmt = (arr: any, field: string): number =>
+        (Array.isArray(arr) ? arr : []).reduce((a: number, x: any) => {
+          if (x && x.bill_to && String(x.bill_to) === 'guest') return a
+          if (field === 'supply' && x && x.billable === false) return a
+          const v = Number(field === 'cost' ? x?.cost : (x?.total_price != null ? x.total_price : x?.unit_cost))
+          return a + (Number.isFinite(v) ? v : 0)
+        }, 0)
       const billableOf = (t: any): number => {
         if (kindOf(t) === 'clean') return 0
         const adj = adjs2[String(t.id)]
         if (adj && adj.excluded) return 0
         if (adj && adj.override_amount != null) return Number(adj.override_amount) || 0
         const det = dets2[String(t.id)]
-        const capped = t.total_minutes != null ? Math.min(Number(t.total_minutes), 480) : null
-        return laborAmount(t.rate_paid != null ? Number(t.rate_paid) : null, det && det.rate_type != null ? String(det.rate_type) : null, capped, adj && adj.billed_hours != null ? Number(adj.billed_hours) : null)
+        if (!det) return 0
+        return Math.round((ownerAmt(det.costs, 'cost') + ownerAmt(det.supplies, 'supply')) * 100) / 100
       }
       const roster2: string[] = []
       for (const t of yTc) if (roster2.indexOf(t.name) < 0) roster2.push(t.name)
@@ -1145,8 +1157,9 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       })
     }
 
-    // BILLABLE LABOUR — real per-task money (rate x billed hours + adjustments), the owner-billable
-    // side. Comes from the same engine as the Billable Hours sheet so the two always agree.
+    // BILLABLE — the amount entered against each task in Breezeway (billedAmount is that plus the
+    // rate math, and the rate is 0 on every task here, so this IS the entered cost). Same engine as
+    // the Billable Hours sheet, so the two always agree.
     try {
       const months = Array.from(new Set([winFrom.slice(0, 7), winTo.slice(0, 7)]))
       for (const m of months) {
