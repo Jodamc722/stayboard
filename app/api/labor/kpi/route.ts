@@ -68,8 +68,9 @@ async function shiftsForRange(start: string, end: string): Promise<(Shift & { da
 export async function GET(req: Request) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  // Amounts are GM/admin only; everyone else gets the same board in percentages. Decided here, on
-  // the server, so the dollars are never in the payload at all (see lib/money.ts).
+  // Amounts are the owner's, plus anyone he has switched on at /users → Dollar amounts; everyone
+  // else gets the same board in percentages. Decided here, on the server, so the dollars are never
+  // in the payload at all (see lib/money.ts).
   const showMoney = canSeeMoney(access)
 
   const url = new URL(req.url)
