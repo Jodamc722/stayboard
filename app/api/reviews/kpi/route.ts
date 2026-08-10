@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
-import { buildingOf } from '@/lib/geo-areas'
+import { buildingOf } from '@/lib/segments'
 import { setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -221,10 +221,12 @@ export async function GET(req: NextRequest) {
   const lmap: Record<string, any> = {}
   for (const l of ((lRes.data || []) as any[])) {
     const name = l.nickname || l.title || 'Unit'
-    // The raw Guesty `building` field is per-listing text and produced 65 "buildings" — unusable as
-    // a grouping. buildingOf() is the same rollup the areas and glitch boards use.
+    // The raw Guesty `building` field is per-listing text and produced 65 "buildings" — unusable
+    // as a grouping. buildingOf() is the canonical registry in lib/segments, the same one the
+    // markets, briefs and billing boards use, so a unit cannot group one way here and another way
+    // there (Jon, 2026-08-10).
     lmap[String(l.id)] = {
-      name, building: buildingOf(str(l.building)) || buildingOf(name) || str(l.building) || 'Other',
+      name, building: buildingOf(str(l.building), name) || 'Other',
       market: marketOf(l.building, l.address_city, name),
       active: str(l.status).trim().toLowerCase() === 'active',
       urls: listingUrls(l.ints),
@@ -403,10 +405,14 @@ export async function GET(req: NextRequest) {
   const unitsTotalByBuilding: Record<string, number> = {}
   const marketByBuilding: Record<string, string> = {}
   for (const l of Object.values(lmap) as any[]) {
-    if (!l || !l.active) continue
+    if (!l) continue
     if (market !== 'all' && l.market !== market) continue
-    unitsTotalByBuilding[l.building] = (unitsTotalByBuilding[l.building] || 0) + 1
+    // The MARKET of a building is a fact about where it stands, so it is recorded for every
+    // listing. The UNIT COUNT is "how many we run today", so only active listings are counted —
+    // previously both keyed off active, and any building with no live unit lost its market chip.
     if (!marketByBuilding[l.building]) marketByBuilding[l.building] = l.market
+    if (!l.active) continue
+    unitsTotalByBuilding[l.building] = (unitsTotalByBuilding[l.building] || 0) + 1
   }
   const buildings = Object.keys(byBuilding).map(b => ({
     building: b, ...summarise(byBuilding[b], mean),
