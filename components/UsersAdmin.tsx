@@ -10,11 +10,11 @@ import {
   UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2,
   KeyRound, ChevronDown, ChevronRight, BellOff, Bell, IdCard, Clock, SlidersHorizontal, ShieldCheck
 } from 'lucide-react'
-import { workspaceDef, normWorkspace } from '@/lib/features'
+import { workspaceDef, normWorkspace, FEATURES, LEVELS, roleLevel, userOverride, overriddenKeys, type Level } from '@/lib/features'
 
 type Row = {
   email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'
-  features?: Record<string, boolean> | null
+  features?: Record<string, any> | null
   workspace?: string | null
   access_role?: string | null
   profile?: Record<string, any> | null
@@ -198,6 +198,13 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
   const [pPhone, setPPhone] = useState(String(u.profile?.phone || ''))
   const [savingProfile, setSavingProfile] = useState(false)
   useEffect(() => { setPName(String(u.profile?.name || '')); setPTitle(String(u.profile?.title || '')); setPPhone(String(u.profile?.phone || '')) }, [u.email, u.profile])
+
+  // The role's level for a tab, and this person's override on it — the two halves of the table
+  // below. Kept as plain lookups so the row always shows what it is departing from.
+  const roleDef = roles.find(r => r.key === (u.access_role || (u.role === 'admin' ? 'admin' : ''))) || null
+  const roleLevelOf = (key: string): Level => roleLevel(roleDef as any, key)
+  const overrideOf = (key: string): Level | null => userOverride(u.features as any, key)
+  const overrideCount = overriddenKeys(u.features as any).length
   const profileDirty = pName !== String(u.profile?.name || '') || pTitle !== String(u.profile?.title || '') || pPhone !== String(u.profile?.phone || '')
 
   const prefs = (u.prefs && typeof u.prefs === 'object') ? u.prefs : {}
@@ -262,12 +269,75 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
                   })}
                 </div>
                 <p className="text-[10px] text-muted mt-1.5">
-                  The role decides which tabs they see and what they can do there (view / edit / full) — edit the details on the <b>Roles</b> tab.
+                  The role is the starting point — change what everyone with it can do on the <b>Roles</b> tab, or tune this one person below.
                   {!isOwner && ' Only the owner can change roles.'}
                 </p>
               </>
             )}
           </div>
+
+          {/* PER-PERSON TABS (Jon 2026-08-10: "individual settings for user … customise their
+              views vs having to assign a role as the only option"). The role fills every row; a
+              row only stops following the role once you set it here, and "Use role" puts it back.
+              Showing the role's own level beside the picker is what keeps this readable — you can
+              always see what you are departing from. */}
+          {!isOwnerRow && rolesReady && (
+            <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2">
+              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                <div className="text-[12px] font-bold text-ink inline-flex items-center gap-1.5">
+                  <ShieldCheck size={13} className="text-brand-600" /> Tabs for {name || u.email}
+                  {overrideCount > 0 && <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-full px-1.5 py-0.5">{overrideCount} customised</span>}
+                </div>
+                {overrideCount > 0 && isOwner && !me && (
+                  <button onClick={() => onPatch(u.email, { features: {} }, 'Back to the role for every tab.')}
+                    className="text-[11px] font-semibold text-muted hover:text-ink underline">Reset all to role</button>
+                )}
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-line bg-white max-h-[360px] overflow-y-auto">
+                <table className="w-full text-[12px]">
+                  <thead className="bg-app text-muted sticky top-0">
+                    <tr>
+                      <th className="text-left font-semibold px-2.5 py-1.5">Tab</th>
+                      <th className="text-left font-semibold px-2.5 py-1.5 whitespace-nowrap">From role</th>
+                      <th className="text-left font-semibold px-2.5 py-1.5">This person</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {FEATURES.map((f, i) => {
+                      const fromRole = roleLevelOf(f.key)
+                      const over = overrideOf(f.key)
+                      return (
+                        <tr key={f.key} className={i % 2 ? 'bg-app/40' : 'bg-white'}>
+                          <td className="px-2.5 py-1.5">
+                            <span className="text-ink">{f.label}</span>
+                            <span className="text-muted"> · {f.group}</span>
+                          </td>
+                          <td className="px-2.5 py-1.5 text-muted whitespace-nowrap">{fromRole}</td>
+                          <td className="px-2.5 py-1.5">
+                            <select value={over ?? ''} disabled={!isOwner || me}
+                              onChange={e => {
+                                const v = e.target.value
+                                const next: Record<string, any> = { ...(u.features || {}) }
+                                if (!v) delete next[f.key]; else next[f.key] = v
+                                onPatch(u.email, { features: next }, v ? `${f.label}: ${v} for ${name || u.email}.` : `${f.label} follows the role again.`)
+                              }}
+                              className={'text-[11px] rounded-md border px-1.5 py-1 disabled:opacity-50 ' + (over ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : 'border-line bg-white text-muted')}>
+                              <option value="">Use role ({fromRole})</option>
+                              {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+                            </select>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-muted mt-1.5">
+                <b>off</b> hides the tab · <b>view</b> read-only · <b>edit</b> day-to-day actions · <b>full</b> settings and deletes.
+                Anything left on &ldquo;Use role&rdquo; follows the role, so changing the role still moves this person.
+              </p>
+            </div>
+          )}
 
           {/* Profile details */}
           <div className="rounded-xl border border-line bg-app/40 p-3">
