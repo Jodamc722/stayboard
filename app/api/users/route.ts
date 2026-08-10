@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
-import { normWorkspace } from '@/lib/features'
+import { normWorkspace, FEATURES, LEVELS } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
 
@@ -133,7 +133,22 @@ export async function PATCH(req: NextRequest) {
   // Page access (workspace + per-page overrides) is owner-only; the owner's own access is immutable.
   if (body?.features && typeof body.features === 'object' && !Array.isArray(body.features)) {
     if (!isOwnerCall) return NextResponse.json({ error: 'Only the owner can change page access.' }, { status: 403 })
-    if (email !== OWNER) patch.features = body.features  // owner always keeps all pages
+    // Sanitise before storing. `features` now carries per-person LEVEL overrides as well as the
+    // original booleans, and it is the one thing standing between a typo and someone silently
+    // getting more access than the role allows — so anything not recognised is DROPPED, which
+    // means "no override, use the role", never "full".
+    if (email !== OWNER) {
+      const clean: Record<string, any> = {}
+      for (const k of Object.keys(body.features)) {
+        if (!FEATURES.some(f => f.key === k)) continue          // unknown feature key
+        const v = body.features[k]
+        if (v === false || v === true) { clean[k] = v; continue }
+        const s = String(v ?? '').toLowerCase()
+        if ((LEVELS as string[]).includes(s)) clean[k] = s
+        // anything else: omitted -> falls back to the role
+      }
+      patch.features = clean
+    }
   }
   if (typeof body?.workspace === 'string' && body.workspace) {
     if (!isOwnerCall) return NextResponse.json({ error: 'Only the owner can change workspaces.' }, { status: 403 })
