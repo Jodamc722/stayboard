@@ -121,12 +121,40 @@ export function roleLevel(role: RoleDef | null | undefined, featureKey: string):
   return star != null ? normLevel(star) : 'off'
 }
 
-// Resolve the full level map for a user: role perms, then legacy per-person features[key]===false
-// forces 'off' (kept so pre-roles individual page-offs keep working).
+// PER-PERSON OVERRIDES (Jon 2026-08-10: "individual settings for user — customise their views vs
+// having to assign a role as the only option").
+//
+// The role is the DEFAULT, not the verdict. `app_users.features` is a JSONB map that may carry a
+// level for any feature, and that level wins over whatever the role says. Three accepted shapes,
+// because the column already held the first two before levels existed:
+//
+//   features[key] === false            -> 'off'      (the original per-person hard-off)
+//   features[key] === true             -> role level (an explicit "use the role", same as absent)
+//   features[key] === 'view'|'edit'|
+//                     'full'|'off'     -> that level (the new per-person override)
+//
+// Anything unrecognised is ignored and the role decides, so a typo can never silently grant access.
+// No migration: this reads a column that has existed since the first version of the users table.
+export function userOverride(features: Record<string, any> | null | undefined, key: string): Level | null {
+  if (!features || typeof features !== 'object') return null
+  const v = features[key]
+  if (v === false) return 'off'
+  if (v === true || v == null) return null
+  const s = String(v).toLowerCase()
+  return (LEVELS as string[]).includes(s) ? (s as Level) : null
+}
+
+/** Which features this person has an explicit override on — so the editor can show role vs custom. */
+export function overriddenKeys(features: Record<string, any> | null | undefined): string[] {
+  return FEATURES.map(f => f.key).filter(k => userOverride(features, k) != null)
+}
+
+// Resolve the full level map for a user: the role's level for each feature, overridden per-person
+// where one is set.
 export function levelsForRole(role: RoleDef | null | undefined, features?: Record<string, any> | null): Record<string, Level> {
   const out: Record<string, Level> = {}
   for (const f of FEATURES) {
-    out[f.key] = features && features[f.key] === false ? 'off' : roleLevel(role, f.key)
+    out[f.key] = userOverride(features, f.key) ?? roleLevel(role, f.key)
   }
   return out
 }
@@ -137,7 +165,9 @@ export function levelsForRole(role: RoleDef | null | undefined, features?: Recor
 export function legacyLevels(ws: any, features?: Record<string, any> | null): Record<string, Level> {
   const out: Record<string, Level> = {}
   for (const f of FEATURES) {
-    out[f.key] = pageAllowed(ws, features, f.key) ? 'full' : 'off'
+    // A per-person override still wins here, so someone can be customised before they are ever
+    // assigned a role — otherwise the override would silently do nothing for legacy users.
+    out[f.key] = userOverride(features, f.key) ?? (workspaceAllows(ws, f.key) ? 'full' : 'off')
   }
   return out
 }
