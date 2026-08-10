@@ -153,14 +153,14 @@ function render(r: LaborReport): { subject: string; html: string } {
       ${r.vendorCheckouts ? ' A further ' + r.vendorCheckouts + ' checkouts belong to vendor-cleaned buildings and carry none of our payroll.' : ''}</p>`, '#0891b2')}
 
   ${card('Billable work', `<table width="100%" cellspacing="0" cellpadding="0">
-      <tr><td style="${S.td}">Billable labor <span style="${S.muted}">${r.billable.hours}h at $${r.billable.rate}/h</span></td><td style="${S.td};text-align:right"><b>${money(r.billable.labor)}</b></td></tr>
-      <tr><td style="${S.td}">Materials billed <span style="${S.muted}">a pass-through, not labor</span></td><td style="${S.td};text-align:right">${money(r.billable.materials)}</td></tr>
+      <tr><td style="${S.td}">Billed to owners <span style="${S.muted}">the cost entered on each task</span></td><td style="${S.td};text-align:right"><b>${money(r.billable.billed)}</b></td></tr>
+      <tr><td style="${S.td}">Tasks carrying a cost</td><td style="${S.td};text-align:right"><b>${r.billable.tasksWithBilling}</b> <span style="${S.muted}">of ${r.billable.tasks}</span></td></tr>
       <tr><td style="${S.td}">Maintenance payroll <span style="${S.muted}">clocked wages</span></td><td style="${S.td};text-align:right">${money(r.billable.maintenancePayroll)}</td></tr>
       <tr><td style="${S.td};border-top:2px solid #111827"><b>Margin</b></td><td style="${S.td};text-align:right;border-top:2px solid #111827"><b style="color:${r.billable.margin < 0 ? '#dc2626' : '#047857'}">${money(r.billable.margin)}</b></td></tr>
     </table>
-    ${r.billable.tasksMissingDetail ? `<p style="margin:8px 0 0;font-size:11.5px;color:#b45309"><b>${r.billable.tasksMissingDetail}</b> tasks in this window still have no billing detail pulled. Until they do, that work bills nothing and the margin above reads worse than it is.</p>` : ''}`,
+    <p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Only <b>${r.billable.tasksWithBilling}</b> of ${r.billable.tasks} maintenance and inspection tasks have an amount entered against them, so the margin above is a floor, not a verdict.${r.billable.tasksMissingDetail ? ` <b>${r.billable.tasksMissingDetail}</b> still have no billing detail pulled from Breezeway at all.` : ''}</p>`,
     '#7c3aed',
-    `Rolling ${r.billable.days} days (${r.billable.from} to ${r.billable.to}), not just yesterday &mdash; owner billing gets edited after the fact, so this re-reads the whole window every morning and picks up corrections made to older work.`)}
+    `The amount actually entered on the task in Breezeway &mdash; nothing priced or estimated. Rolling ${r.billable.days} days (${r.billable.from} to ${r.billable.to}), not just yesterday, because owner billing gets edited after the fact and this re-reads the whole window every morning.`)}
 
   ${card('Everyone on the clock', table(['Person', 'Hours', 'Payroll', 'Cleans', 'Tasks', 'On task', 'Cost/clean'], peopleRows)
     + `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">&ldquo;On task&rdquo; is time logged against Breezeway tasks as a share of clocked time &mdash; a low number means work happening off the task list, not someone idle. Cleans credit both the assignee and whoever closed the task.</p>`)}
