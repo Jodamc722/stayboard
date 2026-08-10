@@ -174,9 +174,13 @@ export function LaborPanel() {
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Maintenance</p>
             <div className="grid grid-cols-3 gap-y-3">
-              <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.maintenance.payroll)} sub={d.departments.maintenance.hours + 'h · ' + d.departments.maintenance.people + ' people'} />
-              <Stat label="Tasks done" value={loading ? '…' : String(d.departments.maintenance.tasksCompleted ?? 0)} sub={(d.departments.maintenance.taskHours ?? 0) + 'h on tasks'} />
-              <Stat label="On-task %" value={loading ? '…' : (d.departments.maintenance.utilizationPct != null ? d.departments.maintenance.utilizationPct + '%' : '—')} sub="task time ÷ paid time" />
+              {/* Payroll is Homebase, hours are Breezeway — each tile says which, so the two are
+                  never read as the same number. */}
+              <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.maintenance.payroll)}
+                sub={(d.departments.maintenance.clockedHours ?? 0) + 'h clocked · ' + d.departments.maintenance.people + ' people'} />
+              <Stat label="Hours on tasks" value={loading ? '…' : (d.departments.maintenance.hours ?? 0) + 'h'}
+                sub={(d.departments.maintenance.tasksCompleted ?? 0) + ' tasks · Breezeway'} />
+              <Stat label="On-task %" value={loading ? '…' : (d.departments.maintenance.utilizationPct != null ? d.departments.maintenance.utilizationPct + '%' : '—')} sub="Breezeway hours ÷ Homebase hours" />
               <Stat label="Cost / task" value={loading ? '…' : fmt$(d.departments.maintenance.costPerTask)} />
               <Stat label="Billable" value={loading ? '…' : fmt$(d.departments.maintenance.billableRevenue)} sub={(d.departments.maintenance.billableTasks ?? 0) + ' tasks · Breezeway billing'} />
             </div>
