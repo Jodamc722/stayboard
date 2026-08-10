@@ -278,7 +278,14 @@ export function TodayInOps() {
   // unassigned, or a live guest issue); everything else is one calm line until clicked. Filtering
   // or searching expands the matches — a chip that hides its rows reads as broken.
   const autoOpen = (u: Unit) => u.late || u.atRisk || (u.sameDayTurn && !u.allDone) || u.unassigned || (glByUnit[u.unit] || []).length > 0
-  const isOpen = (u: Unit) => openUnits[u.listingId] !== undefined ? openUnits[u.listingId] : ((filtering || !!needle) ? true : autoOpen(u))
+  // OPEN IF THERE IS WORK (Jon 2026-08-10: "if there are tasks it should be open"). Collapsing a
+  // unit that still has open work hid the thing you came to the board to see, and made you click
+  // to find out whether a row even mattered. A unit folds only once everything in it is done — or
+  // when you fold it yourself, which is still remembered. autoOpen still drives the "Needs
+  // attention" grouping below; that is about urgency and is unchanged.
+  const isOpen = (u: Unit) => openUnits[u.listingId] !== undefined
+    ? openUnits[u.listingId]
+    : ((u.fullTasks || u.tasks || []).some(t => !t.done) || autoOpen(u))
   const accent = (u: Unit) => u.late ? 'border-rose-300 border-l-rose-500' : u.atRisk ? 'border-amber-300 border-l-amber-400' : u.sameDayTurn && !u.allDone ? 'border-line border-l-rose-400' : u.allDone ? 'border-line border-l-emerald-300' : 'border-line border-l-slate-200'
   const careDue = (u: Unit) => { const s = sig[u.listingId]; return !!s && ((s.care || []).some((c: any) => c.due) || (s.pending || []).length > 0) }
   const renderUnit = (u: Unit) => {
