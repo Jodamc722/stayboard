@@ -40,6 +40,10 @@ export const FEATURES: Feature[] = [
   { key: 'inspections',   label: 'Inspections',       path: '/inspections', group: 'Operations' },
   { key: 'orders',        label: 'Orders',            path: '/orders', group: 'Operations' },
   { key: 'requests',      label: 'Requests',          path: '/requests', group: 'Operations' },
+  // Blocked Units (2026-08-10, Jon): every unit off the calendar, read live from Guesty's
+  // multi-calendar, with the note whoever created the block typed in. An operations page, not a
+  // money one — the point is to chase the work behind the block before the nights are gone.
+  { key: 'blocked',       label: 'Blocked Units',     path: '/blocked', group: 'Operations' },
   { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
   { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
@@ -189,11 +193,11 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'patterns', 'faq'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'patterns', 'blocked', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'patterns', 'buildings', 'listings', 'claims'] },
+    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
