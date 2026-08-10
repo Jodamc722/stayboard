@@ -20,7 +20,8 @@ import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { noBreezewayRegex } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
-import type { Access } from '@/lib/access'
+import { canSeeMoney, type Access } from '@/lib/access'
+import { redactMoney } from '@/lib/money'
 
 
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
@@ -69,9 +70,15 @@ async function pageAll(build: (from: number, to: number) => any, maxPages = 14):
 type Li = { id: string; name: string; building: string; market: string; active: boolean; listingFee: number }
 
 export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any> {
-  // Revenue, margin and labour cost are a manager's numbers. Ops workspaces still get every
-  // operational tile — counts, completion, sentiment, reviews — just not the money.
-  const canSeeMoney = access.role === 'admin' || access.workspace === 'admin' || access.workspace === 'gm' || access.workspace === 'data'
+  // WHO SEES DOLLARS — one definition for the whole app (lib/access.ts). This used to be a second,
+  // local rule: admin OR workspace admin/gm/data. That is the rule Jon replaced on 2026-08-10
+  // ("only view of that data should be me ... toggle on and off per user"), so leaving it here
+  // meant the home board and the labor board disagreed about the same person — and worse, it read
+  // `workspace`, which normWorkspace() defaults to 'gm' when the column is missing, handing the
+  // portfolio's revenue to every un-migrated user.
+  //
+  // Everything non-money on this board is unchanged: counts, completion, sentiment, reviews.
+  const showMoney = canSeeMoney(access)
 
   {
     const db = supabaseAdmin()
@@ -463,9 +470,9 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     const lastSync = ((syncRows.data || []) as any[]).map(s => s.last_sync_at).filter(Boolean).sort().pop() || null
 
-    const money = <T,>(v: T): T | null => (canSeeMoney ? v : null)
+    const money = <T,>(v: T): T | null => (showMoney ? v : null)
 
-    return {
+    const payload = {
       ok: true,
       window: { from, to, days: span, prevFrom, prevTo, today },
       filters: {
@@ -473,7 +480,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         markets: ['Miami', 'Broward', 'North'],
         buildings: Array.from(new Set(all.filter(l => l.active).map(l => l.building))).sort(),
       },
-      canSeeMoney,
+      // The flag KpiHome renders against. Must stay the boolean — writing `canSeeMoney` shorthand
+      // here now picks up the imported FUNCTION, which JSON.stringify drops, and the board then
+      // hides money from everyone including the owner.
+      canSeeMoney: showMoney,
       lastSync,
 
       today: {
@@ -582,5 +592,11 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
       negatives,
     }
+    // BELT AND BRACES. money() above only covers the fields somebody remembered to wrap, and two
+    // did not get wrapped: marketRows and buildingRows shipped raw `cost` and `revenue` to every
+    // ops user, quietly, for as long as that gate has existed. redactMoney() strips by field NAME,
+    // so it catches those and anything added later without a wrapper. money() still earns its keep
+    // for fields whose names don't read like money at all (adr, revpar, booked7).
+    return showMoney ? { ...payload, moneyHidden: false } : { ...redactMoney(payload), moneyHidden: true }
   }
 }
