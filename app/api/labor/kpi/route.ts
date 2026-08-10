@@ -15,7 +15,8 @@
 //     dept, date, minutes, pay) for the drill-down
 
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess, canSeeMoney } from '@/lib/access'
+import { redactMoney, pctOf } from '@/lib/money'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
 import { getTimecards, computeLaborKpis } from '@/lib/homebase-labor'
@@ -65,9 +66,11 @@ async function shiftsForRange(start: string, end: string): Promise<(Shift & { da
 }
 
 export async function GET(req: Request) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const access = await getAccess()
+  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Amounts are GM/admin only; everyone else gets the same board in percentages. Decided here, on
+  // the server, so the dollars are never in the payload at all (see lib/money.ts).
+  const showMoney = canSeeMoney(access)
 
   const url = new URL(req.url)
   const now = new Date()
@@ -288,8 +291,16 @@ export async function GET(req: Request) {
         margin: round2(revenue - cost),
         revenuePerLaborDollar: cost > 0 ? round2(revenue / cost) : null,
         avgFeePerClean: mine.length ? round2(revenue / mine.length) : null,
+        // Dollar-free versions of the same two facts, so the ranking still reads when amounts are
+        // hidden: how much of what this person generated was left after paying them, and how much
+        // of the team's cleaning revenue came through their hands.
+        marginPct: pctOf(revenue - cost, revenue),
+        laborPct: pctOf(cost, revenue),
+        _rev: revenue,
       }
     }).sort((a, b) => (b.revenuePerLaborDollar ?? -1) - (a.revenuePerLaborDollar ?? -1))
+    const cleanerRevTotal = perCleaner.reduce((a, c) => a + (c._rev || 0), 0)
+    for (const c of perCleaner as any[]) { c.sharePct = pctOf(c._rev, cleanerRevTotal); delete c._rev }
 
     // ---- Reconciliation ----------------------------------------------------
     const unattributed = {
@@ -329,6 +340,9 @@ export async function GET(req: Request) {
       revenueInhouse: inhouseFees,
       revenueVendor: vendorFees,
       laborPct, band,
+      // Percentage reads of the same three comparisons, for the money-hidden view.
+      scheduledVsActualPct: pctOf(payrollTotal, scheduledCost),   // 100% = spent exactly what was scheduled
+      vendorMixPct: pctOf(vendorFees, totalFees),                 // share of cleaning revenue on vendor-cleaned units
       goalPct: Number(settings.pct_good),
       note: 'payroll = Homebase timecard costs; labor % measured against in-house cleaning fees (vendor-cleaned units excluded)',
     }
@@ -344,6 +358,12 @@ export async function GET(req: Request) {
       scheduledPayroll: round2(shToday.reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0)),
       cleaningRevenueToday: round2(attributions.filter(x => x.checkOut === today).reduce((a, x) => a + (x.fee ?? 0), 0)),
       tasksDoneToday: taskRows.filter(t => String(t.finished_at).slice(0, 10) === today).length,
+      laborPct: pctOf(
+        round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
+        round2(attributions.filter(x => x.checkOut === today).reduce((a, x) => a + (x.fee ?? 0), 0))),
+      vsScheduledPct: pctOf(
+        round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
+        round2(shToday.reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0))),
     } : null
 
     const economics = {
@@ -438,6 +458,9 @@ export async function GET(req: Request) {
       }
     } catch { /* billing detail unavailable — billable simply reads as zero, never blocks the board */ }
 
+    // Payroll split three ways. This is the one number that survives money-hiding intact: it says
+    // where the labor dollar goes without ever saying how big it is.
+    const deptPayrollTotal = hk.payroll + insp.payroll + mt.payroll
     const departments = {
       housekeeping: {
         people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
@@ -451,11 +474,15 @@ export async function GET(req: Request) {
         departureCleans: tasks.clean,
         otherHkTasks: hkNonDeparture,   // common areas, pool, trash, office, linen refreshes
         laborPct: inhouseFees > 0 && hk.payroll > 0 ? round2((hk.payroll / inhouseFees) * 100) : null,
+        marginPct: pctOf(inhouseFees - hk.payroll, inhouseFees),
+        supervisorSharePct: pctOf(hkSupPay, hk.payroll),
+        payrollSharePct: pctOf(hk.payroll, deptPayrollTotal),
       },
       inspection: {
         people: insp.people.size, hours: round2(insp.hours), payroll: round2(insp.payroll),
         inspections: tasks.inspection,
         costPerInspection: tasks.inspection ? round2(insp.payroll / tasks.inspection) : null,
+        payrollSharePct: pctOf(insp.payroll, deptPayrollTotal),
       },
       // TWO DIFFERENT FACTS, NEVER MIXED (Jon 2026-08-10: "maintenance hours should be pulled from
       // Breezeway and payroll from Homebase — not assumptions").
@@ -478,6 +505,9 @@ export async function GET(req: Request) {
         billableRevenue: mtBillable, // Breezeway billing: rate math + owner adjustments
         billableTasks: mtBilledTasks,
         billableMargin: Math.round((mtBillable - mt.payroll) * 100) / 100, // billable vs wages
+        // "Did the work we billed out cover the crew?" — the margin question without the amounts.
+        billableCoveragePct: pctOf(mtBillable, mt.payroll),
+        payrollSharePct: pctOf(mt.payroll, deptPayrollTotal),
       },
     }
 
@@ -493,12 +523,16 @@ export async function GET(req: Request) {
       people: wsByDay[date].sort((a, b) => String(a.start).localeCompare(String(b.start))),
     }))
 
-    return NextResponse.json({
+    const body = {
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
       ...kpis, tasks, economics, payroll, today: todayBlock,
       perCleaner, personTasks, personRevenue, attribution, unattributed, settings,
       nameAliases: Object.keys(aliasCache).filter(k => aliasCache[k] && aliasCache[k] !== k).reduce((o: any, k) => { o[k] = aliasCache[k]; return o }, {}),
-    })
+    }
+    // The percentages above were computed for everyone; only the amounts are gated. `moneyHidden`
+    // tells the panel to render the percentage layout — it is a rendering hint, not the control:
+    // the dollars are already gone from `body` by the time it is set.
+    return NextResponse.json(showMoney ? { ...body, moneyHidden: false } : { ...redactMoney(body), moneyHidden: true })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || String(e) })
   }
