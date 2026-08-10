@@ -485,7 +485,7 @@ export function TodayInOps() {
           decide you want only the unassigned ones, and have to travel back to the top to say so.
           Where and what-kind were also split across two rows with two alert panels between them,
           so they never read as the same tool. One block, pinned. */}
-      <div className="sticky top-0 z-30 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm border-b border-line pt-1 pb-2 mb-3 space-y-2">
+      <div className="sticky top-0 z-30 bg-app border-b border-line pt-1 pb-2 mb-3 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shadow-soft">
           {markets.map(m => (
@@ -703,7 +703,7 @@ export function TodayInOps() {
         {/* BY AREA: units grouped into mini-markets worked out from coordinates, each block a run. */}
         {groupBy === 'area' && areas.map(a => (
           <div key={a.key} className="space-y-2">
-            <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm">
+            <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app border-b border-line/60">
               <MapPin size={13} className="text-muted" />
               <span className="text-[13px] font-bold text-ink">{a.label}</span>
               {a.city && a.city !== a.label && <span className="text-[11px] text-muted">{a.city}</span>}
@@ -724,14 +724,14 @@ export function TodayInOps() {
           if (!needs.length || !rest.length) return units.map(u => renderUnit(u))
           return (
             <>
-              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm">
+              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app border-b border-line/60">
                 <AlertTriangle size={13} className="text-rose-600" />
                 <span className="text-[13px] font-bold text-rose-700">Needs attention</span>
                 <span className="text-[11px] font-semibold text-muted">{needs.length} unit{needs.length === 1 ? '' : 's'} {'—'} late, same-day, unassigned or guest issue</span>
                 <span className="flex-1 h-px bg-rose-200" />
               </div>
               {needs.map(u => renderUnit(u))}
-              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 mt-2 bg-app/95 supports-[backdrop-filter]:bg-app/80 backdrop-blur-sm">
+              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 mt-2 bg-app border-b border-line/60">
                 <span className="text-[13px] font-bold text-ink">On track</span>
                 <span className="text-[11px] font-semibold text-muted">{rest.length} unit{rest.length === 1 ? '' : 's'} {'·'} click a row for detail</span>
                 <span className="flex-1 h-px bg-line" />
