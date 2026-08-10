@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
-import { marketOf } from '@/lib/segments'
+import { marketOf, buildingOf } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -67,8 +67,8 @@ export async function GET(req: NextRequest) {
     const L: Record<string, { building: string; market: string; name: string; active: boolean }> = {}
     const unitsByBuilding: Record<string, number> = {}
     for (const l of listings) {
-      const building = str(l.building).trim() || 'Unassigned'
       const name = str(l.nickname || l.title || l.unit || l.id)
+      const building = buildingOf(str(l.building), name) || 'Unassigned'
       const active = !DEAD.includes(str(l.status).toLowerCase())
       L[str(l.id)] = { building, market: marketOf(building, l.address_city, name), name, active }
       if (active) unitsByBuilding[building] = (unitsByBuilding[building] || 0) + 1
