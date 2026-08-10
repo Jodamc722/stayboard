@@ -52,28 +52,29 @@ export async function GET(req: NextRequest) {
     // ── MAINTENANCE: WHAT WE BILL VS WHAT THE CREW COSTS ─────────────────────────────────────
     // Jon, 2026-08-10: "just take payroll for maintenance and take billable labor on tasks."
     //
-    // THE CALCULATION THAT WAS WRONG: billedAmount on a task is labor + line items, and labor is
-    // rate_paid x hours. NOT ONE maintenance task in the mirror carries a rate_paid, so the labor
-    // side of every bill computed to $0 and the "billable labor" figure was really just the parts
-    // and materials total. That is why it looked nothing like payroll — it was comparing what we
-    // charge for MATERIALS against what we pay in WAGES.
+    // BILLABLE IS WHAT WAS ENTERED ON THE TASK. Nothing derived (Jon, 2026-08-10: "this needs to
+    // be actual cost in the Breezeway task").
     //
-    // So labor is now priced the way we actually charge for it: time on task x the owner charge
-    // rate (app_settings billing_default_rate, $40/h). Materials are kept as their own number
-    // instead of being folded in, because they are a pass-through, not labor. Nothing here
-    // changes what any owner is invoiced — the per-task billing on the rows below is untouched.
+    // The history is worth keeping. billedAmount is labor + line items, where labor is
+    // rate_paid x hours — and rate_paid is 0 on every task in this account, so the labor half of
+    // every bill computed to $0. The fix attempted next was to price labor as logged-hours x the
+    // $40 owner rate. That read $4,312 for August against $2,345 actually entered: nearly double,
+    // because only 51 of 315 maintenance tasks carry a billing entry at all and the time logged on
+    // them is frequently a single minute. An estimate that confident and that wrong is worse than
+    // no estimate. The cost line item IS the job price — several are literally described "Labor"
+    // at $40 — so it is reported as-is, and the count of tasks carrying one is shown beside it so
+    // the coverage gap is visible instead of being papered over.
     let maintenancePayroll: {
       cost: number; hours: number; people: number; source: string
       roster?: { name: string; hours: number; cost: number }[]
-      rate: number; tasks: number; tasksWithTime: number
-      hoursOnTask: number; laborBillable: number; materials: number
+      tasks: number; tasksWithBilling: number; tasksWithTime: number
+      hoursOnTask: number; billed: number
     } | null = null
     // BY MARKET (Jon: "the way we bill in Miami is different"). Billable splits exactly — every
     // task has a listing and the listing has a market. Payroll does not split: Homebase is one
     // location with no market on a timecard, so it stays a single measured total.
-    let maintenanceByMarket: { market: string; tasks: number; tasksWithTime: number; minutes: number; laborBillable: number; materials: number }[] = []
+    let maintenanceByMarket: { market: string; tasks: number; tasksWithBilling: number; tasksWithTime: number; minutes: number; billed: number }[] = []
     try {
-      const chargeRate = Number.isFinite(defaultRate) && defaultRate > 0 ? defaultRate : 40
       const mtTasks = (data.tasks || []).filter((t: any) => /maint/i.test(String(t.department || '')))
       const ownerItems = (t: any) => ((t.items || []) as any[])
         .reduce((a, i) => a + (String(i.bill_to || 'owner') === 'guest' ? 0 : (Number(i.amount) || 0)), 0)
@@ -96,19 +97,18 @@ export async function GET(req: NextRequest) {
       // ---- billable: time on task x charge rate, plus materials, both measured ----
       const totMin = mtTasks.reduce((a: number, t: any) => a + (Number(t.actualMinutes) || 0), 0)
       const withTime = mtTasks.filter((t: any) => Number(t.actualMinutes) > 0).length
-      const materials = mtTasks.reduce((a: number, t: any) => a + ownerItems(t), 0)
+      const billedTotal = mtTasks.reduce((a: number, t: any) => a + ownerItems(t), 0)
       maintenancePayroll = {
         cost: Math.round(roster.reduce((a, p2) => a + p2.cost, 0) * 100) / 100,
         hours: Math.round(roster.reduce((a, p2) => a + p2.hours, 0) * 10) / 10,
         people: roster.length,
         source: 'Homebase clocked payroll \u2014 maintenance crew',
         roster,
-        rate: chargeRate,
         tasks: mtTasks.length,
+        tasksWithBilling: mtTasks.filter((t: any) => ownerItems(t) > 0).length,
         tasksWithTime: withTime,
         hoursOnTask: Math.round((totMin / 60) * 10) / 10,
-        laborBillable: Math.round((totMin / 60) * chargeRate * 100) / 100,
-        materials: Math.round(materials * 100) / 100,
+        billed: Math.round(billedTotal * 100) / 100,
       }
 
       // ---- the same two numbers, per market ----
@@ -122,15 +122,17 @@ export async function GET(req: NextRequest) {
           mkOf[String(l.id)] = String(marketOf(l.building, l.address_city, nm) || 'Other')
         }
       }
-      const agg: Record<string, { tasks: number; tasksWithTime: number; minutes: number; materials: number }> = {}
+      const agg: Record<string, { tasks: number; tasksWithBilling: number; tasksWithTime: number; minutes: number; billed: number }> = {}
       for (const t of mtTasks) {
         const mk = mkOf[String((t as any).listingId || '')] || 'Other'
-        const e = agg[mk] = agg[mk] || { tasks: 0, tasksWithTime: 0, minutes: 0, materials: 0 }
+        const e = agg[mk] = agg[mk] || { tasks: 0, tasksWithBilling: 0, tasksWithTime: 0, minutes: 0, billed: 0 }
         const mins = Number((t as any).actualMinutes) || 0
+        const amt = ownerItems(t)
         e.tasks += 1
         if (mins > 0) e.tasksWithTime += 1
+        if (amt > 0) e.tasksWithBilling += 1
         e.minutes += mins
-        e.materials += ownerItems(t)
+        e.billed += amt
       }
       const ORDER = ['Miami', 'Broward', 'North', 'Other']
       maintenanceByMarket = Object.keys(agg)
@@ -138,10 +140,10 @@ export async function GET(req: NextRequest) {
         .map(mk => ({
           market: mk,
           tasks: agg[mk].tasks,
+          tasksWithBilling: agg[mk].tasksWithBilling,
           tasksWithTime: agg[mk].tasksWithTime,
           minutes: agg[mk].minutes,
-          laborBillable: Math.round((agg[mk].minutes / 60) * chargeRate * 100) / 100,
-          materials: Math.round(agg[mk].materials * 100) / 100,
+          billed: Math.round(agg[mk].billed * 100) / 100,
         }))
     } catch { /* payroll / market split simply absent */ }
     return NextResponse.json({ ok: true, month: monthKey, from: win.from, to: win.to, custom, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews, units, maintenancePayroll, maintenanceByMarket })
