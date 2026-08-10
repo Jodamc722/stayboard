@@ -7,8 +7,7 @@ import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Radar, Receipt
-} from 'lucide-react'
+  Share2, Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Radar, Receipt, CalendarOff } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
 // ordered the way a GM actually moves through the day —
@@ -56,6 +55,7 @@ const SECTIONS: {
       { to: '/vault',     label: 'Vault', Icon: Lock },
       { to: '/health',    label: 'Health Score', Icon: Activity },
       { to: '/patterns',  label: 'Patterns', Icon: Radar },
+      { to: '/blocked',   label: 'Blocked Units', Icon: CalendarOff }, // 2026-08-10 - inventory off the calendar
     ],
   },
   {
