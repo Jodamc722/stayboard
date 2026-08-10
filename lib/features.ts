@@ -78,6 +78,26 @@ export const FEATURES: Feature[] = [
   { key: 'integrations', label: 'Integrations',       path: '/integrations', group: 'Admin' },
 ]
 
+// ---- Extra permissions: things that are NOT pages. -------------------------------------------
+// A FEATURES entry answers "can this person open this tab". These answer "what may this person see
+// once they are on a tab they already have". They live in the same `app_users.features` column as
+// the per-page overrides, so one JSONB column still holds everything, but they are booleans only —
+// off/view/edit/full is meaningless for "may you see a dollar sign".
+//
+// DEFAULT OFF, ALWAYS. There is no role that grants these; the owner turns each person on by hand
+// on /users. That is the whole point (Jon 2026-08-10: "only view of that data should be me ...
+// meaning i should be able to toggle on and off per user").
+//
+// Deliberately no `path:` field — scripts/check-tabs.mjs scrapes this file for `path: '...'` to
+// build the route census, and a pathless entry here must not look like a page to it.
+export const EXTRA_PERMS: { key: string; label: string; blurb: string }[] = [
+  { key: 'money', label: 'Dollar amounts',
+    blurb: 'See revenue, payroll, wages and margins as amounts. Off = the same boards in percentages.' },
+]
+export function isExtraPerm(key: string): boolean {
+  return EXTRA_PERMS.some(p => p.key === key)
+}
+
 // ---- Route census (2026-08-06). The build-time check (scripts/check-tabs.mjs, run from
 // next.config.mjs) fails the build if a page route is not covered by FEATURES or one of these
 // lists — so every new tab is a forced, conscious decision about user settings before it ships.
