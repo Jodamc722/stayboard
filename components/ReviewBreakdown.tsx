@@ -25,7 +25,7 @@ type Unit = {
 type Bld = {
   building: string; market: string
   n: number; avg: number | null; fiveShare: number | null; lowCount: number; score: number | null
-  change: number | null; awaiting: number; unitsReviewed: number; unitsTotal: number; ota: Ota[]
+  change: number | null; awaiting: number; unitsReviewed: number; unitsRetired?: number; unitsTotal: number; ota: Ota[]
 }
 
 const PERIODS = [{ d: 30, l: '30d' }, { d: 90, l: '90d' }, { d: 180, l: '6m' }, { d: 365, l: '12m' }]
@@ -320,7 +320,10 @@ export function ReviewBreakdown() {
                     <ChevronRight size={13} className={'text-muted flex-shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
                     <span className="flex-1 min-w-0 truncate">
                       <span className="text-[13px] font-bold text-ink">{b.building}</span>
-                      <span className="text-[11px] text-muted"> {'·'} {b.market || 'unmapped'} {'·'} {b.unitsReviewed} of {b.unitsTotal || b.unitsReviewed} unit{(b.unitsTotal || b.unitsReviewed) === 1 ? '' : 's'} reviewed</span>
+                      <span className="text-[11px] text-muted"> {'·'} {b.market || 'unmapped'} {'·'} {b.unitsTotal > 0
+                        ? <>{b.unitsReviewed} of {b.unitsTotal} unit{b.unitsTotal === 1 ? '' : 's'} reviewed</>
+                        : <>no active units</>}
+                        {b.unitsRetired ? <> {'·'} {b.unitsRetired} retired</> : null}</span>
                     </span>
                     <Stats n={b.n} avg={b.avg} change={b.change} fiveShare={b.fiveShare} lowCount={b.lowCount} awaiting={b.awaiting} />
                     <span className="w-[150px] hidden lg:block flex-shrink-0" />
