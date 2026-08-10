@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
-import { normWorkspace, FEATURES, LEVELS } from '@/lib/features'
+import { normWorkspace, FEATURES, LEVELS, isExtraPerm } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
 
@@ -140,6 +140,10 @@ export async function PATCH(req: NextRequest) {
     if (email !== OWNER) {
       const clean: Record<string, any> = {}
       for (const k of Object.keys(body.features)) {
+        // Extra permissions (Dollar amounts) share this column but are BOOLEAN ONLY — a level like
+        // 'view' means nothing for "may you see a dollar sign", so only an explicit true survives.
+        // Everything else, including 'edit' or a typo, stores false: default-off, never default-on.
+        if (isExtraPerm(k)) { clean[k] = body.features[k] === true; continue }
         if (!FEATURES.some(f => f.key === k)) continue          // unknown feature key
         const v = body.features[k]
         if (v === false || v === true) { clean[k] = v; continue }
