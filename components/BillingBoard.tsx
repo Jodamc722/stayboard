@@ -29,7 +29,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string } | null; maintenanceByMarket?: { market: string; billed: number; tasks: number; minutes: number; payroll: number | null }[]; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; people_detail?: { name: string; hours: number; cost: number; share: number; maintCost: number; maintHours: number; basis: string }[] } | null; maintenanceByMarket?: { market: string; billed: number; tasks: number; minutes: number; payroll: number | null }[]; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -284,6 +284,25 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
               {t.reviewedBy ? <span className="text-emerald-600 font-semibold"> · ✓ {String(t.reviewedBy).split('@')[0]}{t.reviewedAt ? ' ' + String(t.reviewedAt).slice(5, 10) : ''}</span> : null}
               {t.note ? ' · 📝 ' + t.note : ''}
             </span>
+            {/* MORE THAN ONE COST? SHOW WHAT THEY ARE (Jon, 2026-08-09: "supplies cost should show
+                as a line item in the review process if more than one cost"). A single billed
+                number hides whether it is labour, parts or supplies — you cannot review what you
+                cannot see, and opening every row to find out is not reviewing. */}
+            {(() => {
+              const own = t.items.filter(i => String(i.bill_to || 'owner') !== 'guest' && i.amount)
+              if (own.length < 2) return null
+              const sum = (k: string) => own.filter(i => i.kind === k).reduce((a, i) => a + i.amount, 0)
+              const parts: string[] = []
+              const c = sum('cost'), sup = sum('supply'), ex = sum('extra')
+              if (c) parts.push('costs ' + money(c))
+              if (sup) parts.push('supplies ' + money(sup))
+              if (ex) parts.push('extras ' + money(ex))
+              return (
+                <span className="text-[11px] text-teal-700 block truncate" title={own.map(i => i.kind + ': ' + i.description + ' ' + money(i.amount)).join('  ·  ')}>
+                  {own.length} line items {'·'} {parts.join(' + ')}
+                </span>
+              )
+            })()}
           </span>
         </button>
         </div>
@@ -938,6 +957,21 @@ export function BillingBoard() {
                     })}
                   </tbody>
                 </table>
+                {/* WHO THAT PAYROLL IS. A total nobody can check is a total nobody trusts — these
+                    are the people behind it and the share of their month that was maintenance. */}
+                {(mp.people_detail || []).length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-line/60">
+                    <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1">Who that payroll is · share of their month on maintenance</div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      {(mp.people_detail || []).map(p2 => (
+                        <span key={p2.name} className="text-[12px]" title={p2.basis + ' · full month ' + p2.hours + ' hrs, $' + Math.round(p2.cost)}>
+                          <span className="font-semibold text-ink">{p2.name}</span>
+                          <span className="text-muted"> {p2.share}% · ${Math.round(p2.maintCost).toLocaleString()}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
