@@ -3,7 +3,7 @@
 // cost rates (app_settings 'labor_cost_rates') the Labor tab compares against actual hours.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { billingMonth, listingNames, monthRange } from '@/lib/billing'
+import { billingRange, listingNames, monthRange } from '@/lib/billing'
 import { getTimecards } from '@/lib/homebase-labor'
 import { marketOf } from '@/lib/segments'
 import { getSetting } from '@/lib/app-settings'
@@ -15,11 +15,19 @@ export const maxDuration = 60
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('billing', 'view')
   if (!gate.ok) return gate.res
-  const month = String(req.nextUrl.searchParams.get('month') || '').slice(0, 7)
+  const sp = req.nextUrl.searchParams
+  const month = String(sp.get('month') || '').slice(0, 7)
+  // CUSTOM DATE WINDOW (Jon, 2026-08-10). ?from&to override the month picker so the board can
+  // show a week, a pay period or a quarter. The month stays the default and the fallback, and
+  // the review overlay is still keyed by the month the window starts in so nothing is orphaned.
+  const isYmd = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))
+  const qFrom = String(sp.get('from') || ''), qTo = String(sp.get('to') || '')
+  const custom = isYmd(qFrom) && isYmd(qTo) && qFrom <= qTo
   try {
     const monthKey = /^\d{4}-\d{2}$/.test(month) ? month : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
+    const win = custom ? { from: qFrom, to: qTo } : monthRange(monthKey)
     const [data, rates, def, reviews] = await Promise.all([
-      billingMonth(month),
+      billingRange(win.from, win.to),
       getSetting<Record<string, number>>('labor_cost_rates', {}),
       getSetting<{ rate: number }>('billing_default_rate', { rate: 40 }),
       getSetting<Record<string, { by: string; at: string }>>('billing_review:' + monthKey, {}),
@@ -71,8 +79,7 @@ export async function GET(req: NextRequest) {
         .reduce((a, i) => a + (String(i.bill_to || 'owner') === 'guest' ? 0 : (Number(i.amount) || 0)), 0)
 
       // ---- payroll: the maintenance crew's clocked Homebase pay for the month ----
-      const { from, to } = monthRange(monthKey)
-      const tc = await getTimecards(from, to)
+      const tc = await getTimecards(win.from, win.to)
       const isMaintRole = (r: any) => /maint|tech|repair|handy/i.test(String(r || ''))
       const byName: Record<string, { name: string; hours: number; cost: number }> = {}
       for (const t of (tc as any[])) {
@@ -137,7 +144,7 @@ export async function GET(req: NextRequest) {
           materials: Math.round(agg[mk].materials * 100) / 100,
         }))
     } catch { /* payroll / market split simply absent */ }
-    return NextResponse.json({ ok: true, month: monthKey, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews, units, maintenancePayroll, maintenanceByMarket })
+    return NextResponse.json({ ok: true, month: monthKey, from: win.from, to: win.to, custom, ...data, laborRates: rates, defaultRate: Number.isFinite(defaultRate) ? defaultRate : 40, reviews, units, maintenancePayroll, maintenanceByMarket })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
