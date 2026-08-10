@@ -414,16 +414,24 @@ export async function GET(req: NextRequest) {
     if (!l.active) continue
     unitsTotalByBuilding[l.building] = (unitsTotalByBuilding[l.building] || 0) + 1
   }
-  const buildings = Object.keys(byBuilding).map(b => ({
+  // "x of y reviewed" must never read 31 of 21. unitsTotal counts the units we run TODAY, so the
+  // reviewed count has to be drawn from the same pool — a delisted unit's reviews still belong to
+  // the building's score, but it is not a unit anyone can go clean. Retired units are surfaced
+  // separately rather than silently folded in or silently dropped (Jon, 2026-08-10).
+  const buildings = Object.keys(byBuilding).map(b => {
+    const reviewedIds = Object.keys(byUnit).filter(lid => (lmap[lid] || {}).building === b)
+    const reviewedActive = reviewedIds.filter(lid => (lmap[lid] || {}).active).length
+    return {
     building: b, ...summarise(byBuilding[b], mean),
     change: delta(byBuilding[b], byBuildingPrev[b] || emptyAgg()),
     awaiting: awaitByBuilding[b] || 0,
     market: marketByBuilding[b] || '',
-    unitsReviewed: Object.keys(byUnit).filter(lid => (lmap[lid] || {}).building === b).length,
+    unitsReviewed: reviewedActive,
+    unitsRetired: reviewedIds.length - reviewedActive,
     unitsTotal: unitsTotalByBuilding[b] || 0,
     // the published listing score per OTA, all-time — independent of the window controls above
     ota: otaForBuilding(b),
-  })).sort((a, b) => (a.score ?? 9) - (b.score ?? 9))
+  } }).sort((a, b) => (a.score ?? 9) - (b.score ?? 9))
 
   // ---- CLEANLINESS BY CLEANER (gated). review -> reservation -> that day's clean -> assignees.
   let cleaners: any[] = []
