@@ -141,8 +141,10 @@ export async function GET(req: NextRequest) {
     const payroll = timecards.reduce((a, t) => a + (t.laborCost ?? 0), 0)
     const hours = timecards.reduce((a, t) => a + (t.hours ?? 0), 0)
     const ot = timecards.reduce((a, t) => a + (t.overtimeHours ?? 0), 0)
-    const pct = inhouseFees > 0 && payroll > 0 ? Math.round((payroll / inhouseFees) * 1000) / 10 : null
-    const band = pct == null ? 'no data' : pct <= Number(settings.pct_good) ? 'on target' : pct <= Number(settings.pct_bad) ? 'watch' : 'over target'
+    // LABOR % OF CLEANING REVENUE MUST USE CLEANING LABOR. This divided TOTAL payroll — which
+    // includes maintenance techs and inspectors — into cleaning revenue alone, so it read 48.3%
+    // and tripped "over target" on a week that was actually 34%. hkPayroll is computed below;
+    // the value is filled in there so the two can never drift apart again.
 
     // ── WHAT THE WEEK ACTUALLY CONSISTED OF ──────────────────────────────────────────────────
     // Every task finished inside the week, sorted into the five kinds of work Jon asked for, with
@@ -217,6 +219,8 @@ export async function GET(req: NextRequest) {
     const hoursPerClean = inhouseCheckouts > 0 && hkHours > 0 ? hkHours / inhouseCheckouts : null
     const feePerClean = inhouseCheckouts > 0 && inhouseFees > 0 ? inhouseFees / inhouseCheckouts : null
     // Margins, each against the cost that actually belongs to it.
+    const pct = inhouseFees > 0 && hkPayroll > 0 ? Math.round((hkPayroll / inhouseFees) * 1000) / 10 : null
+    const band = pct == null ? 'no data' : pct <= Number(settings.pct_good) ? 'on target' : pct <= Number(settings.pct_bad) ? 'watch' : 'over target'
     const cleanMargin = hkPayroll > 0 ? inhouseFees - hkPayroll : null
     const cleanMarginPct = (cleanMargin != null && inhouseFees > 0) ? Math.round((cleanMargin / inhouseFees) * 1000) / 10 : null
     const maintMargin = maintPayroll > 0 ? (billableLabor + materialsBilled) - maintPayroll : null
@@ -309,7 +313,7 @@ export async function GET(req: NextRequest) {
         '<tr><td style="' + td + '"><b>Maintenance margin</b></td><td style="' + td + ';text-align:right"><b style="color:' + (maintMargin != null && maintMargin < 0 ? '#dc2626' : '#047857') + '">' + money2(maintMargin) + '</b></td></tr>' +
         '<tr><td style="' + td + ';border-top:2px solid #111827"><b>All revenue vs all payroll</b></td><td style="' + td + ';text-align:right;border-top:2px solid #111827"><b>' + money(totalRev) + ' vs ' + money(payroll) + '</b></td></tr>' +
         '</table>' +
-        '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Labor is at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '&mdash;') + '</b> of in-house cleaning revenue &mdash; <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%). Scheduled cost for the week was ' + money(schedCost) + '.</p>', '#4338ca') +
+        '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Labor is at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '&mdash;') + '</b> of in-house cleaning revenue <span style="color:#9ca3af">(housekeeping wages only)</span> &mdash; <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%). Scheduled cost for the week was ' + money(schedCost) + '.</p>', '#4338ca') +
 
       card('Per person &mdash; revenue generated vs labor cost',
         '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Revenue</th></tr>' + rows + '</table>' +
