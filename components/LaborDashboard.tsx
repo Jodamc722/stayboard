@@ -255,7 +255,7 @@ export function LaborDashboard() {
                   <th className="px-3 py-2 text-left font-semibold">Kind of work</th>
                   <th className="px-3 py-2 text-right font-semibold">Tasks</th>
                   <th className="px-3 py-2 text-right font-semibold">Hours</th>
-                  <th className="px-3 py-2 text-right font-semibold">Materials</th>
+                  <th className="px-3 py-2 text-right font-semibold">Billed</th>
                 </tr></thead>
                 <tbody className="divide-y divide-line">
                   {Object.keys(MIX_LABEL).filter(k => data.mix[k] && data.mix[k].tasks > 0).map(k => (
