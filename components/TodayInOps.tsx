@@ -775,7 +775,10 @@ function AuditsDue({ market }: { market: string }) {
     if (!open || data) return
     fetch('/api/ops-today/audits-due', { cache: 'no-store' }).then(r => r.json()).then(setData).catch(() => {})
   }, [open, data])
-  const rows = ((data && data.due) || []).filter((x: any) => market === 'all' || x.market === market)
+  // market2 carries the "keep an otherwise-empty geography tab alive" case, same as the task list
+  // above. Matching on market alone made a vendor-only geography (North) look like it had no
+  // audits due at all.
+  const rows = ((data && data.due) || []).filter((x: any) => market === 'all' || x.market === market || x.market2 === market)
   const createAudit = async (listingId: string, unit: string) => {
     setBusy(listingId); setMsg('')
     try {
