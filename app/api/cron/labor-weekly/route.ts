@@ -1,4 +1,19 @@
-// Weekly labor recap - manager email, Mondays. Includes dollar amounts.
+// WEEKLY PAYROLL BRIEF - manager email, Mondays. Includes dollar amounts.
+//
+// Jon, 2026-08-10: "count all billable labor completed for that week. It should show cost per
+// clean, margins, time per clean etc. Number of cleans / non-clean tasks, like inspections,
+// other, maintenance." So the week is broken into the work that was actually done - departure
+// cleans, other cleans, inspections, maintenance, everything else - with the cost, the time and
+// the money each one carries, instead of a single undifferentiated payroll number.
+//
+// The three rules this brief obeys, learned the hard way on the other boards:
+//   1. COST PER CLEAN USES DEPARTURE CLEANS ONLY. Common-area sweeps, pool, trash and linen runs
+//      are housekeeping work but they are not turns, and counting them halves the apparent cost.
+//   2. CLEANS ARE COUNTED FROM CHECKOUTS, not from closed Breezeway tasks - newer staff do not
+//      always close a task, and a guest leaving is proof the unit needed cleaning.
+//   3. BILLABLE LABOR IS HOURS x THE OWNER CHARGE RATE. Breezeway carries a pay rate on zero
+//      tasks, so anything built on rate_paid computes to $0. Materials are shown separately
+//      because they are a pass-through, not labor.
 // Covers the last FULL workweek (Sunday-Saturday by default, labor_settings.week_start).
 // Recipients live in app_settings key 'labor_weekly': { enabled, fromEmail, to: string[] }.
 // GET ?preview=1 (signed in) returns the HTML. GET ?test=1 sends to YOU only.
@@ -13,6 +28,10 @@ import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/hom
 import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { sendGmail } from '@/lib/gmail-send'
+import { billingMonth } from '@/lib/billing'
+import { isDepartureCleanName } from '@/lib/breezeway'
+import { quoteBanner } from '@/lib/ops-brief'
+import { getSetting as getSetting2 } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -25,6 +44,12 @@ const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
 type Cfg = { enabled?: boolean; fromEmail?: string; to?: string[] }
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
+// STANDING CC (Jon, 2026-08-09): the operations manager sees every brief that goes out.
+const STANDING_CC = ['roberto@stay-hospitality.com']
+const ccFor = (to: string[]): string[] => {
+  const already = new Set(to.map(t => String(t || '').trim().toLowerCase()))
+  return STANDING_CC.filter(c => !already.has(c.toLowerCase()))
+}
 
 async function me(): Promise<string | null> {
   try {
@@ -119,6 +144,86 @@ export async function GET(req: NextRequest) {
     const pct = inhouseFees > 0 && payroll > 0 ? Math.round((payroll / inhouseFees) * 1000) / 10 : null
     const band = pct == null ? 'no data' : pct <= Number(settings.pct_good) ? 'on target' : pct <= Number(settings.pct_bad) ? 'watch' : 'over target'
 
+    // ── WHAT THE WEEK ACTUALLY CONSISTED OF ──────────────────────────────────────────────────
+    // Every task finished inside the week, sorted into the five kinds of work Jon asked for, with
+    // the time each one took. Sourced from the billing pull rather than a raw task query so the
+    // line items (materials) come with it and the numbers agree with the Billable Hours board.
+    const monthsInWeek = Array.from(new Set([start.slice(0, 7), end.slice(0, 7)]))
+    let bTasks: any[] = []
+    for (const mk of monthsInWeek) {
+      try { const bm = await billingMonth(mk); bTasks = bTasks.concat(bm.tasks as any[]) } catch { /* week still renders */ }
+    }
+    const inWeek = (t: any) => {
+      const d = String(t.finishedAt || t.scheduledDate || '').slice(0, 10)
+      return !!d && d >= start && d <= end
+    }
+    const weekTasks = bTasks.filter(inWeek)
+    type Kind = 'departure' | 'otherClean' | 'inspection' | 'maintenance' | 'other'
+    const kindOf = (t: any): Kind => {
+      const dep = String(t.department || '').toLowerCase()
+      const nm = String(t.name || '')
+      if (/inspect|audit|quality/.test(dep + ' ' + nm.toLowerCase())) return 'inspection'
+      if (/maint|repair|handy/.test(dep)) return 'maintenance'
+      if (isDepartureCleanName(nm)) return 'departure'
+      if (/clean|housekeep|turn/.test(dep + ' ' + nm.toLowerCase())) return 'otherClean'
+      return 'other'
+    }
+    const KINDS: { k: Kind; label: string; note: string }[] = [
+      { k: 'departure', label: 'Departure cleans', note: 'the turns \u2014 the cost-per-clean denominator' },
+      { k: 'otherClean', label: 'Other housekeeping', note: 'common areas, pool, trash, linen, mid-stay' },
+      { k: 'inspection', label: 'Inspections', note: 'quality walks and audits' },
+      { k: 'maintenance', label: 'Maintenance', note: 'owner-billable repair work' },
+      { k: 'other', label: 'Everything else', note: 'errands, deliveries, admin tasks' },
+    ]
+    const mix: Record<Kind, { n: number; mins: number; materials: number }> =
+      { departure: { n: 0, mins: 0, materials: 0 }, otherClean: { n: 0, mins: 0, materials: 0 },
+        inspection: { n: 0, mins: 0, materials: 0 }, maintenance: { n: 0, mins: 0, materials: 0 },
+        other: { n: 0, mins: 0, materials: 0 } }
+    for (const t of weekTasks) {
+      const e = mix[kindOf(t)]
+      e.n += 1
+      e.mins += Number(t.actualMinutes) || 0
+      e.materials += ((t.items || []) as any[])
+        .reduce((a, i) => a + (String(i.bill_to || 'owner') === 'guest' ? 0 : (Number(i.amount) || 0)), 0)
+    }
+
+    // ── BILLABLE LABOR COMPLETED THIS WEEK ───────────────────────────────────────────────────
+    // Owner-billable work is maintenance and inspection time. Priced at the owner charge rate,
+    // because the rate field on a Breezeway task is empty on every task in the system.
+    const rateCfg = await getSetting2<{ rate: number }>('billing_default_rate', { rate: 40 })
+    const chargeRate = Number(rateCfg?.rate) > 0 ? Number(rateCfg.rate) : 40
+    const billableMins = mix.maintenance.mins + mix.inspection.mins
+    const billableHours = billableMins / 60
+    const billableLabor = billableHours * chargeRate
+    const materialsBilled = KINDS.reduce((a, k) => a + mix[k.k].materials, 0)
+
+    // ── COST AND TIME PER CLEAN ──────────────────────────────────────────────────────────────
+    // Denominator is CHECKOUTS on in-house units (rule 2), not the departure-clean task count -
+    // both are shown so the gap between them is visible rather than hidden.
+    const inhouseCheckouts = atts.filter(a => !a.vendor).length
+    const deptOfRole = (r: any) => {
+      const x = String(r || '').toLowerCase()
+      if (/inspect|audit|quality/.test(x)) return 'inspection'
+      if (/clean|housekeep|turn/.test(x)) return 'housekeeping'
+      if (/maint|tech|repair|handy/.test(x)) return 'maintenance'
+      return 'other'
+    }
+    const hkCards = timecards.filter(t => deptOfRole(t.role) === 'housekeeping')
+    const hkPayroll = hkCards.reduce((a, t) => a + (t.laborCost ?? 0), 0)
+    const hkHours = hkCards.reduce((a, t) => a + (t.hours ?? 0), 0)
+    const maintCards = timecards.filter(t => deptOfRole(t.role) === 'maintenance')
+    const maintPayroll = maintCards.reduce((a, t) => a + (t.laborCost ?? 0), 0)
+    const costPerClean = inhouseCheckouts > 0 && hkPayroll > 0 ? hkPayroll / inhouseCheckouts : null
+    const hoursPerClean = inhouseCheckouts > 0 && hkHours > 0 ? hkHours / inhouseCheckouts : null
+    const feePerClean = inhouseCheckouts > 0 && inhouseFees > 0 ? inhouseFees / inhouseCheckouts : null
+    // Margins, each against the cost that actually belongs to it.
+    const cleanMargin = hkPayroll > 0 ? inhouseFees - hkPayroll : null
+    const cleanMarginPct = (cleanMargin != null && inhouseFees > 0) ? Math.round((cleanMargin / inhouseFees) * 1000) / 10 : null
+    const maintMargin = maintPayroll > 0 ? (billableLabor + materialsBilled) - maintPayroll : null
+    const totalRev = inhouseFees + billableLabor + materialsBilled
+    const totalMargin = payroll > 0 ? totalRev - payroll : null
+    const totalMarginPct = (totalMargin != null && totalRev > 0) ? Math.round((totalMargin / totalRev) * 1000) / 10 : null
+
     const names: string[] = []
     for (const t of timecards) if (names.indexOf(t.name) < 0) names.push(t.name)
     const people = names.map(name => {
@@ -143,23 +248,79 @@ export async function GET(req: NextRequest) {
       '</tr>').join('')
 
     const bandColor = band === 'over target' ? '#dc2626' : band === 'watch' ? '#d97706' : '#059669'
+
+    // ── EMAIL ────────────────────────────────────────────────────────────────────────────────
+    const card = (title: string, inner: string, accent = '#111827') =>
+      '<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ' + accent + ';border-radius:12px;padding:16px 18px;margin-bottom:14px">' +
+      '<p style="margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:700">' + title + '</p>' + inner + '</div>'
+    const tile = (label: string, value: string, sub: string, tone?: string) =>
+      '<td width="33%" style="padding:10px 12px;vertical-align:top">' +
+      '<p style="margin:0;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;font-weight:700">' + label + '</p>' +
+      '<p style="margin:3px 0 1px;font-size:21px;font-weight:800;color:' + (tone || '#0b1220') + '">' + value + '</p>' +
+      '<p style="margin:0;font-size:11px;color:#9ca3af">' + sub + '</p></td>'
+    const money2 = (n: number | null) => n == null ? '&mdash;' : (n < 0 ? '-$' + Math.abs(Math.round(n)).toLocaleString('en-US') : money(n))
+    const hrsOf = (m: number) => (m / 60)
+
+    const mixRows = KINDS.map(k => {
+      const e = mix[k.k]
+      if (!e.n) return ''
+      return '<tr><td style="' + td + '"><b>' + k.label + '</b><div style="font-size:11px;color:#9ca3af">' + k.note + '</div></td>' +
+        '<td style="' + td + ';text-align:right"><b>' + e.n + '</b></td>' +
+        '<td style="' + td + ';text-align:right">' + r1(hrsOf(e.mins)) + 'h</td>' +
+        '<td style="' + td + ';text-align:right">' + (e.n && e.mins ? r1(e.mins / e.n) : '<span style="color:#d1d5db">&mdash;</span>') + '</td>' +
+        '<td style="' + td + ';text-align:right">' + (e.materials ? money(e.materials) : '<span style="color:#d1d5db">&mdash;</span>') + '</td></tr>'
+    }).join('')
+
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">' +
-      '<div style="max-width:720px;margin:0 auto;padding:20px">' +
-      '<div style="background:#111827;border-radius:12px;padding:18px 20px;margin-bottom:14px">' +
-      '<p style="margin:0;color:#fff;font-size:16px;font-weight:700">Weekly labor recap</p>' +
-      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + start + ' to ' + end + ' - Homebase + Breezeway + Guesty</p></div>' +
-      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;margin-bottom:14px">' +
-      '<p style="margin:0 0 6px;font-size:14px"><b>' + r1(hours) + 'h</b> worked - payroll <b>' + money(payroll) + '</b> (scheduled ' + money(schedCost) + ')' + (ot ? ' - <span style="color:#d97706">' + r1(ot) + 'h overtime</span>' : '') + '</p>' +
-      '<p style="margin:0 0 6px;font-size:14px">In-house cleaning revenue <b>' + money(inhouseFees) + '</b>' + (vendorFees ? ' - vendor-cleaned units brought ' + money(vendorFees) + ' more (not ours to clean)' : '') + '</p>' +
-      '<p style="margin:0;font-size:14px">Labor at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '-') + '</b> of in-house revenue - <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%)</p></div>' +
-      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px">' +
-      '<p style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;font-weight:700">Per person - revenue generated vs labor cost</p>' +
-      '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Revenue</th></tr>' + rows + '</table>' +
-      '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Revenue = guest cleaning fees on checkouts matched to that person&#39;s Breezeway cleans (in-house units only). People with hours but no cleans are maintenance/inspections or missing Breezeway assignees.</p></div>' +
-      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af">Sent automatically by Lighthouse every Monday. Full detail: /labor.</p>' +
+      '<div style="max-width:760px;margin:0 auto;padding:20px">' +
+      '<div style="background:#111827;border-radius:12px;padding:18px 20px;margin-bottom:10px">' +
+      '<p style="margin:0;color:#9ca3af;font-size:10px;letter-spacing:.18em;font-weight:700">S T A Y &nbsp; H O S P I T A L I T Y</p>' +
+      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Weekly payroll brief</p>' +
+      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + start + ' to ' + end + ' &middot; Homebase payroll, Breezeway work, Guesty checkouts</p></div>' +
+      quoteBanner(end) +
+      '<table width="100%" cellspacing="0" cellpadding="0" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin:10px 0 14px"><tr>' +
+      tile('Payroll', money(payroll), r1(hours) + 'h clocked' + (ot ? ' &middot; ' + r1(ot) + 'h OT' : '')) +
+      tile('Cost / clean', costPerClean != null ? money(costPerClean) : '&mdash;', inhouseCheckouts + ' in-house checkouts') +
+      tile('Time / clean', hoursPerClean != null ? r1(hoursPerClean) + 'h' : '&mdash;', 'housekeeping hours &divide; checkouts') +
+      '</tr><tr>' +
+      tile('Cleaning revenue', money(inhouseFees), feePerClean != null ? money(feePerClean) + ' per turn' : 'guest cleaning fees') +
+      tile('Billable labor', money(billableLabor), r1(billableHours) + 'h at $' + chargeRate + '/h') +
+      tile('Margin', totalMarginPct != null ? totalMarginPct + '%' : '&mdash;', money2(totalMargin) + ' on ' + money(totalRev),
+        totalMarginPct == null ? undefined : totalMarginPct < 10 ? '#dc2626' : totalMarginPct < 30 ? '#d97706' : '#047857') +
+      '</tr></table>' +
+
+      card('Work completed this week', 
+        '<table width="100%" cellspacing="0" cellpadding="0">' +
+        '<tr><th style="' + th + '">Kind of work</th><th style="' + th + ';text-align:right">Tasks</th><th style="' + th + ';text-align:right">Hours</th><th style="' + th + ';text-align:right">Min / task</th><th style="' + th + ';text-align:right">Materials</th></tr>' +
+        mixRows + '</table>' +
+        '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">' + mix.departure.n + ' departure cleans were closed in Breezeway against <b>' + inhouseCheckouts + '</b> in-house checkouts. ' +
+        (mix.departure.n < inhouseCheckouts
+          ? 'The gap is ' + (inhouseCheckouts - mix.departure.n) + ' turns that were done but never closed as a task \u2014 cost per clean uses the checkout count, so it stays right either way.'
+          : 'Task closure is keeping up with checkouts.') + '</p>', '#0891b2') +
+
+      card('The money, by what it pays for',
+        '<table width="100%" cellspacing="0" cellpadding="0">' +
+        '<tr><td style="' + td + '">Guest cleaning fees <span style="color:#9ca3af">' + inhouseCheckouts + ' in-house checkouts</span></td><td style="' + td + ';text-align:right"><b>' + money(inhouseFees) + '</b></td></tr>' +
+        '<tr><td style="' + td + '">Housekeeping payroll <span style="color:#9ca3af">clocked, cleaning roles only</span></td><td style="' + td + ';text-align:right">' + money(hkPayroll) + '</td></tr>' +
+        '<tr><td style="' + td + '"><b>Cleaning margin</b></td><td style="' + td + ';text-align:right"><b style="color:' + (cleanMarginPct != null && cleanMarginPct < 10 ? '#dc2626' : '#047857') + '">' + money2(cleanMargin) + (cleanMarginPct != null ? ' &middot; ' + cleanMarginPct + '%' : '') + '</b></td></tr>' +
+        '<tr><td style="' + td + ';padding-top:14px">Billable labor <span style="color:#9ca3af">maintenance + inspection hours at $' + chargeRate + '/h</span></td><td style="' + td + ';text-align:right;padding-top:14px"><b>' + money(billableLabor) + '</b></td></tr>' +
+        '<tr><td style="' + td + '">Materials billed to owners <span style="color:#9ca3af">parts and supplies, a pass-through</span></td><td style="' + td + ';text-align:right">' + money(materialsBilled) + '</td></tr>' +
+        '<tr><td style="' + td + '">Maintenance payroll <span style="color:#9ca3af">clocked, maintenance roles only</span></td><td style="' + td + ';text-align:right">' + money(maintPayroll) + '</td></tr>' +
+        '<tr><td style="' + td + '"><b>Maintenance margin</b></td><td style="' + td + ';text-align:right"><b style="color:' + (maintMargin != null && maintMargin < 0 ? '#dc2626' : '#047857') + '">' + money2(maintMargin) + '</b></td></tr>' +
+        '<tr><td style="' + td + ';border-top:2px solid #111827"><b>All revenue vs all payroll</b></td><td style="' + td + ';text-align:right;border-top:2px solid #111827"><b>' + money(totalRev) + ' vs ' + money(payroll) + '</b></td></tr>' +
+        '</table>' +
+        '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Labor is at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '&mdash;') + '</b> of in-house cleaning revenue &mdash; <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%). Scheduled cost for the week was ' + money(schedCost) + '.</p>', '#4338ca') +
+
+      card('Per person &mdash; revenue generated vs labor cost',
+        '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Revenue</th></tr>' + rows + '</table>' +
+        '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Revenue = guest cleaning fees on checkouts matched to that person&#39;s Breezeway cleans (in-house units only). People with hours but no cleans are maintenance, inspections, or a name that does not match between Homebase and Breezeway.</p>') +
+
+      '<div style="border-top:1px solid #e5e7eb;margin-top:4px;padding-top:14px;text-align:center">' +
+      '<p style="margin:0;font-size:12.5px;color:#374151"><b>Thank you for everything you do.</b></p></div>' +
+      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically by Lighthouse every Monday. Full detail on the Labor and Billable Hours boards.</p>' +
       '</div></body></html>'
 
-    const subject = 'Weekly labor recap ' + start + ' to ' + end + ': ' + money(payroll) + ' payroll vs ' + money(inhouseFees) + ' in-house revenue' + (pct != null ? ' (' + pct + '%)' : '')
+    const subject = 'Weekly payroll ' + start + ' to ' + end + ': ' + money(payroll) + ' payroll, ' + (costPerClean != null ? money(costPerClean) + '/clean' : inhouseCheckouts + ' cleans') + ', ' + money(totalRev) + ' revenue' + (totalMarginPct != null ? ' (' + totalMarginPct + '% margin)' : '')
 
     if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     if (test) {
@@ -169,7 +330,7 @@ export async function GET(req: NextRequest) {
     if (cfg.enabled !== true) return NextResponse.json({ ok: true, skipped: 'labor_weekly not enabled - set app_settings labor_weekly { enabled, to } ' })
     const to = (cfg.to || []).filter(Boolean)
     if (!to.length) return NextResponse.json({ ok: true, skipped: 'no recipients' })
-    const r = await sendGmail({ fromEmail, to, subject, html })
+    const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject, html })
     return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || String(e) })
