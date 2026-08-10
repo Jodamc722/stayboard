@@ -8,12 +8,11 @@ import { readFileSync } from 'node:fs'
 const { isMoneyKey, redactMoney, pctOf } = await import('../lib/money.ts')
 
 // canSeeMoney, transcribed from lib/access.ts (kept in sync by the assertion at the bottom).
+const SUPERADMIN = 'jon@stay-hospitality.com'
+const isSuperadmin = (email) => String(email || '').toLowerCase() === SUPERADMIN
 function canSeeMoney(access) {
-  const flag = access.features?.money
-  if (flag === true) return true
-  if (flag === false) return false
-  if (access.role === 'admin') return true
-  return access.accessRole === 'admin' || access.accessRole === 'manager'
+  if (isSuperadmin(access.email)) return true
+  return access.features?.money === true
 }
 
 let pass = 0, fail = 0
@@ -168,30 +167,59 @@ eq('total labor cost gone', hidden.totalLaborCost, null)
 eq('cleaning revenue gone', hidden.economics.cleaningRevenue, null)
 
 // ---------------------------------------------------------------- who sees it
+// Jon 2026-08-10: "only view of that data should be me ... i should be able to toggle on and off
+// per user". The owner always; everyone else only when he has switched them on. No role grants it.
 console.log('\ncanSeeMoney')
-ok('owner/admin role sees amounts', canSeeMoney({ role: 'admin', accessRole: 'admin', workspace: 'admin', features: {} }))
-ok('manager (the GM seat) sees amounts', canSeeMoney({ role: 'member', accessRole: 'manager', workspace: 'gm', features: {} }))
-ok('ops does not', !canSeeMoney({ role: 'member', accessRole: 'ops', workspace: 'ops', features: {} }))
-ok('cs does not', !canSeeMoney({ role: 'member', accessRole: 'cs', workspace: 'cs', features: {} }))
-ok('cs_manager does not', !canSeeMoney({ role: 'member', accessRole: 'cs_manager', workspace: 'cs', features: {} }))
-ok('data does not', !canSeeMoney({ role: 'member', accessRole: 'data', workspace: 'data', features: {} }))
-// The one that matters: normWorkspace() turns a missing column into 'gm'. If canSeeMoney trusted
-// workspace, every un-migrated user would be handed the payroll.
-ok('un-migrated user (no role, workspace defaults to gm) does NOT see amounts',
-  !canSeeMoney({ role: 'member', accessRole: null, workspace: 'gm', features: {} }))
-ok('per-person grant beats the role', canSeeMoney({ role: 'member', accessRole: 'ops', workspace: 'ops', features: { money: true } }))
-ok('per-person deny beats admin', !canSeeMoney({ role: 'admin', accessRole: 'admin', workspace: 'admin', features: { money: false } }))
-ok('an unrelated features flag changes nothing', !canSeeMoney({ role: 'member', accessRole: 'ops', workspace: 'ops', features: { labor: 'view' } }))
+const OWNER = 'jon@stay-hospitality.com'
+ok('the owner always sees amounts', canSeeMoney({ email: OWNER, features: {} }))
+ok('the owner is matched case-insensitively', canSeeMoney({ email: 'Jon@Stay-Hospitality.com', features: {} }))
+ok('the owner cannot be switched off by a row edit', canSeeMoney({ email: OWNER, features: { money: false } }))
+
+// NO ROLE GRANTS IT — this is the whole point of the change. Every one of these used to pass.
+ok('admin role does NOT see amounts', !canSeeMoney({ email: 'a@x.com', role: 'admin', accessRole: 'admin', workspace: 'admin', features: {} }))
+ok('manager / GM does NOT see amounts', !canSeeMoney({ email: 'gm@x.com', role: 'member', accessRole: 'manager', workspace: 'gm', features: {} }))
+ok('ops does not', !canSeeMoney({ email: 'o@x.com', accessRole: 'ops', workspace: 'ops', features: {} }))
+ok('cs_manager does not', !canSeeMoney({ email: 'c@x.com', accessRole: 'cs_manager', workspace: 'cs', features: {} }))
+ok('data does not', !canSeeMoney({ email: 'd@x.com', accessRole: 'data', workspace: 'data', features: {} }))
+// normWorkspace() turns a missing column into 'gm'. If canSeeMoney trusted workspace, every
+// un-migrated user would be handed the payroll.
+ok('un-migrated user (workspace defaults to gm) does NOT see amounts',
+  !canSeeMoney({ email: 'u@x.com', accessRole: null, workspace: 'gm', features: {} }))
+
+// The per-user switch.
+ok('switched on', canSeeMoney({ email: 'o@x.com', accessRole: 'ops', features: { money: true } }))
+ok('switched off', !canSeeMoney({ email: 'o@x.com', accessRole: 'ops', features: { money: false } }))
+ok('never set = off', !canSeeMoney({ email: 'o@x.com', accessRole: 'ops', features: {} }))
+ok('null features = off', !canSeeMoney({ email: 'o@x.com', features: null }))
+ok('undefined features = off', !canSeeMoney({ email: 'o@x.com' }))
+// Only an explicit boolean true. A truthy string must not open the door.
+for (const v of ['true', 'yes', 1, 'full', 'view', {}, []])
+  ok('truthy non-true (' + JSON.stringify(v) + ') = off', !canSeeMoney({ email: 'o@x.com', features: { money: v } }))
+ok('an unrelated features flag changes nothing', !canSeeMoney({ email: 'o@x.com', features: { labor: 'view' } }))
+ok('no email = off', !canSeeMoney({ email: null, features: {} }))
 
 // The transcription above must match lib/access.ts, or these tests prove nothing.
 const accessSrc = readFileSync(new URL('../lib/access.ts', import.meta.url), 'utf8')
 const fn = accessSrc.slice(accessSrc.indexOf('export function canSeeMoney'))
   .split('\n}')[0].replace(/\s+/g, ' ')
 ok('test copy of canSeeMoney still matches lib/access.ts', [
-  "if (flag === true) return true", "if (flag === false) return false",
-  "if (access.role === 'admin') return true",
-  "return access.accessRole === 'admin' || access.accessRole === 'manager'",
+  "if (isSuperadmin(access.email)) return true",
+  "return (access.features as any)?.money === true",
 ].every(s => fn.includes(s)), fn)
+ok('SUPERADMIN constant still matches lib/access.ts',
+  new RegExp("SUPERADMIN\\s*=\\s*'" + OWNER + "'").test(accessSrc))
+
+// The users API must let the switch through — it sanitises `features` on write, and `money` is not
+// a page feature, so without an explicit rule it would be silently dropped on every save.
+const usersSrc = readFileSync(new URL('../app/api/users/route.ts', import.meta.url), 'utf8')
+ok('users API stores extra perms', /isExtraPerm\(k\)\s*\)\s*\{\s*clean\[k\]\s*=\s*body\.features\[k\]\s*===\s*true/.test(usersSrc.replace(/\s+/g, ' ')) || usersSrc.includes('isExtraPerm(k)'), 'no isExtraPerm branch in app/api/users/route.ts')
+ok('users API stores extra perms as strict booleans', usersSrc.includes("body.features[k] === true"))
+const featSrc = readFileSync(new URL('../lib/features.ts', import.meta.url), 'utf8')
+ok('money is registered in EXTRA_PERMS', /EXTRA_PERMS[\s\S]{0,400}?key:\s*'money'/.test(featSrc))
+// check-tabs.mjs scrapes this file for `path: '...'` to build the route census — an extra perm
+// must never look like a page to it.
+const extraBlock = (featSrc.match(/EXTRA_PERMS[\s\S]*?\n\]/) || [''])[0]
+ok('EXTRA_PERMS declares no path (would break the route census)', !/path:/.test(extraBlock))
 
 // ---------------------------------------------------------------- pctOf
 console.log('\npctOf')
