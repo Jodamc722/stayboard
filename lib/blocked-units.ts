@@ -15,6 +15,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getMultiCalendar, isOpsBlock } from './guesty'
 import { marketOf, buildingOf } from './segments'
+import { isLiveStay } from './stay-status'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const str = (v: any) => (v == null ? '' : String(v))
@@ -35,14 +36,23 @@ export type BlockedRun = {
   reason: string
   note: string | null
   keys: string[]       // raw Guesty flags, so our labels never hide the truth
+  // LINKED INVENTORY (Jon, 2026-08-10: "some are parent listing, meaning if one is booked can
+  // take some offline"). A unit sold as a whole AND as its parts — "3316 Full - 4BR" alongside
+  // "3316/1" and "3316/2", or "Capri 115/116" alongside "Capri 115" — goes unavailable the moment
+  // a sibling sells. That is the system working, not a unit out of service, and mixing the two
+  // buries the blocks that actually need chasing.
+  linked: boolean          // unavailable because a linked listing is booked over these dates
+  linkedBy: string | null  // which sibling is booked
 }
 
 export type BlockedReport = {
   from: string; to: string; days: number
   listingsChecked: number; calendarDays: number
   liveNow: number; upcoming: number; nightsBlocked: number
+  linkedCount: number      // excluded from liveNow/upcoming/nightsBlocked — reported separately
   byMarket: Record<string, { units: number; nights: number }>
-  runs: BlockedRun[]
+  runs: BlockedRun[]       // out-of-service only
+  linkedRuns: BlockedRun[] // blocked by a booked sibling
 }
 
 // Guesty's block flags. Unrecognised keys are passed through verbatim rather than swallowed — a
@@ -78,6 +88,21 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     }
   }
 
+  // LINKED SETS. A unit listed both whole and in parts shares a room number across its listings:
+  // "3316 Full - 4 BR" / "3316/1 - 2BR" / "3316/2 - 2BR", or "Capri 115/116" / "Capri 115 - 1BR".
+  // Grouping on <canonical building>#<first 3-4 digit number> finds them without needing Guesty to
+  // model the relationship — which it does not: complexId is building-level (all 32 Elser units
+  // share one), so it cannot answer this.
+  const roomKeyOf = (building: string, name: string): string | null => {
+    const m = String(name || '').match(/(\d{3,4})/)
+    return m ? building.toLowerCase() + '#' + m[1] : null
+  }
+  const roomSets: Record<string, string[]> = {}
+  for (const lid of Object.keys(meta)) {
+    const k = roomKeyOf(meta[lid].building, meta[lid].unit)
+    if (k) (roomSets[k] = roomSets[k] || []).push(lid)
+  }
+
   const cal = await getMultiCalendar(Object.keys(meta), today, end)
   const blocked = cal.filter(isOpsBlock)
   const byUnit: Record<string, typeof blocked> = {}
@@ -102,6 +127,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
         live: cur.from <= today && cur.to >= today,
         openEnded: cur.to >= end,
         reason: reasonLabel(keys), note: cur.note, keys,
+        linked: false, linkedBy: null,
       })
       cur = null
     }
@@ -120,12 +146,52 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     }
     flush()
   }
+  // IS THIS BLOCK JUST A SIBLING BEING SOLD? For every run on a unit that belongs to a linked set,
+  // look for a live reservation on any sibling that overlaps these dates. If one exists, the
+  // calendar is doing its job and there is nothing for anyone to chase.
+  const linkedCandidates = runs.filter(r => {
+    const k = roomKeyOf(r.building, r.unit)
+    return !!k && (roomSets[k] || []).length > 1
+  })
+  if (linkedCandidates.length) {
+    const sibIds = new Set<string>()
+    for (const r of linkedCandidates) {
+      const k = roomKeyOf(r.building, r.unit)!
+      for (const id of roomSets[k]) if (id !== r.listingId) sibIds.add(id)
+    }
+    let stays: any[] = []
+    try {
+      const { data } = await db.from('guesty_reservations')
+        .select('listing_id,listing_name,check_in,check_out,status')
+        .in('listing_id', Array.from(sibIds))
+        .lte('check_in', end).gte('check_out', today).limit(2000)
+      stays = ((data || []) as any[]).filter(x => isLiveStay(x.status))
+    } catch { /* no reservation read = nothing reclassified, which errs toward showing more */ }
+    for (const r of linkedCandidates) {
+      const k = roomKeyOf(r.building, r.unit)!
+      const sibs = new Set((roomSets[k] || []).filter(id => id !== r.listingId))
+      // Overlap: the stay starts before this block ends AND ends after this block starts.
+      const hit = stays.find(x => sibs.has(String(x.listing_id))
+        && String(x.check_in).slice(0, 10) <= r.to
+        && String(x.check_out).slice(0, 10) > r.from)
+      if (hit) {
+        r.linked = true
+        r.linkedBy = String(hit.listing_name || (meta[String(hit.listing_id)] || {}).unit || 'a linked listing')
+      }
+    }
+  }
+
+  const outOfService = runs.filter(r => !r.linked)
+  const linkedRuns = runs.filter(r => r.linked)
   // Down now first, then longest. The unit that has been shut the longest is the one most likely
   // to be a block nobody remembers creating.
-  runs.sort((a, b) => Number(b.live) - Number(a.live) || b.nights - a.nights || a.from.localeCompare(b.from))
+  const bySeverity = (a: BlockedRun, b: BlockedRun) =>
+    Number(b.live) - Number(a.live) || b.nights - a.nights || a.from.localeCompare(b.from)
+  outOfService.sort(bySeverity)
+  linkedRuns.sort(bySeverity)
 
   const byMarket: Record<string, { units: number; nights: number }> = {}
-  for (const r of runs) {
+  for (const r of outOfService) {
     const e = byMarket[r.market] = byMarket[r.market] || { units: 0, nights: 0 }
     e.units += 1; e.nights += r.nights
   }
@@ -133,9 +199,10 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     from: today, to: end, days: win,
     listingsChecked: Object.keys(meta).length,
     calendarDays: cal.length,
-    liveNow: runs.filter(r => r.live).length,
-    upcoming: runs.filter(r => !r.live).length,
-    nightsBlocked: runs.reduce((a, r) => a + r.nights, 0),
-    byMarket, runs,
+    liveNow: outOfService.filter(r => r.live).length,
+    upcoming: outOfService.filter(r => !r.live).length,
+    nightsBlocked: outOfService.reduce((a, r) => a + r.nights, 0),
+    linkedCount: linkedRuns.length,
+    byMarket, runs: outOfService, linkedRuns,
   }
 }

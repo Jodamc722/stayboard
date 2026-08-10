@@ -369,10 +369,17 @@ const closingNote = (_ymd: string): string => {
 // that, since the oldest block is the one nobody remembers creating.
 //
 // `markets` scopes the card to a supervisor's own patch; pass null for the whole portfolio.
-function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: boolean }): string {
+function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: boolean; linked?: number }): string {
+  // LINKED UNITS ARE NOT ON THIS LIST (Jon, 2026-08-10: "some are parent listing, meaning if one
+  // is booked can take some offline"). A unit sold whole and in parts drops off the calendar the
+  // moment a sibling sells — that is the system working. Those are counted in a footnote instead
+  // of padding a list that is supposed to be a worklist.
+  const linkedNote = opts?.linked
+    ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${opts.linked} more ${opts.linked === 1 ? 'unit is' : 'units are'} unavailable because a linked listing is booked over the same dates \u2014 normal, nothing to chase.</p>`
+    : ''
   if (!runs.length) {
     return card('Blocked units — off the calendar', null,
-      `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing blocked.</span> <span style="${S.muted}">Every unit is sellable for the next 30 days.</span></p>`, '#059669')
+      `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing out of service.</span> <span style="${S.muted}">Every unit is sellable for the next 30 days.</span></p>` + linkedNote, '#059669')
   }
   const limit = opts?.limit ?? 12
   const live = runs.filter(r => r.live)
@@ -398,7 +405,7 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
     `<p style="margin:0 0 8px;font-size:12.5px;color:#374151"><b>${live.length}</b> down right now, <b>${later.length}</b> starting soon, <b>${nights}</b> nights off the calendar in the next 30 days.
       Every one of these is either work that needs finishing or a block that should come off.</p>` +
     `<table width="100%" cellspacing="0" cellpadding="0"><tr>${['Unit', 'Dates', 'Nights', ''].map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${shown.map(row).join('')}</table>` +
-    (more > 0 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${more} more \u2014 full list on the board</p>` : ''),
+    (more > 0 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${more} more \u2014 full list on the board</p>` : '') + linkedNote,
     '#dc2626')
 }
 
@@ -441,9 +448,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   // supervisor gets Miami's blocks and not a portfolio-wide list they cannot act on. Best-effort:
   // if the Guesty calendar call fails the rest of the brief still goes out on time.
   let blocked: BlockedRun[] = []
+  let blockedLinked = 0
   try {
     const rep = await blockedUnits(30)
-    blocked = variant === 'full' ? rep.runs : rep.runs.filter(r => r.market === variant)
+    const mine = (rs: BlockedRun[]) => variant === 'full' ? rs : rs.filter(r => r.market === variant)
+    blocked = mine(rep.runs)
+    blockedLinked = mine(rep.linkedRuns).length
   } catch { /* card renders as absent rather than blocking the send */ }
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
@@ -800,7 +810,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${accessNotice()}
 
   ${eyebrow('Act now')}
-  ${blockedCard(blocked, { showMarket: variant === 'full' })}
+  ${blockedCard(blocked, { showMarket: variant === 'full', linked: blockedLinked })}
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
@@ -871,7 +881,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // Blocked units, whole portfolio. On the leadership brief this is a revenue question as much as
   // an ops one — every night here is inventory that was never for sale.
   let blocked: BlockedRun[] = []
-  try { blocked = (await blockedUnits(30)).runs } catch { /* brief still sends */ }
+  let blockedLinked = 0
+  try { const rep = await blockedUnits(30); blocked = rep.runs; blockedLinked = rep.linkedCount } catch { /* brief still sends */ }
   const sheet: any = d.sheet || {}
   const today = d.today
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
@@ -1380,7 +1391,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
   ${accessNotice()}
 
-  ${blockedCard(blocked, { showMarket: true, limit: 10 })}
+  ${blockedCard(blocked, { showMarket: true, limit: 10, linked: blockedLinked })}
 
   ${card('Today', null, tbl(`
     <tr><td style="${S.td}">In the buildings tonight</td><td style="${S.td};text-align:right"><b>${tod.inHouse || 0}</b> <span style="${S.muted}">of ${tod.units || d.activeCount} units · ${occToday != null ? pct1(occToday) : '—'}</span></td></tr>
