@@ -44,6 +44,9 @@ export const FEATURES: Feature[] = [
   // multi-calendar, with the note whoever created the block typed in. An operations page, not a
   // money one — the point is to chase the work behind the block before the nights are gone.
   { key: 'blocked',       label: 'Blocked Units',     path: '/blocked', group: 'Operations' },
+  // Projects (2026-08-10, Jon): the ops work that is NOT a task — renovations, rollouts,
+  // building onboarding. /project/<token> is the vendor's view and stays public (OPEN_PREFIXES).
+  { key: 'projects',      label: 'Projects',          path: '/projects', group: 'Operations' },
   { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
   { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
@@ -83,7 +86,7 @@ export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt'
 export const OPEN_PREFIXES = [
   '/login', '/auth', '/signup', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
-  '/salato/share', '/salato/verify', '/report/', '/favicon',
+  '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/',
 ]
 export function isOpenPath(path: string): boolean {
   if (OPEN_EXACT.indexOf(path) >= 0) return true
@@ -193,7 +196,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'buildings', 'patterns', 'blocked', 'faq'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'cleaners', 'labor', 'buildings', 'patterns', 'blocked', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
