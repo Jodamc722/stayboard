@@ -107,7 +107,13 @@ export type PersonLabor = {
   remainingScheduledThisWeek: number
   projectedWeekHours: number
   overtimeRisk: boolean       // projected ≥ 40h this workweek
-  openTimecard: boolean       // still clocked in
+  // ON SHIFT RIGHT NOW vs A CARD NOBODY CLOSED — two different problems, and conflating them made
+  // the board useless (Jon, 2026-08-10: "can you make sure if clocked out?"). This used to be
+  // `myTc.some(t => t.open)` across the WHOLE selected range, so one un-closed card from three
+  // weeks ago painted a permanent green "clocked in" badge on someone who was at home. Twelve
+  // people read as on shift at once.
+  openTimecard: boolean       // an open card that started TODAY — genuinely on the clock now
+  missedClockOuts: string[]   // dates of open cards from earlier days — a payroll data problem
   noShow: boolean             // had a shift, no timecard that day
 }
 
@@ -125,7 +131,8 @@ export type LaborKpis = {
   flags: {
     overtimeRisk: string[]
     noShows: { name: string; date: string }[]
-    stillClockedIn: string[]         // open timecards from a previous day = missed punch
+    stillClockedIn: string[]         // on the clock RIGHT NOW (open card dated today)
+    missedClockOuts: string[]        // open card from an earlier day = missed punch, hours too low
   }
 }
 
@@ -187,7 +194,8 @@ export function computeLaborKpis(opts: {
       remainingScheduledThisWeek: remaining,
       projectedWeekHours: round1(wtd + remaining),
       overtimeRisk: wtd + remaining >= OT,
-      openTimecard: myTc.some(t => t.open),
+      openTimecard: myTc.some(t => t.open && t.date === todayISO.slice(0, 10)),
+      missedClockOuts: myTc.filter(t => t.open && t.date && t.date < todayISO.slice(0, 10)).map(t => t.date as string).sort(),
       noShow: missed.length > 0,
     }
   }).sort((a, b) => b.actualHours - a.actualHours)
@@ -229,9 +237,15 @@ export function computeLaborKpis(opts: {
     flags: {
       overtimeRisk: people.filter(p => p.overtimeRisk).map(p => p.name),
       noShows,
+      // On the clock right now.
       stillClockedIn: people
         .filter(p => p.openTimecard)
         .map(p => p.name),
+      // Clocked in on an earlier day and never clocked out. Their hours and cost are understated
+      // until someone closes the card, so every figure that includes them is too low.
+      missedClockOuts: people
+        .filter(p => p.missedClockOuts.length)
+        .map(p => p.name + ' (' + p.missedClockOuts.join(', ') + ')'),
     },
   }
 }

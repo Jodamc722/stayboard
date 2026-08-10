@@ -16,9 +16,12 @@
 //   2. COST PER CLEAN USES DEPARTURE CLEANS ONLY and HOUSEKEEPING WAGES ONLY. Common-area sweeps,
 //      pool, trash and linen runs are housekeeping work but they are not turns, and maintenance
 //      techs are not cleaners — mixing either in halves or doubles the number.
-//   3. BILLABLE LABOR IS HOURS x THE OWNER CHARGE RATE. Breezeway carries a pay rate on zero tasks
-//      in this account, so anything built on rate_paid computes to $0. Materials are reported
-//      beside labor, never inside it — they are a pass-through.
+//   3. BILLABLE IS THE COST ENTERED ON THE BREEZEWAY TASK. Nothing derived (Jon, 2026-08-10:
+//      "this needs to be actual cost in the Breezeway task"). An earlier version priced it as
+//      logged-hours x the $40 owner rate, which read $4,312 for August against $2,345 actually
+//      entered — the estimate was nearly double, because only 51 of 315 maintenance tasks carry a
+//      billing entry and the time logged on them is often a single minute. The entered amount is
+//      what the owner is actually charged, so it is the only number worth reporting.
 //   4. BILLABLES ARE RE-READ OVER A ROLLING 45 DAYS. Billing detail gets edited after the fact, so
 //      a number frozen on the day it was earned goes stale. BILLABLE_LOOKBACK_DAYS is that window.
 import 'server-only'
@@ -29,7 +32,6 @@ import { getLaborSettings, type LaborSettings } from './labor-settings'
 import { computeYesterdayLabor, type YesterdayLabor } from './labor-daily'
 import { billingRange } from './billing'
 import { isDepartureCleanName } from './breezeway'
-import { getSetting } from './app-settings'
 import { isLiveStay } from './stay-status'
 import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
@@ -126,8 +128,11 @@ export type LaborReport = {
   // billables, re-read over a rolling window because they get edited after the fact
   billable: {
     from: string; to: string; days: number
-    hours: number; rate: number; labor: number; materials: number
-    tasks: number; tasksMissingDetail: number
+    billed: number            // MEASURED: what was entered against the tasks in Breezeway
+    tasks: number             // billable-department tasks in the window
+    tasksWithBilling: number  // how many of them actually carry an amount
+    tasksMissingDetail: number
+    hours: number             // time logged on them, for context only — never priced
     maintenancePayroll: number
     margin: number
   }
@@ -142,8 +147,6 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   const db = supabaseAdmin()
   const days = daysBetween(from, to) + 1
   const settings = await getLaborSettings('default')
-  const rateCfg = await getSetting<{ rate: number }>('billing_default_rate', { rate: 40 })
-  const chargeRate = Number(rateCfg?.rate) > 0 ? Number(rateCfg.rate) : 40
 
   // ---- payroll ----------------------------------------------------------------
   const timecards = await timecardsRange(from, to)
@@ -282,8 +285,8 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   const bFrom = shiftDay(to, -(BILLABLE_LOOKBACK_DAYS - 1))
   let billable = {
     from: bFrom, to, days: BILLABLE_LOOKBACK_DAYS,
-    hours: 0, rate: chargeRate, labor: 0, materials: 0,
-    tasks: 0, tasksMissingDetail: 0, maintenancePayroll: 0, margin: 0,
+    billed: 0, tasks: 0, tasksWithBilling: 0, tasksMissingDetail: 0,
+    hours: 0, maintenancePayroll: 0, margin: 0,
   }
   try {
     const look = await billingRange(bFrom, to)
@@ -294,19 +297,19 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     const billableTasks = lookTasks.filter((t: any) => {
       const k = kindOfTask(t); return k === 'maintenance' || k === 'inspection'
     })
-    const mins = billableTasks.reduce((a: number, t: any) => a + (Number(t.actualMinutes) || 0), 0)
     const bCards = await timecardsRange(bFrom, to)
+    const billed = billableTasks.reduce((a: number, t: any) => a + ownerItems(t), 0)
     billable = {
       from: bFrom, to, days: BILLABLE_LOOKBACK_DAYS,
-      hours: r1(mins / 60), rate: chargeRate,
-      labor: r2((mins / 60) * chargeRate),
-      materials: r2(lookTasks.reduce((a: number, t: any) => a + ownerItems(t), 0)),
+      billed: r2(billed),
       tasks: billableTasks.length,
+      tasksWithBilling: billableTasks.filter((t: any) => ownerItems(t) > 0).length,
       tasksMissingDetail: lookTasks.filter((t: any) => !t.hasDetail).length,
+      hours: r1(billableTasks.reduce((a: number, t: any) => a + (Number(t.actualMinutes) || 0), 0) / 60),
       maintenancePayroll: r2(bCards.filter(t => deptOfRole(t.role) === 'maintenance').reduce((a, t) => a + (t.laborCost ?? 0), 0)),
       margin: 0,
     }
-    billable.margin = r2(billable.labor + billable.materials - billable.maintenancePayroll)
+    billable.margin = r2(billable.billed - billable.maintenancePayroll)
   } catch { /* billables absent rather than the whole report failing */ }
 
   // ---- schedule-based flags (short windows only — getShifts is one call per day) ----
@@ -334,8 +337,8 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     })
     if (yesterday.missedClockOuts.length) flags.push({
       level: 'red', kind: 'open_shift',
-      title: yesterday.missedClockOuts.length + ' still clocked in',
-      detail: 'An open timecard keeps accruing. Until it is closed, every hour and cost figure on this report is understated for these people.',
+      title: yesterday.missedClockOuts.length + ' never clocked out',
+      detail: 'Clocked in and no clock-out on the card. For a day that has already ended this is always a missed punch, not someone still working — and until it is corrected their hours and cost are understated, so every figure on this report is low.',
       people: yesterday.missedClockOuts,
     })
     if (yesterday.overSchedule.length) flags.push({
@@ -397,10 +400,14 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     detail: 'They may have been on work that lives outside Breezeway, or their tasks are being closed under someone else’s name.',
     people: idle.map(p => p.name + ' ' + p.hours + 'h'),
   })
-  if (billable.tasksMissingDetail > 0) flags.push({
-    level: 'amber', kind: 'missing_billing',
-    title: billable.tasksMissingDetail + ' tasks with no billing detail',
-    detail: 'In the last ' + BILLABLE_LOOKBACK_DAYS + ' days. Until the detail is pulled, that work bills nothing and the maintenance margin reads worse than it is.',
+  const unbilled = billable.tasks - billable.tasksWithBilling
+  if (unbilled > 0) flags.push({
+    level: unbilled > billable.tasksWithBilling ? 'red' : 'amber', kind: 'unbilled',
+    title: unbilled + ' billable tasks carry no cost',
+    detail: 'Of ' + billable.tasks + ' maintenance and inspection tasks in the last ' + BILLABLE_LOOKBACK_DAYS
+      + ' days, only ' + billable.tasksWithBilling + ' have an amount entered in Breezeway. The rest bill the owner nothing, '
+      + 'which is the single biggest reason the maintenance margin reads negative.'
+      + (billable.tasksMissingDetail ? ' ' + billable.tasksMissingDetail + ' of them have not had their billing detail pulled from Breezeway yet.' : ''),
   })
   flags.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1))
 
