@@ -31,7 +31,6 @@ import { sendGmail } from '@/lib/gmail-send'
 import { billingMonth } from '@/lib/billing'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { quoteBanner } from '@/lib/ops-brief'
-import { getSetting as getSetting2 } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -189,15 +188,20 @@ export async function GET(req: NextRequest) {
         .reduce((a, i) => a + (String(i.bill_to || 'owner') === 'guest' ? 0 : (Number(i.amount) || 0)), 0)
     }
 
-    // ── BILLABLE LABOR COMPLETED THIS WEEK ───────────────────────────────────────────────────
-    // Owner-billable work is maintenance and inspection time. Priced at the owner charge rate,
-    // because the rate field on a Breezeway task is empty on every task in the system.
-    const rateCfg = await getSetting2<{ rate: number }>('billing_default_rate', { rate: 40 })
-    const chargeRate = Number(rateCfg?.rate) > 0 ? Number(rateCfg.rate) : 40
-    const billableMins = mix.maintenance.mins + mix.inspection.mins
-    const billableHours = billableMins / 60
-    const billableLabor = billableHours * chargeRate
-    const materialsBilled = KINDS.reduce((a, k) => a + mix[k.k].materials, 0)
+    // ── BILLABLE WORK COMPLETED THIS WEEK ────────────────────────────────────────────────────
+    // THE AMOUNT ENTERED ON THE TASK, nothing derived (Jon, 2026-08-10: "billable labor is the
+    // actual number in the Breezeway task, not $40 x hours worked — that's just how we charge for
+    // the task"). This previously priced maintenance and inspection time at the $40 owner rate,
+    // which overstated August by roughly double: only a third of billable tasks carry an amount at
+    // all, and the time logged on them is often a single minute.
+    const billableTasksAll = weekTasks.filter((t: any) => { const k = kindOf(t); return k === 'maintenance' || k === 'inspection' })
+    const billableHours = (mix.maintenance.mins + mix.inspection.mins) / 60
+    const billableLabor = mix.maintenance.materials + mix.inspection.materials
+    const billableWithAmount = billableTasksAll.filter((t: any) =>
+      ((t.items || []) as any[]).some(i => String(i.bill_to || 'owner') !== 'guest' && Number(i.amount) > 0)).length
+    // Everything entered against ANY task this week — the billable work above plus anything
+    // charged on a cleaning or errand task. This is the whole owner-billable side of the week.
+    const billedOnTasks = KINDS.reduce((a, k) => a + mix[k.k].materials, 0)
 
     // ── COST AND TIME PER CLEAN ──────────────────────────────────────────────────────────────
     // Denominator is CHECKOUTS on in-house units (rule 2), not the departure-clean task count -
@@ -223,8 +227,8 @@ export async function GET(req: NextRequest) {
     const band = pct == null ? 'no data' : pct <= Number(settings.pct_good) ? 'on target' : pct <= Number(settings.pct_bad) ? 'watch' : 'over target'
     const cleanMargin = hkPayroll > 0 ? inhouseFees - hkPayroll : null
     const cleanMarginPct = (cleanMargin != null && inhouseFees > 0) ? Math.round((cleanMargin / inhouseFees) * 1000) / 10 : null
-    const maintMargin = maintPayroll > 0 ? (billableLabor + materialsBilled) - maintPayroll : null
-    const totalRev = inhouseFees + billableLabor + materialsBilled
+    const maintMargin = maintPayroll > 0 ? billableLabor - maintPayroll : null
+    const totalRev = inhouseFees + billedOnTasks
     const totalMargin = payroll > 0 ? totalRev - payroll : null
     const totalMarginPct = (totalMargin != null && totalRev > 0) ? Math.round((totalMargin / totalRev) * 1000) / 10 : null
 
@@ -288,7 +292,7 @@ export async function GET(req: NextRequest) {
       tile('Time / clean', hoursPerClean != null ? r1(hoursPerClean) + 'h' : '&mdash;', 'housekeeping hours &divide; checkouts') +
       '</tr><tr>' +
       tile('Cleaning revenue', money(inhouseFees), feePerClean != null ? money(feePerClean) + ' per turn' : 'guest cleaning fees') +
-      tile('Billable labor', money(billableLabor), r1(billableHours) + 'h at $' + chargeRate + '/h') +
+      tile('Billable work', money(billableLabor), billableWithAmount + ' of ' + billableTasksAll.length + ' tasks carry a cost') +
       tile('Margin', totalMarginPct != null ? totalMarginPct + '%' : '&mdash;', money2(totalMargin) + ' on ' + money(totalRev),
         totalMarginPct == null ? undefined : totalMarginPct < 10 ? '#dc2626' : totalMarginPct < 30 ? '#d97706' : '#047857') +
       '</tr></table>' +
@@ -307,8 +311,8 @@ export async function GET(req: NextRequest) {
         '<tr><td style="' + td + '">Guest cleaning fees <span style="color:#9ca3af">' + inhouseCheckouts + ' in-house checkouts</span></td><td style="' + td + ';text-align:right"><b>' + money(inhouseFees) + '</b></td></tr>' +
         '<tr><td style="' + td + '">Housekeeping payroll <span style="color:#9ca3af">clocked, cleaning roles only</span></td><td style="' + td + ';text-align:right">' + money(hkPayroll) + '</td></tr>' +
         '<tr><td style="' + td + '"><b>Cleaning margin</b></td><td style="' + td + ';text-align:right"><b style="color:' + (cleanMarginPct != null && cleanMarginPct < 10 ? '#dc2626' : '#047857') + '">' + money2(cleanMargin) + (cleanMarginPct != null ? ' &middot; ' + cleanMarginPct + '%' : '') + '</b></td></tr>' +
-        '<tr><td style="' + td + ';padding-top:14px">Billable labor <span style="color:#9ca3af">maintenance + inspection hours at $' + chargeRate + '/h</span></td><td style="' + td + ';text-align:right;padding-top:14px"><b>' + money(billableLabor) + '</b></td></tr>' +
-        '<tr><td style="' + td + '">Materials billed to owners <span style="color:#9ca3af">parts and supplies, a pass-through</span></td><td style="' + td + ';text-align:right">' + money(materialsBilled) + '</td></tr>' +
+        '<tr><td style="' + td + ';padding-top:14px">Billable work <span style="color:#9ca3af">the cost entered on each maintenance and inspection task</span></td><td style="' + td + ';text-align:right;padding-top:14px"><b>' + money(billableLabor) + '</b></td></tr>' +
+        '<tr><td style="' + td + '">Tasks carrying a cost <span style="color:#9ca3af">the rest bill the owner nothing</span></td><td style="' + td + ';text-align:right">' + billableWithAmount + ' of ' + billableTasksAll.length + '</td></tr>' +
         '<tr><td style="' + td + '">Maintenance payroll <span style="color:#9ca3af">clocked, maintenance roles only</span></td><td style="' + td + ';text-align:right">' + money(maintPayroll) + '</td></tr>' +
         '<tr><td style="' + td + '"><b>Maintenance margin</b></td><td style="' + td + ';text-align:right"><b style="color:' + (maintMargin != null && maintMargin < 0 ? '#dc2626' : '#047857') + '">' + money2(maintMargin) + '</b></td></tr>' +
         '<tr><td style="' + td + ';border-top:2px solid #111827"><b>All revenue vs all payroll</b></td><td style="' + td + ';text-align:right;border-top:2px solid #111827"><b>' + money(totalRev) + ' vs ' + money(payroll) + '</b></td></tr>' +
