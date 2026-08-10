@@ -44,6 +44,9 @@ export const FEATURES: Feature[] = [
   // multi-calendar, with the note whoever created the block typed in. An operations page, not a
   // money one — the point is to chase the work behind the block before the nights are gone.
   { key: 'blocked',       label: 'Blocked Units',     path: '/blocked', group: 'Operations' },
+  // Projects (2026-08-10, Jon): the ops work that is NOT a task — renovations, rollouts,
+  // building onboarding. /project/<token> is the vendor's view and stays public (OPEN_PREFIXES).
+  { key: 'projects',      label: 'Projects',          path: '/projects', group: 'Operations' },
   { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
   { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
@@ -78,6 +81,26 @@ export const FEATURES: Feature[] = [
   { key: 'integrations', label: 'Integrations',       path: '/integrations', group: 'Admin' },
 ]
 
+// ---- Extra permissions: things that are NOT pages. -------------------------------------------
+// A FEATURES entry answers "can this person open this tab". These answer "what may this person see
+// once they are on a tab they already have". They live in the same `app_users.features` column as
+// the per-page overrides, so one JSONB column still holds everything, but they are booleans only —
+// off/view/edit/full is meaningless for "may you see a dollar sign".
+//
+// DEFAULT OFF, ALWAYS. There is no role that grants these; the owner turns each person on by hand
+// on /users. That is the whole point (Jon 2026-08-10: "only view of that data should be me ...
+// meaning i should be able to toggle on and off per user").
+//
+// Deliberately no `path:` field — scripts/check-tabs.mjs scrapes this file for `path: '...'` to
+// build the route census, and a pathless entry here must not look like a page to it.
+export const EXTRA_PERMS: { key: string; label: string; blurb: string }[] = [
+  { key: 'money', label: 'Dollar amounts',
+    blurb: 'See revenue, payroll, wages and margins as amounts. Off = the same boards in percentages.' },
+]
+export function isExtraPerm(key: string): boolean {
+  return EXTRA_PERMS.some(p => p.key === key)
+}
+
 // ---- Route census (2026-08-06). The build-time check (scripts/check-tabs.mjs, run from
 // next.config.mjs) fails the build if a page route is not covered by FEATURES or one of these
 // lists — so every new tab is a forced, conscious decision about user settings before it ships.
@@ -86,7 +109,7 @@ export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt'
 export const OPEN_PREFIXES = [
   '/login', '/auth', '/signup', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
-  '/salato/share', '/salato/verify', '/report/', '/favicon',
+  '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/',
 ]
 export function isOpenPath(path: string): boolean {
   if (OPEN_EXACT.indexOf(path) >= 0) return true
@@ -196,7 +219,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
