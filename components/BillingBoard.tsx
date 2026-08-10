@@ -29,7 +29,7 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
-type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string } | null; error?: string }
+type Data = { ok: boolean; month: string; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string } | null; maintenanceByMarket?: { market: string; billed: number; tasks: number; minutes: number; payroll: number | null }[]; error?: string }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hours = (min: number | null | undefined) => min == null ? '—' : (Math.round((min / 60) * 10) / 10).toFixed(1) + 'h'
@@ -897,7 +897,7 @@ export function BillingBoard() {
         const margin = billedAll - mp.cost
         return (
           <div className="rounded-xl border border-line bg-white px-4 py-3 mb-3 flex items-center gap-x-6 gap-y-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted">Maintenance this month</span>
+            <span className="text-[11px] uppercase tracking-wider font-semibold text-muted">Maintenance · {new Date(String(data.month || '') + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
             <span className="text-[13px]"><span className="text-muted">Billable to owners</span> <b className="tabular-nums">${Math.round(billedAll).toLocaleString()}</b></span>
             <span className="text-[13px]"><span className="text-muted">Payroll</span> <b className="tabular-nums">${Math.round(mp.cost).toLocaleString()}</b>
               <span className="text-muted"> · {mp.hours} hrs · {mp.people} {mp.people === 1 ? 'person' : 'people'}</span></span>
@@ -905,6 +905,41 @@ export function BillingBoard() {
               {margin >= 0 ? '+' : '−'}${Math.abs(Math.round(margin)).toLocaleString()} <span className="font-normal text-muted">margin</span>
             </span>
             <span className="ml-auto text-[11px] text-muted">{mp.source} · billable counts every task, reviewed or not</span>
+            {/* BY MARKET (Jon: "the way we bill in Miami is different"). Billable splits exactly —
+                every task belongs to a listing and a market. Payroll cannot: Homebase is one
+                location, so the per-market wage figure is the real total apportioned by the
+                maintenance minutes each market used, and it says so rather than pretending. */}
+            {(data.maintenanceByMarket || []).length > 0 && (
+              <div className="w-full mt-1 pt-2 border-t border-line">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wider text-muted">
+                      <th className="text-left font-semibold py-1">Market</th>
+                      <th className="text-right font-semibold py-1">Tasks</th>
+                      <th className="text-right font-semibold py-1">Billable</th>
+                      <th className="text-right font-semibold py-1">Payroll <span className="normal-case font-normal">(apportioned)</span></th>
+                      <th className="text-right font-semibold py-1">Margin</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.maintenanceByMarket || []).map(r => {
+                      const mg = r.payroll != null ? r.billed - r.payroll : null
+                      return (
+                        <tr key={r.market} className="border-t border-line/60">
+                          <td className="py-1 font-semibold text-ink">{r.market}</td>
+                          <td className="py-1 text-right tabular-nums text-muted">{r.tasks}</td>
+                          <td className="py-1 text-right tabular-nums font-semibold">${Math.round(r.billed).toLocaleString()}</td>
+                          <td className="py-1 text-right tabular-nums text-muted">{r.payroll != null ? '$' + Math.round(r.payroll).toLocaleString() : '—'}</td>
+                          <td className={'py-1 text-right tabular-nums font-bold ' + (mg == null ? 'text-muted' : mg >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                            {mg == null ? '—' : (mg >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(mg)).toLocaleString()}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )
       })() : null}
