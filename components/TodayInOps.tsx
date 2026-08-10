@@ -359,9 +359,14 @@ export function TodayInOps() {
               </div>
             </div>
             <div className="h-1 bg-app"><div className={'h-full transition-all ' + (u.late ? 'bg-rose-400' : u.atRisk ? 'bg-amber-400' : 'bg-emerald-500/70')} style={{ width: ((u.fullTasks || u.tasks).length ? Math.round(((u.fullTasks || u.tasks).filter(t => t.done).length / (u.fullTasks || u.tasks).length) * 100) : 0) + '%' }} /></div>
+            {/* ALTERNATING SHADING (Jon 2026-08-10: "maybe alternating colours like white grey
+                better between tasks"). Zebra striping tested no worse than plain rows and measurably
+                better under time pressure, which is exactly this board at 3pm. Status tint still
+                wins where a row has one — striping is only the fallback, so a late row never loses
+                its red to a grey stripe. */}
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
-                <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : '')}>
+                <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : ti % 2 ? 'bg-app/40' : 'bg-white')}>
                 <div className="group flex items-center gap-3 px-4 py-2.5 text-sm">
                   <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
@@ -509,19 +514,43 @@ export function TodayInOps() {
               <span>due {d.dueBy}{data.isToday === false ? ' \u00b7 planning ' + fmtDay(data.today) : d.passed ? ' \u00b7 ' + fmtLeft(d.minsLeft) + ' past' : ' \u00b7 ' + fmtLeft(d.minsLeft) + ' left'}</span>
               {(d.missed > 0 || (d.untracked || 0) > 0) && <span className="ml-auto" title={(d.missed > 0 ? d.missed + ' finished after 4pm today. ' : '') + ((d.untracked || 0) > 0 ? 'Excludes ' + d.untracked + ' vendor-cleaned units (Botanica) \u2014 the vendor does not close tasks in Breezeway, so they cannot be tracked against 4pm.' : '')}>{d.missed > 0 ? d.missed + ' after 4pm' : ''}{(d.untracked || 0) > 0 ? (d.missed > 0 ? ' \u00b7 ' : '') + d.untracked + ' vendor-cleaned' : ''}</span>}
             </div>
-            <div className="flex items-end gap-5 flex-wrap mt-1.5">
-              <span className="leading-none"><span className="text-[26px] font-bold text-ink tabular-nums">{d.done}</span><span className="text-[15px] font-semibold text-muted">/{d.cleans}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">done</span></span>
-              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (d.late > 0 ? 'text-rose-600' : 'text-ink/30')}>{d.late}</span><span className={'block text-[10px] font-semibold uppercase tracking-wide mt-1 ' + (d.late > 0 ? 'text-rose-600' : 'text-muted')}>late</span></span>
-              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (d.atRisk > 0 ? 'text-amber-600' : 'text-ink/30')}>{d.atRisk}</span><span className={'block text-[10px] font-semibold uppercase tracking-wide mt-1 ' + (d.atRisk > 0 ? 'text-amber-600' : 'text-muted')}>at risk</span></span>
-              <span className="leading-none"><span className="text-[26px] font-bold text-ink tabular-nums">{d.running}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">running</span></span>
-              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (byMkt.some(u => u.sameDayTurn && !u.allDone) ? 'text-rose-600' : 'text-ink/30')}>{byMkt.filter(u => u.sameDayTurn && !u.allDone).length}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">same-day</span></span>
-              <span className="leading-none"><span className={'text-[26px] font-bold tabular-nums ' + (byMkt.some(u => u.unassigned) ? 'text-rose-600' : 'text-ink/30')}>{byMkt.filter(u => u.unassigned).length}</span><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">unassigned</span></span>
-              <span className="flex-1 min-w-[120px] self-center">
+            {/* ONE HEADLINE, THEN THE REST SMALL (Jon 2026-08-10: "hard to look at the data sets
+                at top"). Six numbers all set at 26px meant none of them led — the eye had to read
+                all six to learn whether the day was fine. Cleans-done answers that on its own, so
+                it keeps the big type and the bar; everything else drops to a chip row and stays
+                grey at zero, colouring only when it actually wants a human. */}
+            <div className="flex items-center gap-4 flex-wrap mt-1.5">
+              <span className="leading-none">
+                <span className="text-[30px] font-bold text-ink tabular-nums">{d.done}</span>
+                <span className="text-[17px] font-semibold text-muted tabular-nums">/{d.cleans}</span>
+                <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted mt-1">cleans done</span>
+              </span>
+              <span className="flex-1 min-w-[140px]">
                 <span className="block h-2 rounded-full bg-app overflow-hidden">
                   <span className={'block h-full ' + (d.late > 0 ? 'bg-rose-500' : 'bg-emerald-500')} style={{ width: (d.cleans ? Math.round((d.done / d.cleans) * 100) : 0) + '%' }} />
                 </span>
-                <span className="block text-[10px] text-muted mt-1 text-right tabular-nums">{d.cleans ? Math.round((d.done / d.cleans) * 100) : 0}% of cleans done</span>
+                <span className="block text-[10px] text-muted mt-1 text-right tabular-nums">{d.cleans ? Math.round((d.done / d.cleans) * 100) : 0}%</span>
               </span>
+            </div>
+            {/* Chip row: quiet at zero, loud when not. Never rely on colour alone — the count and
+                the word are always there, the colour is only the shortcut. */}
+            <div className="flex items-center gap-1.5 flex-wrap mt-2">
+              {([
+                { n: d.late, label: 'late', tone: 'bad' },
+                { n: d.atRisk, label: 'at risk', tone: 'warn' },
+                { n: d.running, label: 'running', tone: 'plain' },
+                { n: byMkt.filter(u => u.sameDayTurn && !u.allDone).length, label: 'same-day', tone: 'bad' },
+                { n: byMkt.filter(u => u.unassigned).length, label: 'unassigned', tone: 'bad' },
+              ] as const).map(c => (
+                <span key={c.label}
+                  className={'inline-flex items-baseline gap-1 rounded-full px-2 py-0.5 text-[11px] border ' + (
+                    c.n === 0 ? 'border-line bg-app text-muted'
+                      : c.tone === 'bad' ? 'border-rose-200 bg-rose-50 text-rose-700 font-semibold'
+                      : c.tone === 'warn' ? 'border-amber-200 bg-amber-50 text-amber-700 font-semibold'
+                      : 'border-line bg-white text-ink font-semibold')}>
+                  <b className="tabular-nums">{c.n}</b>{c.label}
+                </span>
+              ))}
             </div>
           </div>
           <button onClick={() => setPanel(panel === 'glitches' ? '' : 'glitches')} className={'px-5 py-3 text-left flex items-center gap-2 transition ' + (panel === 'glitches' ? 'bg-rose-50/70' : 'hover:bg-app/50')} title="Guest-reported problems happening right now \u2014 click to see them">
