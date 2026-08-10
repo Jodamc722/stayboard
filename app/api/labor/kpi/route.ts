@@ -364,9 +364,15 @@ export async function GET(req: Request) {
       if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
       return 'other'
     }
-    // Fallback: when the Homebase role doesn't identify a department,
-    // classify the person by what they actually did in Breezeway this window.
+    // WHO COUNTS AS MAINTENANCE — in order of how much we trust it (Jon 2026-08-10: "not
+    // assumptions"). 1) the staff record a human set on /users → Staffing, 2) the role text typed
+    // into Homebase, 3) only then a guess from what they did in Breezeway. Before this, a person
+    // whose Homebase role was blank was classified by majority vote, which put ALL of a mixed
+    // worker's clocked hours into one department.
     const deptOfPerson = (name: string, role: string | null) => {
+      const rec = resolveStaff(name, staffIdx)
+      const byStaff = deptOf(rec?.role || null)
+      if (byStaff !== 'other') return byStaff
       const byRole = deptOf(role)
       if (byRole !== 'other') return byRole
       let m = 0, c = 0, insp = 0
@@ -451,11 +457,22 @@ export async function GET(req: Request) {
         inspections: tasks.inspection,
         costPerInspection: tasks.inspection ? round2(insp.payroll / tasks.inspection) : null,
       },
+      // TWO DIFFERENT FACTS, NEVER MIXED (Jon 2026-08-10: "maintenance hours should be pulled from
+      // Breezeway and payroll from Homebase — not assumptions").
+      //   hours   = time ON MAINTENANCE TASKS, from Breezeway total_minutes. What was worked.
+      //   payroll = what Homebase actually paid those people. What it cost.
+      // `hours` used to be the Homebase clocked total, so a maintenance tech who also did a clean
+      // had that clean's hours counted as maintenance. Clocked time is still reported, under its
+      // own name, because the gap between the two IS the utilisation number.
       maintenance: {
-        people: mt.people.size, hours: round2(mt.hours), payroll: round2(mt.payroll),
+        people: mt.people.size,
+        hours: round2(mtTaskMinutes / 60),           // Breezeway — time on maintenance tasks
+        payroll: round2(mt.payroll),                 // Homebase — actual wages
+        clockedHours: round2(mt.hours),              // Homebase — hours on the clock
+        source: { hours: 'breezeway', payroll: 'homebase' },
         tasksCompleted: tasks.maintenance,
         teamNames: mtPeopleArr,
-        taskHours: round2(mtTaskMinutes / 60),
+        taskHours: round2(mtTaskMinutes / 60),       // kept: same number, older key
         utilizationPct: mt.hours > 0 ? round2((mtTaskMinutes / 60 / mt.hours) * 100) : null,
         costPerTask: tasks.maintenance ? round2(mt.payroll / tasks.maintenance) : null,
         billableRevenue: mtBillable, // Breezeway billing: rate math + owner adjustments
