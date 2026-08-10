@@ -6,9 +6,16 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
+import { vendorRegex } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
+
+// Same bucket the ops board uses, for the same reason (Jon 2026-08-10: "Botanica should be under
+// the vendor tab, not Broward"). This route was still labelling by raw geography, so a Botanica
+// audit landed under Broward while every other Botanica row sat under Vendor — the two panels on
+// one screen disagreed about the same unit.
+const VENDOR_MARKET = 'Vendor'
 
 // Audit cadence is operator-editable (/users -> Ops presets).
 const DONE = /complete|finish|close|approv/i
@@ -22,7 +29,11 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
-    const DUE_DAYS = (await getOpsPresets()).timing.auditDueDays
+    const presets = await getOpsPresets()
+    const DUE_DAYS = presets.timing.auditDueDays
+    // Operator-editable list (/users -> Ops presets), NOT the hardcoded registry in lib/segments —
+    // the ops board reads this one, and two vendor lists that can drift is what caused the split.
+    const VENDOR_RE = vendorRegex(presets.vendorBuildings)
     const db = supabaseAdmin()
     const today = ymd(new Date())
     const [lRes, aRes] = await Promise.all([
@@ -43,6 +54,19 @@ export async function GET(req: NextRequest) {
         hasOpen[id] = true
       }
     }
+    const geoOf = (l: any, nm: string) => marketOf(l.building, l.address_city, nm)
+    const isVendorUnit = (l: any, nm: string) => VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(nm)
+    // Which geographies still have units WE clean. A vendor unit is also listed under its
+    // geography only when that geography would otherwise be empty, so a tab made entirely of
+    // vendor buildings (North) does not vanish — and stops being double-listed the day a unit of
+    // ours moves in there. Identical rule to /api/ops-today, deliberately.
+    const geoHasOwnUnits = new Set<string>()
+    for (const l of (lRes.data || []) as any[]) {
+      const nm = l.nickname || l.title || 'Unit'
+      if (isVendorUnit(l, nm)) continue
+      if (str(l.status).trim().toLowerCase() !== 'active') continue
+      geoHasOwnUnits.add(geoOf(l, nm))
+    }
     const due: any[] = []
     for (const l of (lRes.data || []) as any[]) {
       if (str(l.status).trim().toLowerCase() !== 'active') continue
@@ -52,7 +76,15 @@ export async function GET(req: NextRequest) {
       const age = last ? daysBetween(last, today) : null
       if (last && age != null && age <= DUE_DAYS) continue
       const name = l.nickname || l.title || 'Unit'
-      due.push({ listingId: id, unit: name, market: marketOf(l.building, l.address_city, name), lastAudit: last, ageDays: age })
+      const geo = geoOf(l, name)
+      const isVendor = isVendorUnit(l, name)
+      const alsoGeo = isVendor && !geoHasOwnUnits.has(geo)
+      due.push({
+        listingId: id, unit: name,
+        market: isVendor ? VENDOR_MARKET : geo,
+        market2: alsoGeo ? geo : null,
+        lastAudit: last, ageDays: age,
+      })
     }
     // never-audited first, then oldest audit first
     due.sort((a, b) => (a.lastAudit ? 1 : 0) - (b.lastAudit ? 1 : 0) || (b.ageDays || 0) - (a.ageDays || 0) || a.unit.localeCompare(b.unit))
