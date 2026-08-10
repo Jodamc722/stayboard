@@ -82,14 +82,31 @@ export async function GET(req: NextRequest) {
     // NOTE: compare status EXACTLY — /active/i also matches 'inactive', which silently counted all
     // 48 inactive listings (e.g. every Waves unit) as vacant.
     const lmap: Record<string, { name: string; market: string; market2: string | null; active: boolean; city: string | null; address: string | null; bedrooms: number | null; building: string | null; lat: number | null; lng: number | null; checkInTime: string | null; checkOutTime: string | null }> = {}
+    // WHICH GEOGRAPHIES CAN STAND ON THEIR OWN.
+    //
+    // Jon 2026-07-31 put vendor units under BOTH the Vendor tab and their geography, because
+    // Capri/Lucerne/Amrit ARE the whole of North — vendor-first left North a dead tab.
+    // Jon 2026-08-10: "Botanica should be under vendor tab not Broward." Both are right, and the
+    // rule that satisfies both is not a per-building exception: a vendor unit is ALSO listed under
+    // its geography only when that geography would otherwise be EMPTY. Broward has plenty of units
+    // we clean ourselves, so Botanica leaves Broward and lives only under Vendor. North has none,
+    // so North keeps its units and stays alive. Bring a North building in house and this corrects
+    // itself with no edit here.
+    const geoOf = (l: any, nm: string) => marketOf(l.building, l.address_city, nm)
+    const geoHasOwnUnits = new Set<string>()
+    for (const l of (lRes.data || []) as any[]) {
+      const nm = l.nickname || l.title || 'Unit'
+      if (VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(nm)) continue
+      if (str(l.status).trim().toLowerCase() !== 'active') continue
+      geoHasOwnUnits.add(geoOf(l, nm))
+    }
     for (const l of (lRes.data || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
       const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
       const lat = Number(l.lat), lng = Number(l.lng)
-      // Jon 2026-07-31: vendor-cleaned buildings show under BOTH their vendor bucket AND their
-      // geography (Capri/Lucerne/Amrit are the whole of North — vendor-first made North a dead tab).
-      const geo = marketOf(l.building, l.address_city, name)
-      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : geo, market2: isVendor ? geo : null, active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, address: l.address_full || null, bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null, building: str(l.building) || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, checkInTime: fmt12(l.checkIn), checkOutTime: fmt12(l.checkOut) }
+      const geo = geoOf(l, name)
+      const alsoGeo = isVendor && !geoHasOwnUnits.has(geo)   // only to keep an empty tab alive
+      lmap[String(l.id)] = { name, market: isVendor ? VENDOR_MARKET : geo, market2: alsoGeo ? geo : null, active: str(l.status).trim().toLowerCase() === 'active', city: l.city2 || l.address_city || null, address: l.address_full || null, bedrooms: l.bedrooms != null ? Number(l.bedrooms) : null, building: str(l.building) || null, lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, checkInTime: fmt12(l.checkIn), checkOutTime: fmt12(l.checkOut) }
     }
     // same-day turns + who is leaving, for unit context
     const outToday: Record<string, string> = {}
