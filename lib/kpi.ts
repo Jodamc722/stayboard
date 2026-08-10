@@ -100,7 +100,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       lmap[String(l.id)] = {
         id: String(l.id),
         name,
-        building: rollupBuilding(l.building) || 'Unassigned',
+        building: rollupBuilding(l.building, name) || 'Unassigned',
         market: marketOf(l.building, l.address_city, name),
         active: !DEAD_LISTING.includes(str(l.status).toLowerCase()),
         // Jon 2026-07-31: the cleaning fee also lives on the PROPERTY in Guesty (Fees). Some

@@ -1,3 +1,4 @@
+import { buildingOf as canonicalBuilding } from '@/lib/segments'
 // Single source of truth for the Listing Optimize Score (0-100).
 // Deterministic, research-backed, computed entirely from structured Guesty data
 // (no AI call) so it can run on the property detail page, the Properties/building
@@ -62,21 +63,13 @@ export type ScoreResult = {
 /* ----------------------------- building rollup ----------------------------- */
 // Roll unit-level building names up to their parent property.
 // e.g. "Botanica 6108" -> "Botanica", "Oasis Mahogany" -> "Oasis", "Arya 1704" -> "Arya".
-const PARENTS = ['Botanica', 'Oasis', 'Arya', '3316', 'Salato']
-const OASIS_UNITS = ['mahogany', 'royal palm', 'bougainvillea', 'bamboo', 'sapodilla', 'jasmine']
-// Exact building-name aliases that are really the same property (canonical on the right).
-const ALIASES: Record<string, string> = { '101': 'Lucerne' }
-export function rollupBuilding(raw?: string | null): string {
+// DELEGATES to lib/segments (Jon, 2026-08-10). This used to be its own table of parents and
+// aliases, which meant the app had three different answers to "what building is this?" — this
+// one, the first-word guess in geo-areas, and the city rules in segments. One registry now.
+export function rollupBuilding(raw?: string | null, name?: string | null): string {
   const b = (raw || '').trim()
-  if (!b) return 'Unassigned'
-  const lower = b.toLowerCase()
-  if (ALIASES[lower]) return ALIASES[lower]
-  for (const p of PARENTS) {
-    const pl = p.toLowerCase()
-    if (lower === pl || lower.startsWith(pl + ' ') || lower.startsWith(pl + '-')) return p
-  }
-  if (OASIS_UNITS.some(u => lower === u || lower.startsWith(u + ' '))) return 'Oasis'
-  return b
+  if (!b && !String(name || '').trim()) return 'Unassigned'
+  return canonicalBuilding(b, name || null) || b || 'Unassigned'
 }
 
 // URL slug for a building name (used by the drill-in route /buildings/[slug]).

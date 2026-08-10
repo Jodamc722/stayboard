@@ -83,7 +83,7 @@ async function gather(variant: BriefVariant) {
     meta[String(l.id)] = {
       name,
       market: marketOf(l.building, l.address_city, name),
-      building: rollupBuilding(str(l.building)) || 'Other',
+      building: rollupBuilding(str(l.building), name) || 'Other',
       active: str(l.status).trim().toLowerCase() === 'active',
     }
   }
@@ -339,11 +339,23 @@ function quoteOfDay(ymd: string): { text: string; who: string } {
   const idx = ((day % HOSPITALITY_QUOTES.length) + HOSPITALITY_QUOTES.length) % HOSPITALITY_QUOTES.length
   return HOSPITALITY_QUOTES[idx] || HOSPITALITY_QUOTES[0]
 }
-const closingNote = (ymd: string): string => {
+// THE QUOTE LEADS THE EMAIL (Jon, 2026-08-10: "put the quote at the top and highlight it a bit
+// better"). It sits directly under the masthead, before a single number — the first thing anyone
+// reads is why the work matters, not how much of it there is. Built as a bordered table cell with
+// a heavy left rule: Outlook drops background-image and CSS borders on divs, but honours these.
+const quoteBanner = (ymd: string): string => {
   const q = quoteOfDay(ymd)
+  return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 4px">
+    <tr><td style="background:#fffbeb;border-left:4px solid #d97706;border-top:1px solid #fde68a;border-right:1px solid #fde68a;border-bottom:1px solid #fde68a;border-radius:0 10px 10px 0;padding:14px 18px">
+      <p style="margin:0 0 6px;font-size:9.5px;font-weight:700;letter-spacing:.18em;color:#b45309;text-transform:uppercase">Today&rsquo;s thought</p>
+      <p style="margin:0 0 7px;font-size:16px;line-height:1.55;color:#0b1220;font-style:italic;font-weight:500">${'“'}${esc(q.text)}${'”'}</p>
+      <p style="margin:0;font-size:11.5px;color:#92400e;letter-spacing:.03em">${'—'} ${esc(q.who)}</p>
+    </td></tr>
+  </table>`
+}
+// The close keeps the thank-you only; the quote has already been read at the top.
+const closingNote = (_ymd: string): string => {
   return `<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;text-align:center">
-    <p style="margin:0 0 6px;font-size:13.5px;line-height:1.6;color:#0b1220;font-style:italic">${'“'}${esc(q.text)}${'”'}</p>
-    <p style="margin:0 0 10px;font-size:11px;color:#9ca3af;letter-spacing:.04em">${'—'} ${esc(q.who)}</p>
     <p style="margin:0;font-size:12.5px;color:#374151"><b>Thank you for everything you do.</b></p>
   </div>`
 }
@@ -733,6 +745,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <p style="${S.bandTitle}">Morning Ops Brief — ${label}</p>
     <p style="${S.bandSub}">${dateNice} · ${d.activeCount} active units</p>
   </div>
+  ${quoteBanner(d.today)}
   <div style="${S.tilesOuter}">${tileRow(tilesAll)}</div>
   ${accessNotice()}
 
@@ -1277,6 +1290,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <p style="${S.bandTitle}">GM Brief</p>
     <p style="${S.bandSub}">${dateNice} · whole portfolio · ${d.activeCount} active units</p>
   </div>
+  ${quoteBanner(today)}
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
   ${accessNotice()}
 
@@ -1456,6 +1470,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
     <p style="${S.bandTitle}">${def.label} — Housekeeping</p>
     <p style="${S.bandSub}">${dateNice}</p>
   </div>
+  ${quoteBanner(today)}
   <div style="${S.tilesOuter}">${tileRow([
     { label: 'Checkouts to clean', value: String(checkouts.length), tone: checkouts.length ? 'amber' : 'green' },
     { label: 'Same-day turns', value: String(sameDayCount), tone: sameDayCount ? 'red' : undefined,
