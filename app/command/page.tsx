@@ -79,14 +79,25 @@ export default async function CommandCenterPage() {
     sb.from('guesty_conversation_sentiment').select('conversation_id, guest_name, listing_id, channel, band, dissatisfied, awaiting_reply, top_issue, guest_excerpt, last_message_at, status')
       .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
     sb.from('guesty_listings').select('id, nickname, title, building, status').limit(2000),
-    // Truthful overdue work: unfinished Breezeway tasks scheduled before today (matches daysheet isDone/isGone)...
-    sb.from('breezeway_tasks_sync').select('reference_property_id')
-      .gte('scheduled_date', bzStart).lt('scheduled_date', todayStr)
-      .is('finished_at', null)
-      .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
-      .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
-      .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
-      .limit(5000),
+    // Truthful overdue work: unfinished Breezeway tasks scheduled before today (matches daysheet
+    // isDone/isGone). PAGED — PostgREST caps any single request at 1000 rows no matter what
+    // .limit() asks for (the trap lib/kpi.ts documents), so the old .limit(5000) single fetch
+    // silently undercounted exactly when the backlog was biggest.
+    (async () => {
+      let rows: any[] = []
+      for (let i = 0; i < 8; i++) {
+        const { data: page } = await sb.from('breezeway_tasks_sync').select('reference_property_id')
+          .gte('scheduled_date', bzStart).lt('scheduled_date', todayStr)
+          .is('finished_at', null)
+          .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
+          .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
+          .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+          .order('scheduled_date').range(i * 1000, i * 1000 + 999)
+        rows = rows.concat(page || [])
+        if (!page || page.length < 1000) break
+      }
+      return { data: rows }
+    })(),
     // ...plus open glitches whose due date has passed.
     sb.from('glitches').select('id', { count: 'exact', head: true })
       .not('status', 'in', '("done","resolved","closed")').lt('due_date', todayStr),
