@@ -7,6 +7,7 @@ import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 import { getAccess } from '@/lib/access'
 import { customFieldNameMap } from '@/lib/custom-fields'
+import { isDepartureCleanName } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -29,11 +30,9 @@ const isCodeField = (name: string) => /code/i.test(name)
 // in-house (their planned checkout clean got overrun). Mid-stay / refresh / linen / strip / inspection /
 // walkthrough / touch-up tasks during a stay are NORMAL and must NEVER be flagged as an extension —
 // flagging those was showing "Extended · do not clean" on guests (e.g. Wahiba) who never extended.
-const isDepartureCleanName = (name: string) => {
-  const n = String(name || '')
-  if (/mid[\s-]?stay|refresh|linen|strip|walk|inspect|touch|trash|check[\s-]?in|arrival/i.test(n)) return false
-  return /depart|turnover|\bturn\b|check[\s-]?out|clean/i.test(n)
-}
+// The departure-clean test is the ONE shared rule in lib/breezeway (name must SAY it is the
+// turnover) — this file used to keep a looser local copy where a bare "clean" matched, which is
+// exactly the drift the shared rule was written to stop (owner policy, 2026-08-04).
 // Internal/tracking fields (QC flags, OTA ids, sync markers) — not useful to a vendor, kept off the board.
 const isInternalField = (name: string) => /sensitive|verified|booking_call|welcome|_id$|confirmation_number|_email_sent|added_to_app|date_of_last|asana|breezeway|glitch/i.test(name)
 function prettyLabel(s: string): string { return String(s || '').replace(/[_/]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()).trim() }
