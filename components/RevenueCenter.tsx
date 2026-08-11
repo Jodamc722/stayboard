@@ -438,7 +438,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
             {/* Channel mix */}
             <section className="lg:col-span-2 rounded-2xl border border-line bg-white p-5">
               <h2 className="text-sm font-bold text-ink mb-0.5">Channel mix <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">portfolio</span></h2>
-              <p className="text-[12px] text-muted mb-3">Prorated revenue by booking source. Cancel = cancelled ÷ all bookings on that channel in this range.</p>
+              <p className="text-[12px] text-muted mb-3">Prorated revenue by booking source. Cancel = cancelled ÷ guest bookings in this range — owner and friends-&amp;-family holds are excluded from both sides, and a channel with too few bookings to be meaningful shows no rate at all.</p>
               {d.channels.length === 0 ? (
                 <div className="text-sm text-muted italic py-4 text-center">No revenue in this range.</div>
               ) : (
@@ -449,9 +449,17 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                         <span className="font-medium text-ink">{c.name}</span>
                         <span className="text-muted tabular-nums">
                           {fmtMoney(c.revenue)} · {Math.round((c.revenue / (d.totals.total || 1)) * 100)}%
-                          {(c.cancelled ?? 0) + c.count > 0 && (c.cancelled ?? 0) > 0 && (
-                            <span className={((c.cancelled / (c.count + c.cancelled)) >= 0.2 ? 'text-rose-600' : (c.cancelled / (c.count + c.cancelled)) >= 0.1 ? 'text-amber-600' : 'text-muted') + ' ml-1'}>
-                              · {Math.round((c.cancelled / (c.count + c.cancelled)) * 100)}% cancel
+                          {c.cancelRate != null && (
+                            <span
+                              className={(c.cancelRate >= 0.2 ? 'text-rose-600' : c.cancelRate >= 0.1 ? 'text-amber-600' : 'text-muted') + ' ml-1'}
+                              title={`${c.cancelled} of ${c.cancelSample} guest bookings on ${c.name} cancelled in this range` + (c.ownerHolds ? ` · ${c.ownerHolds} owner/F&F booking${c.ownerHolds > 1 ? 's' : ''} excluded` : '')}
+                            >
+                              · {Math.round(c.cancelRate * 100)}% cancel
+                            </span>
+                          )}
+                          {c.cancelRate == null && c.cancelSample > 0 && (
+                            <span className="ml-1 text-muted/70" title={`Only ${c.cancelSample} guest booking${c.cancelSample > 1 ? 's' : ''} on ${c.name} in this range — too few to quote a cancel rate.`}>
+                              · cancel n/a
                             </span>
                           )}
                         </span>
