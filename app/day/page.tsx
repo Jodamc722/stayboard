@@ -125,7 +125,7 @@ export default function DayLinkPage() {
         <button onClick={() => setTab('cleans')} className={'dl-tab ' + (tab === 'cleans' ? 'dl-tabon' : '')}>Cleans <b>{departures.length}</b></button>
         <button onClick={() => setTab('verify')} className={'dl-tab ' + (tab === 'verify' ? 'dl-tabon' : '')}>Verify <b>{noClean.length}</b></button>
         <button onClick={() => setTab('work')} className={'dl-tab ' + (tab === 'work' ? 'dl-tabon' : '')}>Work <b>{work.length}</b></button>
-        <button onClick={() => setTab('issues')} className={'dl-tab ' + (tab === 'issues' ? 'dl-tabon' : '')}>Issues <b>{issues.length}</b></button>
+        <button onClick={() => setTab('issues')} className={'dl-tab ' + (tab === 'issues' ? 'dl-tabon' : '')}>Issues <b>{issues.length + (d?.glitches || []).length}</b></button>
       </div>
 
       {tab === 'cleans' && (
