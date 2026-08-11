@@ -13,6 +13,7 @@ import { Shell } from '@/components/Shell'
 import { RevenueCenter } from '@/components/RevenueCenter'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf } from '@/lib/segments'
+import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 
 export const dynamic = 'force-dynamic'
 // YTD pulls ~3 ranges of reservations incl. raw money JSON - needs more than the default fn timeout.
@@ -88,18 +89,33 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
     }))
 }
 
-// Cancelled bookings overlapping the range — source + listing only, for the per-channel cancel
-// rate on the Channel mix card (folded in from the killed /channels page, 2026-08-11). Same
-// pagination discipline as pullRange; a failed pull returns [] rather than sinking the page,
-// because a missing cancel % is annotation, not revenue.
-async function pullCancelledSources(sb: any, from: string, toExcl: string): Promise<{ listing_id: string; source: string }[]> {
+// ---- Per-channel cancel rate (Channel mix card) -----------------------------------------------
+// Folded in from the killed /channels page 2026-08-11; CORRECTED 2026-08-11 evening after the
+// first version shipped two dishonest numbers of exactly the kind this audit series exists to kill:
+//
+//   1. NO MINIMUM SAMPLE. Booking Engine rendered "80% cancel" off ~5 bookings ($299 of revenue).
+//      A percentage on a handful of rows is noise wearing a number's clothes.
+//   2. OWNER / F&F HOLDS COUNTED AS LOST BUSINESS. prettyChannel folds source='owner' and
+//      'manual' into "Direct / Owner", so every released owner or friends-&-family hold landed in
+//      the cancel numerator. Those are inventory decisions, not guests walking away — and the
+//      codebase already had the law for this (OWNERISH_RE / FF_RE in lib/owner-audit.ts, "their
+//      discounts are by design"), it just wasn't imported here. Same law-not-imported theme the
+//      audit flagged nine times over.
+//
+// Both sides of the ratio now come from THIS one query, so numerator and denominator can never
+// drift apart: same rows, same filters, same owner/F&F exclusion. Flat columns + one targeted
+// raw->tags extraction only (perf law: never select raw over thousands of rows).
+// A failed pull returns [] — a missing cancel % is annotation, never a reason to sink revenue.
+type ClassRow = { listing_id: string; source: string; cancelled: boolean; ownerish: boolean }
+
+async function pullChannelStatusMix(sb: any, from: string, toExcl: string): Promise<ClassRow[]> {
   let all: any[] = []
   try {
     for (let i = 0; i < 30; i++) {
       const res = await sb
         .from('guesty_reservations')
-        .select('listing_id, source')
-        .in('status', ['canceled', 'cancelled'])
+        .select('listing_id, status, source, guest_name, tags:raw->tags')
+        .in('status', [...CONFIRMED, 'canceled', 'cancelled'])
         .gt('check_out', from)
         .lt('check_in', toExcl)
         .range(i * 1000, i * 1000 + 999)
@@ -111,8 +127,22 @@ async function pullCancelledSources(sb: any, from: string, toExcl: string): Prom
   } catch { return [] }
   return all
     .filter((r: any) => r.listing_id)
-    .map((r: any) => ({ listing_id: String(r.listing_id), source: String(r.source || 'other') }))
+    .map((r: any) => {
+      const source = String(r.source || 'other')
+      const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
+      const guest = String(r.guest_name || '')
+      return {
+        listing_id: String(r.listing_id),
+        source,
+        cancelled: /cancel/i.test(String(r.status || '')),
+        ownerish: isOwnerOrFriendsFamily(source, tagBlob, guest),
+      }
+    })
 }
+
+// Below this many real (non-owner/F&F) bookings on a channel in the range, we show no percentage
+// at all rather than a number nobody should act on.
+const CANCEL_MIN_SAMPLE = 15
 
 // Per-reservation revenue components. grossAccom = fareAccommodationAdjusted (guest-paid room
 // rate, before OTA fees - matches PriceLabs). netAccom = grossAccom - hostServiceFeeIncTax: the
@@ -193,7 +223,12 @@ export type RevenueData = {
   nightsSold: number; occupiedNights: number; availableNights: number; bookings: number
   prev: { from: string; to: string; total: number; nightsSold: number; occupiedNights: number; availableNights: number; grossAccom: number }
   otb: { d30: number; d60: number; d90: number; nights30: number; nights60: number; nights90: number; rev30: number }
-  channels: { name: string; revenue: number; count: number; cancelled: number }[]
+  // cancelRate is null when the channel had fewer than CANCEL_MIN_SAMPLE real bookings in range —
+  // render nothing rather than a percentage computed off a handful of rows.
+  channels: {
+    name: string; revenue: number; count: number
+    cancelled: number; cancelSample: number; ownerHolds: number; cancelRate: number | null
+  }[]
   buildingAvg: Record<string, { occ: number; adr: number }>
   units: UnitRow[]
   recs: Rec[]
@@ -262,11 +297,11 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       .filter(l => !/\bfull\b/i.test(String(l.nickname || l.title || '')))
     const inactiveUnits = listings.length - active.length
 
-    const [cur, prevR, fwd, cancelledRows] = await Promise.all([
+    const [cur, prevR, fwd, statusMix] = await Promise.all([
       pullRange(sb, from, toExcl),
       pullRange(sb, prevFrom, from),
       pullRange(sb, todayStr, addDays(todayStr, 90)),
-      pullCancelledSources(sb, from, toExcl),
+      pullChannelStatusMix(sb, from, toExcl),
     ])
 
     const curX = cur.map(r => ({ r, c: componentsOf(r) }))
@@ -416,15 +451,34 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     totals.total = totals.grossAccom + totals.cleaning + totals.parking + totals.other
     const availableNights = active.length * days
 
-    // Cancelled count per channel (active units only, same range) → cancel rate on the mix card.
-    const cancelledByChannel: Record<string, number> = {}
-    for (const c of cancelledRows) {
+    // ---- per-channel cancel rate ----
+    // Numerator AND denominator both come from statusMix, so they can never drift; owner and
+    // friends-&-family bookings are dropped from BOTH sides (a released owner hold is an
+    // inventory decision, not a guest walking away — see pullChannelStatusMix). Channels under
+    // CANCEL_MIN_SAMPLE real bookings get cancelRate = null and render no percentage at all.
+    const mixByChannel: Record<string, { real: number; cancelled: number; ownerish: number }> = {}
+    for (const c of statusMix) {
       if (!activeIds.has(c.listing_id)) continue
       const ch = prettyChannel(c.source)
-      cancelledByChannel[ch] = (cancelledByChannel[ch] || 0) + 1
+      const m = mixByChannel[ch] = mixByChannel[ch] || { real: 0, cancelled: 0, ownerish: 0 }
+      if (c.ownerish) { m.ownerish += 1; continue }
+      m.real += 1
+      if (c.cancelled) m.cancelled += 1
     }
     const channels = Object.keys(byChannel)
-      .map(k => ({ name: k, revenue: byChannel[k].revenue, count: byChannel[k].count, cancelled: cancelledByChannel[k] || 0 }))
+      .map(k => {
+        const m = mixByChannel[k]
+        const enough = !!m && m.real >= CANCEL_MIN_SAMPLE
+        return {
+          name: k,
+          revenue: byChannel[k].revenue,
+          count: byChannel[k].count,
+          cancelled: m ? m.cancelled : 0,
+          cancelSample: m ? m.real : 0,
+          ownerHolds: m ? m.ownerish : 0,
+          cancelRate: enough ? m.cancelled / m.real : null,
+        }
+      })
       .sort((a, b) => b.revenue - a.revenue)
 
     // ---- daily checks / recommendations, each with an estimated $/month impact ----
