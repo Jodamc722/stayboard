@@ -1,7 +1,6 @@
 'use client'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase-browser'
 import {
   FieldRequest, FieldRequestStatus, FieldRequestPriority,
   PRIORITY_STYLE, STATUS_LABEL, STATUS_STYLE, TYPE_LABEL
@@ -19,38 +18,39 @@ export function RequestDetail({
   const [newComment, setNewComment] = useState('')
   const [pending, startTransition] = useTransition()
 
+  // All writes go through /api/requests/update (requireLevel-gated, service role) — this page
+  // used to write field_requests from the browser client, which bypassed role levels (and RLS
+  // is being turned on by migration 032, so direct browser writes would fail anyway).
+  async function call(payload: Record<string, any>): Promise<any | null> {
+    const res = await fetch('/api/requests/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const d = await res.json().catch(() => ({} as any))
+    if (!res.ok || d.error) { alert(d.message || d.error || `HTTP ${res.status}`); return null }
+    return d
+  }
+
   async function patch(updates: Partial<FieldRequest>) {
-    const supabase = createClient()
-    const { data, error } = await supabase
-      .from('field_requests')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', r.id)
-      .select()
-      .single()
-    if (error) return alert(error.message)
-    setR(data as any)
+    const d = await call({ action: 'patch', id: r.id, data: updates })
+    if (!d) return
+    setR(d.request as any)
     startTransition(() => router.refresh())
   }
 
   async function addComment() {
     if (!newComment.trim()) return
-    const supabase = createClient()
-    const { data, error } = await supabase
-      .from('field_request_comments')
-      .insert({ request_id: r.id, author_email: userEmail, body: newComment.trim() })
-      .select()
-      .single()
-    if (error) return alert(error.message)
-    setComments([...comments, data as any])
+    const d = await call({ action: 'comment', id: r.id, body: newComment.trim() })
+    if (!d) return
+    setComments([...comments, d.comment as any])
     setNewComment('')
   }
 
   async function approve(approved: boolean) {
-    await patch({
-      approval_status: approved ? 'approved' : 'rejected',
-      approver_email: userEmail,
-      approved_at: new Date().toISOString()
-    } as any)
+    const d = await call({ action: 'decide', id: r.id, approved })
+    if (!d) return
+    setR(d.request as any)
+    startTransition(() => router.refresh())
   }
 
   const overdue = r.due_at && !['done', 'cancelled'].includes(r.status) && new Date(r.due_at) < new Date(new Date().toISOString().slice(0, 10))
@@ -193,8 +193,8 @@ export function RequestDetail({
 
         <button
           onClick={() => { if (confirm('Delete this request?')) (async () => {
-            const supabase = createClient()
-            await supabase.from('field_requests').delete().eq('id', r.id)
+            const d = await call({ action: 'delete', id: r.id })
+            if (!d) return
             router.push('/requests'); router.refresh()
           })() }}
           className="w-full text-xs text-rose-600 hover:text-rose-700 py-2">Delete request</button>
