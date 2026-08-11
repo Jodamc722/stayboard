@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,9 @@ async function anthropic(key: string, payload: any): Promise<string | null> {
 
 // Suggest ~12 real nearby things-to-do for a listing so the builder can pick which to include.
 export async function POST(req: NextRequest) {
+  // Spends Anthropic API credits — was completely unauthenticated until 2026-08-10.
+  const gate = await requireLevel('guidebooks', 'edit')
+  if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
   const listingId = String(body?.listingId || '')
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
