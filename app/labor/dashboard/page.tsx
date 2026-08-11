@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { Timer } from 'lucide-react'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
@@ -22,6 +23,11 @@ export default async function LaborDashboardPage() {
           the daily labor email is built from, so the screen and the inbox can never disagree. Billables run
           on a wider rolling window because owner billing gets edited after the fact.
         </p>
+        {/* Nav diet 2026-08-11 (Jon): reached from /labor's Board|Dashboard switcher. */}
+        <span className="mt-3 inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
+          <Link href="/labor" prefetch={false} className="text-sm font-medium px-3 py-1.5 bg-white text-muted hover:bg-app">Board</Link>
+          <span className="text-sm font-medium px-3 py-1.5 bg-ink text-white">Dashboard</span>
+        </span>
       </header>
       <LaborDashboard />
     </Shell>
