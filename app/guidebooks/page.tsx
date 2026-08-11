@@ -58,7 +58,7 @@ export default async function GuidebooksPage() {
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted">
           <BookOpen className="mx-auto mb-3 opacity-40" />
-          No guidebooks yet. Open a property in <Link href="/listings" className="underline font-semibold">Listings</Link> and click “Generate Guidebook”.
+          No guidebooks yet. Open a unit under <Link href="/buildings" className="underline font-semibold">Properties</Link> and click “Generate Guidebook”.
         </div>
       ) : (
         <div className="space-y-8">
