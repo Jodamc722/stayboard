@@ -5,12 +5,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const SECTION_KEYS = ['summary', 'space', 'access', 'neighborhood', 'transit', 'notes']
 
 export async function POST(req: NextRequest) {
+  // This route WRITES LIVE OTA LISTING TEXT to Guesty. Until 2026-08-10 any signed-in user could
+  // call it; now it needs edit on the optimizer, whatever the UI shows.
+  const gate = await requireLevel('optimize', 'edit')
+  if (!gate.ok) return gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
