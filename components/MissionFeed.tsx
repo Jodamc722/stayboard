@@ -2,13 +2,11 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase-browser'
+import { ratingDisplay } from '@/lib/review-scale'
 import {
   Star, MessageSquare, ClipboardCheck, AlertTriangle, LogIn, PhoneCall,
   Send, Sparkles, Check, X, ArrowUpRight, CheckCircle2, Frown, ChevronRight, XCircle,
 } from 'lucide-react'
-
-const SIGN_HINT = ''
 
 type Review = { id: string; rating: number | null; content: string; channel: string; guest: string; listing_name: string; created_at?: string }
 type Approval = { id: string; title: string; type: string; building: string; unit: string; vendor: string; amount_usd: number | null; priority: string }
@@ -20,8 +18,9 @@ type Sentiment = { id: string; guest: string; channel: string; unit: string; ban
 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
 const fmtDate = (s?: string) => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
-const fmtRating = (n: number | null) => n == null ? '—' : (n <= 5 ? `${n}/5` : `${n}/10`)
-const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
+// Scale rule (lib/review-scale): stored ratings are ALWAYS /5; Booking alone displays ×2 as /10.
+const fmtRating = (n: number | null, channel?: string) => n == null ? '—' : (/booking/i.test(String(channel || '')) ? ratingDisplay(n, channel) : `${n}/5`)
+const isLow = (n: number | null) => n != null && n <= 3 // stored scale is always /5
 const unitTag = (unit: string, name: string) => unit ? `Unit ${unit}` : (name || '')
 
 const PRIORITY: Record<string, string> = {
@@ -100,15 +99,16 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
 
   async function decide(a: Approval, approved: boolean) {
     setRowBusy(b => ({ ...b, [a.id]: true })); setErr(null)
-    const supabase = createClient()
-    const { error } = await supabase.from('field_requests').update({
-      approval_status: approved ? 'approved' : 'rejected',
-      status: approved ? 'open' : 'rejected',
-      updated_at: new Date().toISOString(),
-    }).eq('id', a.id)
+    // Server-gated: requireLevel('requests','edit') + approver stamped server-side. Approvals used
+    // to write field_requests straight from the browser, bypassing role levels entirely.
+    const res = await fetch('/api/requests/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'decide', id: a.id, approved }),
+    })
+    const d = await res.json().catch(() => ({} as any))
     setRowBusy(b => ({ ...b, [a.id]: false }))
-    if (!error) { setDecided(x => ({ ...x, [a.id]: approved ? 'Approved' : 'Rejected' })); router.refresh() }
-    else setErr('Could not update: ' + error.message)
+    if (res.ok && !d.error) { setDecided(x => ({ ...x, [a.id]: approved ? 'Approved' : 'Rejected' })); router.refresh() }
+    else setErr('Could not update: ' + (d.message || d.error || `HTTP ${res.status}`))
   }
 
   if (totalOpen === 0) {
@@ -179,7 +179,7 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
             {liveReviews.slice(0, 5).map(r => (
               <li key={r.id} className="px-4 py-3">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}><Star size={11} /> {fmtRating(r.rating)}</span>
+                  <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}><Star size={11} /> {fmtRating(r.rating, r.channel)}</span>
                   <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>
                   {r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
                   {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}

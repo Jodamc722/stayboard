@@ -12,6 +12,7 @@
 // the window is telling you something too, and a plain unit count hides it.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Building2, ChevronRight, Search, Download, TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, MessageSquareWarning } from 'lucide-react'
+import { ratingDisplay } from '@/lib/review-scale'
 
 type Ch = { channel: string; n: number; avg: number; low: number }
 // The published listing score per OTA — lifetime, not the window. `display` is already converted to
@@ -108,7 +109,7 @@ function ChannelChips({ chs }: { chs: Ch[] }) {
     <span className="inline-flex flex-wrap gap-1">
       {chs.slice(0, 4).map(c => {
         // Booking's own average reads on its native /10; the combined number stays out of 5.
-        const disp = /booking/i.test(c.channel) ? (Math.round(c.avg * 2 * 10) / 10) + '/10' : String(c.avg)
+        const disp = ratingDisplay(c.avg, c.channel)
         return (
         <span key={c.channel}
           title={c.channel + ': ' + c.n + ' review' + (c.n === 1 ? '' : 's') + ', average ' + disp + (c.low ? ', ' + c.low + ' at 3★ or below' : '')}

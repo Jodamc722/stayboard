@@ -10,6 +10,7 @@
 // than repairing it again.
 import { useCallback, useEffect, useState } from 'react'
 import { ClipboardList, Check, X, RefreshCw, ChevronRight, ExternalLink, AlertTriangle, Play, RotateCcw, Send, CalendarDays } from 'lucide-react'
+import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
 
 type Action = {
   id: string; listing_id: string; unit: string | null; building: string | null
@@ -103,7 +104,7 @@ function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => 
             <div key={i} className="text-[11.5px] border-l-2 border-rose-200 pl-2">
               <span className="text-ink">{'“'}{e.quote}{'”'}</span>
               <div className="text-[10.5px] text-muted">
-                {e.at}{e.channel ? ' · ' + e.channel : ''}{e.rating ? ' · ' + (/booking/i.test(String(e.channel || '')) ? (Math.round(e.rating * 2 * 10) / 10) + '/10' : e.rating + '★') : ''}
+                {e.at}{e.channel ? ' · ' + e.channel : ''}{e.rating ? ' · ' + (isBookingChannel(e.channel) ? ratingDisplay(e.rating, e.channel) : e.rating + '★') : ''}
               </div>
             </div>
           ))}

@@ -6,6 +6,7 @@
 // up front (no draft/post UI) instead of letting the host write a reply that fails on post.
 import { useState } from 'react'
 import { Star, MessageSquare, Send, Wand2, Check, Ban } from 'lucide-react'
+import { ratingDisplay } from '@/lib/review-scale'
 
 type R = {
   id: string
@@ -73,7 +74,7 @@ export function ListingReviews({ reviews, listingName }: { reviews: R[]; listing
           <div key={r.id} className="border border-line rounded-lg px-3 py-2">
             <div className="flex items-center justify-between gap-2 text-[12px]">
               <span className="inline-flex items-center gap-1.5">
-                {r.rating != null && <span className="inline-flex items-center gap-0.5 font-semibold text-ink"><Star size={11} className="text-amber-500 fill-amber-500" />{/booking/i.test(String(r.channel || '')) ? (Math.round(r.rating * 2 * 10) / 10) + '/10' : r.rating}</span>}
+                {r.rating != null && <span className="inline-flex items-center gap-0.5 font-semibold text-ink"><Star size={11} className="text-amber-500 fill-amber-500" />{ratingDisplay(r.rating, r.channel)}</span>}
                 <span className="text-muted">{r.channel || '—'}</span>
                 {r.guest_name && <span className="text-muted">· {r.guest_name}</span>}
               </span>

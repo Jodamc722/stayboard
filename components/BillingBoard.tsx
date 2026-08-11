@@ -1169,7 +1169,9 @@ export function BillingBoard() {
       ) : null}
 
       {view === 'labor' && data ? (
-        <LaborView tasks={filtered.length ? filtered : data.tasks} rates={data.laborRates || {}} canEdit={canEdit} month={month}
+        /* Always the FULL window — the board's search/owner/status filters used to leak in here
+           silently, so the Labor tab's totals changed with whatever was typed in the filter bar. */
+        <LaborView tasks={data.tasks} rates={data.laborRates || {}} canEdit={canEdit} month={month}
           onRates={r => setData(d => d ? { ...d, laborRates: r } : d)} />
       ) : null}
 

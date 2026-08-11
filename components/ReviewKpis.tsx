@@ -6,6 +6,7 @@
 // behind one "Details" fold. The whole strip collapses to a single line and remembers that choice.
 import { useCallback, useEffect, useState } from 'react'
 import { Star, TrendingUp, TrendingDown, Minus, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
+import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
 
 const PERIODS = [{ d: 30, l: '30d' }, { d: 90, l: '90d' }, { d: 180, l: '6m' }, { d: 365, l: '12m' }]
 const AT_RISK = 4.5
@@ -57,7 +58,7 @@ function Quote({ s }: { s: any }) {
       <span className="text-ink">{'“'}{s.comment}{'”'}</span>
       <div className="text-[10.5px] text-muted">
         {s.unit}{s.at ? ' · ' + s.at : ''}{s.channel ? ' · ' + s.channel : ''}
-        {s.rating != null ? ' · ' + (/booking/i.test(String(s.channel || '')) ? (Math.round(s.rating * 2 * 10) / 10) + '/10' : s.rating + '★') : ''}
+        {s.rating != null ? ' · ' + (isBookingChannel(s.channel) ? ratingDisplay(s.rating, s.channel) : s.rating + '★') : ''}
       </div>
     </div>
   )
@@ -162,7 +163,7 @@ export function ReviewKpis() {
   // Scale rule: stored averages are ALWAYS /5. When the strip is filtered to Booking.com alone,
   // the headline is a Booking-only number, so it reads on Booking's native /10 (×2). Everywhere
   // a number could be mistaken for the other scale it carries an explicit /5 or /10 tag.
-  const bookingOnly = /booking/i.test(String(channel || ''))
+  const bookingOnly = isBookingChannel(channel)
   const x2 = (v: any) => (v == null ? null : Math.round(Number(v) * 2 * 10) / 10)
   const headAvg = bookingOnly ? x2(h.avg) : h.avg
   const headScale = bookingOnly ? '/10' : '/5'
