@@ -438,7 +438,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
             {/* Channel mix */}
             <section className="lg:col-span-2 rounded-2xl border border-line bg-white p-5">
               <h2 className="text-sm font-bold text-ink mb-0.5">Channel mix <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">portfolio</span></h2>
-              <p className="text-[12px] text-muted mb-3">Prorated revenue by booking source.</p>
+              <p className="text-[12px] text-muted mb-3">Prorated revenue by booking source. Cancel = cancelled ÷ all bookings on that channel in this range.</p>
               {d.channels.length === 0 ? (
                 <div className="text-sm text-muted italic py-4 text-center">No revenue in this range.</div>
               ) : (
@@ -447,7 +447,14 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                     <div key={i}>
                       <div className="flex items-center justify-between text-[13px] mb-1">
                         <span className="font-medium text-ink">{c.name}</span>
-                        <span className="text-muted tabular-nums">{fmtMoney(c.revenue)} · {Math.round((c.revenue / (d.totals.total || 1)) * 100)}%</span>
+                        <span className="text-muted tabular-nums">
+                          {fmtMoney(c.revenue)} · {Math.round((c.revenue / (d.totals.total || 1)) * 100)}%
+                          {(c.cancelled ?? 0) + c.count > 0 && (c.cancelled ?? 0) > 0 && (
+                            <span className={((c.cancelled / (c.count + c.cancelled)) >= 0.2 ? 'text-rose-600' : (c.cancelled / (c.count + c.cancelled)) >= 0.1 ? 'text-amber-600' : 'text-muted') + ' ml-1'}>
+                              · {Math.round((c.cancelled / (c.count + c.cancelled)) * 100)}% cancel
+                            </span>
+                          )}
+                        </span>
                       </div>
                       <div className="h-2 rounded-full bg-app overflow-hidden">
                         <div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.max(2, (c.revenue / chMax) * 100)}%` }} />
