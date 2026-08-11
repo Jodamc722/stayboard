@@ -55,7 +55,6 @@ export const FEATURES: Feature[] = [
   // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
   { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
-  { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Money' },
   { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing', group: 'Money' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
@@ -223,7 +222,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'channels', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims'] },
+    pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
