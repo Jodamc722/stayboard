@@ -7,7 +7,7 @@ import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import {
   Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff } from 'lucide-react'
+  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa } from 'lucide-react'
 
 // Cleaner information architecture: a small set of clearly-named groups,
 // ordered the way a GM actually moves through the day —
@@ -43,6 +43,7 @@ const SECTIONS: {
       { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
       { to: '/glitches', label: 'Guest Issues', Icon: AlertTriangle },
       { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
+      { to: '/ffe',      label: 'FF&E Audit', Icon: Sofa }, // 2026-08-10 - furniture order, not work orders
       { to: '/inspections', label: 'Inspections', Icon: ClipboardCheck }, // gated 2026-08-06 — was URL-only
       { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
       { to: '/requests', label: 'Work Orders', Icon: ClipboardList },
