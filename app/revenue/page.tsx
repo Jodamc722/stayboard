@@ -88,6 +88,32 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
     }))
 }
 
+// Cancelled bookings overlapping the range — source + listing only, for the per-channel cancel
+// rate on the Channel mix card (folded in from the killed /channels page, 2026-08-11). Same
+// pagination discipline as pullRange; a failed pull returns [] rather than sinking the page,
+// because a missing cancel % is annotation, not revenue.
+async function pullCancelledSources(sb: any, from: string, toExcl: string): Promise<{ listing_id: string; source: string }[]> {
+  let all: any[] = []
+  try {
+    for (let i = 0; i < 30; i++) {
+      const res = await sb
+        .from('guesty_reservations')
+        .select('listing_id, source')
+        .in('status', ['canceled', 'cancelled'])
+        .gt('check_out', from)
+        .lt('check_in', toExcl)
+        .range(i * 1000, i * 1000 + 999)
+      if (res.error) return []
+      const data = res.data || []
+      all = all.concat(data)
+      if (data.length < 1000) break
+    }
+  } catch { return [] }
+  return all
+    .filter((r: any) => r.listing_id)
+    .map((r: any) => ({ listing_id: String(r.listing_id), source: String(r.source || 'other') }))
+}
+
 // Per-reservation revenue components. grossAccom = fareAccommodationAdjusted (guest-paid room
 // rate, before OTA fees - matches PriceLabs). netAccom = grossAccom - hostServiceFeeIncTax: the
 // OWNER-STATEMENT "Rental Income" basis, validated to the penny against Guesty owner statements
@@ -167,7 +193,7 @@ export type RevenueData = {
   nightsSold: number; occupiedNights: number; availableNights: number; bookings: number
   prev: { from: string; to: string; total: number; nightsSold: number; occupiedNights: number; availableNights: number; grossAccom: number }
   otb: { d30: number; d60: number; d90: number; nights30: number; nights60: number; nights90: number; rev30: number }
-  channels: { name: string; revenue: number; count: number }[]
+  channels: { name: string; revenue: number; count: number; cancelled: number }[]
   buildingAvg: Record<string, { occ: number; adr: number }>
   units: UnitRow[]
   recs: Rec[]
@@ -236,10 +262,11 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       .filter(l => !/\bfull\b/i.test(String(l.nickname || l.title || '')))
     const inactiveUnits = listings.length - active.length
 
-    const [cur, prevR, fwd] = await Promise.all([
+    const [cur, prevR, fwd, cancelledRows] = await Promise.all([
       pullRange(sb, from, toExcl),
       pullRange(sb, prevFrom, from),
       pullRange(sb, todayStr, addDays(todayStr, 90)),
+      pullCancelledSources(sb, from, toExcl),
     ])
 
     const curX = cur.map(r => ({ r, c: componentsOf(r) }))
@@ -389,8 +416,15 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     totals.total = totals.grossAccom + totals.cleaning + totals.parking + totals.other
     const availableNights = active.length * days
 
+    // Cancelled count per channel (active units only, same range) → cancel rate on the mix card.
+    const cancelledByChannel: Record<string, number> = {}
+    for (const c of cancelledRows) {
+      if (!activeIds.has(c.listing_id)) continue
+      const ch = prettyChannel(c.source)
+      cancelledByChannel[ch] = (cancelledByChannel[ch] || 0) + 1
+    }
     const channels = Object.keys(byChannel)
-      .map(k => ({ name: k, revenue: byChannel[k].revenue, count: byChannel[k].count }))
+      .map(k => ({ name: k, revenue: byChannel[k].revenue, count: byChannel[k].count, cancelled: cancelledByChannel[k] || 0 }))
       .sort((a, b) => b.revenue - a.revenue)
 
     // ---- daily checks / recommendations, each with an estimated $/month impact ----
