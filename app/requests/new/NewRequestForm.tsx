@@ -2,7 +2,6 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
-import { createClient } from '@/lib/supabase-browser'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 
 type ListingOption = { id: string; nickname: string | null; title: string | null; building: string | null; unit: string | null }
@@ -30,31 +29,31 @@ export function NewRequestForm({
     e.preventDefault()
     setSubmitting(true); setErr(null)
     try {
-      const supabase = createClient()
-      const { data, error } = await supabase
-        .from('field_requests')
-        .insert({
-          type,
-          title: title.trim(),
-          description: desc.trim() || null,
-          listing_id: listingId,
-          building: listing?.building ?? null,
-          unit: listing?.unit ?? null,
-          reservation_id: prefillReservationId,
-          priority,
-          status: 'open',
-          created_by_email: creatorEmail,
-          assignee_email: assignee.trim() || null,
-          due_at: dueAt || null,
-          vendor: vendor.trim() || null,
-          amount_usd: amount ? Number(amount) : null,
-          approval_required: reqApproval,
-          approval_status: reqApproval ? 'pending' : null
-        })
-        .select('id')
-        .single()
-      if (error) throw error
-      router.push(`/requests/${data!.id}`)
+      // Server-gated create (/api/requests/update) — creator is stamped from the session there.
+      const res = await fetch('/api/requests/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          data: {
+            type,
+            title: title.trim(),
+            description: desc.trim() || null,
+            listing_id: listingId,
+            building: listing?.building ?? null,
+            unit: listing?.unit ?? null,
+            reservation_id: prefillReservationId,
+            priority,
+            assignee_email: assignee.trim() || null,
+            due_at: dueAt || null,
+            vendor: vendor.trim() || null,
+            amount_usd: amount ? Number(amount) : null,
+            approval_required: reqApproval,
+          },
+        }),
+      })
+      const data = await res.json().catch(() => ({} as any))
+      if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`)
+      router.push(`/requests/${data.id}`)
     } catch (e: any) {
       setErr(e.message || 'Failed to create')
       setSubmitting(false)
