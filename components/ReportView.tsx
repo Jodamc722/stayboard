@@ -181,7 +181,7 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     const x = 0.6 + i * (cw + cgap)
     s2.addShape('roundRect', { x, y: CT, w: cw, h: 2.05, fill: { color: CARD }, line: { color: CB }, rectRadius: 0.06 })
     s2.addText(String(cards[i].label || ''), { x: x + 0.18, y: CT + 0.16, w: cw - 0.32, h: 0.25, fontSize: 9.5, bold: true, color: ACC, charSpacing: 2 })
-    s2.addText(String(cards[i].value || ''), { x: x + 0.18, y: CT + 0.46, w: cw - 0.32, h: 0.66, fontSize: 30, bold: true, color: INK })
+    s2.addText(String((typeof cards[i].override === 'string' && cards[i].override.trim() !== '' ? cards[i].override : cards[i].value) || ''), { x: x + 0.18, y: CT + 0.46, w: cw - 0.32, h: 0.66, fontSize: 30, bold: true, color: INK })
     s2.addText(String(cards[i].sub || '').slice(0, 95), { x: x + 0.18, y: CT + 1.2, w: cw - 0.3, h: 0.78, fontSize: 8.5, color: SUB })
   }
   if (snap.ytd) {
@@ -1352,6 +1352,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 const pick = (b: Basis) => { const s = basisStrings(M, b); return card.key === 'revenue' ? s.rev : card.key === 'adr' ? s.adr : s.revpar }
                 const primaryVal = canBasis ? pick(snapPrimary) : (hasBasisRaw(M) && card.key === 'occupancy' && M.occPct != null ? (M.occPct + '%') : null)
                 const secondaryVal = canBasis && snapSecondary !== 'none' ? pick(snapSecondary as Basis) : null
+                // Manual override for the big number: computed values are the default, but any card
+                // can be typed over (card.override). Clearing the field goes back to the computed one.
+                const override = typeof card.override === 'string' && card.override.trim() !== '' ? card.override : null
+                const shownVal = override != null ? override : primaryVal
                 return (
                 <div key={card.key || i} className="relative rounded-2xl p-5 shadow-sm border flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
@@ -1361,8 +1365,22 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <Ed v={card.label || ''} set={v => patch('snapshot.cards.' + i + '.label', v)} edit={edit} />
                   </p>
                   <p className="mt-2 text-4xl font-black tabular-nums" style={{ color: t.ink }}>
-                    {primaryVal != null ? primaryVal : <Ed v={card.value || ''} set={v => patch('snapshot.cards.' + i + '.value', v)} edit={edit} />}
+                    {primaryVal != null
+                      ? (edit
+                        ? <Ed v={override != null ? String(card.override) : ''} placeholder={String(primaryVal)} set={v => patch('snapshot.cards.' + i + '.override', v)} edit={edit} />
+                        : shownVal)
+                      : <Ed v={card.value || ''} set={v => patch('snapshot.cards.' + i + '.value', v)} edit={edit} />}
                   </p>
+                  {edit && primaryVal != null && (
+                    <p className="mt-1 text-[10px]" style={{ color: t.muted }}>
+                      {override != null ? (
+                        <>overriding the computed {primaryVal}{' — '}
+                          <button onClick={() => patch('snapshot.cards.' + i + '.override', '')} className="underline font-semibold" style={{ color: t.accent }}>back to auto</button></>
+                      ) : (
+                        <>auto from the numbers — type to override</>
+                      )}
+                    </p>
+                  )}
                   {secondaryVal != null ? (
                     <p className="mt-1 text-[13px] font-bold tabular-nums" style={{ color: t.accent }}>{BASIS_SHORT[snapSecondary as Basis]} {secondaryVal}</p>
                   ) : (grossMode && cardGross(card) && (
