@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Shell } from '@/components/Shell'
 import { GlitchBoard } from '@/components/GlitchBoard'
+import { BuildingPatterns } from '@/components/BuildingPatterns'
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react'
 
 type Person = { id: number; name: string; departments: string[] }
@@ -96,7 +97,19 @@ export default function GlitchesPage() {
       {tab !== 'board' && loading && !data && <div className="text-sm text-muted py-10 text-center">Loading glitches…</div>}
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
 
-      {tab === 'patterns' && data && <PatternsView all={all} board={board} onDrill={(u: string) => { setTab('history'); setQ(u) }} />}
+      {/* Nav diet 2026-08-11 (Jon): Building Patterns folded in from /patterns — the theme-level
+          prevention view (reviews + issues per building) leads, the repeat-offender drill follows. */}
+      {tab === 'patterns' && (
+        <>
+          <BuildingPatterns />
+          {data && (
+            <div className="mt-6">
+              <div className="text-[11px] font-semibold uppercase tracking-widest text-muted mb-2">Repeat offenders — glitch history</div>
+              <PatternsView all={all} board={board} onDrill={(u: string) => { setTab('history'); setQ(u) }} />
+            </div>
+          )}
+        </>
+      )}
 
       {tab === 'history' && data && (
         <>
