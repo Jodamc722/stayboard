@@ -2,6 +2,7 @@
 // current). Rolling 90 days: cleans, pace, same-day completion per cleaner; top hubs; units with
 // recurring maintenance. Feeds the QC ladder (95%+ spot-check / 85-94% inspect / <85% retrain).
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isDepartureCleanName } from '@/lib/breezeway'
 import { unstable_cache } from 'next/cache'
 import { Sparkles, Users, Timer, CheckCheck, Wrench } from 'lucide-react'
 
@@ -21,7 +22,10 @@ const getData = unstable_cache(async () => {
   const nameOf: Record<string, string> = {}
   for (const p of (props || [])) if ((p as any).reference_property_id) nameOf[String((p as any).reference_property_id)] = String((p as any).name || '')
   const hubOf = (ref: string) => (nameOf[ref] || 'Other').split(' ')[0] || 'Other'
-  const cleans = (tasks || []).filter((t: any) => t.type_department === 'housekeeping' && /depart|clean|turn/i.test(String(t.name || '')))
+  // Departure cleans ONLY, via the one shared rule (lib/breezeway). The old /depart|clean|turn/
+  // loose match counted oven cleans, refresh cleans and common-area work as turnovers, inflating
+  // every KPI on this page — the exact bug fixed board-wide on 2026-08-04.
+  const cleans = (tasks || []).filter((t: any) => t.type_department === 'housekeeping' && isDepartureCleanName(t.name))
   type Agg = { cleans: number; done: number; sameDay: number; minutes: number; minutesN: number; days: Set<string>; hubs: Record<string, number> }
   const by: Record<string, Agg> = {}
   for (const t of cleans as any[]) {
