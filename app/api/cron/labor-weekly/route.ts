@@ -11,9 +11,10 @@
 //      are housekeeping work but they are not turns, and counting them halves the apparent cost.
 //   2. CLEANS ARE COUNTED FROM CHECKOUTS, not from closed Breezeway tasks - newer staff do not
 //      always close a task, and a guest leaving is proof the unit needed cleaning.
-//   3. BILLABLE LABOR IS HOURS x THE OWNER CHARGE RATE. Breezeway carries a pay rate on zero
-//      tasks, so anything built on rate_paid computes to $0. Materials are shown separately
-//      because they are a pass-through, not labor.
+//   3. BILLABLE LABOR IS THE CHARGE ENTERED ON THE TASK - the cost field in Breezeway, nothing
+//      derived (Jon, 2026-08-12: "billable labor is not 40 times their hours"). Ten tasks at $25
+//      is $250. rate_paid is 0 on every task in this account, so anything built on it reads $0,
+//      and pricing logged hours at the owner rate over-stated the week by ~85%.
 // Covers the last FULL workweek (Sunday-Saturday by default, labor_settings.week_start).
 // Recipients live in app_settings key 'labor_weekly': { enabled, fromEmail, to: string[] }.
 // GET ?preview=1 (signed in) returns the HTML. GET ?test=1 sends to YOU only.
@@ -26,6 +27,7 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
+import { laborEconomics, type PersonEcon } from '@/lib/labor-econ'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { sendGmail } from '@/lib/gmail-send'
 import { billingMonth } from '@/lib/billing'
@@ -207,18 +209,17 @@ export async function GET(req: NextRequest) {
     // Denominator is CHECKOUTS on in-house units (rule 2), not the departure-clean task count -
     // both are shown so the gap between them is visible rather than hidden.
     const inhouseCheckouts = atts.filter(a => !a.vendor).length
-    const deptOfRole = (r: any) => {
-      const x = String(r || '').toLowerCase()
-      if (/inspect|audit|quality/.test(x)) return 'inspection'
-      if (/clean|housekeep|turn/.test(x)) return 'housekeeping'
-      if (/maint|tech|repair|handy/.test(x)) return 'maintenance'
-      return 'other'
-    }
-    const hkCards = timecards.filter(t => deptOfRole(t.role) === 'housekeeping')
-    const hkPayroll = hkCards.reduce((a, t) => a + (t.laborCost ?? 0), 0)
-    const hkHours = hkCards.reduce((a, t) => a + (t.hours ?? 0), 0)
-    const maintCards = timecards.filter(t => deptOfRole(t.role) === 'maintenance')
-    const maintPayroll = maintCards.reduce((a, t) => a + (t.laborCost ?? 0), 0)
+    // CREWS COME FROM THE DECLARED ROSTER, NOT FROM THE HOMEBASE ROLE FIELD (Jon, 2026-08-12).
+    // That field is blank for Ethan, George, Guillermo, Yoslenis and Roberto, so splitting payroll
+    // on it quietly dropped five people out of both departments — housekeeping payroll was too
+    // small and maintenance payroll was missing most of the crew. lib/labor-econ is the same
+    // engine the labor board and the morning brief use.
+    const econ = await laborEconomics({ from: start, to: end, market: 'all' })
+    const depOf = (k: string) => econ.departments.filter(x => x.key === k)[0]
+    const hkD = depOf('housekeeping'), supD = depOf('supervision'), mtD = depOf('maintenance')
+    const hkPayroll = hkD.payroll
+    const hkHours = hkD.hours
+    const maintPayroll = mtD.payroll
     const costPerClean = inhouseCheckouts > 0 && hkPayroll > 0 ? hkPayroll / inhouseCheckouts : null
     const hoursPerClean = inhouseCheckouts > 0 && hkHours > 0 ? hkHours / inhouseCheckouts : null
     const feePerClean = inhouseCheckouts > 0 && inhouseFees > 0 ? inhouseFees / inhouseCheckouts : null
@@ -232,28 +233,47 @@ export async function GET(req: NextRequest) {
     const totalMargin = payroll > 0 ? totalRev - payroll : null
     const totalMarginPct = (totalMargin != null && totalRev > 0) ? Math.round((totalMargin / totalRev) * 1000) / 10 : null
 
-    const names: string[] = []
-    for (const t of timecards) if (names.indexOf(t.name) < 0) names.push(t.name)
-    const people = names.map(name => {
-      const mine = timecards.filter(t => t.name === name)
-      const h = mine.reduce((a, t) => a + (t.hours ?? 0), 0)
-      const o = mine.reduce((a, t) => a + (t.overtimeHours ?? 0), 0)
-      const p = mine.reduce((a, t) => a + (t.laborCost ?? 0), 0)
-      const cleans = cleanTasks.filter(t => { const d = doer(t); return !!d && nameMatches(d, name) }).length
-      let rev = 0
-      for (const a of atts) if (!a.vendor && a.fee != null && a.who && nameMatches(a.who, name)) rev += a.fee
-      return { name, h: r1(h), o: r1(o), p, cleans, rev, per: p > 0 ? Math.round((rev / p) * 100) / 100 : null }
-    }).sort((a, b) => b.rev - a.rev)
+    const otBy = (name: string) => timecards.filter(t => nameMatches(t.name, name)).reduce((a, t) => a + (t.overtimeHours ?? 0), 0)
+    const people = econ.people.map((x: PersonEcon) => ({
+      name: x.name, dept: x.dept, h: r1(x.hours), o: r1(otBy(x.name)),
+      p: x.payroll, cleans: x.cleans, rev: x.cleaningRevenue, bill: x.billableRevenue, margin: x.margin,
+    }))
 
     const td = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:left'
     const th = 'padding:6px 8px;border-bottom:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;color:#6b7280'
-    const rows = people.map(x =>
+    // GROUPED BY CREW, each with the header that says what it earns and what it costs.
+    const DEPT_ORDER: { key: string; title: string }[] = [
+      { key: 'housekeeping', title: 'HOUSEKEEPING' }, { key: 'supervision', title: 'SUPERVISORS' },
+      { key: 'maintenance', title: 'MAINTENANCE' }, { key: 'inspection', title: 'INSPECTIONS' },
+      { key: 'other', title: 'OTHER' },
+    ]
+    const personTr = (x: { name: string; h: number; o: number; p: number; cleans: number; rev: number; bill: number; margin: number }) =>
       '<tr><td style="' + td + '"><b>' + x.name + '</b></td>' +
       '<td style="' + td + '">' + x.h + 'h' + (x.o ? ' <span style="color:#d97706">(+' + x.o + ' OT)</span>' : '') + '</td>' +
       '<td style="' + td + '">' + money(x.p) + '</td>' +
       '<td style="' + td + '">' + (x.cleans || '-') + '</td>' +
       '<td style="' + td + '">' + (x.rev ? money(x.rev) : '-') + '</td>' +
-      '</tr>').join('')
+      '<td style="' + td + '">' + (x.bill ? money(x.bill) : '-') + '</td>' +
+      '<td style="' + td + ';font-weight:600;color:' + (x.margin < 0 ? '#dc2626' : '#047857') + '">' + money(x.margin) + '</td>' +
+      '</tr>'
+    let rows = ''
+    for (const d of DEPT_ORDER) {
+      const mine = people.filter((x: any) => x.dept === d.key)
+      if (!mine.length) continue
+      mine.sort((a: any, b: any) => (b.rev + b.bill) - (a.rev + a.bill) || b.p - a.p)
+      const dd = depOf(d.key)
+      const bits = [money(dd.payroll) + ' payroll (' + r1(dd.hours) + 'h)']
+      if (dd.cleans) bits.push(dd.cleans + ' cleans, ' + money(dd.cleaningRevenue))
+      if (dd.billableRevenue) bits.push(money(dd.billableRevenue) + ' billable')
+      // Supervisors get no margin line: they are overhead against management fees, by design.
+      const tail = d.key === 'supervision'
+        ? ' &mdash; overhead vs ' + money(econ.managementFee) + ' management fees'
+        : ' &mdash; margin ' + money(dd.margin)
+      const cpc = d.key === 'housekeeping' && dd.costPerClean != null ? ' &middot; ' + money(dd.costPerClean) + ' / clean' : ''
+      rows += '<tr><td colspan="7" style="' + td + ';background:#f5f5f4;font-weight:bold">' + d.title + ': ' + bits.join(', ') + tail + cpc + '</td></tr>'
+      rows += mine.map(personTr).join('')
+    }
+    rows += '<tr><td colspan="7" style="' + td + ';border-top:2px solid #111827;font-weight:bold">TOTAL: ' + money(econ.payroll) + ' payroll vs ' + money(econ.cleaningRevenue + econ.billableRevenue) + ' revenue &mdash; margin ' + money(econ.margin) + '</td></tr>'
 
     const bandColor = band === 'over target' ? '#dc2626' : band === 'watch' ? '#d97706' : '#059669'
 
@@ -320,7 +340,7 @@ export async function GET(req: NextRequest) {
         '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Labor is at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '&mdash;') + '</b> of in-house cleaning revenue <span style="color:#9ca3af">(housekeeping wages only)</span> &mdash; <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%). Scheduled cost for the week was ' + money(schedCost) + '.</p>', '#4338ca') +
 
       card('Per person &mdash; revenue generated vs labor cost',
-        '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Revenue</th></tr>' + rows + '</table>' +
+        '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Cleaning rev</th><th style="' + th + '">Billable</th><th style="' + th + '">Margin</th></tr>' + rows + '</table>' +
         '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Revenue = guest cleaning fees on checkouts matched to that person&#39;s Breezeway cleans (in-house units only). People with hours but no cleans are maintenance, inspections, or a name that does not match between Homebase and Breezeway.</p>') +
 
       '<div style="border-top:1px solid #e5e7eb;margin-top:4px;padding-top:14px;text-align:center">' +
