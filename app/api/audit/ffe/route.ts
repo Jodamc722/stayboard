@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { roomsFor, totalItems } from '@/lib/ffe-checklist'
+import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, type FfeOverride } from '@/lib/ffe-checklist'
 import { buildingOf } from '@/lib/segments'
 import { ownerMap } from '@/lib/billing'
 import { isLiveStay } from '@/lib/stay-status'
@@ -28,12 +28,34 @@ const str = (v: any) => (v == null ? '' : String(v))
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
+// TELL THE TRUTH WHEN THE TABLES ARE MISSING. Until migration 032 has been run, every save fails
+// with a PostgREST schema-cache error, and the walker's phone showed "check your signal" — which
+// sent people chasing a network problem that did not exist. This turns that one specific failure
+// into a message that names the actual cause.
+const isMissingTable = (msg: any) =>
+  /schema cache|does not exist|relation .* does not exist/i.test(String(msg || ''))
+const SETUP_MSG = 'FF&E storage is not set up yet — migration 032 has not been run on the database. Nothing you tap can save until it is.'
+function dbFail(msg: any) {
+  return isMissingTable(msg)
+    ? NextResponse.json({ ok: false, setupRequired: true, error: SETUP_MSG }, { status: 503 })
+    : NextResponse.json({ ok: false, error: String(msg) }, { status: 500 })
+}
+
 type Lst = { id: string; name: string; building: string; bedrooms: number | null; ownerId: string; ownerName: string }
 
 const bedroomsOf = (l: any): number | null => {
   const b = l ? l.bedrooms : null
   if (typeof b === 'number') return b
   const n = parseFloat(str(b)); return Number.isFinite(n) ? n : null
+}
+
+/** The editable overlay on the built-in checklist. Absent table = empty overlay, never an error. */
+async function checklistOverrides(db: any): Promise<FfeOverride[]> {
+  try {
+    const { data } = await db.from('ffe_checklist_items')
+      .select('room,item_key,en,es,ask,hidden,sort').limit(2000)
+    return (data || []) as FfeOverride[]
+  } catch { return [] }
 }
 
 /** Every active unit with its building and owner — the one list everything else is derived from. */
@@ -91,27 +113,29 @@ async function progress(db: any, ids: string[]) {
   const answered: Record<string, number> = {}
   const toOrder: Record<string, number> = {}
   const done: Record<string, string | null> = {}
-  if (!ids.length) return { answered, toOrder, done }
+  let setupRequired = false
+  if (!ids.length) return { answered, toOrder, done, setupRequired }
   try {
-    const { data } = await db.from('ffe_answers').select('listing_id,answer').in('listing_id', ids).limit(20000)
+    const { data, error } = await db.from('ffe_answers').select('listing_id,answer').in('listing_id', ids).limit(20000)
+    if (error && isMissingTable(error.message)) setupRequired = true
     for (const a of ((data || []) as any[])) {
       const id = String(a.listing_id)
       answered[id] = (answered[id] || 0) + 1
       if (['replace', 'add'].includes(str(a.answer))) toOrder[id] = (toOrder[id] || 0) + 1
     }
-  } catch { /* table not migrated yet */ }
+  } catch { setupRequired = true }
   try {
     const { data } = await db.from('ffe_unit_status').select('listing_id,completed_at').in('listing_id', ids).limit(3000)
     for (const s of ((data || []) as any[])) done[String(s.listing_id)] = s.completed_at || null
   } catch { /* optional */ }
-  return { answered, toOrder, done }
+  return { answered, toOrder, done, setupRequired }
 }
 
-const unitCard = (l: Lst, p: any, st: Record<string, string>) => ({
+const unitCard = (l: Lst, p: any, st: Record<string, string>, ov: FfeOverride[] = []) => ({
   id: l.id, name: l.name, bedrooms: l.bedrooms, building: l.building,
   ownerId: l.ownerId, ownerName: l.ownerName,
   code: unitCode(l.id),
-  total: totalItems(l.bedrooms),
+  total: totalItems(l.bedrooms, ov),
   answered: p.answered[l.id] || 0,
   toOrder: p.toOrder[l.id] || 0,
   completedAt: p.done[l.id] || null,
@@ -130,13 +154,13 @@ export async function GET(req: NextRequest) {
       const { data: u } = await s.auth.getUser()
       if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
       const ids = all.map(l => l.id)
-      const [p, st] = await Promise.all([progress(db, ids), todayStatus(db, ids)])
+      const [p, st, ov] = await Promise.all([progress(db, ids), todayStatus(db, ids), checklistOverrides(db)])
       const byOwner: Record<string, any> = {}
       for (const l of all) {
         const o = byOwner[l.ownerId] = byOwner[l.ownerId] || {
           ownerId: l.ownerId, ownerName: l.ownerName, code: ownerCode(l.ownerId), buildings: {} as any, units: [] as any[],
         }
-        o.units.push(unitCard(l, p, st))
+        o.units.push(unitCard(l, p, st, ov))
         o.buildings[l.building] = { building: l.building, code: buildingCode(l.building) }
       }
       const owners = Object.values(byOwner).map((o: any) => ({
@@ -147,7 +171,23 @@ export async function GET(req: NextRequest) {
         toOrder: o.units.reduce((a: number, x: any) => a + x.toOrder, 0),
         complete: o.units.filter((x: any) => x.completedAt).length,
       })).sort((a: any, b: any) => b.units.length - a.units.length || a.ownerName.localeCompare(b.ownerName))
-      return NextResponse.json({ ok: true, owners })
+      return NextResponse.json({ ok: true, owners, setupRequired: p.setupRequired, setupMessage: p.setupRequired ? SETUP_MSG : null })
+    }
+
+    // ---- CHECKLIST (signed in): the built-in list plus the overlay, for the editor tab ----
+    if (sp.get('checklist')) {
+      const s2 = createClient()
+      const { data: u } = await s2.auth.getUser()
+      if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+      const ov = await checklistOverrides(db)
+      return NextResponse.json({
+        ok: true,
+        rooms: FFE_ROOMS.map(r => ({
+          key: r.key, en: r.en, es: r.es, minBedrooms: r.minBedrooms || null,
+          items: r.items.map(i => ({ key: i.key, en: i.en, es: i.es, ask: i.ask || 'replace', builtin: true })),
+        })),
+        overrides: ov,
+      })
     }
 
     // ---- HUB (public): a building or an owner ----
@@ -163,8 +203,8 @@ export async function GET(req: NextRequest) {
         ? all.filter(l => l.building.toLowerCase() === scope.id)
         : all.filter(l => l.ownerId === scope.id)
       const ids = units.map(l => l.id)
-      const [p, st] = await Promise.all([progress(db, ids), todayStatus(db, ids)])
-      const cards = units.map(l => unitCard(l, p, st))
+      const [p, st, ov] = await Promise.all([progress(db, ids), todayStatus(db, ids), checklistOverrides(db)])
+      const cards = units.map(l => unitCard(l, p, st, ov))
       return NextResponse.json({
         ok: true,
         scope: {
@@ -173,6 +213,8 @@ export async function GET(req: NextRequest) {
           code: hub,
         },
         units: cards,
+        setupRequired: p.setupRequired,
+        setupMessage: p.setupRequired ? SETUP_MSG : null,
         totals: {
           units: cards.length,
           total: cards.reduce((a, x) => a + x.total, 0),
@@ -189,13 +231,14 @@ export async function GET(req: NextRequest) {
     const scope = resolveCode(code, { units: all.map(l => l.id), buildings: [], owners: [] })
     if (!scope) return NextResponse.json({ error: 'link not found' }, { status: 404 })
     const l = all.find(x => x.id === scope.id) as Lst
-    const [p, st] = await Promise.all([progress(db, [l.id]), todayStatus(db, [l.id])])
+    const [p, st, ov] = await Promise.all([progress(db, [l.id]), todayStatus(db, [l.id]), checklistOverrides(db)])
+    const merged = mergeChecklist(l.bedrooms, ov)
     let answers: Record<string, any> = {}
     try {
       const { data } = await db.from('ffe_answers')
-        .select('room,item_key,answer,qty,note').eq('listing_id', l.id).limit(1000)
+        .select('room,item_key,answer,qty,note,photo_url').eq('listing_id', l.id).limit(1000)
       for (const a of ((data || []) as any[])) {
-        answers[str(a.room) + '::' + str(a.item_key)] = { answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null }
+        answers[str(a.room) + '::' + str(a.item_key)] = { answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null, photoUrl: a.photo_url ?? null }
       }
     } catch { /* not migrated yet — form renders, saving will report the error */ }
     return NextResponse.json({
@@ -205,14 +248,18 @@ export async function GET(req: NextRequest) {
         ownerName: l.ownerName, today: st[l.id] || 'vacant',
         completedAt: p.done[l.id] || null,
       },
+      setupRequired: p.setupRequired,
+      setupMessage: p.setupRequired ? SETUP_MSG : null,
       // Where to go back to. The hub the walker most likely came from is the building.
       hub: { code: buildingCode(l.building), name: l.building },
-      rooms: roomsFor(l.bedrooms).map(r => r.key),
-      total: totalItems(l.bedrooms),
+      // The CHECKLIST ITSELF is sent down, not just the room keys — the phone renders whatever the
+      // Checklist tab says, so an added item appears without a deploy.
+      checklist: merged,
+      total: merged.reduce((a, r) => a + r.items.length, 0),
       answers,
     })
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
+    return dbFail(e?.message || e)
   }
 }
 
@@ -240,7 +287,7 @@ export async function POST(req: NextRequest) {
       const r = ex && ex[0]
         ? await db.from('ffe_unit_status').update(row).eq('listing_id', listingId)
         : await db.from('ffe_unit_status').insert(row)
-      if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
+      if (r.error) return dbFail(r.error.message)
       return NextResponse.json({ ok: true, completedAt: row.completed_at })
     }
 
@@ -256,6 +303,9 @@ export async function POST(req: NextRequest) {
       answer,
       qty: Number.isFinite(qtyN) && qtyN > 0 ? Math.min(Math.round(qtyN), 99) : 1,
       note: str(body.note).slice(0, 500) || null,
+      // Only overwrite the photo when the client actually sends one — re-answering an item must
+      // not silently drop the picture already attached to it.
+      ...(str(body.photoUrl) ? { photo_url: str(body.photoUrl).slice(0, 500) } : {}),
       updated_at: new Date().toISOString(),
     }
     const { data: ex } = await db.from('ffe_answers')
@@ -263,9 +313,9 @@ export async function POST(req: NextRequest) {
     const r = ex && ex[0]
       ? await db.from('ffe_answers').update(row).eq('id', ex[0].id)
       : await db.from('ffe_answers').insert(row)
-    if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
+    if (r.error) return dbFail(r.error.message)
     return NextResponse.json({ ok: true })
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
+    return dbFail(e?.message || e)
   }
 }
