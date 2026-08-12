@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, type FfeOverride } from '@/lib/ffe-checklist'
+import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, type FfeOverride } from '@/lib/ffe-checklist'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { isLiveStay } from '@/lib/stay-status'
 import { unitCode, buildingCode, ownerCode, resolveCode } from '@/lib/ffe-links'
@@ -211,13 +211,34 @@ export async function GET(req: NextRequest) {
     const [p, st, ov] = await Promise.all([progress(db, [l.id]), todayStatus(db, [l.id]), checklistOverrides(db)])
     const merged = mergeChecklist(l.bedrooms, ov)
     let answers: Record<string, any> = {}
+    // ITEMS ADDED ON THIS UNIT'S WALK, which exist on no checklist anywhere (Jon, 2026-08-12:
+    // "have a add button"). They are stored as ordinary answers carrying a title, so they order,
+    // export and total exactly like a built-in — and they belong to THIS unit, not to all 230.
+    const custom: Record<string, { key: string; en: string; es: string }[]> = {}
     try {
       const { data } = await db.from('ffe_answers')
-        .select('room,item_key,answer,qty,note,photo_url').eq('listing_id', l.id).limit(1000)
+        .select('room,item_key,title,answer,qty,note,spec,photo_url').eq('listing_id', l.id).limit(1000)
+      const known = new Set<string>()
+      for (const r of merged) for (const i of r.items) known.add(r.key + '::' + i.key)
       for (const a of ((data || []) as any[])) {
-        answers[str(a.room) + '::' + str(a.item_key)] = { answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null, photoUrl: a.photo_url ?? null }
+        const room = str(a.room), key = str(a.item_key), k = room + '::' + key
+        answers[k] = { answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null, spec: a.spec ?? null, photoUrl: a.photo_url ?? null }
+        if (!known.has(k) && str(a.title)) {
+          (custom[room] = custom[room] || []).push({ key, en: str(a.title), es: str(a.title) })
+        }
       }
     } catch { /* not migrated yet — form renders, saving will report the error */ }
+
+    const withCustom = merged.map(r => custom[r.key]?.length
+      ? { ...r, items: r.items.concat(custom[r.key].map(c => ({ ...c, extra: true }))) }
+      : r)
+
+    let unitNotes: string | null = null
+    try {
+      const { data } = await db.from('ffe_unit_status').select('notes').eq('listing_id', l.id).limit(1)
+      unitNotes = (data || [])[0]?.notes ?? null
+    } catch { /* the notes column arrives with migration 036 */ }
+
     return NextResponse.json({
       ok: true,
       unit: {
@@ -231,9 +252,13 @@ export async function GET(req: NextRequest) {
       hub: { code: buildingCode(l.building), name: l.building },
       // The CHECKLIST ITSELF is sent down, not just the room keys — the phone renders whatever the
       // Checklist tab says, so an added item appears without a deploy.
-      checklist: merged,
-      total: merged.reduce((a, r) => a + r.items.length, 0),
+      checklist: withCustom,
+      total: withCustom.reduce((a, r) => a + r.items.length, 0),
       answers,
+      unitNotes,
+      // The sheet's own standing instructions, so the two that happen inside the unit are on the
+      // screen where they happen rather than in a PDF nobody opens on a phone.
+      actions: FFE_ACTIONS.filter(a => a.inUnit),
     })
   } catch (e: any) {
     return dbFail(e?.message || e)
@@ -268,6 +293,50 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, completedAt: row.completed_at })
     }
 
+    // NOTES & MEASUREMENTS — the sheet's last section, and the only place the living-room
+    // dimensions the rug order depends on can actually be written down.
+    if (String(body.action || '') === 'notes') {
+      const row = {
+        listing_id: listingId,
+        notes: str(body.notes).slice(0, 4000) || null,
+        updated_at: new Date().toISOString(),
+      }
+      const { data: ex } = await db.from('ffe_unit_status').select('listing_id').eq('listing_id', listingId).limit(1)
+      const r = ex && ex[0]
+        ? await db.from('ffe_unit_status').update(row).eq('listing_id', listingId)
+        : await db.from('ffe_unit_status').insert(row)
+      if (r.error) return dbFail(r.error.message)
+      return NextResponse.json({ ok: true })
+    }
+
+    // ADD AN ITEM THAT IS ON NO LIST (Jon, 2026-08-12: "have a add button"). It becomes an ordinary
+    // answer on THIS unit, carrying its own title — so it prices, orders and exports like any other
+    // line without changing what the other 229 units get asked.
+    if (String(body.action || '') === 'addItem') {
+      const room2 = str(body.room).slice(0, 40)
+      const title = str(body.title).trim().slice(0, 120)
+      if (!room2 || !title) return NextResponse.json({ error: 'room and a name are required' }, { status: 400 })
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 28)
+      if (!slug) return NextResponse.json({ error: 'could not make a key from that name' }, { status: 400 })
+      // Namespaced so an added item can never collide with a built-in key in the same room.
+      const key = 'x_' + slug
+      const qty0 = Number(body.qty)
+      const row = {
+        listing_id: listingId, room: room2, item_key: key, title,
+        answer: 'replace',
+        qty: Number.isFinite(qty0) && qty0 > 0 ? Math.min(Math.round(qty0), 99) : 1,
+        note: str(body.note).slice(0, 500) || null,
+        updated_at: new Date().toISOString(),
+      }
+      const { data: ex } = await db.from('ffe_answers')
+        .select('id').eq('listing_id', listingId).eq('room', room2).eq('item_key', key).limit(1)
+      const r = ex && ex[0]
+        ? await db.from('ffe_answers').update(row).eq('id', ex[0].id)
+        : await db.from('ffe_answers').insert(row)
+      if (r.error) return dbFail(r.error.message)
+      return NextResponse.json({ ok: true, itemKey: key, title })
+    }
+
     const room = str(body.room).slice(0, 40)
     const itemKey = str(body.itemKey).slice(0, 40)
     if (!room || !itemKey) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
@@ -280,6 +349,8 @@ export async function POST(req: NextRequest) {
       answer,
       qty: Number.isFinite(qtyN) && qtyN > 0 ? Math.min(Math.round(qtyN), 99) : 1,
       note: str(body.note).slice(0, 500) || null,
+      // The size / which-one answer, so "9x12" reaches the vendor instead of "area rug x1".
+      ...('spec' in body ? { spec: str(body.spec).slice(0, 120) || null } : {}),
       // Only overwrite the photo when the client actually sends one — re-answering an item must
       // not silently drop the picture already attached to it.
       ...(str(body.photoUrl) ? { photo_url: str(body.photoUrl).slice(0, 500) } : {}),
