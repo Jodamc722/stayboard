@@ -277,6 +277,18 @@ export function LaborPanel() {
                   <td className="py-1 text-[11px] text-muted">{x.basis}</td>
                 </tr>
               ))}
+              {/* Makes the table add up. Fees on checkouts we could not tie to anybody's clean
+                  belong to the company, not to a crew — so they sit on their own line. */}
+              {econ.cleaningRevenueUnattributed > 0 && (
+                <tr className="border-t border-line text-muted">
+                  <td className="py-1.5 pr-3">Unattributed</td>
+                  <td className="py-1.5 pr-3">—</td><td className="py-1.5 pr-3">—</td><td className="py-1.5 pr-3">—</td>
+                  <td className="py-1.5 pr-3">—</td>
+                  <td className="py-1.5 pr-3">{fmt$(econ.cleaningRevenueUnattributed)}</td>
+                  <td className="py-1.5 pr-3">—</td><td className="py-1.5 pr-3">—</td>
+                  <td className="py-1 text-[11px]">checkout with no clean matched to a person</td>
+                </tr>
+              )}
               <tr className="border-t-2 border-ink font-medium">
                 <td className="py-1.5 pr-3">Total</td>
                 <td className="py-1.5 pr-3">{(econ.people || []).length}</td>
