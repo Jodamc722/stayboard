@@ -30,7 +30,7 @@ import { MONTH_LABEL, money } from './owner-statements'
 
 export type AuditFlagType =
   | 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev'
-  | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement'
+  | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
@@ -301,7 +301,7 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   // more under "No issues found" — money moving with no booking behind it, invisible. The team's
   // own spreadsheet caught every one of them.
   offBookingMin: 25,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true },
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -1026,6 +1026,22 @@ export async function buildAudit(month: string): Promise<AuditData> {
           detail: isWash
             ? 'Matched pair: the fee cancels the rental line for line, so this booking pays the owner exactly $0.00 — nothing is missing.'
             : 'Commission fully offsets rental (pass-through wash) — owner nets zero on it by design.',
+        })
+      }
+      // OWNER STAYS AND F&F GET FLAGGED, NOT HIDDEN. The discount is by design, so these never read
+      // as pricing errors — but the stay itself is a decision the owner review is supposed to see:
+      // nights taken off the market, cleaning and costs that still have to land somewhere, and the
+      // occasional booking tagged "owner" that nobody authorised. Tagging alone left them sitting in
+      // "No issues found", which is where the team's spreadsheet listed 15 of them by hand instead.
+      if (on.owner_stay && stayTag) {
+        const nightsTxt = totalNights > 0 ? totalNights + ' night' + (totalNights === 1 ? '' : 's') : monthNights + ' night' + (monthNights === 1 ? '' : 's')
+        flags.push({
+          type: 'owner_stay', severity: 'review', amount: net,
+          detail: (stayTag === 'ff' ? 'Friends & family stay' : 'Owner stay') + ' — ' + nightsTxt
+            + (net > 0.5 ? ', paying the owner $' + net.toFixed(2)
+              : net < -0.5 ? ', costing the owner $' + Math.abs(net).toFixed(2)
+                : ' at no revenue')
+            + '. Confirm it was authorised and that the cleaning and costs sit where they should.',
         })
       }
       if (on.no_reservation && !res) {
