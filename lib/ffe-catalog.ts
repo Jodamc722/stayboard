@@ -161,6 +161,20 @@ export const ORDER_STATUS_LABEL: Record<string, string> = {
   draft: 'Draft', sent: 'With owner', approved: 'Approved', changes: 'Changes requested', closed: 'Closed',
 }
 
+// ── FIXES ───────────────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-08-12: "This would not need to be shared with owner unless it's 350 or more to fix."
+// ONE number, defined once. Every screen that decides whether an owner sees a fix reads it from
+// here, so raising the bar to $500 next year is a single edit rather than a hunt.
+export const FIX_OWNER_THRESHOLD = 350
+
+/** Does this fix need the owner's sign-off, or can the team just get on with it? */
+export const needsOwner = (estCost: number | null | undefined): boolean =>
+  estCost != null && Number.isFinite(Number(estCost)) && Number(estCost) >= FIX_OWNER_THRESHOLD
+
+export const FIX_STATUS_LABEL: Record<string, string> = {
+  open: 'To do', doing: 'In progress', done: 'Done', dropped: 'Not doing',
+}
+
 export const money = (n: number | null | undefined): string =>
   n == null || !Number.isFinite(Number(n)) ? '—'
     : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
