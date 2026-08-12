@@ -119,12 +119,17 @@ function voiceSection(v: Voice): string {
   const ex = (Array.isArray(v.examples) ? v.examples : []).filter(e => String(e?.reply || '').trim()).slice(0, 12)
   if (!g && !ex.length) return ''
   let s = '\n\nHOUSE VOICE (set by the Stay Hospitality admin — follow it within the hard limits above)'
-  if (g) s += `\n${g.slice(0, 6000)}`
+  // The saved profile is the strongest signal in the prompt: an approved example that says "our
+  // host" teaches the model the exact phrasing the rules above forbid, and few-shot examples beat
+  // instructions. So the profile is passed through the same guard as the output. The GUEST's review
+  // in each example is left verbatim — that is the guest's words, and rewriting them would teach the
+  // model to expect input it will never actually see.
+  if (g) s += `\n${weNotThem(g).slice(0, 6000)}`
   if (ex.length) {
     s += '\n\nAPPROVED EXAMPLE REPLIES (match this tone and style):'
     ex.forEach((e, i) => {
       const rv = String(e.review || '').trim()
-      s += `\n\nExample ${i + 1}:` + (rv ? `\nGuest review: """${rv.slice(0, 1000)}"""` : '') + `\nReply: """${String(e.reply || '').trim().slice(0, 1200)}"""`
+      s += `\n\nExample ${i + 1}:` + (rv ? `\nGuest review: """${rv.slice(0, 1000)}"""` : '') + `\nReply: """${weNotThem(String(e.reply || '').trim()).slice(0, 1200)}"""`
     })
   }
   return s
