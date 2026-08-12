@@ -53,6 +53,13 @@ export function LaborPanel() {
   const people = d?.people || []
   const cleaners = d?.perCleaner || []
   const pay = d?.payroll || {}
+  // The shared labor P&L (lib/labor-econ) — same object the briefs print from.
+  const econ = (d as any)?.econ
+  // Per-person P&L keyed by the Homebase spelling, so the People table can show what each person
+  // earned (cleaning fees + the charges typed on their tasks) beside what they cost.
+  const econBy: Record<string, any> = {}
+  for (const x of ((econ?.people || []) as any[])) econBy[x.name] = x
+  const DEPT_SHORT: Record<string, string> = { housekeeping: 'HK', supervision: 'Sup', maintenance: 'Maint', inspection: 'Insp', other: '—' }
   const tasks = d?.tasks || {}
   const tdy = d?.today
   const attr = d?.attribution || {}
@@ -64,7 +71,7 @@ export function LaborPanel() {
   // anyone else — `moneyHidden` only tells this component which layout to draw. Every dollar tile
   // below has a percentage counterpart, so the board answers the same questions either way.
   const hideMoney = d?.moneyHidden === true
-  const peopleCols = hideMoney ? 6 : 9
+  const peopleCols = hideMoney ? 7 : 11
 
   const TaskList = ({ name }: { name: string }) => {
     const rows = personTasks[name] || []
@@ -166,28 +173,67 @@ export function LaborPanel() {
       </div>
 
       {/* DEPARTMENTS: housekeeping economics + maintenance utilization */}
+      {/* DEPARTMENT ECONOMICS — each crew judged on what it actually earns.
+          Jon, 2026-08-12: housekeeping is housekeepers only; supervisors are their own category
+          and are carried by management fees, not by the cleaning margin. */}
       {d?.departments && (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-xl border border-line bg-white px-3 py-4">
-            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping <span className="normal-case font-normal">· housekeepers only</span></p>
             <div className="grid grid-cols-3 gap-y-3">
               {hideMoney ? <>
                 <Stat label="Labor %" value={loading ? '…' : pct(d.departments.housekeeping.laborPct)} sub="of in-house cleaning revenue" />
                 <Stat label="Margin %" value={loading ? '…' : pct(d.departments.housekeeping.marginPct)}
                   tone={d.departments.housekeeping.marginPct > 0 ? 'good' : 'bad'} />
-                <Stat label="Share of payroll" value={loading ? '…' : pct(d.departments.housekeeping.payrollSharePct)} sub="of all three depts" />
+                <Stat label="Share of payroll" value={loading ? '…' : pct(d.departments.housekeeping.payrollSharePct)} sub="of all payroll" />
                 <Stat label="Cleans" value={loading ? '…' : String(d.departments.housekeeping.departureCleans ?? 0)} sub={(d.departments.housekeeping.otherHkTasks ?? 0) + ' other HK tasks'} />
                 <Stat label="Hours" value={loading ? '…' : d.departments.housekeeping.hours + 'h'} sub={d.departments.housekeeping.people + ' people'} />
-                <Stat label="Supervisor share" value={loading ? '…' : pct(d.departments.housekeeping.supervisorSharePct)} sub="of HK payroll" />
               </> : <>
-                <Stat label="In-house revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="cleaning fees, in-house units" />
-                <Stat label="Labor" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' people' + (d.departments.housekeeping.supervisorPayroll ? ' · incl ' + fmt$(d.departments.housekeeping.supervisorPayroll) + ' supervisors' : '')} />
-                <Stat label="In-house margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} />
-                <Stat label="Vendor revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.vendorRevenue)} sub="cleaned by vendors" />
-                <Stat label="Cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} />
+                <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="guest fees, in-house units" />
+                <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' housekeepers'} />
+                <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} sub="fees − housekeeper wages" />
+                <Stat label="Cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} sub={(d.departments.housekeeping.departureCleans ?? 0) + ' departure cleans'} />
                 <Stat label="Fee / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.feePerClean)} />
+                <Stat label="Loaded / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerCleanLoaded)} sub="with supervisors" />
+                <Stat label="Vendor revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.vendorRevenue)} sub="cleaned by vendors" />
                 <Stat label="Labor %" value={loading ? '…' : (d.departments.housekeeping.laborPct != null ? d.departments.housekeeping.laborPct + '%' : '—')} />
               </>}
+            </div>
+          </div>
+          {/* Supervisors: overhead, and deliberately given no cleaning margin. What pays for them
+              is the management fee on the stays they keep standards on. */}
+          <div className="rounded-xl border border-line bg-white px-3 py-4">
+            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Supervisors <span className="normal-case font-normal">· overhead</span></p>
+            <div className="grid grid-cols-3 gap-y-3">
+              <Stat label={hideMoney ? 'Share of payroll' : 'Payroll'}
+                value={loading ? '…' : (hideMoney ? pct(d.departments.supervision?.payrollSharePct) : fmt$(d.departments.supervision?.payroll))}
+                sub={(d.departments.supervision?.hours ?? 0) + 'h · ' + (d.departments.supervision?.people ?? 0) + ' people'} />
+              {!hideMoney && <Stat label="Management fees" value={loading ? '…' : fmt$(d.departments.supervision?.managementFee)} sub="Guesty commission, window" />}
+              <Stat label="% of mgmt fee" value={loading ? '…' : pct(d.departments.supervision?.coveragePct)}
+                tone={(d.departments.supervision?.coveragePct ?? 0) < 100 ? 'good' : 'bad'} sub="supervisor cost ÷ fees" />
+              {!hideMoney && (d.departments.supervision?.cleaningRevenue ?? 0) > 0 &&
+                <Stat label="Cleaning rev" value={loading ? '…' : fmt$(d.departments.supervision?.cleaningRevenue)} sub="cleans they did themselves" />}
+              <Stat label="Team" value={loading ? '…' : String((d.departments.supervision?.names || []).length)} sub={(d.departments.supervision?.names || []).join(', ') || '—'} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-line bg-white px-3 py-4">
+            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Maintenance</p>
+            <div className="grid grid-cols-3 gap-y-3">
+              {/* Payroll is Homebase, hours are Breezeway, billable is the charge typed on the
+                  task — each tile says which, so no two are read as the same number. */}
+              <Stat label={hideMoney ? 'Share of payroll' : 'Payroll'}
+                value={loading ? '…' : (hideMoney ? pct(d.departments.maintenance.payrollSharePct) : fmt$(d.departments.maintenance.payroll))}
+                sub={(d.departments.maintenance.clockedHours ?? 0) + 'h clocked · ' + d.departments.maintenance.people + ' people'} />
+              {!hideMoney && <Stat label="Billable" value={loading ? '…' : fmt$(d.departments.maintenance.billableRevenue)} sub={(d.departments.maintenance.billableTasks ?? 0) + ' tasks with a charge'} />}
+              {!hideMoney && <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.maintenance.margin)} tone={(d.departments.maintenance.margin ?? 0) > 0 ? 'good' : 'bad'} sub="billable − wages" />}
+              <Stat label="Billable vs wages" value={loading ? '…' : pct(d.departments.maintenance.billableCoveragePct)}
+                tone={d.departments.maintenance.billableCoveragePct != null ? (d.departments.maintenance.billableCoveragePct >= 100 ? 'good' : 'bad') : undefined} />
+              <Stat label="Hours on tasks" value={loading ? '…' : (d.departments.maintenance.hours ?? 0) + 'h'}
+                sub={(d.departments.maintenance.tasksCompleted ?? 0) + ' tasks · Breezeway'} />
+              <Stat label="On-task %" value={loading ? '…' : (d.departments.maintenance.utilizationPct != null ? d.departments.maintenance.utilizationPct + '%' : '—')} sub="Breezeway ÷ Homebase hours" />
+              {/* Not a rounding error — a finished task with nothing in the cost field earns $0. */}
+              <Stat label="No charge entered" value={loading ? '…' : String(d.departments.maintenance.tasksNoCharge ?? 0)}
+                tone={(d.departments.maintenance.tasksNoCharge ?? 0) > 0 ? 'warn' : undefined} sub="finished, nothing billed" />
             </div>
           </div>
           <div className="rounded-xl border border-line bg-white px-3 py-4">
@@ -200,28 +246,55 @@ export function LaborPanel() {
               {!hideMoney && <Stat label="Cost / inspection" value={loading ? '…' : fmt$(d.departments.inspection?.costPerInspection)} />}
             </div>
           </div>
-          <div className="rounded-xl border border-line bg-white px-3 py-4">
-            <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Maintenance</p>
-            <div className="grid grid-cols-3 gap-y-3">
-              {/* Payroll is Homebase, hours are Breezeway — each tile says which, so the two are
-                  never read as the same number. */}
-              <Stat label={hideMoney ? 'Share of payroll' : 'Payroll'}
-                value={loading ? '…' : (hideMoney ? pct(d.departments.maintenance.payrollSharePct) : fmt$(d.departments.maintenance.payroll))}
-                sub={(d.departments.maintenance.clockedHours ?? 0) + 'h clocked · ' + d.departments.maintenance.people + ' people'} />
-              <Stat label="Hours on tasks" value={loading ? '…' : (d.departments.maintenance.hours ?? 0) + 'h'}
-                sub={(d.departments.maintenance.tasksCompleted ?? 0) + ' tasks · Breezeway'} />
-              <Stat label="On-task %" value={loading ? '…' : (d.departments.maintenance.utilizationPct != null ? d.departments.maintenance.utilizationPct + '%' : '—')} sub="Breezeway hours ÷ Homebase hours" />
-              {hideMoney
-                // Billable ÷ wages: over 100% means what we billed out covered the crew.
-                ? <Stat label="Billable vs wages" value={loading ? '…' : pct(d.departments.maintenance.billableCoveragePct)}
-                    sub={(d.departments.maintenance.billableTasks ?? 0) + ' billed tasks · Breezeway'}
-                    tone={d.departments.maintenance.billableCoveragePct != null ? (d.departments.maintenance.billableCoveragePct >= 100 ? 'good' : 'bad') : undefined} />
-                : <>
-                    <Stat label="Cost / task" value={loading ? '…' : fmt$(d.departments.maintenance.costPerTask)} />
-                    <Stat label="Billable" value={loading ? '…' : fmt$(d.departments.maintenance.billableRevenue)} sub={(d.departments.maintenance.billableTasks ?? 0) + ' tasks · Breezeway billing'} />
-                  </>}
-            </div>
-          </div>
+        </div>
+      )}
+
+      {/* THE WHOLE LABOR P&L ON ONE LINE PER CREW — what it earned, what it cost, what is left. */}
+      {!hideMoney && econ && (
+        <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
+          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Department P&amp;L <span className="normal-case font-normal">· cleaning fees + billable charges vs payroll</span></p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+                <th className="py-1 pr-3">Department</th><th className="py-1 pr-3">People</th><th className="py-1 pr-3">Hours</th>
+                <th className="py-1 pr-3">Payroll</th><th className="py-1 pr-3">Cleans</th><th className="py-1 pr-3">Cleaning rev</th>
+                <th className="py-1 pr-3">Billable</th><th className="py-1 pr-3">Margin</th><th className="py-1">Measured on</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(econ.departments || []).filter((x: any) => x.people > 0).map((x: any) => (
+                <tr key={x.key} className="border-t border-line">
+                  <td className="py-1.5 pr-3 font-medium text-ink">{x.label}</td>
+                  <td className="py-1.5 pr-3">{x.people}</td>
+                  <td className="py-1.5 pr-3">{x.hours}h</td>
+                  <td className="py-1.5 pr-3">{fmt$(x.payroll)}</td>
+                  <td className="py-1.5 pr-3">{x.cleans || '—'}</td>
+                  <td className="py-1.5 pr-3">{x.cleaningRevenue ? fmt$(x.cleaningRevenue) : '—'}</td>
+                  <td className="py-1.5 pr-3">{x.billableRevenue ? fmt$(x.billableRevenue) : '—'}</td>
+                  <td className={'py-1.5 pr-3 font-medium ' + (x.key === 'supervision' ? 'text-muted' : x.margin >= 0 ? 'text-emerald-700' : 'text-red-600')}>
+                    {x.key === 'supervision' ? '—' : fmt$(x.margin)}
+                  </td>
+                  <td className="py-1 text-[11px] text-muted">{x.basis}</td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-ink font-medium">
+                <td className="py-1.5 pr-3">Total</td>
+                <td className="py-1.5 pr-3">{(econ.people || []).length}</td>
+                <td className="py-1.5 pr-3">—</td>
+                <td className="py-1.5 pr-3">{fmt$(econ.payroll)}</td>
+                <td className="py-1.5 pr-3">{econ.cleans || '—'}</td>
+                <td className="py-1.5 pr-3">{fmt$(econ.cleaningRevenue)}</td>
+                <td className="py-1.5 pr-3">{fmt$(econ.billableRevenue)}</td>
+                <td className={'py-1.5 pr-3 ' + (econ.margin >= 0 ? 'text-emerald-700' : 'text-red-600')}>{fmt$(econ.margin)}</td>
+                <td className="py-1 text-[11px] text-muted">+{fmt$(econ.managementFee)} mgmt fees → {fmt$(econ.marginWithFee)}</td>
+              </tr>
+            </tbody>
+          </table>
+          {econ.coverage?.tasksWithNoCharge > 0 && (
+            <p className="mt-2 text-[11px] text-amber-700">
+              {econ.coverage.tasksWithNoCharge} finished task{econ.coverage.tasksWithNoCharge === 1 ? '' : 's'} carried no charge in Breezeway — that work earns $0 here until a cost is entered on it.
+            </p>
+          )}
         </div>
       )}
 
@@ -272,13 +345,16 @@ export function LaborPanel() {
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted border-b border-line">
               <th className="text-left font-semibold px-4 py-2">Person</th>
+              <th className="text-left font-semibold px-2 py-2">Crew</th>
               <th className="text-right font-semibold px-2 py-2">Sched</th>
               <th className="text-right font-semibold px-2 py-2">Actual</th>
               <th className="text-right font-semibold px-2 py-2">OT</th>
               {!hideMoney && <>
                 <th className="text-right font-semibold px-2 py-2">$/hr</th>
                 <th className="text-right font-semibold px-2 py-2">Payroll</th>
-                <th className="text-right font-semibold px-2 py-2">Revenue</th>
+                <th className="text-right font-semibold px-2 py-2">Cleaning rev</th>
+                <th className="text-right font-semibold px-2 py-2">Billable</th>
+                <th className="text-right font-semibold px-2 py-2">Margin</th>
               </>}
               <th className="text-right font-semibold px-2 py-2">Tasks</th>
               <th className="text-right font-semibold px-4 py-2">Wk proj</th>
@@ -300,13 +376,19 @@ export function LaborPanel() {
                         never clocked out{p.missedClockOuts.length > 1 ? ' ×' + p.missedClockOuts.length : ''}</span>
                     )}
                   </td>
+                  <td className="px-2 py-2 text-left text-[11px] text-muted">
+                    {DEPT_SHORT[econBy[p.name]?.dept] || '—'}
+                    {econBy[p.name] && !econBy[p.name].declared && <span title="Crew inferred from their work — name them on the roster to lock it in" className="ml-1 text-amber-600">?</span>}
+                  </td>
                   <td className="px-2 py-2 text-right tabular-nums text-muted">{p.scheduledHours}</td>
                   <td className="px-2 py-2 text-right tabular-nums font-semibold text-ink">{p.actualHours}</td>
                   <td className={'px-2 py-2 text-right tabular-nums ' + (p.overtimeHours > 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{p.overtimeHours || '—'}</td>
                   {!hideMoney && <>
                     <td className="px-2 py-2 text-right tabular-nums text-ink">{(p as any).wageRate != null ? '$' + (p as any).wageRate : '—'}</td>
                     <td className="px-2 py-2 text-right tabular-nums text-ink">{p.laborCost != null ? fmt$(p.laborCost) : '—'}</td>
-                    <td className="px-2 py-2 text-right tabular-nums text-ink">{(d as any)?.personRevenue?.[p.name] != null ? fmt$((d as any).personRevenue[p.name]) : '—'}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-ink">{econBy[p.name]?.cleaningRevenue ? fmt$(econBy[p.name].cleaningRevenue) : ((d as any)?.personRevenue?.[p.name] != null ? fmt$((d as any).personRevenue[p.name]) : '—')}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-ink">{econBy[p.name]?.billableRevenue ? fmt$(econBy[p.name].billableRevenue) : '—'}</td>
+                    <td className={'px-2 py-2 text-right tabular-nums font-medium ' + (!econBy[p.name] ? 'text-muted' : econBy[p.name].margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{econBy[p.name] ? fmt$(econBy[p.name].margin) : '—'}</td>
                   </>}
                   <td className="px-2 py-2 text-right tabular-nums text-muted">{(personTasks[p.name] || []).length || '—'}</td>
                   <td className={'px-4 py-2 text-right tabular-nums ' + (p.overtimeRisk ? 'text-rose-700 font-bold' : 'text-muted')}>{p.projectedWeekHours}h</td>
