@@ -87,6 +87,11 @@ export type AuditItem = {
   lines: AuditLine[]             // capped for payload size — see lineCount
   lineCount: number              // how many statement line items this row REALLY has, so the
                                  // detail never shows a truncated table that quietly fails to add up
+  // HOW THE ROW'S TOTAL WAS BUILT, and what the booking itself says — the two numbers the team
+  // kept finding side by side without an explanation.
+  posted: number                 // everything credited to the owner this month on this booking
+  reversed: number               // everything taken back this month (corrections, cancellations)
+  resValue: number | null        // the reservation's own total in Guesty (folio), null if unmatched
   flags: AuditFlag[]
   needsReview: boolean           // carries at least one flag above informational
   status: AuditStatus
@@ -459,6 +464,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
   type Group = {
     ownerId: string; resCode: string; lineKey: string
     rental: number; commission: number; other: number; paid: number
+    posted: number                 // every positive line this month (income + credits)
+    reversed: number               // every negative line this month (corrections, fees, reversals)
     lines: AuditLine[]; afDates: Set<string>; afAmtByDate: Record<string, number>
     listingIds: Record<string, number>
   }
@@ -492,9 +499,16 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const gKey = ownerId + '|' + (res || lineKey)
     const g = groups[gKey] || (groups[gKey] = {
       ownerId, resCode: res, lineKey,
-      rental: 0, commission: 0, other: 0, paid: 0,
+      rental: 0, commission: 0, other: 0, paid: 0, posted: 0, reversed: 0,
       lines: [], afDates: new Set(), afAmtByDate: {}, listingIds: {},
     })
+
+    // POSTED vs REVERSED. The month's total for a booking is a running sum, not a single figure:
+    // Guesty posts the income and then posts corrections against it (a cancellation books $692.44
+    // and then reverses $275.00). The team kept opening a reservation, seeing one number, and
+    // finding another on the statement — so both halves are carried through to the row.
+    if (eff >= 0) g.posted = money(g.posted + eff)
+    else g.reversed = money(g.reversed + eff)
 
     if (code === 'AF') {
       g.rental = money(g.rental + eff)
@@ -1033,6 +1047,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
       rate, avgRate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
       lineCount: g.lines.length,
+      posted: g.posted,
+      reversed: g.reversed,
+      resValue: res ? (Number((res as any).money_total) || Number((res as any).fare) || null) : null,
       flags,
       needsReview,
       // Stored statuses win, but only the ones a human can actually set. Rows saved as 'done'
