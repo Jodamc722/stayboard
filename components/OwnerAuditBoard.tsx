@@ -23,7 +23,7 @@ import {
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
 } from 'lucide-react'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -109,6 +109,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
   negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphan reimb',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
+  empty_statement: 'Empty statement',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
@@ -120,6 +121,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   no_reservation: 'Statement line items whose reservation code has no matching booking (informational).',
   commission_off: 'Commission % on this reservation strays from the owner’s usual rate — most often a canceled booking whose whole cancellation fee was taken as commission.',
   off_booking: 'Money on the statement with no booking behind it — management fees, owner charges, one-off adjustments.',
+  empty_statement: 'A statement was generated with no line items at all — usually a listing that is not mapped to the owner.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
@@ -1229,11 +1231,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               <div className="text-[10px] text-muted mt-0.5">Flag when a reservation’s commission % strays this far from the owner’s usual rate.</div>
             </div>
             <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Charge with no booking ($)</label>
-              <input type="number" min={0} step={50} value={rulesDraft.offBookingMin}
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Money with no revenue behind it ($)</label>
+              <input type="number" min={0} step={5} value={rulesDraft.offBookingMin}
                 onChange={e => setRulesDraft(rd => rd ? { ...rd, offBookingMin: Number(e.target.value) } : rd)}
                 className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-              <div className="text-[10px] text-muted mt-0.5">Statement money with no reservation behind it, from this size up.</div>
+              <div className="text-[10px] text-muted mt-0.5">Owner charges, and money on bookings with no room revenue, from this size up.</div>
             </div>
           </div>
           <div className="grid sm:grid-cols-2 gap-1.5 max-w-2xl">
