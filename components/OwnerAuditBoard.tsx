@@ -72,7 +72,7 @@ type Item = {
   listingId: string; unit: string; source: string; reservationId: string; resNote: string
   benchRate: number | null; benchLabel: string; benchPct: number | null; benchPrev: number | null
   mixWeekday: number; mixWeekend: number; leadDays: number | null
-  stayTag: 'owner' | 'ff' | null
+  stayTag: 'owner' | 'owner_guest' | 'ff' | null
   canceled: boolean
   statusTag: 'canceled' | 'inquiry' | 'declined' | 'expired' | null
   rental: number; commission: number; other: number; net: number
@@ -128,6 +128,11 @@ const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
   review: 'bg-amber-50 text-amber-700 ring-amber-200',
   info: 'bg-neutral-100 text-neutral-600 ring-neutral-200',
+}
+// Guesty books the owner and the owner's guest as two different sources, and the team treats them
+// as two different things — one tag for both hid which was which.
+const STAY_LABEL: Record<'owner' | 'owner_guest' | 'ff', string> = {
+  owner: 'Owner stay', owner_guest: 'Owner’s guest', ff: 'Friends & family',
 }
 const STATUS_LABEL: Record<Status, string> = {
   review: 'Needs review', action: 'Action needed', done: 'Approved', clear: 'No issues found',
@@ -284,7 +289,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [fFlag, setFFlag] = useState<'' | 'flagged' | FlagType>('')
   const [fOwner, setFOwner] = useState('')
   const [fSource, setFSource] = useState('')                                 // channel filter (label)
-  const [fTag, setFTag] = useState<'' | 'canceled' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'ff'>('')
+  const [fTag, setFTag] = useState<'' | 'canceled' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'>('')
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({})
   // Worklist opens CLEAN: every statement collapsed to its totals row. expandedOwners is the
   // explicit open/close override; sections auto-open while filters or a search are active.
@@ -642,7 +647,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (fFlag === 'flagged' && !it.flags.some(f => f.severity !== 'info')) return false
       if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
       if (fSource && sourceLabel(it.source) !== fSource) return false
-      if (fTag === 'owner' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
+      if (fTag === 'owner' || fTag === 'owner_guest' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
       else if (fTag) { if (it.statusTag !== fTag) return false }
       if (needle) {
         const hay = (it.guest + ' ' + it.resCode + ' ' + it.unit + ' ' + (ownerName[it.ownerId] || '') + ' ' + it.note).toLowerCase()
@@ -689,7 +694,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
       return [
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
-        sourceLabel(it.source), it.statusTag ? it.statusTag.charAt(0).toUpperCase() + it.statusTag.slice(1) : it.stayTag === 'ff' ? 'Friends & family' : it.stayTag === 'owner' ? 'Owner stay' : '',
+        sourceLabel(it.source), it.statusTag ? it.statusTag.charAt(0).toUpperCase() + it.statusTag.slice(1) : it.stayTag ? STAY_LABEL[it.stayTag] : '',
         it.checkIn, it.checkOut, it.monthNights,
         it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2), it.avgRate == null ? '' : it.avgRate.toFixed(2),
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
@@ -729,8 +734,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 {it.resCode && <span className="text-muted font-normal"> · {it.resCode}</span>}
               </span>
               {it.kind === 'reservation' && <SourceChip source={it.source} />}
-              {it.stayTag === 'owner' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Owner stay</span>}
-              {it.stayTag === 'ff' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">Friends &amp; family</span>}
+              {it.stayTag && (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">
+                  {STAY_LABEL[it.stayTag]}
+                </span>
+              )}
               {it.statusTag === 'canceled' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300 line-through decoration-neutral-400">Canceled</span>}
               {it.statusTag === 'inquiry' && <span title="Never a confirmed booking — worth checking why it carries statement line items" className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200">Inquiry</span>}
               {it.statusTag === 'declined' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300">Declined</span>}
@@ -1798,12 +1806,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
               {/* filters — row 2: what the booking IS (tags + channel), plus owner + search */}
               <div className="flex flex-wrap items-center gap-2">
-                {([['canceled', 'Canceled'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['ff', 'Friends & family']] as [typeof fTag, string][])
+                {([['canceled', 'Canceled'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']] as [typeof fTag, string][])
                   .filter(([k]) => tagCounts.t[k as string])
                   .map(([k, label]) => (
                     <button key={k} onClick={() => setFTag(fTag === k ? '' : k)}
                       className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset transition '
-                        + (k === 'owner' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
+                        + (k === 'owner' || k === 'owner_guest' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
                         + (fTag === k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
                       {label} {tagCounts.t[k as string]}
                     </button>
