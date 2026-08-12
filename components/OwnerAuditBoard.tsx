@@ -85,7 +85,8 @@ type Item = {
 type Owner = {
   ownerId: string; ownerName: string; hasStatement: boolean; dueToOwner: number | null
   rental: number; commission: number; other: number; net: number; paid: number
-  hasPayout: boolean; ties: boolean; items: number; open: number; done: number; clear: number
+  hasPayout: boolean; ties: boolean; stmtStatus: string; isDraft: boolean; generatedAt: string
+  items: number; open: number; done: number; clear: number
   high: number; reviewFlags: number; notes: number; commentCount: number
   signOff: SignOff | null
   stmtNote: string
@@ -221,11 +222,24 @@ const TIE_HELP = 'Ties = adding up every line item on this statement (rental −
 // a balance difference, not money gone missing. This distinction is the whole reason 28 July
 // statements looked "off by $113,067" when nothing was actually wrong.
 const BALANCE_HELP = 'No payout has posted for this statement yet, so this compares earnings from the line items against the statement’s closing balance. The balance carries prior balances and statement-level deductions — expect a difference, and re-check once the payout posts.'
+// Why a draft statement's balance is not something to reconcile against. This is the answer to
+// "why is 3020 Seville off by $16,950.75": it isn't — Guesty had not finished the statement.
+const DRAFT_HELP = 'Guesty still has this statement as a draft (PENDING). Its due-to-owner is provisional and is recalculated every time we pull — the balance and the line items will not agree until Guesty finalises it. Work the flagged rows now; reconcile the total once the statement is final and the payout posts.'
 
-// One badge, three honest states: it ties; it does not tie against real money that moved; or
-// no payout has posted yet and all we can do is note the balance difference (neutral, not red).
+// One badge, four honest states, in the order that decides which comparison is even possible:
+//   1. Guesty still calls the statement a DRAFT → its balance is provisional, so there is nothing
+//      to reconcile against yet. Neutral, and it says draft rather than implying a discrepancy.
+//   2. A payout posted and matches → ties.
+//   3. A payout posted and does not match → a real gap, in red.
+//   4. Statement final, no payout yet → note the balance difference, neutral.
 function tieBadge(o: Owner): { text: string; cls: string; help: string } {
   const diff = Math.round((o.net - (o.hasPayout ? o.paid : (o.dueToOwner ?? o.net))) * 100) / 100
+  if (o.isDraft && !o.hasPayout) {
+    return {
+      text: 'Draft in Guesty' + (o.generatedAt ? ' · rebuilt ' + agoLabel(o.generatedAt) : ''),
+      cls: 'bg-sky-50 text-sky-700 ring-sky-200', help: DRAFT_HELP,
+    }
+  }
   if (o.ties) return { text: o.hasPayout ? 'Ties to payout' : 'Ties to statement', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', help: TIE_HELP }
   if (o.hasPayout) return { text: 'Earnings − payout: ' + fmt(diff), cls: 'bg-rose-50 text-rose-700 ring-rose-200', help: TIE_HELP }
   return { text: 'Payout not posted yet · balance differs by ' + fmt(diff), cls: 'bg-neutral-100 text-neutral-600 ring-neutral-200', help: BALANCE_HELP }
@@ -1025,6 +1039,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   }
 
   const staleHours = data ? hoursSince(data.coverage.syncedAt) : null
+  const draftCount = data ? data.owners.filter(o => o.hasStatement && o.isDraft).length : 0
   const t = data?.totals
   const total = t ? t.review + t.action + t.done : 0
   const pct = total ? Math.round((t!.done / total) * 100) : 0
@@ -1089,6 +1104,20 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       {data && !data.coverage.ready && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2 flex items-center gap-2">
           <AlertTriangle size={14} /> The statement line items for {data.label} are still syncing from Guesty — rows may be incomplete until the sync finishes.
+        </div>
+      )}
+      {/* DRAFT MONTH — Guesty has not finalised these statements, so their balances are still
+          moving and cannot be reconciled yet. Said once, at the top, before anyone chases a
+          difference that is only a draft in progress. */}
+      {data && draftCount > 0 && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 text-sm px-3 py-2 flex items-start gap-2">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-sky-600" />
+          <span>
+            {draftCount === data.owners.filter(o => o.hasStatement).length
+              ? <>Guesty still has <span className="font-semibold">every {data.label} statement</span> as a draft.</>
+              : <><span className="font-semibold">{draftCount}</span> of {data.owners.filter(o => o.hasStatement).length} {data.label} statements are still drafts in Guesty.</>}
+            {' '}Their due-to-owner totals are provisional and change on every pull, so a difference against the line items is expected right now — work the flagged rows, and reconcile the totals once Guesty finalises them.
+          </span>
         </div>
       )}
       {/* FRESHNESS — an audit run against stale accounting data is worse than no audit, and a
@@ -1302,7 +1331,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         <td className="px-3 py-2.5">
                           {!o.hasStatement
                             ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No stmt</span>
-                            : (() => { const b = tieBadge(o); return <span title={b.help} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + b.cls}>{o.ties ? b.text : (o.hasPayout ? fmt(off || 0) : 'balance ' + fmt(off || 0))}</span> })()}
+                            : (() => { const b = tieBadge(o); return <span title={b.help} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + b.cls}>{o.isDraft && !o.hasPayout ? 'Draft' : o.ties ? b.text : (o.hasPayout ? fmt(off || 0) : 'balance ' + fmt(off || 0))}</span> })()}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
                           {o.high > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset mr-1 ' + FLAG_CLS.high}>{o.high} high</span>}
@@ -1374,7 +1403,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <div>
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Statement balance</div>
                     <div className="text-sm font-semibold text-ink">{curOwner.dueToOwner != null ? fmt(curOwner.dueToOwner) : '—'}</div>
-                    <div className="text-[10px] text-muted">due to owner</div>
+                    <div className="text-[10px] text-muted">{curOwner.isDraft ? 'draft — still moving' : 'due to owner'}</div>
                   </div>
                   <div>
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Actually paid out</div>
