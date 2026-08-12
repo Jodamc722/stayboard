@@ -146,8 +146,9 @@ export type AuditOwner = {
   commission: number
   other: number
   net: number
-  paid: number
-  ties: boolean
+  paid: number                   // PO total — money that actually moved to the owner
+  hasPayout: boolean             // a payout has posted for this statement (PO rows exist)
+  ties: boolean                  // earnings match the payout, or the balance when none has posted
   items: number                  // count; the items themselves live in the flat list
   open: number                   // items waiting on a person (review + action)
   done: number                   // items a person approved and closed
@@ -463,7 +464,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const ownerOf = (id: string): AuditOwner => owners[id] || (owners[id] = {
     ownerId: id, ownerName: '', hasStatement: !!stmtByOwner[id],
     dueToOwner: stmtByOwner[id] ? (Number(stmtByOwner[id].due_to_owner ?? 0) || 0) : null,
-    rental: 0, commission: 0, other: 0, net: 0, paid: 0, ties: false, items: 0, open: 0,
+    rental: 0, commission: 0, other: 0, net: 0, paid: 0, hasPayout: false, ties: false, items: 0, open: 0,
     done: 0, clear: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null, stmtNote: '',
   })
 
@@ -613,11 +614,24 @@ export async function buildAudit(month: string): Promise<AuditData> {
     bedsOf[id] = Number(l.bedrooms) || 0
   }
 
+  // WHAT THE OWNER IS ACTUALLY PAID, AND WHAT WE CAN HONESTLY COMPARE IT TO.
+  //
+  //   net           earnings built from the statement's own line items (rental − commission + fees)
+  //   paid          PO rows: money that actually MOVED to the owner. The real payout.
+  //   dueToOwner    the statement's closing BALANCE — not earnings. It carries prior balances and
+  //                 statement-level deductions, which is why 28 July owners looked "off by
+  //                 +$113,067" (a consistent 19–26% of net) when nothing was wrong: earnings were
+  //                 being subtracted from a balance. The account-wide audit found the same thing —
+  //                 40 of 59 non-tying months tied exactly against the PO total instead.
+  //
+  // So the tie is judged against the payout when one has posted, and against the balance only as
+  // a fallback. When neither matches we say WHICH comparison failed rather than calling it "off".
   for (const o of Object.values(owners)) {
     o.ownerName = String(stmtByOwner[o.ownerId]?.owner_name || ownerName[o.ownerId] || '(unnamed)')
-    o.ties = o.dueToOwner == null
-      ? false
-      : Math.abs(o.net - o.dueToOwner) < 0.02 || Math.abs(o.net - o.paid) < 0.02
+    o.hasPayout = Math.abs(o.paid) > 0.5
+    o.ties = o.hasPayout
+      ? Math.abs(o.net - o.paid) < 0.02
+      : (o.dueToOwner != null && Math.abs(o.net - o.dueToOwner) < 0.02)
   }
 
   // 6. Reviews already saved for this month.
@@ -910,31 +924,49 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // bigger than the tolerance is a money error, most often a canceled booking whose
       // whole cancellation fee went to commission. Canceled does NOT soften this one —
       // wrong money is wrong money.
-      if (on.commission_off) {
+      // A WASH IS NOT A COMMISSION GRAB. Guesty books some bookings — cancellations especially —
+      // as a matched pair on the same date: AF +$692.44 and CMS −$692.44, then AF −$275 / CMS +$275.
+      // The legs cancel, the owner's payout on the row is exactly $0.00, and no money is missing;
+      // the account-wide statement audit proved this pattern out (see the PASS-THROUGH block in
+      // lib/owner-statements.ts). Reading "commission = 100% of revenue" off those rows and calling
+      // it an error produced 8 false alarms in July 2026 — the money had never been the owner's.
+      // So: a wash is informational, and a commission flag has to show the owner actually LOSING.
+      const isWash = isPassthru && Math.abs(net) < 1
+      if (on.commission_off && !isWash) {
         const usual = ownerCommMed[g.ownerId]
+        const commPct = g.rental > 0.5 ? (g.commission / g.rental) * 100 : null
         if (g.commission > 0.5 && g.rental <= 0.5) {
           flags.push({
-            type: 'commission_off', severity: 'review', amount: g.commission,
+            type: 'commission_off', severity: net < -0.5 ? 'high' : 'review', amount: g.commission,
             detail: 'Commission of $' + g.commission.toFixed(2) + ' charged with no room revenue on this statement — nothing to take a commission on.'
+              + (net < -0.5 ? ' The owner ends up ' + money(Math.abs(net)).toFixed(2) + ' out of pocket on this booking.' : '')
               + (canceled ? ' Canceled booking: check whether this commission should be reversed.' : ''),
           })
-        } else if (usual != null && g.commission > 0.5 && g.rental > 0.5) {
-          const commPct = (g.commission / g.rental) * 100
-          if (Math.abs(commPct - usual) > rules.commTolerance) {
-            const swallowed = commPct >= 90
-            flags.push({
-              type: 'commission_off', severity: swallowed ? 'high' : 'review', amount: g.commission,
-              detail: 'Commission $' + g.commission.toFixed(2) + ' is ' + Math.round(commPct) + '% of room revenue — this owner’s usual rate is ~' + Math.round(usual) + '%.'
-                + (swallowed ? ' The commission swallows essentially all of the revenue.' : '')
-                + (canceled ? ' Canceled booking: the cancellation fee appears to have been taken ' + (swallowed ? 'entirely' : 'largely') + ' as commission — check whether the owner should get their ' + Math.round(usual) + '% share treatment instead.'
-                  : commPct > usual ? ' The owner was charged more than their usual rate — verify.' : ' The owner was charged less than their usual rate — verify.'),
-            })
-          }
+        } else if (commPct != null && g.commission > 0.5 && commPct > rules.passthruHi * 100) {
+          // More commission than there was revenue, and the legs do not cancel — the owner pays
+          // us out of their own pocket for this booking. Always worth a person's eyes.
+          flags.push({
+            type: 'commission_off', severity: 'high', amount: g.commission,
+            detail: 'Commission $' + g.commission.toFixed(2) + ' is ' + Math.round(commPct) + '% of the $'
+              + g.rental.toFixed(2) + ' of room revenue on this booking'
+              + (net < -0.5 ? ', leaving the owner $' + money(Math.abs(net)).toFixed(2) + ' out of pocket' : '')
+              + (usual != null ? ' — this owner’s usual rate is ~' + Math.round(usual) + '%.' : '.'),
+          })
+        } else if (usual != null && commPct != null && Math.abs(commPct - usual) > rules.commTolerance) {
+          flags.push({
+            type: 'commission_off', severity: 'review', amount: g.commission,
+            detail: 'Commission $' + g.commission.toFixed(2) + ' is ' + Math.round(commPct) + '% of room revenue — this owner’s usual rate is ~' + Math.round(usual) + '%. '
+              + (commPct > usual ? 'The owner was charged more than their usual rate — verify.' : 'The owner was charged less than their usual rate — verify.'),
+          })
         }
       }
-      // A pass-through wash is only "by design" when it is NOT a commission anomaly.
       if (on.passthru && isPassthru && !flags.some(f => f.type === 'commission_off')) {
-        flags.push({ type: 'passthru', severity: 'info', detail: 'Commission fully offsets rental (pass-through wash) — owner nets zero on it by design.' })
+        flags.push({
+          type: 'passthru', severity: 'info',
+          detail: isWash
+            ? 'Matched pair: the fee cancels the rental line for line, so this booking pays the owner exactly $0.00 — nothing is missing.'
+            : 'Commission fully offsets rental (pass-through wash) — owner nets zero on it by design.',
+        })
       }
       if (on.no_reservation && !res) {
         flags.push({ type: 'no_reservation', severity: 'info', detail: 'Code not found in the reservations mirror — dates and the Guesty link are unavailable.' })
