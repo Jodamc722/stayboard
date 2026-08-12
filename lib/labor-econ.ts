@@ -142,6 +142,11 @@ export type LaborEcon = {
   departments: DeptEcon[]
   cleans: number
   cleaningRevenue: number
+  /** Of that, the part tied to a named person via their departure clean. */
+  cleaningRevenueAttributed: number
+  /** The rest: a checkout whose clean we could not match to anybody. Shown, never hidden —
+   *  it is the difference between the department rows and the company total. */
+  cleaningRevenueUnattributed: number
   cleaningRevenueVendor: number
   billableRevenue: number
   materials: number
@@ -392,6 +397,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     costPerCleanByMarket[m] = mkAgg[m].cleans && mkAgg[m].payroll ? round2(mkAgg[m].payroll / mkAgg[m].cleans) : null
   }
 
+  // What the crews between them actually earned. The gap to `cleaningRevenue` is fees on
+  // checkouts where no clean task could be matched to a person — a real hole in attribution,
+  // so it gets its own line rather than being quietly absorbed into somebody's margin.
+  const attributedRev = round2(people.reduce((a, p) => a + p.cleaningRevenue, 0))
   const payroll = round2(people.reduce((a, p) => a + p.payroll, 0))
   const billableRevenue = round2(people.reduce((a, p) => a + p.billableRevenue, 0))
   const materials = round2(people.reduce((a, p) => a + p.materials, 0))
@@ -403,6 +412,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     departments: DEPTS.map(d => byDept[d]),
     cleans: cleansTotal,
     cleaningRevenue,
+    cleaningRevenueAttributed: attributedRev,
+    cleaningRevenueUnattributed: round2(cleaningRevenue - attributedRev),
     cleaningRevenueVendor: round2(cleaningVendor),
     billableRevenue,
     materials,
