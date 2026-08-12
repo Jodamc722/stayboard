@@ -38,7 +38,17 @@ create table if not exists ffe_unit_status (
   updated_at   timestamptz not null default now()
 );
 
--- Clean-up: this feature briefly wrote into the shared audit tables. Remove anything it left there
--- so no FF&E row can ever be dispatched as a maintenance task. Harmless if it never ran.
-delete from audit_items where kind = 'ffe';
-delete from property_audits where audit_type = 'ffe';
+-- Clean-up: an early draft of this feature briefly wrote into the shared audit tables. Remove
+-- anything it left there so no FF&E row can ever be dispatched as a maintenance task.
+--
+-- WRAPPED IN AN EXCEPTION BLOCK ON PURPOSE. The Supabase SQL editor runs a paste as ONE
+-- transaction: if any statement throws, everything above it rolls back too. These two deletes
+-- reference columns that may not exist in every environment (property_audits.audit_type in
+-- particular), and when they threw they silently took the CREATE TABLEs with them — the migration
+-- looked like it ran and the tables were still missing. Cleanup is a nicety; the tables are the
+-- point, so a failure here must never undo them.
+do $$
+begin
+  begin execute 'delete from audit_items where kind = ''ffe'''; exception when others then null; end;
+  begin execute 'delete from property_audits where audit_type = ''ffe'''; exception when others then null; end;
+end $$;
