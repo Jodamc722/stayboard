@@ -262,6 +262,10 @@ const OWNER_GUEST_RE = /owner[-_ ]?guest/i
 // that is nearly always the cleaning fee; anywhere else it is money the owner is paying for
 // something, and either way somebody should be able to say what.
 const OWNER_CHARGE_RE = /owner\s*charge/i
+// A turnover costs $125–150 across this portfolio. Up to this much, a bare owner charge reads as
+// the cleaning; past it we say "large owner charge" instead, because Rock Soffer's −$10,051.40 is
+// plainly something else and guessing "cleaning" at that size would be worse than saying nothing.
+const CLEANING_LIKELY_MAX = 400
 export const STAY_LABEL: Record<'owner' | 'owner_guest' | 'ff', string> = {
   owner: 'Owner stay', owner_guest: 'Owner’s guest', ff: 'Friends & family stay',
 }
@@ -1099,7 +1103,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
         // turnover. Read it that way and ask for the label, rather than reporting nothing charged.
         const ownerCharge = money(g.lines.filter(l => OWNER_CHARGE_RE.test(l.label) && l.amount < 0)
           .reduce((a, l) => a + Math.abs(l.amount), 0))
-        const likelyCleaning = !folioClean && !stmtClean && ownerCharge > 0.005
+        const likelyCleaning = !folioClean && !stmtClean && ownerCharge > 0.005 && ownerCharge <= CLEANING_LIKELY_MAX
         flags.push({
           type: 'owner_stay', severity: (folioClean > 0.005 || stmtClean || likelyCleaning) ? 'review' : 'high', amount: net,
           detail: STAY_LABEL[stayTag] + ' — ' + nightsTxt
@@ -1133,9 +1137,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
           detail: (net < 0 ? 'The owner is charged $' + Math.abs(net).toFixed(2) : 'The owner is credited $' + net.toFixed(2))
             + ' on a statement line with no booking behind it'
             // Same rule as on the stays themselves: a bare owner charge is usually the cleaning.
-            + (isOwnerCharge && net < 0
-              ? ' — posted as a bare "Owner charge", which is usually the cleaning fee for an owner stay. Confirm what it covers and label it.'
-              : big ? ' — confirm it is meant to be on this statement.' : ' (small housekeeping amount).'),
+            + (isOwnerCharge && net < 0 && Math.abs(net) <= CLEANING_LIKELY_MAX
+              ? ' — posted as a bare "Owner charge" and small enough to be the cleaning fee for an owner stay. Confirm what it covers and label it.'
+              : isOwnerCharge && net < 0
+                ? ' — posted as a bare "Owner charge", too large to be a turnover. Confirm what it covers and label it.'
+                : big ? ' — confirm it is meant to be on this statement.' : ' (small housekeeping amount).'),
         })
       }
     }
