@@ -84,7 +84,7 @@ type Item = {
 type Owner = {
   ownerId: string; ownerName: string; hasStatement: boolean; dueToOwner: number | null
   rental: number; commission: number; other: number; net: number; paid: number
-  ties: boolean; items: number; open: number; done: number; clear: number
+  hasPayout: boolean; ties: boolean; items: number; open: number; done: number; clear: number
   high: number; reviewFlags: number; notes: number; commentCount: number
   signOff: SignOff | null
   stmtNote: string
@@ -215,7 +215,20 @@ const SourceChip = ({ source }: { source: string }) => {
 }
 
 // What "Ties / Off by" actually means — owner statements are ACCOUNTING-level documents.
-const TIE_HELP = 'Ties = adding up every line item on this statement (rental − commission + other charges) lands exactly on the statement’s Due-to-owner, or on the amount actually paid out. The $ figure = line items minus payout. A gap is NOT automatically an error: carried-forward balances, owner charges, reimbursements and payout timing all live in the statement’s accounting — treat it as a pointer to reconcile, not a verdict.'
+const TIE_HELP = 'Ties = adding up every line item on this statement (rental − commission + fees) lands on the money that actually moved to the owner. Once a payout has posted, that is the comparison. Until then the only figure available is the statement’s closing balance, which is NOT earnings — it carries prior balances and statement-level deductions, so a difference against it is normal and is not an error.'
+// Shown when a statement has no payout posted yet: the difference against the closing balance is
+// a balance difference, not money gone missing. This distinction is the whole reason 28 July
+// statements looked "off by $113,067" when nothing was actually wrong.
+const BALANCE_HELP = 'No payout has posted for this statement yet, so this compares earnings from the line items against the statement’s closing balance. The balance carries prior balances and statement-level deductions — expect a difference, and re-check once the payout posts.'
+
+// One badge, three honest states: it ties; it does not tie against real money that moved; or
+// no payout has posted yet and all we can do is note the balance difference (neutral, not red).
+function tieBadge(o: Owner): { text: string; cls: string; help: string } {
+  const diff = Math.round((o.net - (o.hasPayout ? o.paid : (o.dueToOwner ?? o.net))) * 100) / 100
+  if (o.ties) return { text: o.hasPayout ? 'Ties to payout' : 'Ties to statement', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', help: TIE_HELP }
+  if (o.hasPayout) return { text: 'Earnings − payout: ' + fmt(diff), cls: 'bg-rose-50 text-rose-700 ring-rose-200', help: TIE_HELP }
+  return { text: 'Payout not posted yet · balance differs by ' + fmt(diff), cls: 'bg-neutral-100 text-neutral-600 ring-neutral-200', help: BALANCE_HELP }
+}
 
 function worstOf(it: Item): Severity | null {
   if (it.flags.some(f => f.severity === 'high')) return 'high'
@@ -1160,12 +1173,21 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500" style={{ width: (t!.statements ? Math.round((t!.signedOff / t!.statements) * 100) : 0) + '%' }} />
                 </div>
               </div>
-              <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Total payout</div><div className="text-sm font-semibold text-ink">{fmt0(t!.dueToOwner)}</div></div>
+              {/* Two different numbers, never blended: what the statements say is owed, and what
+                  has actually gone out the door. */}
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Owed to owners</div>
+                <div className="text-sm font-semibold text-ink" title="Total of the statements' closing balances (due to owner)">{fmt0(t!.dueToOwner)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Paid out so far</div>
+                <div className={'text-sm font-semibold ' + (t!.paid ? 'text-ink' : 'text-muted')} title="Payout movements posted on these statements">{t!.paid ? fmt0(t!.paid) : 'none posted'}</div>
+              </div>
               <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Statements</div><div className="text-sm font-semibold text-ink">{t!.statements} · {t!.owners} owners</div></div>
               <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Reservations</div><div className="text-sm font-semibold text-ink">{t!.reservations}</div></div>
               <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Rental income</div><div className="text-sm font-semibold text-ink">{fmt0(t!.rental)}</div></div>
               <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Commission</div><div className="text-sm font-semibold text-ink">{fmt0(t!.commission)}</div></div>
-              <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Net to owners</div><div className="text-sm font-semibold text-ink">{fmt0(t!.net)}</div></div>
+              <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Owner earnings</div><div className="text-sm font-semibold text-ink" title="Rental − commission + fees, from the statement line items">{fmt0(t!.net)}</div></div>
             </div>
           </div>
 
@@ -1204,7 +1226,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         <td className="px-3 py-2.5">
                           {!o.hasStatement
                             ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No stmt</span>
-                            : <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>{o.ties ? 'Ties' : 'Off ' + fmt(off || 0)}</span>}
+                            : (() => { const b = tieBadge(o); return <span title={b.help} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + b.cls}>{o.ties ? b.text : (o.hasPayout ? fmt(off || 0) : 'balance ' + fmt(off || 0))}</span> })()}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
                           {o.high > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset mr-1 ' + FLAG_CLS.high}>{o.high} high</span>}
@@ -1263,21 +1285,29 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <div className="text-lg font-semibold text-ink">{curOwner.ownerName}</div>
                     {!curOwner.hasStatement && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No statement generated</span>}
                   </div>
+                  {/* The money, in the order it happens: what the bookings earned, what we took,
+                      what the owner is owed, and what has actually been paid. */}
                   <div>
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Payout (due to owner)</div>
-                    <div className="text-xl font-semibold text-ink">{curOwner.dueToOwner != null ? fmt(curOwner.dueToOwner) : '—'}</div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Owner earnings</div>
+                    <div className="text-xl font-semibold text-ink">{fmt(curOwner.net)}</div>
+                    <div className="text-[10px] text-muted">from this statement&rsquo;s line items</div>
                   </div>
-                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Rental</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.rental)}</div></div>
-                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Commission</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.commission)}</div></div>
-                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Other</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.other)}</div></div>
-                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Net</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.net)}</div></div>
-                  {curOwner.paid !== 0 && <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Paid out</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.paid)}</div></div>}
+                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Room revenue</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.rental)}</div></div>
+                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Our commission</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.commission)}</div></div>
+                  <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Fees &amp; reimbursements</div><div className="text-sm font-semibold text-ink">{fmt(curOwner.other)}</div></div>
                   <div>
-                    {curOwner.hasStatement && (
-                      <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (curOwner.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
-                        {curOwner.ties ? 'Ties to statement' : 'Line items − payout: ' + fmt(Math.round((curOwner.net - (curOwner.dueToOwner || 0)) * 100) / 100)}
-                      </span>
-                    )}
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Statement balance</div>
+                    <div className="text-sm font-semibold text-ink">{curOwner.dueToOwner != null ? fmt(curOwner.dueToOwner) : '—'}</div>
+                    <div className="text-[10px] text-muted">due to owner</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Actually paid out</div>
+                    <div className={'text-sm font-semibold ' + (curOwner.hasPayout ? 'text-ink' : 'text-muted')}>{curOwner.hasPayout ? fmt(curOwner.paid) : 'not yet'}</div>
+                  </div>
+                  <div>
+                    {curOwner.hasStatement && (() => { const b = tieBadge(curOwner); return (
+                      <span title={b.help} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + b.cls}>{b.text}</span>
+                    ) })()}
                   </div>
                 </div>
                 {/* statement-level note — always visible, saves on blur */}
@@ -1716,11 +1746,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                       {!o.hasStatement && (
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No statement generated</span>
                       )}
-                      {o.hasStatement && (
-                        <span title={TIE_HELP} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + (o.ties ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>
-                          {o.ties ? 'Ties to statement' : 'Line items − payout: ' + fmt(off || 0)}
-                        </span>
-                      )}
+                      {o.hasStatement && (() => { const b = tieBadge(o); return (
+                        <span title={b.help} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + b.cls}>{b.text}</span>
+                      ) })()}
                       {o.high > 0 && <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.high}>{o.high} high</span>}
                       {o.reviewFlags > 0 && <span className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.review}>{o.reviewFlags} flagged</span>}
                       {o.signOff && (
