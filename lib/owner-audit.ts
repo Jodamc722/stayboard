@@ -74,7 +74,11 @@ export type AuditItem = {
   mixWeekday: number             // in-month weekday nights (Sun–Thu)
   mixWeekend: number             // in-month weekend nights (Fri–Sat)
   leadDays: number | null        // days between booking creation and check-in
-  stayTag: 'owner' | 'ff' | null // owner stay / friends & family — discounts are by design
+  // Guesty books these as TWO different things and the team tracks them as two different things:
+  // source 'owner' is the owner in their own unit, 'owner-guest' is somebody the owner sent.
+  // Collapsing them into one "Owner stay" tag lost the distinction that decides who gets asked
+  // about the cleaning. 'ff' stays in the vocabulary for accounts that tag friends & family.
+  stayTag: 'owner' | 'owner_guest' | 'ff' | null
   canceled: boolean              // reservation is canceled — partial payout/cancel fee expected
   statusTag: 'canceled' | 'inquiry' | 'declined' | 'expired' | null   // any non-normal booking status, shown as a tag
   rental: number
@@ -252,6 +256,11 @@ export function reservationNoteOf(customFields: any): string {
 const REFUND_RE = /refund/i
 const REIMB_RE = /reimburs|cleaning/i
 const OWNERISH_RE = /owner/i
+// Guesty's own two source values: 'owner' (the owner staying) and 'owner-guest' (their guest).
+const OWNER_GUEST_RE = /owner[-_ ]?guest/i
+export const STAY_LABEL: Record<'owner' | 'owner_guest' | 'ff', string> = {
+  owner: 'Owner stay', owner_guest: 'Owner’s guest', ff: 'Friends & family stay',
+}
 // Friends & family markers — matched against Guesty tags, source and guest name. These stays
 // are discounted on purpose, so they get TAGGED and their low-rate reads as informational.
 const FF_RE = /friends?\s*(&|and)\s*family|\bf\s*&\s*f\b|\bfnf\b|\bff\b|friends?[-_ ]?family|family[-_ ]?friends?|\bcomp(ed|limentary)?\b/i
@@ -920,10 +929,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const tagBlob = (res && Array.isArray((res as any).tags) ? (res as any).tags.map((t: any) => String(t)).join(' ') : '')
     const srcStr = res ? String(res.source || '') : ''
     const guestStr = res ? String(res.guest_name || '') : ''
-    const stayTag: 'owner' | 'ff' | null = !g.resCode ? null
-      : (FF_RE.test(tagBlob) || FF_RE.test(guestStr)) ? 'ff'
-        : (OWNERISH_RE.test(srcStr) || OWNERISH_RE.test(tagBlob) || OWNERISH_RE.test(guestStr)) ? 'owner'
-          : null
+    const stayTag: AuditItem['stayTag'] = !g.resCode ? null
+      : OWNER_GUEST_RE.test(srcStr) ? 'owner_guest'
+        : (FF_RE.test(tagBlob) || FF_RE.test(guestStr)) ? 'ff'
+          : (OWNERISH_RE.test(srcStr) || OWNERISH_RE.test(tagBlob) || OWNERISH_RE.test(guestStr)) ? 'owner'
+            : null
     // Non-normal booking statuses still leave money on statements (cancellation fees, partial
     // payouts, stray postings). Their "nightly rate" is meaningless — they get TAGGED so the
     // reviewer knows exactly what's going on, and rate flags read as informational.
@@ -1070,13 +1080,17 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // "No issues found", which is where the team's spreadsheet listed 15 of them by hand instead.
       if (on.owner_stay && stayTag) {
         const nightsTxt = totalNights > 0 ? totalNights + ' night' + (totalNights === 1 ? '' : 's') : monthNights + ' night' + (monthNights === 1 ? '' : 's')
+        // THE CLEANING IS THE QUESTION. The team's own sheet writes "Owner stay - no cleaning fee
+        // charged" on every one of these, because that is the thing that actually goes wrong: the
+        // unit still got cleaned and somebody has to be charged for it.
+        const cleaned = g.lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
         flags.push({
           type: 'owner_stay', severity: 'review', amount: net,
-          detail: (stayTag === 'ff' ? 'Friends & family stay' : 'Owner stay') + ' — ' + nightsTxt
+          detail: STAY_LABEL[stayTag] + ' — ' + nightsTxt
             + (net > 0.5 ? ', paying the owner $' + net.toFixed(2)
               : net < -0.5 ? ', costing the owner $' + Math.abs(net).toFixed(2)
                 : ' at no revenue')
-            + '. Confirm it was authorised and that the cleaning and costs sit where they should.',
+            + (cleaned ? '. A cleaning fee is on the statement.' : '. NO CLEANING FEE CHARGED — confirm who is paying for the turnover.'),
         })
       }
       if (on.no_reservation && !res) {
@@ -1165,7 +1179,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
       const oid = listingOwner[lid] || ''
       if (!oid) continue                                 // unit not on any statement this month
       const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
-      const isFF = FF_RE.test(tagBlob) || FF_RE.test(String(r.guest_name || ''))
+      const kind: 'owner' | 'owner_guest' | 'ff' = OWNER_GUEST_RE.test(String(r.source || '')) ? 'owner_guest'
+        : (FF_RE.test(tagBlob) || FF_RE.test(String(r.guest_name || ''))) ? 'ff' : 'owner'
       const key = 'line:ownerstay:' + (code || String(r.id || ''))
       const saved = reviews[oid + '|' + key]
       const savedStatus = saved ? String(saved.status) : ''
@@ -1179,16 +1194,17 @@ export async function buildAudit(month: string): Promise<AuditData> {
         reservationId: String(r.id || ''), resNote: '',
         benchRate: null, benchLabel: '', benchPct: null, benchPrev: null,
         mixWeekday: 0, mixWeekend: 0, leadDays: null,
-        stayTag: isFF ? 'ff' : 'owner', canceled: /cancel/i.test(String(r.status || '')),
+        stayTag: kind, canceled: /cancel/i.test(String(r.status || '')),
         statusTag: /cancel/i.test(String(r.status || '')) ? 'canceled' : null,
         rental: 0, commission: 0, other: 0, net: 0, rate: null, avgRate: null,
         lines: [], lineCount: 0, posted: 0, reversed: 0,
         resValue: Number(r.money_total) || null,
         flags: [{
           type: 'owner_stay', severity: 'review',
-          detail: (isFF ? 'Friends & family stay' : 'Owner stay') + ' — ' + (nights || '?') + ' night'
-            + (nights === 1 ? '' : 's') + ' held off the market, and nothing for it on this statement. '
-            + 'Confirm it was authorised and that the cleaning and any costs are accounted for.',
+          detail: STAY_LABEL[kind] + ' — ' + (nights || '?') + ' night' + (nights === 1 ? '' : 's')
+            + (/cancel/i.test(String(r.status || '')) ? ', canceled' : ' held off the market')
+            + ', and nothing for it on this statement: NO CLEANING FEE CHARGED. '
+            + 'Confirm it was authorised and who is paying for the turnover.',
         }],
         needsReview: true,
         status: (savedStatus && WRITABLE_STATUSES.includes(savedStatus as AuditStatus)) ? (savedStatus as AuditStatus) : 'review',
