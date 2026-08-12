@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { Sofa } from 'lucide-react'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
-import { FfeIndex } from '@/components/FfeIndex'
+import { FfeTabs } from '@/components/FfeTabs'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +24,7 @@ export default async function FfePage() {
           not a work order: nothing here touches Breezeway, maintenance or billing.
         </p>
       </header>
-      <FfeIndex />
+      <FfeTabs />
     </Shell>
   )
 }
