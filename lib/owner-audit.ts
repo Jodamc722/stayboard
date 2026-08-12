@@ -30,7 +30,7 @@ import { MONTH_LABEL, money } from './owner-statements'
 
 export type AuditFlagType =
   | 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev'
-  | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking'
+  | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
@@ -289,7 +289,7 @@ export type AuditRules = {
   passthruLo: number                           // commission/rental band treated as a wash
   passthruHi: number
   commTolerance: number                        // flag when commission % strays this many points from the owner's usual rate
-  offBookingMin: number                        // $ from this size up, a charge with no booking behind it needs a look
+  offBookingMin: number                        // $ from this size up, money with no room revenue behind it needs a look
   enabled: Record<AuditFlagType, boolean>      // per-flag kill switch
 }
 export const DEFAULT_AUDIT_RULES: AuditRules = {
@@ -297,8 +297,11 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   lastMinDays: 3, lastMinExtra: 20,
   lowRate: 60, passthruLo: 0.9, passthruHi: 1.1,
   commTolerance: 5,
-  offBookingMin: 250,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true },
+  // $25, not $250. At $250 the board filed a −$160.05 owner charge, a −$112.14 charge and six
+  // more under "No issues found" — money moving with no booking behind it, invisible. The team's
+  // own spreadsheet caught every one of them.
+  offBookingMin: 25,
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -916,6 +919,22 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (Math.abs(g.rental) < 0.005 && reimbAmt > 0.005) {
         if (on.orphan_reimb) flags.push({ type: 'orphan_reimb', severity: 'review', amount: reimbAmt, detail: 'Reimbursement with no rental income on the block — no booking justifies it.' })
       } else if (on.zero_rev && Math.abs(g.rental) < 0.005 && !flags.length) {
+        // MONEY STILL MOVED. "Canceled, so $0 is expected" is only true when the row really is $0.
+        // Keith Dobrolinsky's canceled stay paid the owner $7.60 and barry griggs $8.20 with no room
+        // revenue behind either, and both sat in "No issues found" because the flag looked at the
+        // status instead of the money. A cancellation explains a low figure; it does not explain a
+        // payment. Anything at or above the threshold goes to a person regardless of status.
+        const moved = Math.abs(net) >= rules.offBookingMin
+        if (moved) {
+          flags.push({
+            type: 'zero_rev', severity: 'review', amount: net,
+            detail: (net > 0 ? 'The owner is paid $' + net.toFixed(2) : 'The owner is charged $' + Math.abs(net).toFixed(2))
+              + ' on a booking with no room revenue'
+              + (statusTag === 'canceled' ? ' — the booking is canceled, so confirm this is a cancellation fee or a cost that belongs to them.'
+                : stayTag ? ' — ' + (stayTag === 'ff' ? 'a friends & family stay' : 'an owner stay') + ' carries no revenue by design, but this money still needs a reason.'
+                  : '.'),
+          })
+        } else
         flags.push({ type: 'zero_rev', severity: (stayTag || statusTag) ? 'info' : 'review',
           detail: statusTag === 'canceled' ? 'Canceled reservation — $0 net is expected.'
             : statusTag === 'inquiry' ? 'Inquiry — never a confirmed booking; check why it has statement line items.'
@@ -1080,6 +1099,46 @@ export async function buildAudit(month: string): Promise<AuditData> {
       updatedBy: saved ? (saved.updated_by || null) : null,
       updatedAt: saved ? (saved.updated_at || null) : null,
     })
+  }
+
+  // A STATEMENT WITH NOTHING ON IT is itself a finding — usually a listing that never got mapped
+  // to the owner, so a month of real bookings landed nowhere. The board used to render those
+  // owners as an empty shell with no row to click and nothing to explain them; the team's own
+  // spreadsheet listed all eight. One synthetic row per empty statement puts them in the worklist
+  // where they can be looked at, noted and closed out like anything else.
+  if (rules.enabled.empty_statement) {
+    const withRows = new Set(items.map(i => i.ownerId))
+    for (const s of stmts) {
+      const oid = String(s.owner_id || '')
+      if (!oid || withRows.has(oid)) continue
+      const o = ownerOf(oid)
+      const key = 'line:__empty__'
+      const saved = reviews[oid + '|' + key]
+      const savedStatus = saved ? String(saved.status) : ''
+      items.push({
+        key, kind: 'line', ownerId: oid, resCode: '',
+        guest: 'Statement generated with nothing on it',
+        checkIn: '', checkOut: '', totalNights: 0, monthNights: 0, splitMonth: false,
+        listingId: '', unit: '', source: '', reservationId: '', resNote: '',
+        benchRate: null, benchLabel: '', benchPct: null, benchPrev: null,
+        mixWeekday: 0, mixWeekend: 0, leadDays: null, stayTag: null, canceled: false, statusTag: null,
+        rental: 0, commission: 0, other: 0, net: 0, rate: null, avgRate: null,
+        lines: [], lineCount: 0, posted: 0, reversed: 0, resValue: null,
+        flags: [{
+          type: 'empty_statement', severity: 'review',
+          detail: 'Guesty generated a ' + MONTH_LABEL(month) + ' statement for this owner with no line items at all'
+            + (o.dueToOwner ? ', and a balance of $' + o.dueToOwner.toFixed(2) : '')
+            + '. Usually a listing that is not mapped to the owner — check their properties in Guesty before the statement goes out.',
+        }],
+        needsReview: true,
+        status: (savedStatus && WRITABLE_STATUSES.includes(savedStatus as AuditStatus)) ? (savedStatus as AuditStatus) : 'review',
+        touched: !!saved,
+        note: saved ? String(saved.note || '') : '',
+        comments: Array.isArray(saved?.comments) ? saved.comments : [],
+        updatedBy: saved ? (saved.updated_by || null) : null,
+        updatedAt: saved ? (saved.updated_at || null) : null,
+      })
+    }
   }
 
   // Order: worst first inside each owner, owners by name.
