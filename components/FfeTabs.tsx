@@ -9,18 +9,20 @@
 // units, pricing it and sending it to the owner in one sitting. The tab lives in the URL hash so a
 // link to "the orders tab" is a link somebody can actually send.
 import { useEffect, useState } from 'react'
-import { Link2, ListChecks, Package, ShoppingCart } from 'lucide-react'
+import { Link2, ListChecks, Package, ShoppingCart, Wrench } from 'lucide-react'
 import { FfeIndex } from '@/components/FfeIndex'
 import { FfeChecklistEditor } from '@/components/FfeChecklistEditor'
 import { FfeCatalog } from '@/components/FfeCatalog'
 import { FfeOrders } from '@/components/FfeOrders'
+import { FfeFixes } from '@/components/FfeFixes'
 
-type Tab = 'links' | 'checklist' | 'catalog' | 'orders'
+type Tab = 'links' | 'checklist' | 'catalog' | 'orders' | 'fixes'
 const TABS: { k: Tab; label: string; Icon: any }[] = [
   { k: 'links', label: 'Owners & links', Icon: Link2 },
   { k: 'checklist', label: 'Checklist', Icon: ListChecks },
   { k: 'catalog', label: 'Catalog', Icon: Package },
   { k: 'orders', label: 'Orders', Icon: ShoppingCart },
+  { k: 'fixes', label: 'Fixes', Icon: Wrench },
 ]
 
 export function FfeTabs() {
@@ -49,7 +51,8 @@ export function FfeTabs() {
       {tab === 'links' ? <FfeIndex />
         : tab === 'checklist' ? <FfeChecklistEditor />
           : tab === 'catalog' ? <FfeCatalog />
-            : <FfeOrders />}
+            : tab === 'orders' ? <FfeOrders />
+              : <FfeFixes />}
     </div>
   )
 }

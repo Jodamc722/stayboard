@@ -100,6 +100,39 @@ export function FfeAudit({ code }: { code: string }) {
     }
   }
 
+  // ── SOMETHING NEEDS FIXING (Jon, 2026-08-12) ───────────────────────────────────────────────────
+  // "...then add what needs to be done. This is only for furniture." A walker sees two different
+  // things in a unit: a piece to replace, which is an order line, and a piece to repair, which used
+  // to have nowhere to go and either got lost or got raised as a maintenance ticket. This is the
+  // second one, staying inside FF&E. No cost is asked for here — somebody prices it later at a desk,
+  // and demanding a number in a hallway is how these stop being written down at all.
+  const [fixes, setFixes] = useState<{ id: string; title: string; note: string | null; status: string }[]>([])
+  const [fixDraft, setFixDraft] = useState<{ title: string; note: string } | null>(null)
+  const [fixBusy, setFixBusy] = useState(false)
+
+  const loadFixes = useCallback(async () => {
+    try {
+      const r = await fetch('/api/audit/ffe/fixes?code=' + encodeURIComponent(code), { cache: 'no-store' })
+      const j = await r.json()
+      if (j?.ok) setFixes(j.fixes || [])
+    } catch { /* the form works without this list */ }
+  }, [code])
+  useEffect(() => { loadFixes() }, [loadFixes])
+
+  const addFix = async () => {
+    if (!fixDraft || !fixDraft.title.trim()) return
+    setFixBusy(true)
+    try {
+      const r = await fetch('/api/audit/ffe/fixes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', code, title: fixDraft.title, note: fixDraft.note }),
+      })
+      const j = await r.json()
+      if (r.ok && j.ok) { setFixDraft(null); await loadFixes() }
+    } catch { /* keep what they typed so a bad signal does not eat it */ }
+    setFixBusy(false)
+  }
+
   const [completing, setCompleting] = useState(false)
   const markComplete = async (undo?: boolean) => {
     if (!data) return
@@ -309,6 +342,66 @@ export function FfeAudit({ code }: { code: string }) {
             </div>
           )
         })}
+      </div>
+
+      {/* Fixes sit BELOW the checklist and ABOVE Mark done, which is where they happen: you finish
+          the rooms, remember the drawer that sticks, and write it before you sign off. */}
+      <div className="px-3 pt-4">
+        <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-neutral-100">
+            <p className="text-[13px] font-bold text-neutral-900">
+              {lang === 'en' ? 'Something needs fixing?' : '¿Algo que reparar?'}
+            </p>
+            <p className="text-[11.5px] text-neutral-500">
+              {lang === 'en'
+                ? 'Furniture that can be repaired rather than replaced. The office prices it and takes it from there.'
+                : 'Muebles que se pueden reparar en vez de reemplazar. La oficina lo cotiza y se encarga.'}
+            </p>
+          </div>
+
+          {fixes.length ? (
+            <div className="divide-y divide-neutral-100">
+              {fixes.map(f => (
+                <div key={f.id} className="px-4 py-2 flex items-start gap-2">
+                  <span className={'mt-1 w-1.5 h-1.5 rounded-full shrink-0 ' + (f.status === 'done' ? 'bg-emerald-500' : 'bg-amber-500')} />
+                  <div className="min-w-0">
+                    <p className={'text-[12.5px] font-semibold text-neutral-800 ' + (f.status === 'done' ? 'line-through' : '')}>{f.title}</p>
+                    {f.note ? <p className="text-[11.5px] text-neutral-500">{f.note}</p> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="px-4 py-3">
+            {fixDraft ? (
+              <>
+                <input value={fixDraft.title} autoFocus
+                  onChange={e => setFixDraft(d => d && ({ ...d, title: e.target.value }))}
+                  placeholder={lang === 'en' ? 'What needs fixing, e.g. master dresser drawer sticks' : 'Qué hay que reparar, ej. cajón de la cómoda no cierra'}
+                  className="w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-[13px]" />
+                <textarea value={fixDraft.note} rows={2}
+                  onChange={e => setFixDraft(d => d && ({ ...d, note: e.target.value }))}
+                  placeholder={lang === 'en' ? 'Anything else worth knowing (optional)' : 'Algo más que ayude (opcional)'}
+                  className="mt-2 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-[13px]" />
+                <div className="mt-2 flex items-center gap-2">
+                  <button onClick={addFix} disabled={fixBusy || !fixDraft.title.trim()}
+                    className="rounded-xl bg-neutral-900 text-white px-4 py-2.5 text-[13px] font-bold disabled:opacity-40">
+                    {fixBusy ? t(FFE_UI.saving) : (lang === 'en' ? 'Add it' : 'Agregar')}
+                  </button>
+                  <button onClick={() => setFixDraft(null)} className="text-[12.5px] font-semibold text-neutral-500">
+                    {lang === 'en' ? 'Cancel' : 'Cancelar'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button onClick={() => setFixDraft({ title: '', note: '' })}
+                className="w-full min-h-[46px] rounded-xl border-2 border-dashed border-neutral-300 text-[13px] font-semibold text-neutral-600 active:bg-neutral-50">
+                + {lang === 'en' ? 'Add something that needs fixing' : 'Agregar algo que reparar'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Finishing is a statement by the walker, not something inferred from a full grid — they may
