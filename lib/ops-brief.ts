@@ -689,6 +689,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const note = '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + esc(cpcLine) +
           '. Billable = the charge entered on the Breezeway task. Vendor-cleaned units earned ' +
           usd(ec.cleaningRevenueVendor) + ', kept separate.' +
+          (ec.cleaningRevenueUnattributed > 0 ? ' ' + usd(ec.cleaningRevenueUnattributed) + ' of cleaning fees had no clean matched to a person.' : '') +
           (gap ? ' <span style="color:#b45309">' + gap + ' task' + (gap === 1 ? '' : 's') + ' finished with no charge entered.</span>' : '') +
           '</p>'
         crewCard = card('Team economics yesterday — by department', shown,
