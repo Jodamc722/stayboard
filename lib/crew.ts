@@ -56,6 +56,11 @@ export const DECLARED: Record<string, Dept> = {
   'Gehron Regis': 'maintenance',
   'Abel Guada': 'maintenance',
   'Ronnie': 'maintenance',
+  // Office / not on a field crew. Named so a stray Breezeway task in someone's name never
+  // drags the owner or an agency label into a crew's payroll and margin.
+  'Jon McGill': 'other',
+  'Karla Valle': 'other',
+  'Opal Works Opal Works': 'other',
 }
 
 /** Department implied by a free-text role ("Supervisor Maintenance Broward" → maintenance). */
