@@ -11,7 +11,7 @@
 //   • EN/ES flips the entire page at once, including the answer buttons. Half a form in your
 //     second language is harder to read than all of it.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { FFE_ROOMS, FFE_ANSWERS, FFE_UI, roomsFor, type FfeItem } from '@/lib/ffe-checklist'
+import { FFE_ANSWERS, FFE_UI, roomsFor, type FfeItem, type FfeRoom } from '@/lib/ffe-checklist'
 
 // Today's state decides whether the unit can be walked at all, so it sits in the header next to the
 // name rather than buried below the fold.
@@ -23,20 +23,27 @@ const STATUS: Record<string, { en: string; es: string; cls: string }> = {
   occupied: { en: 'Occupied',        es: 'Ocupada',              cls: 'bg-neutral-500' },
 }
 const MORE = {
+  addPhoto: { en: 'Add photo', es: 'Agregar foto' },
+  retakePhoto: { en: 'Replace photo', es: 'Cambiar foto' },
+  uploading: { en: 'Uploading…', es: 'Subiendo…' },
+  photoFailed: { en: 'Photo did not upload — tap to try again', es: 'La foto no se subió — toque para reintentar' },
   back: { en: 'All units', es: 'Todas las unidades' },
   markDone: { en: 'Mark this unit complete', es: 'Marcar unidad como lista' },
   isDone: { en: 'Marked complete', es: 'Marcada como lista' },
   undo: { en: 'Undo', es: 'Deshacer' },
 }
 
-type Answer = { answer: string; qty: number | null; note: string | null }
+type Answer = { answer: string; qty: number | null; note: string | null; photoUrl?: string | null }
 type Data = {
   ok: boolean
   unit: { name: string; building: string; bedrooms: number | null; ownerName: string; today: string; completedAt: string | null }
   hub: { code: string; name: string }
-  rooms: string[]
+  checklist?: FfeRoom[]
+  rooms?: string[]
   total: number
   answers: Record<string, Answer>
+  setupRequired?: boolean
+  setupMessage?: string | null
   error?: string
 }
 type Lang = 'en' | 'es'
@@ -57,15 +64,41 @@ export function FfeAudit({ code }: { code: string }) {
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Link not found')
       setData(j)
       // Start on the first room; the rest collapse so the page opens short.
-      setOpen({ [roomsFor(j.unit.bedrooms)[0]?.key || '']: true })
+      setOpen({ [((j.checklist && j.checklist[0]) || roomsFor(j.unit.bedrooms)[0])?.key || '']: true })
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [code])
   useEffect(() => { load() }, [load])
 
-  const rooms = useMemo(() => roomsFor(data?.unit.bedrooms ?? null), [data])
+  // The server sends the merged checklist (built-ins + whatever the Checklist tab added), so an
+  // added item shows up here with no deploy. roomsFor() is the fallback if an older payload arrives.
+  const rooms = useMemo(
+    () => (data?.checklist && data.checklist.length ? data.checklist : roomsFor(data?.unit.bedrooms ?? null)),
+    [data])
   const answered = Object.keys(data?.answers || {}).length
   const total = data?.total || 0
   const t = <K extends { en: string; es: string }>(x: K) => x[lang]
+
+  const [setupErr, setSetupErr] = useState('')
+  const [photoBusy, setPhotoBusy] = useState<Record<string, 'up' | 'err'>>({})
+
+  // PHOTO OF THE PIECE BEING REPLACED (Jon, 2026-08-11). Uploaded on its own rather than bundled
+  // into the answer save, so a slow photo on a bad connection never blocks the tap that recorded
+  // the decision — the answer is already stored by the time the camera opens.
+  const uploadPhoto = async (roomKey: string, item: FfeItem, file: File) => {
+    const k = roomKey + '::' + item.key
+    setPhotoBusy(b => ({ ...b, [k]: 'up' }))
+    try {
+      const fd = new FormData()
+      fd.append('code', code); fd.append('room', roomKey); fd.append('itemKey', item.key); fd.append('file', file)
+      const r = await fetch('/api/audit/ffe/photo', { method: 'POST', body: fd })
+      const j = await r.json()
+      if (!r.ok || !j.ok || !j.url) throw new Error(j?.error || 'upload failed')
+      setData(d => d ? { ...d, answers: { ...d.answers, [k]: { ...(d.answers[k] || { answer: 'replace', qty: 1, note: null }), photoUrl: j.url } } } : d)
+      setPhotoBusy(b => { const n = { ...b }; delete n[k]; return n })
+    } catch {
+      setPhotoBusy(b => ({ ...b, [k]: 'err' }))
+    }
+  }
 
   const [completing, setCompleting] = useState(false)
   const markComplete = async (undo?: boolean) => {
@@ -96,8 +129,13 @@ export function FfeAudit({ code }: { code: string }) {
       if (!r.ok || !j.ok) throw new Error(j?.error || 'save failed')
       setBusy(b => ({ ...b, [k]: 'saved' }))
       setTimeout(() => setBusy(b => { const n = { ...b }; delete n[k]; return n }), 1200)
-    } catch {
+    } catch (e: any) {
+      // Distinguish "we could not reach the server" from "the server says storage is not set up".
+      // Telling someone to check their signal when the database is missing a table sends them
+      // chasing the wrong problem.
+      const msg = String(e?.message || '')
       setBusy(b => ({ ...b, [k]: 'error' }))
+      if (/not set up|migration/i.test(msg)) setSetupErr(msg)
     }
   }
 
@@ -149,6 +187,14 @@ export function FfeAudit({ code }: { code: string }) {
           <span className="text-[11px] text-neutral-300 tabular-nums shrink-0">{answered}/{total} {t(FFE_UI.progress)}</span>
         </div>
       </div>
+
+      {(setupErr || data.setupRequired) ? (
+        <div className="mx-3 mt-3 rounded-xl border-2 border-rose-300 bg-rose-50 px-3.5 py-3">
+          <p className="text-[13px] font-bold text-rose-800">Answers are not saving</p>
+          <p className="text-[12px] text-rose-700 mt-0.5 leading-snug">{setupErr || data.setupMessage}</p>
+          <p className="text-[11.5px] text-rose-600 mt-1">Nothing you tap is being stored. Tell the office before you keep walking.</p>
+        </div>
+      ) : null}
 
       <div className="px-3 pt-3">
         <p className="text-[12.5px] text-neutral-600 px-1">{t(FFE_UI.intro)}</p>
@@ -232,6 +278,27 @@ export function FfeAudit({ code }: { code: string }) {
                               defaultValue={a?.note || ''}
                               onBlur={e => { if (e.target.value !== (a?.note || '')) save(room.key, item, chosen as string, a?.qty || 1, e.target.value) }}
                               className="flex-1 min-w-0 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[13.5px]" />
+                          </div>
+                        ) : null}
+
+                        {showDetail ? (
+                          <div className="mt-2 flex items-center gap-2">
+                            {a?.photoUrl ? (
+                              <a href={a.photoUrl} target="_blank" rel="noreferrer" className="shrink-0">
+                                <img src={a.photoUrl} alt="" className="w-14 h-14 rounded-lg object-cover border border-neutral-200" />
+                              </a>
+                            ) : null}
+                            {/* A plain file input with capture= opens the camera straight away on a
+                                phone and the gallery on a laptop, with no library and nothing to
+                                permission beyond what the browser already asks. */}
+                            <label className={'flex-1 min-h-[40px] rounded-xl border-2 border-dashed text-[12.5px] font-semibold flex items-center justify-center cursor-pointer ' +
+                              (photoBusy[k] === 'err' ? 'border-rose-300 text-rose-600' : 'border-neutral-300 text-neutral-600 active:bg-neutral-50')}>
+                              {photoBusy[k] === 'up' ? t(MORE.uploading)
+                                : photoBusy[k] === 'err' ? t(MORE.photoFailed)
+                                : a?.photoUrl ? t(MORE.retakePhoto) : '\uD83D\uDCF7 ' + t(MORE.addPhoto)}
+                              <input type="file" accept="image/*" capture="environment" className="hidden"
+                                onChange={e => { const f = e.target.files && e.target.files[0]; if (f) uploadPhoto(room.key, item, f); e.currentTarget.value = '' }} />
+                            </label>
                           </div>
                         ) : null}
                       </div>
