@@ -156,7 +156,7 @@ export async function GET(req: NextRequest) {
     if (!ids.length) return NextResponse.json({ ok: true, owner: null, groups: [], products: [] })
 
     const [{ data: ans, error: aErr }, { data: onOrder }, { data: prods }, ov] = await Promise.all([
-      db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,photo_url')
+      db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,spec,photo_url')
         .in('listing_id', ids).in('answer', ['replace', 'add']).limit(20000),
       db.from('ffe_order_lines').select('listing_id,room,item_key,order_id').in('listing_id', ids).limit(20000),
       db.from('ffe_catalog').select('id,code,name_en,category,item_keys,vendor,vendor_sku,unit_cost,url,image_url,room_hint')
@@ -189,6 +189,8 @@ export async function GET(req: NextRequest) {
         answer: str(a.answer),
         qty: Math.max(1, num(a.qty, 1)),
         note: a.note || null,
+        // The size the walker recorded standing in the room — it has to reach the vendor.
+        spec: a.spec || null,
         photoUrl: a.photo_url || null,
         category: categoryForItem(str(a.item_key)),
       })
@@ -278,6 +280,7 @@ export async function POST(req: NextRequest) {
       if ('qty' in body) patch.qty = Math.max(1, Math.min(999, Math.round(num(body.qty, 1))))
       if ('unitCost' in body) patch.unit_cost = priceOf(body.unitCost)
       if ('placement' in body) patch.placement = clean(body.placement, 160)
+      if ('spec' in body) patch.spec = clean(body.spec, 120)
       if ('note' in body) patch.note = clean(body.note, 500)
 
       const r = await db.from('ffe_order_lines').update(patch).eq('id', lineId)
@@ -431,6 +434,7 @@ async function insertLines(db: any, orderId: string, raw: any, units: FfeUnit[],
       qty: Math.max(1, Math.min(999, Math.round(num(l.qty, 1)))),
       unit_cost: 'unitCost' in l ? priceOf(l.unitCost) : (prod && prod.unit_cost != null ? prod.unit_cost : null),
       placement: clean(l.placement, 160),
+      spec: clean(l.spec, 120),
       stage: 'draft',
       note: clean(l.note, 500),
       updated_at: now,
