@@ -16,8 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, type FfeOverride } from '@/lib/ffe-checklist'
-import { buildingOf } from '@/lib/segments'
-import { ownerMap } from '@/lib/billing'
+import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { isLiveStay } from '@/lib/stay-status'
 import { unitCode, buildingCode, ownerCode, resolveCode } from '@/lib/ffe-links'
 
@@ -25,7 +24,6 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 45
 
 const str = (v: any) => (v == null ? '' : String(v))
-const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 // TELL THE TRUTH WHEN THE TABLES ARE MISSING. Until migration 032 has been run, every save fails
@@ -41,13 +39,9 @@ function dbFail(msg: any) {
     : NextResponse.json({ ok: false, error: String(msg) }, { status: 500 })
 }
 
-type Lst = { id: string; name: string; building: string; bedrooms: number | null; ownerId: string; ownerName: string }
-
-const bedroomsOf = (l: any): number | null => {
-  const b = l ? l.bedrooms : null
-  if (typeof b === 'number') return b
-  const n = parseFloat(str(b)); return Number.isFinite(n) ? n : null
-}
+// The unit list lives in lib/ffe-portfolio.ts now — the order builder needs the same one, and two
+// copies of "which units does this owner have" is two answers to that question.
+type Lst = FfeUnit
 
 /** The editable overlay on the built-in checklist. Absent table = empty overlay, never an error. */
 async function checklistOverrides(db: any): Promise<FfeOverride[]> {
@@ -58,27 +52,7 @@ async function checklistOverrides(db: any): Promise<FfeOverride[]> {
   } catch { return [] }
 }
 
-/** Every active unit with its building and owner — the one list everything else is derived from. */
-async function portfolio(db: any): Promise<Lst[]> {
-  const [{ data: ls }, owners] = await Promise.all([
-    db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms:raw->>bedrooms').limit(2000),
-    ownerMap().catch(() => ({ byListing: {} as any })),
-  ])
-  return ((ls || []) as any[])
-    .filter(l => !DEAD.includes(str(l.status).toLowerCase()))
-    .map(l => {
-      const name = l.nickname || l.title || String(l.id)
-      const own = (owners as any).byListing[String(l.id)]
-      return {
-        id: String(l.id), name,
-        building: buildingOf(str(l.building), name) || 'Other',
-        bedrooms: bedroomsOf(l),
-        ownerId: own ? String(own.ownerId) : 'unassigned',
-        ownerName: own ? String(own.ownerName) : 'Unassigned owner',
-      }
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-}
+const portfolio = ffePortfolio
 
 /**
  * What is happening in each unit TODAY. A walker needs to know before they knock: an occupied unit
@@ -200,7 +174,10 @@ export async function GET(req: NextRequest) {
       })
       if (!scope) return NextResponse.json({ error: 'link not found' }, { status: 404 })
       const units = scope.kind === 'building'
-        ? all.filter(l => l.building.toLowerCase() === scope.id)
+        // resolveCode hands back the building name as it is stored ("Botanica"), while buildingCode
+        // signs the lower-cased form — so this comparison has to lower BOTH sides or every building
+        // hub comes back with zero units and the walker's Back link lands on an empty page.
+        ? all.filter(l => l.building.toLowerCase() === String(scope.id).toLowerCase())
         : all.filter(l => l.ownerId === scope.id)
       const ids = units.map(l => l.id)
       const [p, st, ov] = await Promise.all([progress(db, ids), todayStatus(db, ids), checklistOverrides(db)])
