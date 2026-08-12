@@ -17,7 +17,7 @@ import { Check, X, Loader2, Package, ExternalLink, Sofa } from 'lucide-react'
 
 type Line = {
   id: string; code: string | null; product: string | null; itemEn: string; itemEs: string
-  placement: string | null; imageUrl: string | null; url: string | null
+  placement: string | null; spec: string | null; imageUrl: string | null; url: string | null
   qty: number; unitCost: number | null; lineTotal: number | null
   stage: string; locked: boolean; ownerChoice: string | null
 }
@@ -258,6 +258,7 @@ export function FfeOwnerOrder({ code }: { code: string }) {
                           </div>
                           <div className="text-[11.5px] text-neutral-500">
                             {lang === 'en' ? l.itemEn : l.itemEs}
+                            {l.spec ? ' · ' + l.spec : ''}
                             {l.qty > 1 ? ' × ' + l.qty : ''}
                             {l.unitCost != null && l.qty > 1 ? ' · ' + usd(l.unitCost) + ' ' + t(T.each) : ''}
                           </div>

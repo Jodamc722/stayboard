@@ -2,8 +2,11 @@
 // FF&E AUDIT — the phone form a walker actually uses (Jon, 2026-08-10).
 //
 // Built for one hand, in a hallway, on a phone. The decisions that follow from that:
-//   • Two big buttons per line and nothing else required. Quantity and note only unfold once the
-//     answer is Replace or Add, because they are meaningless on a Keep.
+//   • ONE CONTROL PER LINE: how many does this unit need. That is the question Jon's own sheet
+//     asks ("NUMBER NEEDED / CANTIDAD"), and zero is how you say "not needed" — so the common case
+//     is a single tap on +. Size, note and photo only unfold once the number is above zero.
+//   • Where the size changes what gets bought — rug, TV, stand vs wall mount, bed — the form asks
+//     for it on the spot, with one-tap chips and a free box. "Area rug x1" is not an order.
 //   • Every tap saves on its own. There is no Submit to forget, and closing the browser mid-unit
 //     loses nothing — the next person opens the same link and carries on from where it stopped.
 //   • A failed save says so on that row and keeps the tap, rather than silently dropping it. A
@@ -33,7 +36,7 @@ const MORE = {
   undo: { en: 'Undo', es: 'Deshacer' },
 }
 
-type Answer = { answer: string; qty: number | null; note: string | null; photoUrl?: string | null }
+type Answer = { answer: string; qty: number | null; note: string | null; spec?: string | null; photoUrl?: string | null }
 type Data = {
   ok: boolean
   unit: { name: string; building: string; bedrooms: number | null; ownerName: string; today: string; completedAt: string | null }
@@ -42,6 +45,8 @@ type Data = {
   rooms?: string[]
   total: number
   answers: Record<string, Answer>
+  unitNotes?: string | null
+  actions?: { key: string; en: string; es: string }[]
   setupRequired?: boolean
   setupMessage?: string | null
   error?: string
@@ -133,6 +138,41 @@ export function FfeAudit({ code }: { code: string }) {
     setFixBusy(false)
   }
 
+  // ── ADD AN ITEM THAT IS ON NO LIST (Jon, 2026-08-12: "have a add button") ──────────────────────
+  const [addTo, setAddTo] = useState('')
+  const [addName, setAddName] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+
+  const addItem = async (roomKey: string) => {
+    if (!addName.trim()) return
+    setAddBusy(true)
+    try {
+      const r = await fetch('/api/audit/ffe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, action: 'addItem', room: roomKey, title: addName.trim(), qty: 1 }),
+      })
+      const j = await r.json()
+      if (r.ok && j.ok) { setAddTo(''); setAddName(''); await load() }
+    } catch { /* keep what they typed rather than eating it on a bad signal */ }
+    setAddBusy(false)
+  }
+
+  // ── NOTES & MEASUREMENTS — the last section of Jon's sheet ─────────────────────────────────────
+  const [notes, setNotes] = useState('')
+  const [notesState, setNotesState] = useState<'' | 'saving' | 'saved'>('')
+  useEffect(() => { if (data && typeof data.unitNotes === 'string') setNotes(data.unitNotes) }, [data?.unitNotes]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveNotes = async (text: string) => {
+    setNotesState('saving')
+    try {
+      await fetch('/api/audit/ffe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, action: 'notes', notes: text }),
+      })
+      setNotesState('saved'); setTimeout(() => setNotesState(''), 1400)
+    } catch { setNotesState('') }
+  }
+
   const [completing, setCompleting] = useState(false)
   const markComplete = async (undo?: boolean) => {
     if (!data) return
@@ -148,15 +188,15 @@ export function FfeAudit({ code }: { code: string }) {
     setCompleting(false)
   }
 
-  const save = async (roomKey: string, item: FfeItem, answer: string, qty?: number, note?: string) => {
+  const save = async (roomKey: string, item: FfeItem, answer: string, qty?: number, note?: string, spec?: string) => {
     const k = roomKey + '::' + item.key
     setBusy(b => ({ ...b, [k]: 'saving' }))
     // Optimistic: the row shows the new answer immediately, and only reverts if the save fails.
-    setData(d => d ? { ...d, answers: { ...d.answers, [k]: { answer, qty: qty ?? d.answers[k]?.qty ?? 1, note: note ?? d.answers[k]?.note ?? null } } } : d)
+    setData(d => d ? { ...d, answers: { ...d.answers, [k]: { answer, qty: qty ?? d.answers[k]?.qty ?? 1, note: note ?? d.answers[k]?.note ?? null, spec: spec ?? d.answers[k]?.spec ?? null, photoUrl: d.answers[k]?.photoUrl ?? null } } } : d)
     try {
       const r = await fetch('/api/audit/ffe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, room: roomKey, itemKey: item.key, title: item.en, answer, qty, note }),
+        body: JSON.stringify({ code, room: roomKey, itemKey: item.key, title: item.en, answer, qty, note, ...(spec === undefined ? {} : { spec }) }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'save failed')
@@ -256,6 +296,14 @@ export function FfeAudit({ code }: { code: string }) {
 
               {isOpen && (
                 <div className="divide-y divide-neutral-100 border-t border-neutral-100">
+                  {/* Terraces and dens are not in every unit. Say so rather than leaving a walker
+                      wondering whether they missed a room. */}
+                  {room.note ? (
+                    <p className="px-4 py-2 text-[11.5px] text-neutral-500 bg-neutral-50">
+                      {room.optional ? <span className="font-semibold text-neutral-700">{t(FFE_UI.optionalRoom)} </span> : null}
+                      {t(room.note)}
+                    </p>
+                  ) : null}
                   {room.items.map(item => {
                     const k = room.key + '::' + item.key
                     const a = data.answers[k]
@@ -264,34 +312,51 @@ export function FfeAudit({ code }: { code: string }) {
                     const yes = isAdd ? 'add' : 'replace'
                     const yesLabel = isAdd ? t(FFE_ANSWERS.add) : t(FFE_ANSWERS.replace)
                     const chosen = a?.answer
-                    const showDetail = chosen === 'replace' || chosen === 'add'
+                    const needed = chosen === 'replace' || chosen === 'add'
+                    const qty = needed ? (a?.qty ?? 1) : 0
+                    const showDetail = needed
+                    // THE SHEET ASKS FOR A NUMBER, so the number is the control. Stepping up from
+                    // zero IS the answer "we need some"; stepping back to zero is "not needed".
+                    const setQty = (n: number) => {
+                      const v = Math.max(0, Math.min(99, Math.round(n)))
+                      save(room.key, item, v > 0 ? yes : 'keep', v > 0 ? v : 1, a?.note || undefined)
+                    }
                     return (
                       <div key={item.key} className="px-4 py-3">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <p className="text-[14px] font-semibold text-neutral-900 leading-snug">{t(item)}</p>
+                            <p className="text-[14px] font-semibold text-neutral-900 leading-snug">
+                              {t(item)}
+                              {(item as any).extra ? (
+                                <span className="ml-1.5 align-middle text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-neutral-100 text-neutral-400">
+                                  {t(FFE_UI.extraTag)}
+                                </span>
+                              ) : null}
+                            </p>
                             {item.hint ? <p className="text-[11.5px] text-neutral-500 mt-0.5 leading-snug">{t(item.hint)}</p> : null}
                           </div>
                           {state === 'saving' ? <span className="text-[10px] text-neutral-400 shrink-0 mt-1">{t(FFE_UI.saving)}</span> : null}
                           {state === 'saved' ? <span className="text-[10px] text-emerald-600 font-bold shrink-0 mt-1">✓</span> : null}
                         </div>
 
-                        {/* Big targets. 44px min height is the smallest thing a thumb hits reliably. */}
-                        <div className="mt-2 grid grid-cols-3 gap-1.5">
-                          <button onClick={() => save(room.key, item, yes)}
-                            className={'min-h-[44px] rounded-xl text-[13.5px] font-bold border-2 transition-colors ' +
-                              (chosen === yes ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-neutral-200 text-neutral-700 active:bg-neutral-50')}>
-                            {yesLabel}
-                          </button>
+                        {/* NUMBER NEEDED / CANTIDAD — the sheet's last column, as one control.
+                            48px targets: this is used one-handed, standing up. */}
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[11px] text-neutral-500 flex-1 min-w-0">
+                            {isAdd ? t(FFE_UI.ask.add) : t(FFE_UI.qty)}
+                          </span>
+                          <div className="flex items-center rounded-xl border-2 border-neutral-200 overflow-hidden shrink-0">
+                            <button onClick={() => setQty(qty - 1)} disabled={qty <= 0} aria-label="minus"
+                              className="w-11 h-[46px] text-[20px] font-bold text-neutral-600 disabled:text-neutral-300 active:bg-neutral-100">−</button>
+                            <span className={'w-12 text-center text-[17px] font-bold tabular-nums ' +
+                              (qty > 0 ? 'text-neutral-900' : 'text-neutral-300')}>{qty}</span>
+                            <button onClick={() => setQty(qty + 1)} aria-label="plus"
+                              className="w-11 h-[46px] text-[20px] font-bold text-neutral-600 active:bg-neutral-100">+</button>
+                          </div>
                           <button onClick={() => save(room.key, item, 'keep')}
-                            className={'min-h-[44px] rounded-xl text-[13.5px] font-bold border-2 transition-colors ' +
-                              (chosen === 'keep' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-neutral-200 text-neutral-700 active:bg-neutral-50')}>
-                            {t(FFE_ANSWERS.keep)}
-                          </button>
-                          <button onClick={() => save(room.key, item, 'na')}
-                            className={'min-h-[44px] rounded-xl text-[13.5px] font-bold border-2 transition-colors ' +
-                              (chosen === 'na' ? 'bg-neutral-600 border-neutral-600 text-white' : 'bg-white border-neutral-200 text-neutral-500 active:bg-neutral-50')}>
-                            {t(FFE_ANSWERS.na)}
+                            className={'min-h-[46px] px-3 rounded-xl text-[12.5px] font-bold border-2 shrink-0 ' +
+                              (chosen === 'keep' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-neutral-200 text-neutral-600 active:bg-neutral-50')}>
+                            {t(FFE_UI.none)}
                           </button>
                         </div>
 
@@ -299,18 +364,38 @@ export function FfeAudit({ code }: { code: string }) {
                           <p className="mt-1.5 text-[11.5px] text-rose-600 font-semibold">{t(FFE_UI.offline)}</p>
                         ) : null}
 
-                        {/* Quantity and note only matter once something is being ordered. */}
+                        {/* WHAT SIZE / WHICH ONE. Chips are suggestions, the box is the truth — a
+                            walker who needs to write "9x12 but measure again" must be able to. */}
+                        {showDetail && item.spec ? (
+                          <div className="mt-2 rounded-xl bg-neutral-50 border border-neutral-200 px-3 py-2">
+                            <p className="text-[11.5px] font-semibold text-neutral-600">{t(item.spec)}</p>
+                            {item.spec.choices?.length ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {item.spec.choices.map(c => (
+                                  <button key={c}
+                                    onClick={() => save(room.key, item, chosen as string, a?.qty || 1, a?.note || undefined, a?.spec === c ? '' : c)}
+                                    className={'min-h-[36px] px-3 rounded-lg text-[13px] font-bold border-2 ' +
+                                      (a?.spec === c ? 'bg-neutral-900 border-neutral-900 text-white' : 'bg-white border-neutral-200 text-neutral-700')}>
+                                    {c}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                            <input type="text" key={'spec-' + (a?.spec || '')}
+                              placeholder={item.spec.choices?.length ? (lang === 'en' ? 'or type it' : 'o escríbalo') : t(item.spec)}
+                              defaultValue={a?.spec || ''}
+                              onBlur={e => { if (e.target.value !== (a?.spec || '')) save(room.key, item, chosen as string, a?.qty || 1, a?.note || undefined, e.target.value) }}
+                              className="mt-1.5 w-full rounded-lg border border-neutral-200 px-2.5 py-2 text-[13.5px] bg-white" />
+                          </div>
+                        ) : null}
+
+                        {/* A note only matters once something is being ordered. */}
                         {showDetail ? (
-                          <div className="mt-2 flex items-center gap-2">
-                            <label className="text-[11px] text-neutral-500 shrink-0">{t(FFE_UI.qty)}</label>
-                            <input type="number" min={1} max={99} inputMode="numeric"
-                              value={a?.qty ?? 1}
-                              onChange={e => save(room.key, item, chosen as string, Number(e.target.value) || 1, a?.note || undefined)}
-                              className="w-16 rounded-lg border border-neutral-200 px-2 py-1.5 text-[14px] text-center" />
+                          <div className="mt-2">
                             <input type="text" placeholder={t(FFE_UI.note)}
                               defaultValue={a?.note || ''}
-                              onBlur={e => { if (e.target.value !== (a?.note || '')) save(room.key, item, chosen as string, a?.qty || 1, e.target.value) }}
-                              className="flex-1 min-w-0 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[13.5px]" />
+                              onBlur={e => { if (e.target.value !== (a?.note || '')) save(room.key, item, chosen as string, a?.qty || 1, e.target.value, a?.spec ?? undefined) }}
+                              className="w-full rounded-lg border border-neutral-200 px-2.5 py-2 text-[13.5px]" />
                           </div>
                         ) : null}
 
@@ -337,12 +422,81 @@ export function FfeAudit({ code }: { code: string }) {
                       </div>
                     )
                   })}
+
+                  {/* AN ADD BUTTON ON THE FORM ITSELF (Jon, 2026-08-12: "have a add button").
+                      The Checklist tab changes what all 230 units are asked; this adds a piece to
+                      THIS unit, which is what a person standing in front of an unlisted bar cart
+                      actually needs. It saves as an ordinary answer, so it orders and exports like
+                      anything else. */}
+                  <div className="px-4 py-3 bg-neutral-50">
+                    {addTo === room.key ? (
+                      <>
+                        <input value={addName} autoFocus onChange={e => setAddName(e.target.value)}
+                          placeholder={t(FFE_UI.addItemPh)}
+                          className="w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-[13.5px] bg-white" />
+                        <div className="mt-2 flex items-center gap-2">
+                          <button onClick={() => addItem(room.key)} disabled={addBusy || !addName.trim()}
+                            className="min-h-[44px] px-4 rounded-xl bg-neutral-900 text-white text-[13.5px] font-bold disabled:opacity-40">
+                            {addBusy ? t(FFE_UI.saving) : (lang === 'en' ? 'Add' : 'Agregar')}
+                          </button>
+                          <button onClick={() => { setAddTo(''); setAddName('') }}
+                            className="text-[12.5px] font-semibold text-neutral-500">
+                            {lang === 'en' ? 'Cancel' : 'Cancelar'}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <button onClick={() => { setAddTo(room.key); setAddName('') }}
+                        className="w-full min-h-[44px] rounded-xl border-2 border-dashed border-neutral-300 text-[13px] font-semibold text-neutral-600 active:bg-neutral-100">
+                        + {t(FFE_UI.addItem)}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           )
         })}
       </div>
+
+      {/* NOTES & MEASUREMENTS — the sheet's own last section. The rug cannot be ordered without the
+          living-room dimensions, and until now there was nowhere on the form to put them. */}
+      <div className="px-3 pt-4">
+        <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-neutral-100 flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-bold text-neutral-900">{t(FFE_UI.notesTitle)}</p>
+              <p className="text-[11.5px] text-neutral-500">{t(FFE_UI.notesHint)}</p>
+            </div>
+            {notesState === 'saving' ? <span className="text-[10px] text-neutral-400 shrink-0">{t(FFE_UI.saving)}</span> : null}
+            {notesState === 'saved' ? <span className="text-[10px] text-emerald-600 font-bold shrink-0">✓</span> : null}
+          </div>
+          <div className="px-4 py-3">
+            <textarea value={notes} rows={4}
+              onChange={e => setNotes(e.target.value)}
+              onBlur={() => { if (notes !== (data.unitNotes || '')) saveNotes(notes) }}
+              placeholder={lang === 'en' ? 'Living room 12 ft x 15 ft. Terrace already has 2 loungers in good shape.' : 'Sala 12 pies x 15 pies. La terraza ya tiene 2 tumbonas en buen estado.'}
+              className="w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-[13.5px]" />
+          </div>
+        </div>
+      </div>
+
+      {/* The sheet's own required actions — only the ones that happen inside the unit, on the screen
+          where they happen, instead of in a PDF nobody opens on a phone. */}
+      {data.actions?.length ? (
+        <div className="px-3 pt-3">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-[12.5px] font-bold text-amber-900">{t(FFE_UI.actionsTitle)}</p>
+            <ul className="mt-1.5 space-y-1">
+              {data.actions.map(a => (
+                <li key={a.key} className="text-[12.5px] text-amber-900 leading-snug flex gap-2">
+                  <span className="shrink-0">•</span><span>{t(a)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
 
       {/* Fixes sit BELOW the checklist and ABOVE Mark done, which is where they happen: you finish
           the rooms, remember the drawer that sticks, and write it before you sign off. */}

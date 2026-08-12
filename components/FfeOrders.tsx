@@ -24,7 +24,7 @@ type Prod = {
 }
 type PendItem = {
   room: string; itemKey: string; itemLabel: string; title: string | null
-  answer: string; qty: number; note: string | null; photoUrl: string | null; category: string
+  answer: string; qty: number; note: string | null; spec: string | null; photoUrl: string | null; category: string
 }
 type PendRoom = { room: string; roomLabel: string; items: PendItem[] }
 type PendUnit = { listingId: string; unitName: string; building: string; bedrooms: number | null; rooms: PendRoom[] }
@@ -292,7 +292,7 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
           lines: chosen.map(l => ({
             listingId: l.listingId, room: l.room, itemKey: l.itemKey, title: l.itemLabel,
             qty: l.qty, catalogId: assign[l.k] || null,
-            placement: l.itemLabel, note: l.note || null,
+            placement: l.itemLabel, note: l.note || null, spec: l.spec || null,
           })),
         }),
       })
@@ -396,7 +396,8 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
                       <div className="min-w-0 flex-1">
                         <div className="text-[12.5px] font-semibold text-ink">{it.itemLabel}</div>
                         <div className="text-[11px] text-muted">
-                          {r.roomLabel} · {it.answer === 'add' ? 'add' : 'replace'} · qty {it.qty}
+                          {r.roomLabel} · qty {it.qty}
+                          {it.spec ? ' · ' + it.spec : ''}
                           {it.note ? ' · ' + it.note : ''}
                         </div>
                       </div>

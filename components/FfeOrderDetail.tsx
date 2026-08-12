@@ -23,7 +23,7 @@ type Line = {
   roomLabel: string; itemLabel: string; title: string | null
   catalog_id: string | null; code: string | null; product: string | null; image_url: string | null
   url: string | null; vendor: string | null; vendor_sku: string | null
-  qty: number; unit_cost: number | null; placement: string | null; stage: string
+  qty: number; unit_cost: number | null; placement: string | null; spec: string | null; stage: string
   po_number: string | null; vendor_ref: string | null; note: string | null
 }
 type Order = {
@@ -248,7 +248,8 @@ export function FfeOrderDetail({ id }: { id: string }) {
                       {l.url ? <a href={l.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
                     </div>
                     <div className="text-[11px] text-muted truncate">
-                      {l.roomLabel} · replacing {l.itemLabel}
+                      {l.roomLabel} · {l.itemLabel}
+                      {l.spec ? ' · ' : ''}{l.spec ? <span className="font-semibold text-ink">{l.spec}</span> : null}
                       {l.vendor ? ' · ' + l.vendor : ''}{l.po_number ? ' · PO ' + l.po_number : ''}
                     </div>
                   </div>
@@ -257,6 +258,9 @@ export function FfeOrderDetail({ id }: { id: string }) {
                     <option value="">No product</option>
                     {products.map(p => <option key={p.id} value={p.id}>{p.code} · {p.name_en}</option>)}
                   </select>
+                  <input defaultValue={l.spec || ''} placeholder="size"
+                    onBlur={e => { if (e.target.value !== (l.spec || '')) post({ action: 'setLine', lineId: l.id, spec: e.target.value }) }}
+                    className="w-20 rounded-lg border border-line px-1.5 py-1 text-[11.5px] text-center" />
                   <input defaultValue={String(l.qty)} onBlur={e => { const v = Number(e.target.value); if (v && v !== l.qty) post({ action: 'setLine', lineId: l.id, qty: v }) }}
                     className="w-12 rounded-lg border border-line px-1.5 py-1 text-[12px] text-center tabular-nums" inputMode="numeric" />
                   <input defaultValue={l.unit_cost == null ? '' : String(l.unit_cost)} placeholder="$"
