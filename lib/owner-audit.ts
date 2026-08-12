@@ -611,19 +611,24 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // So they are pulled from the month's reservations and joined in below, statement money or not.
   const ownerStayRes: any[] = []
   let ownerScanCount = 0
-  {
-    const { data } = await sb.from('guesty_reservations')
+  // PAGED, not limited. A plain .limit() stops at the mirror's 1,000-row ceiling — July touches
+  // more reservations than that, so a single call silently scanned part of the month and any owner
+  // stay past the cut would have been missed exactly like before.
+  for (let off = 0; off < 20_000; off += PAGE) {
+    const { data, error } = await sb.from('guesty_reservations')
       .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
       .gt('check_out', win.start).lt('check_in', win.endExcl)
-      .limit(4000)
-    const all = (data || []) as any[]
-    ownerScanCount = all.length
-    for (const r of all) {
+      .range(off, off + PAGE - 1)
+    if (error) break
+    const batch = (data || []) as any[]
+    ownerScanCount += batch.length
+    for (const r of batch) {
       const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
       if (!isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) continue
       ownerStayRes.push(r)
       if (r.listing_id) listingIds.add(String(r.listing_id))
     }
+    if (batch.length < PAGE) break
   }
 
   // Guest-folio invoice items for those reservations — the fee split is normally done HERE
