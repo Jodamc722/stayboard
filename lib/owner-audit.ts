@@ -258,6 +258,10 @@ const REIMB_RE = /reimburs|cleaning/i
 const OWNERISH_RE = /owner/i
 // Guesty's own two source values: 'owner' (the owner staying) and 'owner-guest' (their guest).
 const OWNER_GUEST_RE = /owner[-_ ]?guest/i
+// Guesty posts owner-side charges as a bare "Owner charge" with no charge code. On an owner stay
+// that is nearly always the cleaning fee; anywhere else it is money the owner is paying for
+// something, and either way somebody should be able to say what.
+const OWNER_CHARGE_RE = /owner\s*charge/i
 export const STAY_LABEL: Record<'owner' | 'owner_guest' | 'ff', string> = {
   owner: 'Owner stay', owner_guest: 'Owner’s guest', ff: 'Friends & family stay',
 }
@@ -1089,16 +1093,23 @@ export async function buildAudit(month: string): Promise<AuditData> {
         const folio = res ? (folioByRes[String(res.id || '')] || []) : []
         const folioClean = money(folio.filter((x: any) => PREP_CLEAN_RE.test(String(x?.title || x?.name || ''))).reduce((a: number, x: any) => a + (Number(x?.amount) || 0), 0))
         const stmtClean = g.lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
-        const charged = folioClean > 0.005 || stmtClean
+        // JON'S RULE: a charge to the owner on an owner stay is almost certainly the cleaning fee.
+        // Guesty posts them as a bare "Owner charge" with no code and no label, so nothing in the
+        // data says "cleaning" — but $125–150 against an owner who just used their own unit is the
+        // turnover. Read it that way and ask for the label, rather than reporting nothing charged.
+        const ownerCharge = money(g.lines.filter(l => OWNER_CHARGE_RE.test(l.label) && l.amount < 0)
+          .reduce((a, l) => a + Math.abs(l.amount), 0))
+        const likelyCleaning = !folioClean && !stmtClean && ownerCharge > 0.005
         flags.push({
-          type: 'owner_stay', severity: charged ? 'review' : 'high', amount: net,
+          type: 'owner_stay', severity: (folioClean > 0.005 || stmtClean || likelyCleaning) ? 'review' : 'high', amount: net,
           detail: STAY_LABEL[stayTag] + ' — ' + nightsTxt
             + (net > 0.5 ? ', paying the owner $' + net.toFixed(2)
               : net < -0.5 ? ', costing the owner $' + Math.abs(net).toFixed(2)
                 : ' at no revenue')
             + (folioClean > 0.005 ? '. Cleaning fee of $' + folioClean.toFixed(2) + ' is on the folio.'
               : stmtClean ? '. A cleaning fee is on the statement but NOT on the guest folio — check the booking.'
-                : '. NO CLEANING FEE ON THE FOLIO — the owner has not been charged for the turnover.'),
+                : likelyCleaning ? '. $' + ownerCharge.toFixed(2) + ' is charged to the owner as a bare "Owner charge" — almost certainly the cleaning fee. Confirm, and label it as cleaning so it reads properly on the statement.'
+                  : '. NO CLEANING FEE ON THE FOLIO — the owner has not been charged for the turnover.'),
         })
       }
       if (on.no_reservation && !res) {
@@ -1116,11 +1127,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // Soffer's statement in the completed pile. Small housekeeping amounts stay informational.
       if (on.off_booking && !flags.some(f => f.severity !== 'info') && Math.abs(net) > 0.005) {
         const big = Math.abs(net) >= rules.offBookingMin
+        const isOwnerCharge = g.lines.some(l => OWNER_CHARGE_RE.test(l.label))
         flags.push({
           type: 'off_booking', severity: big ? 'review' : 'info', amount: net,
           detail: (net < 0 ? 'The owner is charged $' + Math.abs(net).toFixed(2) : 'The owner is credited $' + net.toFixed(2))
             + ' on a statement line with no booking behind it'
-            + (big ? ' — confirm it is meant to be on this statement.' : ' (small housekeeping amount).'),
+            // Same rule as on the stays themselves: a bare owner charge is usually the cleaning.
+            + (isOwnerCharge && net < 0
+              ? ' — posted as a bare "Owner charge", which is usually the cleaning fee for an owner stay. Confirm what it covers and label it.'
+              : big ? ' — confirm it is meant to be on this statement.' : ' (small housekeeping amount).'),
         })
       }
     }
