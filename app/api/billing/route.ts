@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { billingRange, listingNames, monthRange } from '@/lib/billing'
 import { getTimecards } from '@/lib/homebase-labor'
+import { getCrew } from '@/lib/crew'
 import { marketOf } from '@/lib/segments'
 import { getSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -80,11 +81,13 @@ export async function GET(req: NextRequest) {
         .reduce((a, i) => a + (String(i.bill_to || 'owner') === 'guest' ? 0 : (Number(i.amount) || 0)), 0)
 
       // ---- payroll: the maintenance crew's clocked Homebase pay for the month ----
-      const tc = await getTimecards(win.from, win.to)
-      const isMaintRole = (r: any) => /maint|tech|repair|handy/i.test(String(r || ''))
+      // WHO IS ON THE MAINTENANCE CREW comes from the declared roster (lib/crew), not from the
+      // Homebase role field. That field is blank for Ethan, George and Ronnie, so filtering on it
+      // dropped most of the crew and made maintenance payroll look far smaller than it is.
+      const [tc, crew] = await Promise.all([getTimecards(win.from, win.to), getCrew()])
       const byName: Record<string, { name: string; hours: number; cost: number }> = {}
       for (const t of (tc as any[])) {
-        if (!isMaintRole(t.role)) continue
+        if (crew.deptOf(String(t.name || ''), t.role) !== 'maintenance') continue
         const k = String(t.name || '').trim().toLowerCase(); if (!k) continue
         const e = byName[k] = byName[k] || { name: String(t.name), hours: 0, cost: 0 }
         e.hours += Number(t.hours) || 0
