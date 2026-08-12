@@ -23,9 +23,11 @@ import {
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
 } from 'lucide-react'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking'
 type Severity = 'high' | 'review' | 'info'
-type Status = 'review' | 'action' | 'done'
+// 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
+// and never counted as completed work — see the ladder in lib/owner-audit.ts.
+type Status = 'review' | 'action' | 'done' | 'clear'
 type Flag = { type: FlagType; severity: Severity; detail: string; amount?: number }
 type Line = { date: string; label: string; code: string; amount: number }
 type Comment = { author: string; body: string; at: string }
@@ -35,6 +37,7 @@ type Rules = {
   lowRatePct: number; lowRateFloor: number; lastMinDays: number; lastMinExtra: number; lowRate: number
   passthruLo: number; passthruHi: number
   commTolerance: number
+  offBookingMin: number
   enabled: Record<FlagType, boolean>
 }
 type PrepItem = {
@@ -74,14 +77,14 @@ type Item = {
   statusTag: 'canceled' | 'inquiry' | 'declined' | 'expired' | null
   rental: number; commission: number; other: number; net: number
   rate: number | null; avgRate: number | null
-  lines: Line[]; flags: Flag[]
+  lines: Line[]; lineCount: number; flags: Flag[]; needsReview: boolean
   status: Status; touched: boolean; note: string; comments: Comment[]
   updatedBy: string | null; updatedAt: string | null
 }
 type Owner = {
   ownerId: string; ownerName: string; hasStatement: boolean; dueToOwner: number | null
   rental: number; commission: number; other: number; net: number; paid: number
-  ties: boolean; items: number; open: number; done: number
+  ties: boolean; items: number; open: number; done: number; clear: number
   high: number; reviewFlags: number; notes: number; commentCount: number
   signOff: SignOff | null
   stmtNote: string
@@ -91,10 +94,10 @@ type Data = {
   month: string; label: string; owners: Owner[]; items: Item[]
   totals: {
     owners: number; statements: number; reservations: number; flagged: number; high: number
-    review: number; action: number; done: number; signedOff: number; prepOpen: number
+    review: number; action: number; done: number; clear: number; signedOff: number; prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
-  coverage: { ready: boolean; missing: string[] }
+  coverage: { ready: boolean; missing: string[]; syncedAt: string | null }
   rules: Rules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
@@ -103,7 +106,7 @@ type Data = {
 const FLAG_LABEL: Record<FlagType, string> = {
   negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphan reimb',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
-  commission_off: 'Commission off',
+  commission_off: 'Commission off', off_booking: 'No booking behind it',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
@@ -114,18 +117,31 @@ const FLAG_HELP: Record<FlagType, string> = {
   passthru: 'Commission fully offsets rental — a wash by design (informational).',
   no_reservation: 'Statement line items whose reservation code has no matching booking (informational).',
   commission_off: 'Commission % on this reservation strays from the owner’s usual rate — most often a canceled booking whose whole cancellation fee was taken as commission.',
+  off_booking: 'Money on the statement with no booking behind it — management fees, owner charges, one-off adjustments.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
   review: 'bg-amber-50 text-amber-700 ring-amber-200',
   info: 'bg-neutral-100 text-neutral-600 ring-neutral-200',
 }
-const STATUS_LABEL: Record<Status, string> = { review: 'Needs review', action: 'Action needed', done: 'Completed' }
+const STATUS_LABEL: Record<Status, string> = {
+  review: 'Needs review', action: 'Action needed', done: 'Approved', clear: 'No issues found',
+}
 const STATUS_CLS: Record<Status, string> = {
   review: 'bg-amber-50 text-amber-700 ring-amber-200',
   action: 'bg-rose-50 text-rose-700 ring-rose-200',
   done: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  clear: 'bg-neutral-100 text-neutral-500 ring-neutral-200',
 }
+// The four buckets the worklist is organised into, worst first. Approving a row moves it out of
+// the top two and into "Approved & closed", which is the whole point: the open list shrinks as
+// the work gets done instead of every row sitting in one undifferentiated pile.
+const SECTIONS: { key: Status; title: string; blurb: string; collapsed: boolean }[] = [
+  { key: 'action', title: 'Action needed', blurb: 'someone has to fix these in Guesty', collapsed: false },
+  { key: 'review', title: 'Needs review', blurb: 'flagged and waiting on a decision', collapsed: false },
+  { key: 'done', title: 'Approved & closed', blurb: 'reviewed and signed off on', collapsed: true },
+  { key: 'clear', title: 'No issues found', blurb: 'nothing flagged — no decision needed', collapsed: true },
+]
 
 const fmt = (n: number) => {
   const sign = n < 0 ? '-' : ''
@@ -142,6 +158,21 @@ const dateShort = (d: string) => {
 }
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 const shortWho = (s: string | null) => (s || '').replace(/^link · /, '').split('@')[0]
+// Plain-language age of a timestamp, for the "how fresh is this data" line.
+const hoursSince = (iso: string | null): number | null => {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  return isNaN(t) ? null : (Date.now() - t) / 3600000
+}
+const agoLabel = (iso: string | null): string => {
+  const h = hoursSince(iso)
+  if (h == null) return 'never'
+  if (h < 1) return 'less than an hour ago'
+  if (h < 2) return 'an hour ago'
+  if (h < 24) return Math.round(h) + ' hours ago'
+  const d = Math.round(h / 24)
+  return d === 1 ? 'yesterday' : d + ' days ago (' + when(iso) + ')'
+}
 const gyUrl = (id: string) => 'https://app.guesty.com/reservations/' + id + '/summary'
 
 // Booking-source display: friendly labels + a tone per channel family.
@@ -221,9 +252,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [expandedOwners, setExpandedOwners] = useState<Record<string, boolean>>({})
   const [showAllRows, setShowAllRows] = useState<Record<string, boolean>>({})
   const [expandedUnits, setExpandedUnits] = useState<Record<string, boolean>>({})
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({})   // owner::status → expanded
   const [prepBusy, setPrepBusy] = useState('')
   const [fPrep, setFPrep] = useState<PrepFilter>('')
   const [recheckBusy, setRecheckBusy] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [rowSync, setRowSync] = useState('')   // item key currently being re-pulled from Guesty
   const [eNotes, setENotes] = useState<Record<string, string>>({})     // entity note drafts (statement / prep / resolution)
   const [drafts, setDrafts] = useState<Record<string, string>>({})           // note drafts
   const [cDrafts, setCDrafts] = useState<Record<string, string>>({})         // comment drafts
@@ -440,6 +474,54 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     setRecheckBusy(false)
   }
 
+  // Re-pull ONE booking from Guesty — the folio, notes, status and tags on that reservation.
+  // Same engine as the Prep tab's bulk re-check, aimed at the row you are looking at.
+  const refreshRow = async (it: Item) => {
+    if (!it.reservationId || rowSync) return
+    const k = it.ownerId + '|' + it.key
+    setRowSync(k); setError('')
+    try {
+      const r = await fetch('/api/owner-audit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'prep-recheck', reservationIds: [it.reservationId] }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) { setError(j.error || 'Could not reach Guesty for that booking.'); setRowSync(''); return }
+      setFlash('Pulled this booking fresh from Guesty.')
+      setTimeout(() => setFlash(''), 2500)
+      await load(month)
+    } catch (e: any) { setError(String(e?.message || e)) }
+    setRowSync('')
+  }
+
+  // Pull this month's statements + line items straight from Guesty. The hourly sync keeps the
+  // mirror current by itself; this is for the moment right after someone generates or re-recognizes
+  // statements in Guesty and wants the board to reflect it immediately.
+  const syncNow = async () => {
+    if (!month || syncing) return
+    setSyncing(true); setError('')
+    setFlash('Pulling ' + (data ? data.label : 'this month') + ' from Guesty — this takes a minute or two.')
+    try {
+      const r = await fetch('/api/owner-audit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync', month }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) {
+        setFlash('')
+        setError(j.error || 'The Guesty pull did not finish. It runs hourly on its own — try again in a minute.')
+        setSyncing(false); return
+      }
+      setFlash('Statements refreshed from Guesty.')
+      setTimeout(() => setFlash(''), 3000)
+      await load(month)
+    } catch (e: any) {
+      setFlash('')
+      setError(String(e?.message || e))
+    }
+    setSyncing(false)
+  }
+
   const saveRules = async () => {
     if (!rulesDraft) return
     setRulesBusy(true)
@@ -603,14 +685,31 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             ))}
             {!it.flags.length && <span className="text-[10px] px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200"><Check size={10} className="inline -mt-0.5" /> Clean</span>}
           </div>
+          {/* Approving moves the row into "Approved & closed" — the list you are working shrinks. */}
           <div className="flex items-center gap-1">
-            {(['review', 'action', 'done'] as Status[]).map(s => (
-              <button key={s} onClick={() => setStatus(it, s)} disabled={saving}
-                title={STATUS_LABEL[s]}
-                className={'text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset transition ' + (it.status === s ? STATUS_CLS[s] : 'bg-white text-muted ring-line hover:text-ink')}>
-                {s === 'review' ? 'Review' : s === 'action' ? 'Action' : 'Done'}
-              </button>
-            ))}
+            {it.status === 'done' ? (
+              <>
+                <span className={'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset ' + STATUS_CLS.done}>
+                  <Check size={10} /> Approved
+                </span>
+                <button onClick={() => setStatus(it, 'review')} disabled={saving}
+                  title="Reopen — put this row back on the review list"
+                  className="text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset bg-white text-muted ring-line hover:text-ink">Reopen</button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => setStatus(it, 'done')} disabled={saving}
+                  title="Approve and close this row out"
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50">
+                  <Check size={10} /> Approve
+                </button>
+                <button onClick={() => setStatus(it, 'action')} disabled={saving}
+                  title="Needs fixing in Guesty — keep it open"
+                  className={'text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset transition ' + (it.status === 'action' ? STATUS_CLS.action : 'bg-white text-muted ring-line hover:text-ink')}>
+                  Action
+                </button>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1.5 text-muted">
             {it.comments.length > 0 && (
@@ -678,6 +777,30 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 {it.leadDays != null && <span> · booked {it.leadDays}d before check-in</span>}
               </div>
             )}
+            {/* WHAT THE OWNER GETS PAID ON THIS BOOKING — the question every row is really about,
+                answered before the line items rather than left to be added up by eye. */}
+            <div className="rounded-xl border border-line bg-app/40 px-3 py-2 mb-2 max-w-2xl">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">What the owner is paid on this booking</div>
+              <div className="flex flex-wrap items-end gap-x-5 gap-y-1 text-xs">
+                <span>Room revenue <span className="font-semibold text-ink tabular-nums">{fmt(it.rental)}</span></span>
+                <span className="text-muted">−</span>
+                <span>Our commission <span className="font-semibold text-rose-700 tabular-nums">{fmt(it.commission)}</span>
+                  {it.rental > 0.5 && it.commission > 0.005 && <span className="text-[10px] text-muted"> ({Math.round((it.commission / it.rental) * 100)}%)</span>}
+                </span>
+                <span className="text-muted">+</span>
+                <span>Cleaning, fees &amp; reimbursements <span className={'font-semibold tabular-nums ' + (it.other < 0 ? 'text-rose-700' : 'text-ink')}>{fmt(it.other)}</span></span>
+                <span className="ml-auto pl-3 border-l border-line">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted block leading-tight">Owner payout</span>
+                  <span className={'text-base font-bold tabular-nums ' + (it.net < 0 ? 'text-rose-700' : 'text-emerald-700')}>{fmt(it.net)}</span>
+                </span>
+              </div>
+              {it.monthNights > 0 && it.net > 0 && (
+                <div className="text-[10px] text-muted mt-1">
+                  {fmt(it.net / it.monthNights)} per night across the {it.monthNights} night{it.monthNights === 1 ? '' : 's'} on this statement
+                  {it.splitMonth ? ' (the rest of the stay pays out on another statement)' : ''}
+                </div>
+              )}
+            </div>
             {it.lines.length > 0 && (
               <div className="rounded-xl border border-line overflow-hidden mb-2 max-w-2xl">
                 <table className="w-full text-xs">
@@ -690,12 +813,35 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         <td className={'px-2.5 py-1 text-right font-medium whitespace-nowrap ' + (l.amount < 0 ? 'text-rose-700' : 'text-ink')}>{fmt(l.amount)}</td>
                       </tr>
                     ))}
+                    {/* Long stays post a line per night, so the table is capped. Say so out loud —
+                        a truncated table whose numbers do not add up reads as a broken statement. */}
+                    {it.lineCount > it.lines.length && (
+                      <tr className="bg-white">
+                        <td className="px-2.5 py-1 text-muted italic" colSpan={4}>
+                          showing the first {it.lines.length} of {it.lineCount} line items — the payout above covers all {it.lineCount}
+                        </td>
+                      </tr>
+                    )}
                     <tr className="border-t border-line bg-white">
-                      <td className="px-2.5 py-1 font-semibold text-ink" colSpan={3}>Net to owner</td>
+                      <td className="px-2.5 py-1 font-semibold text-ink" colSpan={3}>Owner payout on this booking</td>
                       <td className={'px-2.5 py-1 text-right font-semibold whitespace-nowrap ' + (it.net < 0 ? 'text-rose-700' : 'text-ink')}>{fmt(it.net)}</td>
                     </tr>
                   </tbody>
                 </table>
+              </div>
+            )}
+            {/* Pull THIS booking again from Guesty. Folio edits (fee breakouts, corrections) are
+                made on the reservation; without this you would be reading yesterday's copy of a
+                booking you just fixed. Statement line items come from the monthly sync above. */}
+            {it.reservationId && (
+              <div className="mb-2 flex items-center gap-2 flex-wrap">
+                <button onClick={() => refreshRow(it)} disabled={rowSync === k}
+                  title="Pull this reservation and its folio from Guesty again"
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-lg ring-1 ring-inset bg-white text-brand-700 ring-line hover:bg-app disabled:opacity-50">
+                  <RefreshCw size={11} className={rowSync === k ? 'animate-spin' : ''} />
+                  {rowSync === k ? 'Refreshing from Guesty…' : 'Refresh folio from Guesty'}
+                </button>
+                <span className="text-[10px] text-muted">use this after editing the booking in Guesty</span>
               </div>
             )}
             {it.resNote && (
@@ -789,6 +935,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     )
   }
 
+  const staleHours = data ? hoursSince(data.coverage.syncedAt) : null
   const t = data?.totals
   const total = t ? t.review + t.action + t.done : 0
   const pct = total ? Math.round((t!.done / total) * 100) : 0
@@ -853,6 +1000,29 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       {data && !data.coverage.ready && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2 flex items-center gap-2">
           <AlertTriangle size={14} /> The statement line items for {data.label} are still syncing from Guesty — rows may be incomplete until the sync finishes.
+        </div>
+      )}
+      {/* FRESHNESS — an audit run against stale accounting data is worse than no audit, and a
+          sync that quietly stopped is invisible unless the page says so. */}
+      {data && (
+        <div className={'rounded-xl border text-sm px-3 py-2 flex items-center gap-2 flex-wrap '
+          + (staleHours == null ? 'border-line bg-white text-muted'
+            : staleHours > 26 ? 'border-amber-200 bg-amber-50 text-amber-800'
+              : 'border-line bg-white text-muted')}>
+          {staleHours != null && staleHours > 26 ? <AlertTriangle size={14} /> : <Check size={14} className="text-emerald-600" />}
+          <span>
+            {data.coverage.syncedAt
+              ? <>Statement data for {data.label} last pulled from Guesty <span className="font-semibold">{agoLabel(data.coverage.syncedAt)}</span>.</>
+              : <>This month has never been pulled from Guesty.</>}
+            {staleHours != null && staleHours > 26 && ' It refreshes hourly on its own — if this keeps growing, the sync has stopped.'}
+          </span>
+          {internal && (
+            <button onClick={syncNow} disabled={syncing}
+              title="Pull this month's statements and line items from Guesty right now"
+              className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50">
+              <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Pulling from Guesty…' : 'Sync now'}
+            </button>
+          )}
         </div>
       )}
 
@@ -940,6 +1110,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
               <div className="text-[10px] text-muted mt-0.5">Flag when a reservation’s commission % strays this far from the owner’s usual rate.</div>
             </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Charge with no booking ($)</label>
+              <input type="number" min={0} step={50} value={rulesDraft.offBookingMin}
+                onChange={e => setRulesDraft(rd => rd ? { ...rd, offBookingMin: Number(e.target.value) } : rd)}
+                className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              <div className="text-[10px] text-muted mt-0.5">Statement money with no reservation behind it, from this size up.</div>
+            </div>
           </div>
           <div className="grid sm:grid-cols-2 gap-1.5 max-w-2xl">
             {(Object.keys(FLAG_LABEL) as FlagType[]).map(f => (
@@ -964,12 +1141,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* progress + money strip */}
           <div className="rounded-2xl border border-line bg-white shadow-soft p-4">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              {/* Progress counts ONLY rows that needed a person. Clean rows are reported separately
+                  instead of being folded in — see the status ladder in lib/owner-audit.ts. */}
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Progress</div>
-                <div className="text-sm font-semibold text-ink">{t!.done} of {total} completed · {pct}%</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Issues closed out</div>
+                <div className="text-sm font-semibold text-ink">
+                  {total === 0 ? 'Nothing flagged this month' : t!.done + ' of ' + total + ' · ' + pct + '%'}
+                </div>
                 <div className="mt-1.5 w-44 h-[8px] rounded-full bg-brand-100 overflow-hidden">
                   <div className="h-full rounded-full bg-brand-600 transition-[width] duration-500" style={{ width: pct + '%' }} />
                 </div>
+                <div className="text-[10px] text-muted mt-1">{t!.clear.toLocaleString()} more rows had nothing flagged</div>
               </div>
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Signed off</div>
@@ -1007,13 +1189,16 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   {data.owners.map(o => {
                     const s = stats[o.ownerId] || { notes: 0, comments: 0 }
                     const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
-                    const p = o.items ? Math.round((o.done / o.items) * 100) : 100
+                    // Progress across the rows that actually needed a decision, not across every
+                    // row on the statement — clean rows were never work.
+                    const toClose = o.done + o.open
+                    const p = toClose ? Math.round((o.done / toClose) * 100) : 100
                     return (
-                      <tr key={o.ownerId} onClick={() => { setStmtOwner(o.ownerId); document.querySelector('main')?.scrollTo({ top: 0 }) }}
+                      <tr key={o.ownerId} onClick={() => { setStmtOwner(o.ownerId); window.scrollTo({ top: 0 }) }}
                         className="cursor-pointer hover:bg-app/60 transition">
                         <td className="px-4 py-2.5">
                           <div className="font-medium text-ink">{o.ownerName}</div>
-                          <div className="text-[11px] text-muted">{o.items} row{o.items === 1 ? '' : 's'}{o.hasStatement ? '' : ' · no statement generated'}</div>
+                          <div className="text-[11px] text-muted">{o.items} row{o.items === 1 ? '' : 's'}{o.open ? ' · ' + o.open + ' to review' : ''}{o.hasStatement ? '' : ' · no statement generated'}</div>
                         </td>
                         <td className="px-3 py-2.5 text-right font-semibold text-ink whitespace-nowrap">{o.dueToOwner != null ? fmt(o.dueToOwner) : fmt(o.net)}</td>
                         <td className="px-3 py-2.5">
@@ -1037,7 +1222,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                             <div className="w-16 h-[6px] rounded-full bg-brand-100 overflow-hidden">
                               <div className={'h-full rounded-full ' + (p === 100 ? 'bg-emerald-500' : 'bg-brand-600')} style={{ width: p + '%' }} />
                             </div>
-                            <span className="text-[11px] text-muted whitespace-nowrap">{o.done}/{o.items}</span>
+                            <span className="text-[11px] text-muted whitespace-nowrap" title={o.clear + ' rows had nothing flagged'}>
+                              {toClose ? o.done + '/' + toClose : 'nothing flagged'}
+                            </span>
                           </div>
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
@@ -1065,9 +1252,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <ArrowLeft size={13} /> All statements
                   </button>
                   <span className="ml-auto text-[11px] text-muted">Statement {stmtIdx + 1} of {data.owners.length}</span>
-                  <button disabled={stmtIdx <= 0} onClick={() => { setStmtOwner(data.owners[stmtIdx - 1].ownerId); document.querySelector('main')?.scrollTo({ top: 0 }) }}
+                  <button disabled={stmtIdx <= 0} onClick={() => { setStmtOwner(data.owners[stmtIdx - 1].ownerId); window.scrollTo({ top: 0 }) }}
                     className="p-1.5 rounded-lg border border-line bg-white hover:bg-app disabled:opacity-30"><ChevronLeft size={14} className="text-muted" /></button>
-                  <button disabled={stmtIdx >= data.owners.length - 1} onClick={() => { setStmtOwner(data.owners[stmtIdx + 1].ownerId); document.querySelector('main')?.scrollTo({ top: 0 }) }}
+                  <button disabled={stmtIdx >= data.owners.length - 1} onClick={() => { setStmtOwner(data.owners[stmtIdx + 1].ownerId); window.scrollTo({ top: 0 }) }}
                     className="p-1.5 rounded-lg border border-line bg-white hover:bg-app disabled:opacity-30"><ChevronRight size={14} className="text-muted" /></button>
                 </div>
                 <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
@@ -1183,8 +1370,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <ShieldCheck size={18} className={curOwner.open === 0 ? 'text-brand-600' : 'text-muted'} />
                     <div className="text-sm text-ink">
                       {curOwner.open === 0
-                        ? <span>Every row is completed — sign off to close this statement&rsquo;s audit.</span>
-                        : <span className="text-muted">{curOwner.open} row{curOwner.open === 1 ? '' : 's'} still open — complete every row to enable sign-off.</span>}
+                        ? <span>{curOwner.done > 0
+                          ? 'Every flagged row is closed out'
+                          : 'Nothing was flagged on this statement'} — sign off to close this audit.</span>
+                        : <span className="text-muted">{curOwner.open} flagged row{curOwner.open === 1 ? '' : 's'} still open — approve or resolve {curOwner.open === 1 ? 'it' : 'them'} to enable sign-off.</span>}
                     </div>
                     <div className="ml-auto flex items-center gap-2">
                       {share && (
@@ -1450,10 +1639,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             <>
               {/* filters — row 1: work state (statuses + flags) */}
               <div className="flex flex-wrap items-center gap-2">
-                {(['review', 'action', 'done'] as Status[]).map(s => (
+                {(['action', 'review', 'done', 'clear'] as Status[]).map(s => (
                   <button key={s} onClick={() => setFStatus(fStatus === s ? '' : s)}
                     className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + STATUS_CLS[s] + (fStatus === s ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                    {STATUS_LABEL[s]} {s === 'review' ? t!.review : s === 'action' ? t!.action : t!.done}
+                    {STATUS_LABEL[s]} {s === 'review' ? t!.review : s === 'action' ? t!.action : s === 'done' ? t!.done : t!.clear}
                   </button>
                 ))}
                 <span className="w-px h-5 bg-line mx-1" />
@@ -1514,6 +1703,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 const attention = items.filter(it => it.status !== 'done' || it.flags.some(f => f.severity !== 'info') || it.note || it.comments.length > 0)
                 const showAll = !!showAllRows[o.ownerId] || filterActive
                 const visible = showAll ? items : attention
+                // Bucket the visible rows so approving one visibly moves it down into
+                // "Approved & closed" and out of the pile that still needs working.
+                const buckets = SECTIONS.map(sec => ({ ...sec, rows: visible.filter(it => it.status === sec.key) }))
+                  .filter(b => b.rows.length > 0)
                 return (
                   <div key={o.ownerId} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
                     <button onClick={() => setExpandedOwners(prev => ({ ...prev, [o.ownerId]: !isOpen }))}
@@ -1546,21 +1739,36 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         </span>
                       )}
                       <span className="ml-auto text-xs text-muted">
-                        {o.dueToOwner != null ? 'Payout ' + fmt(o.dueToOwner) + ' · ' : ''}Net {fmt(o.net)} · {items.length} row{items.length === 1 ? '' : 's'} · {o.open ? o.open + ' open' : 'all clear'}
+                        {o.dueToOwner != null ? 'Payout ' + fmt(o.dueToOwner) + ' · ' : ''}Net {fmt(o.net)} · {items.length} row{items.length === 1 ? '' : 's'} · {o.open ? o.open + ' to review' : 'nothing open'}
                       </span>
                     </button>
                     {isOpen && (
-                      <div className="border-t border-line divide-y divide-line">
-                        {visible.map(it => renderItem(it))}
+                      <div className="border-t border-line">
+                        {buckets.map(b => {
+                          const secKey = o.ownerId + '::' + b.key
+                          const shown = openSections[secKey] !== undefined ? openSections[secKey] : !b.collapsed
+                          return (
+                            <div key={b.key} className="border-b border-line last:border-b-0">
+                              <button onClick={() => setOpenSections(prev => ({ ...prev, [secKey]: !shown }))}
+                                className="w-full flex items-center gap-2 px-4 py-1.5 text-left bg-app/40 hover:bg-app/70">
+                                {shown ? <ChevronDown size={13} className="text-muted shrink-0" /> : <ChevronRight size={13} className="text-muted shrink-0" />}
+                                <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + STATUS_CLS[b.key]}>{b.title}</span>
+                                <span className="text-[11px] font-semibold text-ink">{b.rows.length}</span>
+                                <span className="text-[10px] text-muted">{b.blurb}</span>
+                              </button>
+                              {shown && <div className="divide-y divide-line">{b.rows.map(it => renderItem(it))}</div>}
+                            </div>
+                          )
+                        })}
                         {visible.length === 0 && (
-                          <div className="px-4 py-3 text-xs text-muted">All {items.length} rows are clean and completed.</div>
+                          <div className="px-4 py-3 text-xs text-muted">Nothing flagged on this statement.</div>
                         )}
                         {!filterActive && attention.length < items.length && (
                           <button onClick={() => setShowAllRows(prev => ({ ...prev, [o.ownerId]: !showAllRows[o.ownerId] }))}
                             className="w-full px-4 py-2 text-left text-[11px] font-medium text-brand-700 hover:bg-app/60">
                             {showAllRows[o.ownerId]
                               ? 'Show issues only (' + attention.length + ')'
-                              : 'Show all ' + items.length + ' rows (' + (items.length - attention.length) + ' clean hidden)'}
+                              : 'Show all ' + items.length + ' rows (' + (items.length - attention.length) + ' with nothing flagged)'}
                           </button>
                         )}
                       </div>
