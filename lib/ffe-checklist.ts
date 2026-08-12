@@ -168,6 +168,59 @@ export function roomsFor(bedrooms: number | null): FfeRoom[] {
   return FFE_ROOMS.filter(r => !r.minBedrooms || bd >= r.minBedrooms)
 }
 
-export function totalItems(bedrooms: number | null): number {
-  return roomsFor(bedrooms).reduce((a, r) => a + r.items.length, 0)
+// ── THE EDITABLE OVERLAY (Jon, 2026-08-11: "a tab where we can update it or add item") ──────────
+// The list above is the FLOOR, not the law. Rows in ffe_checklist_items switch a built-in off or
+// add a new item to a room, so adding "coffee maker" is a person on the Checklist tab rather than
+// a code change and a deploy. An empty overlay leaves the checklist exactly as designed.
+export type FfeOverride = {
+  room: string; item_key: string
+  en?: string | null; es?: string | null
+  ask?: string | null; hidden?: boolean; sort?: number | null
+}
+
+export function mergeChecklist(bedrooms: number | null, overrides: FfeOverride[]): FfeRoom[] {
+  const byRoom: Record<string, FfeOverride[]> = {}
+  for (const o of overrides || []) (byRoom[String(o.room)] = byRoom[String(o.room)] || []).push(o)
+
+  return roomsFor(bedrooms).map(room => {
+    const ov = byRoom[room.key] || []
+    const hidden = new Set(ov.filter(o => o.hidden).map(o => String(o.item_key)))
+    const edits: Record<string, FfeOverride> = {}
+    for (const o of ov) if (!o.hidden) edits[String(o.item_key)] = o
+
+    // Built-ins first, minus anything switched off, with any label edit applied.
+    const base: (FfeItem & { sort: number })[] = room.items
+      .filter(i => !hidden.has(i.key))
+      .map((i, idx) => {
+        const e = edits[i.key]
+        return {
+          ...i,
+          en: e && e.en ? e.en : i.en,
+          es: e && e.es ? e.es : i.es,
+          ask: (e && e.ask ? e.ask : i.ask) as FfeItem['ask'],
+          sort: e && typeof e.sort === 'number' ? e.sort : idx,
+        }
+      })
+
+    // Then anything added that is not a built-in at all.
+    const builtinKeys = new Set(room.items.map(i => i.key))
+    const added: (FfeItem & { sort: number })[] = ov
+      .filter(o => !o.hidden && !builtinKeys.has(String(o.item_key)) && o.en)
+      .map(o => ({
+        key: String(o.item_key),
+        en: String(o.en),
+        es: String(o.es || o.en),
+        ask: (o.ask || 'replace') as FfeItem['ask'],
+        sort: typeof o.sort === 'number' ? o.sort : 100,
+      }))
+
+    const items = base.concat(added).sort((a, b) => a.sort - b.sort)
+      .map(({ sort, ...rest }) => rest as FfeItem)
+    return { ...room, items }
+  })
+}
+
+export function totalItems(bedrooms: number | null, overrides?: FfeOverride[]): number {
+  const rooms = overrides && overrides.length ? mergeChecklist(bedrooms, overrides) : roomsFor(bedrooms)
+  return rooms.reduce((a, r) => a + r.items.length, 0)
 }
