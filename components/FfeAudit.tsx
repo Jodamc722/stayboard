@@ -13,10 +13,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FFE_ROOMS, FFE_ANSWERS, FFE_UI, roomsFor, type FfeItem } from '@/lib/ffe-checklist'
 
+// Today's state decides whether the unit can be walked at all, so it sits in the header next to the
+// name rather than buried below the fold.
+const STATUS: Record<string, { en: string; es: string; cls: string }> = {
+  vacant:   { en: 'Vacant',          es: 'Vacía',                cls: 'bg-emerald-500' },
+  checkout: { en: 'Checkout today',  es: 'Salida hoy',           cls: 'bg-blue-500' },
+  checkin:  { en: 'Check-in today',  es: 'Entrada hoy',          cls: 'bg-amber-500' },
+  turn:     { en: 'Same-day turn',   es: 'Cambio el mismo día',  cls: 'bg-rose-500' },
+  occupied: { en: 'Occupied',        es: 'Ocupada',              cls: 'bg-neutral-500' },
+}
+const MORE = {
+  back: { en: 'All units', es: 'Todas las unidades' },
+  markDone: { en: 'Mark this unit complete', es: 'Marcar unidad como lista' },
+  isDone: { en: 'Marked complete', es: 'Marcada como lista' },
+  undo: { en: 'Undo', es: 'Deshacer' },
+}
+
 type Answer = { answer: string; qty: number | null; note: string | null }
 type Data = {
   ok: boolean
-  unit: { name: string; building: string; bedrooms: number | null }
+  unit: { name: string; building: string; bedrooms: number | null; ownerName: string; today: string; completedAt: string | null }
+  hub: { code: string; name: string }
   rooms: string[]
   total: number
   answers: Record<string, Answer>
@@ -49,6 +66,21 @@ export function FfeAudit({ code }: { code: string }) {
   const answered = Object.keys(data?.answers || {}).length
   const total = data?.total || 0
   const t = <K extends { en: string; es: string }>(x: K) => x[lang]
+
+  const [completing, setCompleting] = useState(false)
+  const markComplete = async (undo?: boolean) => {
+    if (!data) return
+    setCompleting(true)
+    try {
+      const r = await fetch('/api/audit/ffe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, action: 'complete', done: undo ? false : !data.unit.completedAt }),
+      })
+      const j = await r.json()
+      if (r.ok && j.ok) setData(d => d ? { ...d, unit: { ...d.unit, completedAt: j.completedAt } } : d)
+    } catch { /* leave the button as it was */ }
+    setCompleting(false)
+  }
 
   const save = async (roomKey: string, item: FfeItem, answer: string, qty?: number, note?: string) => {
     const k = roomKey + '::' + item.key
@@ -89,8 +121,17 @@ export function FfeAudit({ code }: { code: string }) {
       <div className="sticky top-0 z-10 bg-neutral-900 text-white px-4 py-3 shadow-lg">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-[9.5px] uppercase tracking-[0.18em] text-neutral-400 font-bold">{t(FFE_UI.title)}</p>
+            <a href={'/audit/ffe/hub/' + data.hub.code}
+              className="text-[9.5px] uppercase tracking-[0.18em] text-neutral-400 font-bold hover:text-white">
+              {'\u2039'} {t(MORE.back)}
+            </a>
             <h1 className="text-lg font-bold leading-tight truncate">{data.unit.name}</h1>
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white ' + (STATUS[data.unit.today] || STATUS.vacant).cls}>
+                {t(STATUS[data.unit.today] || STATUS.vacant)}
+              </span>
+              {data.unit.ownerName ? <span className="text-[11px] text-neutral-400 truncate">{data.unit.ownerName}</span> : null}
+            </div>
           </div>
           <div className="flex items-center rounded-lg overflow-hidden border border-neutral-700 shrink-0">
             {(['en', 'es'] as Lang[]).map(L => (
@@ -203,11 +244,26 @@ export function FfeAudit({ code }: { code: string }) {
         })}
       </div>
 
-      {answered >= total && total > 0 ? (
-        <div className="fixed bottom-0 inset-x-0 bg-emerald-600 text-white px-4 py-3 text-center text-[13.5px] font-bold">
-          {t(FFE_UI.done)}
-        </div>
-      ) : null}
+      {/* Finishing is a statement by the walker, not something inferred from a full grid — they may
+          legitimately leave items blank and still be done. */}
+      <div className="px-3 pt-4">
+        <button onClick={() => markComplete()} disabled={completing}
+          className={'w-full min-h-[52px] rounded-2xl text-[15px] font-bold border-2 ' +
+            (data.unit.completedAt
+              ? 'bg-emerald-600 border-emerald-600 text-white'
+              : 'bg-white border-neutral-300 text-neutral-800 active:bg-neutral-50')}>
+          {completing ? t(FFE_UI.saving) : data.unit.completedAt ? '\u2713 ' + t(MORE.isDone) : t(MORE.markDone)}
+        </button>
+        {data.unit.completedAt ? (
+          <button onClick={() => markComplete(true)} className="w-full mt-2 text-[12px] font-semibold text-neutral-500">
+            {t(MORE.undo)}
+          </button>
+        ) : null}
+        <a href={'/audit/ffe/hub/' + data.hub.code}
+          className="block text-center mt-3 text-[13px] font-semibold text-blue-600">
+          {'\u2039'} {t(MORE.back)}
+        </a>
+      </div>
     </div>
   )
 }
