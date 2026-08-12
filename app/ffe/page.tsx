@@ -18,9 +18,10 @@ export default async function FfePage() {
         </p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">FF&amp;E Audit</h1>
         <p className="text-sm text-muted mt-1 max-w-2xl">
-          One phone link per unit. Whoever walks it goes room by room and taps Replace, Keep or Not here on each
-          piece — in English or Spanish. What comes back is a furniture order, not a work order: nothing here
-          touches Breezeway, maintenance or billing.
+          One link per owner, already made. It opens a page of that owner&apos;s units — each with its own link,
+          today&apos;s status and a progress bar — so the team can move in and out of units and mark each one complete.
+          Room by room, Replace / Keep / Not here, in English or Spanish. What comes back is a furniture order,
+          not a work order: nothing here touches Breezeway, maintenance or billing.
         </p>
       </header>
       <FfeIndex />
