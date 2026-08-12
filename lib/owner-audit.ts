@@ -187,7 +187,11 @@ export type AuditData = {
   // syncedAt = when the mirror last finished sweeping THIS month from Guesty. Shown on the board:
   // an audit run against stale accounting data is worse than no audit, and a dead sync is invisible
   // unless the page says so out loud.
-  coverage: { ready: boolean; missing: string[]; syncedAt: string | null }
+  coverage: {
+    ready: boolean; missing: string[]; syncedAt: string | null
+    resScanned: number          // reservations touching the month, scanned for owner / F&F stays
+    ownerStaysFound: number     // how many of them matched — 0 means the markers are not where we look
+  }
   rules: AuditRules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
@@ -595,6 +599,29 @@ export async function buildAudit(month: string): Promise<AuditData> {
     for (const r of (data || []) as any[]) {
       if (!EXPEDIA_RE.test(String(r.source || ''))) continue
       expRes.push(r)
+      if (r.listing_id) listingIds.add(String(r.listing_id))
+    }
+  }
+
+  // 5a-ter. OWNER AND FRIENDS-&-FAMILY STAYS COME FROM RESERVATIONS, NOT FROM MONEY.
+  // They are the one thing on an owner statement that can be worth $0.00 and still matter: nights
+  // taken off the market, a cleaning somebody has to pay for, and occasionally a booking tagged
+  // "owner" that nobody authorised. Because they carry no ledger money, they produced no group and
+  // no row — the board tagged 0 of 1,292 rows while the team's spreadsheet listed 15 by hand.
+  // So they are pulled from the month's reservations and joined in below, statement money or not.
+  const ownerStayRes: any[] = []
+  let ownerScanCount = 0
+  {
+    const { data } = await sb.from('guesty_reservations')
+      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
+      .gt('check_out', win.start).lt('check_in', win.endExcl)
+      .limit(4000)
+    const all = (data || []) as any[]
+    ownerScanCount = all.length
+    for (const r of all) {
+      const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
+      if (!isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) continue
+      ownerStayRes.push(r)
       if (r.listing_id) listingIds.add(String(r.listing_id))
     }
   }
@@ -1120,6 +1147,55 @@ export async function buildAudit(month: string): Promise<AuditData> {
     })
   }
 
+  // Owner / F&F stays that never reached the statement — one row each, so a $0 owner stay is
+  // still something the reviewer sees, notes and closes out.
+  if (rules.enabled.owner_stay) {
+    const haveCode = new Set(items.filter(i => i.resCode).map(i => i.resCode))
+    const listingOwner: Record<string, string> = {}
+    for (const it of items) if (it.listingId && it.ownerId) listingOwner[it.listingId] = it.ownerId
+    for (const r of ownerStayRes) {
+      const code = String(r.confirmation_code || '')
+      if (code && haveCode.has(code)) continue          // already on the statement, already flagged
+      const lid = String(r.listing_id || '')
+      const oid = listingOwner[lid] || ''
+      if (!oid) continue                                 // unit not on any statement this month
+      const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
+      const isFF = FF_RE.test(tagBlob) || FF_RE.test(String(r.guest_name || ''))
+      const key = 'line:ownerstay:' + (code || String(r.id || ''))
+      const saved = reviews[oid + '|' + key]
+      const savedStatus = saved ? String(saved.status) : ''
+      const nights = Number(r.nights) || 0
+      items.push({
+        key, kind: 'reservation', ownerId: oid, resCode: code,
+        guest: String(r.guest_name || ''),
+        checkIn: String(r.check_in || '').slice(0, 10), checkOut: String(r.check_out || '').slice(0, 10),
+        totalNights: nights, monthNights: 0, splitMonth: false,
+        listingId: lid, unit: unitOf[lid] || '', source: String(r.source || ''),
+        reservationId: String(r.id || ''), resNote: '',
+        benchRate: null, benchLabel: '', benchPct: null, benchPrev: null,
+        mixWeekday: 0, mixWeekend: 0, leadDays: null,
+        stayTag: isFF ? 'ff' : 'owner', canceled: /cancel/i.test(String(r.status || '')),
+        statusTag: /cancel/i.test(String(r.status || '')) ? 'canceled' : null,
+        rental: 0, commission: 0, other: 0, net: 0, rate: null, avgRate: null,
+        lines: [], lineCount: 0, posted: 0, reversed: 0,
+        resValue: Number(r.money_total) || null,
+        flags: [{
+          type: 'owner_stay', severity: 'review',
+          detail: (isFF ? 'Friends & family stay' : 'Owner stay') + ' — ' + (nights || '?') + ' night'
+            + (nights === 1 ? '' : 's') + ' held off the market, and nothing for it on this statement. '
+            + 'Confirm it was authorised and that the cleaning and any costs are accounted for.',
+        }],
+        needsReview: true,
+        status: (savedStatus && WRITABLE_STATUSES.includes(savedStatus as AuditStatus)) ? (savedStatus as AuditStatus) : 'review',
+        touched: !!saved,
+        note: saved ? String(saved.note || '') : '',
+        comments: Array.isArray(saved?.comments) ? saved.comments : [],
+        updatedBy: saved ? (saved.updated_by || null) : null,
+        updatedAt: saved ? (saved.updated_at || null) : null,
+      })
+    }
+  }
+
   // A STATEMENT WITH NOTHING ON IT is itself a finding — usually a listing that never got mapped
   // to the owner, so a month of real bookings landed nowhere. The board used to render those
   // owners as an empty shell with no row to click and nothing to explain them; the team's own
@@ -1308,7 +1384,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     owners: Object.values(owners).sort((a, b) => a.ownerName.localeCompare(b.ownerName)),
     items,
     totals: t,
-    coverage: { ready: covered, missing: covered ? [] : [month], syncedAt },
+    coverage: { ready: covered, missing: covered ? [] : [month], syncedAt, resScanned: ownerScanCount, ownerStaysFound: ownerStayRes.length },
     rules,
     prep: prep.sort((a, b) =>
       Number(prepResolved(a)) - Number(prepResolved(b))
