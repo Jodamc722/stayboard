@@ -507,13 +507,16 @@ type PersonRow = { crew?: 'inhouse' | 'vendor' | null; key: string; tasks: numbe
 
 function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; rates: Record<string, number>; canEdit: boolean; onRates: (r: Record<string, number>) => void; month: string }) {
   // Real wages from Homebase for the month - billable vs wages is the true margin.
-  const [wages, setWages] = useState<{ maintenance: number; housekeeping: number; total: number } | null>(null)
+  // Wages come from the same crew roster the labor board uses (lib/crew), so "maintenance wages"
+  // here means the declared maintenance crew — not whoever happened to have the word maintenance
+  // typed in their Homebase role, which is blank for half of them.
+  const [wages, setWages] = useState<{ maintenance: number; housekeeping: number; supervision: number; total: number } | null>(null)
   useEffect(() => {
     let dead = false
     const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()
     fetch('/api/labor/kpi?from=' + month + '-01&to=' + month + '-' + String(lastDay).padStart(2, '0'), { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (!dead && j && j.ok) setWages({ maintenance: j.departments?.maintenance?.payroll ?? 0, housekeeping: j.departments?.housekeeping?.payroll ?? 0, total: (j.payroll && j.payroll.actual) || 0 }) })
+      .then(j => { if (!dead && j && j.ok) setWages({ maintenance: j.departments?.maintenance?.payroll ?? 0, housekeeping: j.departments?.housekeeping?.payroll ?? 0, supervision: j.departments?.supervision?.payroll ?? 0, total: (j.payroll && j.payroll.actual) || 0 }) })
       .catch(() => { /* wages tile just shows a dash */ })
     return () => { dead = true }
   }, [month])
@@ -578,6 +581,7 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
 
   const DEPTS = ['maintenance', 'housekeeping', 'inspection', 'safety', 'all']
   const wagesFor = wages ? (dept === 'maintenance' ? wages.maintenance : dept === 'housekeeping' ? wages.housekeeping : wages.total) : null
+  const wagesNote = dept === 'maintenance' ? 'declared maintenance crew' : dept === 'housekeeping' ? 'housekeepers only' : 'whole team this month'
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -598,8 +602,8 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
         <Kpi label="Billable labor" value={money(totals.billed)} sub="rate math on these tasks" />
         <Kpi label="Labor cost" value={money(totals.cost)} sub={money(totals.costInhouse) + ' in-house · ' + money(totals.costVendor) + ' vendor'} />
         <Kpi label="Margin" value={money(totals.billed - totals.cost)} sub={totals.cost > 0 ? Math.round(((totals.billed - totals.cost) / totals.cost) * 100) + '% over cost' : 'set rates below'} />
-        <Kpi label="Wages · Homebase" value={wagesFor != null ? money(wagesFor) : '—'} sub={dept === 'all' ? 'whole team this month' : dept + ' crew this month'} />
-        <Kpi label="Billable vs wages" value={wagesFor != null ? money(totals.billed - wagesFor) : '—'} sub="true margin on payroll" />
+        <Kpi label="Wages · Homebase" value={wagesFor != null ? money(wagesFor) : '—'} sub={wagesNote} />
+        <Kpi label="Billable vs wages" value={wagesFor != null ? money(totals.billed - wagesFor) : '—'} sub="charges entered − payroll" />
       </div>
       <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
         <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10.5px] uppercase tracking-wide text-muted font-bold border-b border-line">
