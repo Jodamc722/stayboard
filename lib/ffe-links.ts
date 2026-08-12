@@ -24,7 +24,7 @@ import { createHmac } from 'crypto'
 // still not derivable from a listing id by anyone outside the server.
 const SECRET = process.env.FFE_LINK_SECRET || 'stayboard-ffe-v1-2026'
 
-export type FfeScopeKind = 'unit' | 'building' | 'owner'
+export type FfeScopeKind = 'unit' | 'building' | 'owner' | 'order'
 
 function sign(kind: FfeScopeKind, id: string): string {
   return createHmac('sha256', SECRET).update(kind + ':' + String(id || '')).digest('hex').slice(0, 16)
@@ -33,6 +33,9 @@ function sign(kind: FfeScopeKind, id: string): string {
 export const unitCode = (listingId: string) => sign('unit', listingId)
 export const buildingCode = (building: string) => sign('building', building.toLowerCase())
 export const ownerCode = (ownerId: string) => sign('owner', ownerId)
+// The link an owner gets sent to read and approve a furniture order. Same capability trade as the
+// rest of this file, one order wide: no other order, no other owner, no money movement.
+export const orderCode = (orderId: string) => sign('order', orderId)
 
 /**
  * Resolve a code back to what it points at.
@@ -44,12 +47,13 @@ export const ownerCode = (ownerId: string) => sign('owner', ownerId)
  */
 export function resolveCode(
   code: string,
-  candidates: { units: string[]; buildings: string[]; owners: string[] },
+  candidates: { units: string[]; buildings: string[]; owners: string[]; orders?: string[] },
 ): { kind: FfeScopeKind; id: string } | null {
   const c = String(code || '').trim().toLowerCase()
   if (!/^[a-f0-9]{16}$/.test(c)) return null
   for (const id of candidates.units) if (unitCode(id) === c) return { kind: 'unit', id }
   for (const b of candidates.buildings) if (buildingCode(b) === c) return { kind: 'building', id: b }
   for (const o of candidates.owners) if (ownerCode(o) === c) return { kind: 'owner', id: o }
+  for (const o of candidates.orders || []) if (orderCode(o) === c) return { kind: 'order', id: o }
   return null
 }
