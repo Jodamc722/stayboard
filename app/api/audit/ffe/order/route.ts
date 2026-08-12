@@ -95,6 +95,7 @@ export async function GET(req: NextRequest) {
         itemEn: itemEn[rk + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
         itemEs: itemEs[rk + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
         placement: l.placement || null,
+        spec: l.spec || null,
         imageUrl: l.image_url || null,
         url: l.url || null,
         qty, unitCost: cost, lineTotal,
