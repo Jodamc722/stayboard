@@ -244,6 +244,15 @@ const OWNERISH_RE = /owner/i
 // are discounted on purpose, so they get TAGGED and their low-rate reads as informational.
 const FF_RE = /friends?\s*(&|and)\s*family|\bf\s*&\s*f\b|\bfnf\b|\bff\b|friends?[-_ ]?family|family[-_ ]?friends?|\bcomp(ed|limentary)?\b/i
 
+// THE owner / friends-&-family test. Exported because this is a business law, not a local detail:
+// an owner hold and an F&F comp are inventory decisions, so they must never be read as a pricing
+// error (owner audit) OR as a guest walking away (revenue cancel rate). One definition, imported
+// everywhere — the audit found this same regex pair silently re-implemented across the app.
+export function isOwnerOrFriendsFamily(source: string, tagBlob: string, guestName: string): boolean {
+  return FF_RE.test(tagBlob) || FF_RE.test(guestName)
+    || OWNERISH_RE.test(source) || OWNERISH_RE.test(tagBlob) || OWNERISH_RE.test(guestName)
+}
+
 // ── EDITABLE RULES ────────────────────────────────────────────────────────────
 // The thresholds behind the flags are policy, not physics. Stored in app_settings (JSON over
 // TEXT, via lib/app-settings) and merged over these defaults, so a missing or mangled setting
