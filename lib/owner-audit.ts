@@ -924,7 +924,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
         // revenue behind either, and both sat in "No issues found" because the flag looked at the
         // status instead of the money. A cancellation explains a low figure; it does not explain a
         // payment. Anything at or above the threshold goes to a person regardless of status.
-        const moved = Math.abs(net) >= rules.offBookingMin
+        // A DOLLAR, not the owner-charge threshold. The team's own sheet flags $7.60 and $3.80 of
+        // reimbursement on canceled stays, and they are right to: the amount is small, the question
+        // ("why did this pay out at all?") is not. Only rounding dust stays quiet.
+        const moved = Math.abs(net) >= 1
         if (moved) {
           flags.push({
             type: 'zero_rev', severity: 'review', amount: net,
