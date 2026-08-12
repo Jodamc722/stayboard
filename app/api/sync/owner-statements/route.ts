@@ -25,12 +25,23 @@ const etMonth = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' })
     .format(new Date()).slice(0, 7)
 
+// WHY THIS FAILS OPEN WHEN NO SECRET IS SET — the same law as /api/sync/guesty and the cron routes.
+// A Vercel cron sends no cookie, so falling through to the signed-in-user check rejected EVERY
+// scheduled run: the hourly sweep ('20 * * * *') had never once fired. The owner mirror only moved
+// when a human triggered it, and it aged silently — on 2026-08-05 the audit read "no July statements
+// generated" while 43 finished statements sat in Guesty, and on 2026-08-11 the board was six days
+// stale again. Nothing reports a cron that never ran.
+//
+// With CRON_SECRET set the bearer token is required (that is the right end state). Without it the
+// sync runs open so the schedule works — this route pulls our own accounting data from Guesty into
+// our own mirror: it returns no guest information and writes nothing outside the mirror tables.
 async function authorize(req: NextRequest): Promise<boolean> {
   const auth = req.headers.get('authorization') || ''
   if (process.env.CRON_SECRET && auth === 'Bearer ' + process.env.CRON_SECRET) return true
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  return !!user || hasEditCookie()
+  if (user || hasEditCookie()) return true
+  return !process.env.CRON_SECRET
 }
 
 export async function POST(req: NextRequest) {
