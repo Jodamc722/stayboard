@@ -23,7 +23,7 @@ import {
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
 } from 'lucide-react'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -109,7 +109,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
   negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphan reimb',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
-  empty_statement: 'Empty statement',
+  empty_statement: 'Empty statement', owner_stay: 'Owner / F&F stay',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
@@ -122,6 +122,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   commission_off: 'Commission % on this reservation strays from the owner’s usual rate — most often a canceled booking whose whole cancellation fee was taken as commission.',
   off_booking: 'Money on the statement with no booking behind it — management fees, owner charges, one-off adjustments.',
   empty_statement: 'A statement was generated with no line items at all — usually a listing that is not mapped to the owner.',
+  owner_stay: 'Owner stays and friends & family stays. Discounted by design, never a pricing error — flagged so each one is confirmed as authorised and its costs land correctly.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
