@@ -640,12 +640,14 @@ export async function buildAudit(month: string): Promise<AuditData> {
     if (batch.length < PAGE) break
   }
 
-  // Guest-folio invoice items for those reservations — the fee split is normally done HERE
-  // ("Cleaning fee" + "Revenue Fee" items, lump zeroed), and it does not surface in the
-  // owner ledger. Fetched only for the Expedia set (~100 rows), never portfolio-wide.
+  // Guest-folio invoice items — the fee split is normally done HERE ("Cleaning fee" + "Revenue
+  // Fee" items, lump zeroed), and it does not surface in the owner ledger. Fetched for the Expedia
+  // prep set AND for owner / owner-guest stays, because on an owner stay THE FOLIO IS THE ANSWER:
+  // the accommodation revenue may be anything, but the cleaning fee has to be charged to the owner
+  // there, and a statement with no CF line does not prove it is missing.
   const folioByRes: Record<string, any[]> = {}
   {
-    const ids = expRes.map(r => String(r.id || '')).filter(Boolean)
+    const ids = Array.from(new Set([...expRes, ...ownerStayRes].map(r => String(r.id || '')).filter(Boolean)))
     for (let i = 0; i < ids.length; i += 100) {
       const { data } = await sb.from('guesty_reservations')
         .select('id, inv:raw->money->invoiceItems')
@@ -1080,17 +1082,23 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // "No issues found", which is where the team's spreadsheet listed 15 of them by hand instead.
       if (on.owner_stay && stayTag) {
         const nightsTxt = totalNights > 0 ? totalNights + ' night' + (totalNights === 1 ? '' : 's') : monthNights + ' night' + (monthNights === 1 ? '' : 's')
-        // THE CLEANING IS THE QUESTION. The team's own sheet writes "Owner stay - no cleaning fee
-        // charged" on every one of these, because that is the thing that actually goes wrong: the
-        // unit still got cleaned and somebody has to be charged for it.
-        const cleaned = g.lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
+        // THE CLEANING FEE IS THE POINT. An owner stay may carry accommodation revenue or none —
+        // that part varies. What must be true every time is that the owner was charged for the
+        // turnover, and that charge lives on the GUEST FOLIO. The statement's CF line is only a
+        // second look; a folio with no cleaning item is the finding.
+        const folio = res ? (folioByRes[String(res.id || '')] || []) : []
+        const folioClean = money(folio.filter((x: any) => PREP_CLEAN_RE.test(String(x?.title || x?.name || ''))).reduce((a: number, x: any) => a + (Number(x?.amount) || 0), 0))
+        const stmtClean = g.lines.some(l => l.code === 'CF' || PREP_CLEAN_RE.test(l.label))
+        const charged = folioClean > 0.005 || stmtClean
         flags.push({
-          type: 'owner_stay', severity: 'review', amount: net,
+          type: 'owner_stay', severity: charged ? 'review' : 'high', amount: net,
           detail: STAY_LABEL[stayTag] + ' — ' + nightsTxt
             + (net > 0.5 ? ', paying the owner $' + net.toFixed(2)
               : net < -0.5 ? ', costing the owner $' + Math.abs(net).toFixed(2)
                 : ' at no revenue')
-            + (cleaned ? '. A cleaning fee is on the statement.' : '. NO CLEANING FEE CHARGED — confirm who is paying for the turnover.'),
+            + (folioClean > 0.005 ? '. Cleaning fee of $' + folioClean.toFixed(2) + ' is on the folio.'
+              : stmtClean ? '. A cleaning fee is on the statement but NOT on the guest folio — check the booking.'
+                : '. NO CLEANING FEE ON THE FOLIO — the owner has not been charged for the turnover.'),
         })
       }
       if (on.no_reservation && !res) {
@@ -1199,13 +1207,21 @@ export async function buildAudit(month: string): Promise<AuditData> {
         rental: 0, commission: 0, other: 0, net: 0, rate: null, avgRate: null,
         lines: [], lineCount: 0, posted: 0, reversed: 0,
         resValue: Number(r.money_total) || null,
-        flags: [{
-          type: 'owner_stay', severity: 'review',
-          detail: STAY_LABEL[kind] + ' — ' + (nights || '?') + ' night' + (nights === 1 ? '' : 's')
-            + (/cancel/i.test(String(r.status || '')) ? ', canceled' : ' held off the market')
-            + ', and nothing for it on this statement: NO CLEANING FEE CHARGED. '
-            + 'Confirm it was authorised and who is paying for the turnover.',
-        }],
+        flags: [(() => {
+          const folio = folioByRes[String(r.id || '')] || []
+          const folioClean = money(folio.filter((x: any) => PREP_CLEAN_RE.test(String(x?.title || x?.name || ''))).reduce((a: number, x: any) => a + (Number(x?.amount) || 0), 0))
+          const canceledStay = /cancel/i.test(String(r.status || ''))
+          return {
+            type: 'owner_stay' as AuditFlagType,
+            severity: (folioClean > 0.005 || canceledStay ? 'review' : 'high') as AuditSeverity,
+            detail: STAY_LABEL[kind] + ' — ' + (nights || '?') + ' night' + (nights === 1 ? '' : 's')
+              + (canceledStay ? ', canceled' : ' held off the market')
+              + ', nothing for it on this statement. '
+              + (folioClean > 0.005
+                ? 'Cleaning fee of $' + folioClean.toFixed(2) + ' is on the folio.'
+                : 'NO CLEANING FEE ON THE FOLIO — the owner has not been charged for the turnover.'),
+          }
+        })()],
         needsReview: true,
         status: (savedStatus && WRITABLE_STATUSES.includes(savedStatus as AuditStatus)) ? (savedStatus as AuditStatus) : 'review',
         touched: !!saved,
