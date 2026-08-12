@@ -1,128 +1,214 @@
-// FF&E AUDIT — the share-link API (Jon, 2026-08-10).
+// FF&E AUDIT API — hub pages, unit forms and saving, all on derived share links.
 //
-// FF&E IS A PURCHASING LIST, NOT WORK ORDERS (Jon: "make this FFE order not Maintenance or
-// anything else"). The first cut reused property_audits + audit_items to avoid a migration — that
-// was wrong, because audit_items is exactly what the Audit Desk dispatches into Breezeway as
-// maintenance tasks. "Replace the nightstands" would have become maintenance tickets and polluted
-// the maintenance cost and billing numbers. So this owns two tables of its own (migration 032) and
-// touches nothing in the task pipeline.
-//   ffe_audits   one row per listing, carrying the stable share_code — the link IS the key
-//   ffe_answers  one row per answered item
+// Jon, 2026-08-11: "it should not create a link, it should be created automatically... shareable
+// property level / unit level, where they can go in and out of links, mark them complete... should
+// also show if vacant or checkout today / checkin today... and should be organized by owner."
 //
-//   GET  ?code=<share>              public: the unit, the checklist scope and the saved answers
-//   POST { code, room, itemKey, ... } public: save one answer (upsert on room+item)
-//   POST { action:'link', listingId } signed in: get/create the link for a unit
-//   GET  ?building=17WEST            signed in: every unit's link + progress, for the index page
+// Three shapes of GET, one POST:
+//   ?hub=<code>     a building or an owner: every unit under it, with progress and today's status
+//   ?code=<code>    one unit: the checklist scope, saved answers and where it belongs
+//   ?index=1        signed in: the whole portfolio grouped by owner, with every share link
+//   POST            public: save one answer, or mark a unit complete
+//
+// FF&E IS A PURCHASING LIST. It writes to ffe_answers / ffe_unit_status and nothing else — no
+// Breezeway task, no work order, no maintenance cost. That separation is the point.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { roomsFor, totalItems } from '@/lib/ffe-checklist'
 import { buildingOf } from '@/lib/segments'
+import { ownerMap } from '@/lib/billing'
+import { isLiveStay } from '@/lib/stay-status'
+import { unitCode, buildingCode, ownerCode, resolveCode } from '@/lib/ffe-links'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 45
 
 const str = (v: any) => (v == null ? '' : String(v))
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
+const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
-function newCode(): string {
-  const c: any = (globalThis as any).crypto
-  const uuid = c && c.randomUUID ? c.randomUUID() : String(Math.random()).slice(2) + String(Math.random()).slice(2)
-  return String(uuid).replace(/-/g, '').slice(0, 14)
-}
-async function getUser() {
-  try { const s = createClient(); const { data } = await s.auth.getUser(); return data.user || null } catch { return null }
-}
+type Lst = { id: string; name: string; building: string; bedrooms: number | null; ownerId: string; ownerName: string }
+
 const bedroomsOf = (l: any): number | null => {
   const b = l ? l.bedrooms : null
   if (typeof b === 'number') return b
   const n = parseFloat(str(b)); return Number.isFinite(n) ? n : null
 }
 
-/** The one FF&E audit row for a listing — created on first ask so the link never changes after. */
-async function ffeAuditFor(db: any, listingId: string, email: string | null) {
-  const { data } = await db.from('ffe_audits').select('*').eq('listing_id', listingId).limit(1)
-  if (data && data[0]) return data[0]
-  const ins = await db.from('ffe_audits')
-    .insert({ listing_id: listingId, share_code: newCode(), status: 'open', created_by: email })
-    .select('*').limit(1)
-  if (ins.error) throw new Error(ins.error.message)
-  return ins.data && ins.data[0]
+/** Every active unit with its building and owner — the one list everything else is derived from. */
+async function portfolio(db: any): Promise<Lst[]> {
+  const [{ data: ls }, owners] = await Promise.all([
+    db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms:raw->>bedrooms').limit(2000),
+    ownerMap().catch(() => ({ byListing: {} as any })),
+  ])
+  return ((ls || []) as any[])
+    .filter(l => !DEAD.includes(str(l.status).toLowerCase()))
+    .map(l => {
+      const name = l.nickname || l.title || String(l.id)
+      const own = (owners as any).byListing[String(l.id)]
+      return {
+        id: String(l.id), name,
+        building: buildingOf(str(l.building), name) || 'Other',
+        bedrooms: bedroomsOf(l),
+        ownerId: own ? String(own.ownerId) : 'unassigned',
+        ownerName: own ? String(own.ownerName) : 'Unassigned owner',
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
 }
+
+/**
+ * What is happening in each unit TODAY. A walker needs to know before they knock: an occupied unit
+ * is not one to walk, a checkout is the best moment, and a check-in means finish before arrival.
+ */
+async function todayStatus(db: any, ids: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  if (!ids.length) return out
+  const today = ymd(new Date())
+  try {
+    const { data } = await db.from('guesty_reservations')
+      .select('listing_id,check_in,check_out,status')
+      .in('listing_id', ids).lte('check_in', today).gte('check_out', today).limit(3000)
+    for (const id of ids) out[id] = 'vacant'
+    for (const r of ((data || []) as any[])) {
+      if (!isLiveStay(r.status)) continue
+      const id = String(r.listing_id)
+      const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
+      // Precedence matters: a same-day turn is a checkout AND a check-in, and the crew needs to
+      // hear the tighter of the two.
+      if (ci === today && co === today) out[id] = 'turn'
+      else if (co === today) out[id] = out[id] === 'checkin' ? 'turn' : 'checkout'
+      else if (ci === today) out[id] = out[id] === 'checkout' ? 'turn' : 'checkin'
+      else if (ci < today && co > today) out[id] = 'occupied'
+    }
+  } catch { /* status is a nicety; the form still works without it */ }
+  return out
+}
+
+/** Progress per unit, from the answers table. */
+async function progress(db: any, ids: string[]) {
+  const answered: Record<string, number> = {}
+  const toOrder: Record<string, number> = {}
+  const done: Record<string, string | null> = {}
+  if (!ids.length) return { answered, toOrder, done }
+  try {
+    const { data } = await db.from('ffe_answers').select('listing_id,answer').in('listing_id', ids).limit(20000)
+    for (const a of ((data || []) as any[])) {
+      const id = String(a.listing_id)
+      answered[id] = (answered[id] || 0) + 1
+      if (['replace', 'add'].includes(str(a.answer))) toOrder[id] = (toOrder[id] || 0) + 1
+    }
+  } catch { /* table not migrated yet */ }
+  try {
+    const { data } = await db.from('ffe_unit_status').select('listing_id,completed_at').in('listing_id', ids).limit(3000)
+    for (const s of ((data || []) as any[])) done[String(s.listing_id)] = s.completed_at || null
+  } catch { /* optional */ }
+  return { answered, toOrder, done }
+}
+
+const unitCard = (l: Lst, p: any, st: Record<string, string>) => ({
+  id: l.id, name: l.name, bedrooms: l.bedrooms, building: l.building,
+  ownerId: l.ownerId, ownerName: l.ownerName,
+  code: unitCode(l.id),
+  total: totalItems(l.bedrooms),
+  answered: p.answered[l.id] || 0,
+  toOrder: p.toOrder[l.id] || 0,
+  completedAt: p.done[l.id] || null,
+  today: st[l.id] || 'vacant',
+})
 
 export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const sp = req.nextUrl.searchParams
-  const code = str(sp.get('code')).trim()
-  const building = str(sp.get('building')).trim()
-
   try {
-    // ---- index for the internal page: every unit in a building, with its link and progress ----
-    if (building) {
-      const user = await getUser()
-      if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-      const { data: ls } = await db.from('guesty_listings')
-        .select('id,nickname,title,building,status,bedrooms:raw->>bedrooms').limit(2000)
-      const units = ((ls || []) as any[])
-        .filter(l => !DEAD.includes(str(l.status).toLowerCase()))
-        .filter(l => (buildingOf(str(l.building), str(l.nickname || l.title)) || '').toLowerCase() === building.toLowerCase())
-        .map(l => ({ id: String(l.id), name: l.nickname || l.title || String(l.id), bedrooms: bedroomsOf(l) }))
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-      if (!units.length) return NextResponse.json({ ok: true, building, units: [] })
+    const all = await portfolio(db)
 
-      const ids = units.map(u => u.id)
-      const { data: audits } = await db.from('ffe_audits')
-        .select('id,listing_id,share_code').in('listing_id', ids).limit(500)
-      const byListing: Record<string, any> = {}
-      for (const a of ((audits || []) as any[])) byListing[String(a.listing_id)] = a
-      const auditIds = ((audits || []) as any[]).map(a => a.id)
-      const counts: Record<string, { answered: number; replace: number }> = {}
-      if (auditIds.length) {
-        const { data: items } = await db.from('ffe_answers')
-          .select('audit_id,answer').in('audit_id', auditIds).limit(5000)
-        for (const it of ((items || []) as any[])) {
-          const e = counts[String(it.audit_id)] = counts[String(it.audit_id)] || { answered: 0, replace: 0 }
-          e.answered += 1
-          if (['replace', 'add'].includes(String(it.answer))) e.replace += 1
+    // ---- INDEX (signed in): the whole portfolio by owner, with every link already made ----
+    if (sp.get('index')) {
+      const s = createClient()
+      const { data: u } = await s.auth.getUser()
+      if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+      const ids = all.map(l => l.id)
+      const [p, st] = await Promise.all([progress(db, ids), todayStatus(db, ids)])
+      const byOwner: Record<string, any> = {}
+      for (const l of all) {
+        const o = byOwner[l.ownerId] = byOwner[l.ownerId] || {
+          ownerId: l.ownerId, ownerName: l.ownerName, code: ownerCode(l.ownerId), buildings: {} as any, units: [] as any[],
         }
+        o.units.push(unitCard(l, p, st))
+        o.buildings[l.building] = { building: l.building, code: buildingCode(l.building) }
       }
+      const owners = Object.values(byOwner).map((o: any) => ({
+        ...o,
+        buildings: Object.values(o.buildings),
+        total: o.units.reduce((a: number, x: any) => a + x.total, 0),
+        answered: o.units.reduce((a: number, x: any) => a + x.answered, 0),
+        toOrder: o.units.reduce((a: number, x: any) => a + x.toOrder, 0),
+        complete: o.units.filter((x: any) => x.completedAt).length,
+      })).sort((a: any, b: any) => b.units.length - a.units.length || a.ownerName.localeCompare(b.ownerName))
+      return NextResponse.json({ ok: true, owners })
+    }
+
+    // ---- HUB (public): a building or an owner ----
+    const hub = str(sp.get('hub')).trim()
+    if (hub) {
+      const scope = resolveCode(hub, {
+        units: [], // a unit code is not a hub
+        buildings: Array.from(new Set(all.map(l => l.building))),
+        owners: Array.from(new Set(all.map(l => l.ownerId))),
+      })
+      if (!scope) return NextResponse.json({ error: 'link not found' }, { status: 404 })
+      const units = scope.kind === 'building'
+        ? all.filter(l => l.building.toLowerCase() === scope.id)
+        : all.filter(l => l.ownerId === scope.id)
+      const ids = units.map(l => l.id)
+      const [p, st] = await Promise.all([progress(db, ids), todayStatus(db, ids)])
+      const cards = units.map(l => unitCard(l, p, st))
       return NextResponse.json({
-        ok: true, building,
-        units: units.map(u => {
-          const a = byListing[u.id]
-          const c = a ? counts[String(a.id)] : null
-          return {
-            ...u,
-            code: a ? a.share_code : null,
-            total: totalItems(u.bedrooms),
-            answered: c ? c.answered : 0,
-            replace: c ? c.replace : 0,
-          }
-        }),
+        ok: true,
+        scope: {
+          kind: scope.kind,
+          name: scope.kind === 'building' ? (units[0]?.building || scope.id) : (units[0]?.ownerName || 'Owner'),
+          code: hub,
+        },
+        units: cards,
+        totals: {
+          units: cards.length,
+          total: cards.reduce((a, x) => a + x.total, 0),
+          answered: cards.reduce((a, x) => a + x.answered, 0),
+          toOrder: cards.reduce((a, x) => a + x.toOrder, 0),
+          complete: cards.filter(x => x.completedAt).length,
+        },
       })
     }
 
-    // ---- the public form ----
-    if (!code || code.length < 6) return NextResponse.json({ error: 'link not found' }, { status: 404 })
-    const { data: ar } = await db.from('ffe_audits').select('*').eq('share_code', code).limit(1)
-    const audit = ar && ar[0]
-    if (!audit) return NextResponse.json({ error: 'link not found' }, { status: 404 })
-    const { data: lr } = await db.from('guesty_listings')
-      .select('id,nickname,title,building,bedrooms:raw->>bedrooms').eq('id', audit.listing_id).limit(1)
-    const l = lr && lr[0]
-    const bedrooms = bedroomsOf(l)
-    const { data: items } = await db.from('ffe_answers')
-      .select('room,item_key,answer,qty,note').eq('audit_id', audit.id).limit(1000)
-    const answers: Record<string, { answer: string; qty: number | null; note: string | null }> = {}
-    for (const it of ((items || []) as any[])) {
-      answers[str(it.room) + '::' + str(it.item_key)] = {
-        answer: str(it.answer), qty: it.qty ?? null, note: it.note ?? null,
+    // ---- UNIT (public) ----
+    const code = str(sp.get('code')).trim()
+    if (!code) return NextResponse.json({ error: 'link not found' }, { status: 404 })
+    const scope = resolveCode(code, { units: all.map(l => l.id), buildings: [], owners: [] })
+    if (!scope) return NextResponse.json({ error: 'link not found' }, { status: 404 })
+    const l = all.find(x => x.id === scope.id) as Lst
+    const [p, st] = await Promise.all([progress(db, [l.id]), todayStatus(db, [l.id])])
+    let answers: Record<string, any> = {}
+    try {
+      const { data } = await db.from('ffe_answers')
+        .select('room,item_key,answer,qty,note').eq('listing_id', l.id).limit(1000)
+      for (const a of ((data || []) as any[])) {
+        answers[str(a.room) + '::' + str(a.item_key)] = { answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null }
       }
-    }
+    } catch { /* not migrated yet — form renders, saving will report the error */ }
     return NextResponse.json({
       ok: true,
-      unit: { name: l ? (l.nickname || l.title || 'Unit') : 'Unit', building: l ? str(l.building) : '', bedrooms },
-      rooms: roomsFor(bedrooms).map(r => r.key),
-      total: totalItems(bedrooms),
+      unit: {
+        name: l.name, building: l.building, bedrooms: l.bedrooms,
+        ownerName: l.ownerName, today: st[l.id] || 'vacant',
+        completedAt: p.done[l.id] || null,
+      },
+      // Where to go back to. The hub the walker most likely came from is the building.
+      hub: { code: buildingCode(l.building), name: l.building },
+      rooms: roomsFor(l.bedrooms).map(r => r.key),
+      total: totalItems(l.bedrooms),
       answers,
     })
   } catch (e: any) {
@@ -133,24 +219,30 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
-
   try {
-    // ---- signed-in: mint or fetch a unit's link ----
-    if (String(body.action || '') === 'link') {
-      const user = await getUser()
-      if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-      const listingId = str(body.listingId)
-      if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
-      const audit = await ffeAuditFor(db, listingId, user.email || null)
-      return NextResponse.json({ ok: true, code: audit.share_code, url: req.nextUrl.origin + '/audit/ffe/' + audit.share_code })
-    }
-
-    // ---- public: save one answer ----
     const code = str(body.code).trim()
-    if (!code || code.length < 6) return NextResponse.json({ error: 'link not found' }, { status: 404 })
-    const { data: ar } = await db.from('ffe_audits').select('id,listing_id').eq('share_code', code).limit(1)
-    const audit = ar && ar[0]
-    if (!audit) return NextResponse.json({ error: 'link not found' }, { status: 404 })
+    if (!code) return NextResponse.json({ error: 'link not found' }, { status: 404 })
+    const all = await portfolio(db)
+    const scope = resolveCode(code, { units: all.map(l => l.id), buildings: [], owners: [] })
+    if (!scope) return NextResponse.json({ error: 'link not found' }, { status: 404 })
+    const listingId = scope.id
+
+    // Mark the unit finished — a person's statement, not a computed one.
+    if (String(body.action || '') === 'complete') {
+      const done = body.done !== false
+      const row = {
+        listing_id: listingId,
+        completed_at: done ? new Date().toISOString() : null,
+        completed_by: str(body.by).slice(0, 80) || null,
+        updated_at: new Date().toISOString(),
+      }
+      const { data: ex } = await db.from('ffe_unit_status').select('listing_id').eq('listing_id', listingId).limit(1)
+      const r = ex && ex[0]
+        ? await db.from('ffe_unit_status').update(row).eq('listing_id', listingId)
+        : await db.from('ffe_unit_status').insert(row)
+      if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, completedAt: row.completed_at })
+    }
 
     const room = str(body.room).slice(0, 40)
     const itemKey = str(body.itemKey).slice(0, 40)
@@ -158,24 +250,20 @@ export async function POST(req: NextRequest) {
     const answer = str(body.answer)
     if (!['replace', 'add', 'keep', 'na'].includes(answer)) return NextResponse.json({ error: 'bad answer' }, { status: 400 })
     const qtyN = Number(body.qty)
-    const qty = Number.isFinite(qtyN) && qtyN > 0 ? Math.min(Math.round(qtyN), 99) : 1
-    const note = str(body.note).slice(0, 500) || null
-    const title = str(body.title).slice(0, 120) || itemKey
-
     const row = {
-      audit_id: audit.id, listing_id: audit.listing_id,
-      room, item_key: itemKey, title, answer, qty, note,
+      listing_id: listingId, room, item_key: itemKey,
+      title: str(body.title).slice(0, 120) || itemKey,
+      answer,
+      qty: Number.isFinite(qtyN) && qtyN > 0 ? Math.min(Math.round(qtyN), 99) : 1,
+      note: str(body.note).slice(0, 500) || null,
       updated_at: new Date().toISOString(),
     }
     const { data: ex } = await db.from('ffe_answers')
-      .select('id').eq('audit_id', audit.id).eq('room', room).eq('item_key', itemKey).limit(1)
-    if (ex && ex[0]) {
-      const up = await db.from('ffe_answers').update(row).eq('id', ex[0].id)
-      if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 })
-    } else {
-      const ins = await db.from('ffe_answers').insert(row)
-      if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
-    }
+      .select('id').eq('listing_id', listingId).eq('room', room).eq('item_key', itemKey).limit(1)
+    const r = ex && ex[0]
+      ? await db.from('ffe_answers').update(row).eq('id', ex[0].id)
+      : await db.from('ffe_answers').insert(row)
+    if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 })
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
