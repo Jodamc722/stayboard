@@ -77,7 +77,8 @@ type Item = {
   statusTag: 'canceled' | 'inquiry' | 'declined' | 'expired' | null
   rental: number; commission: number; other: number; net: number
   rate: number | null; avgRate: number | null
-  lines: Line[]; lineCount: number; flags: Flag[]; needsReview: boolean
+  lines: Line[]; lineCount: number; posted: number; reversed: number; resValue: number | null
+  flags: Flag[]; needsReview: boolean
   status: Status; touched: boolean; note: string; comments: Comment[]
   updatedBy: string | null; updatedAt: string | null
 }
@@ -230,6 +231,14 @@ function tieBadge(o: Owner): { text: string; cls: string; help: string } {
   return { text: 'Payout not posted yet · balance differs by ' + fmt(diff), cls: 'bg-neutral-100 text-neutral-600 ring-neutral-200', help: BALANCE_HELP }
 }
 
+// Plain words for what a failed save was trying to do, so the Retry chip says something useful.
+function describeSave(body: Record<string, any>): string {
+  if (body.status) return body.status === 'done' ? 'approval' : body.status === 'action' ? 'action flag' : 'reopen'
+  if (body.comment) return 'comment'
+  if (body.note !== undefined) return 'note'
+  return 'change'
+}
+
 function worstOf(it: Item): Severity | null {
   if (it.flags.some(f => f.severity === 'high')) return 'high'
   if (it.flags.some(f => f.severity === 'review')) return 'review'
@@ -271,6 +280,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [recheckBusy, setRecheckBusy] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [rowSync, setRowSync] = useState('')   // item key currently being re-pulled from Guesty
+  // Changes the server never confirmed, keyed by row — shown on the row with a Retry button so a
+  // dropped connection can never look like saved work.
+  const [unsaved, setUnsaved] = useState<Record<string, { body: Record<string, any>; label: string }>>({})
   const [eNotes, setENotes] = useState<Record<string, string>>({})     // entity note drafts (statement / prep / resolution)
   const [drafts, setDrafts] = useState<Record<string, string>>({})           // note drafts
   const [cDrafts, setCDrafts] = useState<Record<string, string>>({})         // comment drafts
@@ -327,23 +339,33 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       const owners = d.owners.map(o => {
         if (o.ownerId !== it.ownerId) return o
         const mine = items.filter(x => x.ownerId === o.ownerId)
-        const open = mine.filter(x => x.status !== 'done').length
+        // Open = waiting on a person. Rows with nothing flagged are NOT open — counting them
+        // here would put 1,193 clean rows back in the way of sign-off the moment anyone clicks.
+        const open = mine.filter(x => x.status === 'review' || x.status === 'action').length
+        const done = mine.filter(x => x.status === 'done').length
         // A statement with open rows again loses its signature — same rule the server applies.
-        return { ...o, open, done: mine.length - open, signOff: open > 0 ? null : o.signOff }
+        return { ...o, open, done, clear: mine.length - open - done, signOff: open > 0 ? null : o.signOff }
       })
       const totals = {
         ...d.totals,
         review: items.filter(x => x.status === 'review').length,
         action: items.filter(x => x.status === 'action').length,
         done: items.filter(x => x.status === 'done').length,
+        clear: items.filter(x => x.status === 'clear').length,
         signedOff: owners.filter(o => o.signOff).length,
       }
       return { ...d, items, owners, totals }
     })
   }
 
-  const save = async (it: Item, body: Record<string, any>) => {
-    if (!data) return
+  // EVERY CLICK IS A SERVER WRITE, AND A FAILED WRITE MUST LOOK FAILED.
+  // The board is worked on phones, on hotel wifi, halfway through a battery. The old version
+  // painted the new status immediately and only whispered an error if the request died — so a
+  // dropped connection left rows LOOKING approved that were never saved, and a refresh silently
+  // undid the afternoon. Now a failure rolls the row back to what the server actually holds and
+  // parks it in `unsaved` with a Retry button, so nothing is ever quietly lost.
+  const save = async (it: Item, body: Record<string, any>, prev?: Partial<Item>) => {
+    if (!data) return false
     const key = it.ownerId + '|' + it.key
     setSavingKey(key)
     try {
@@ -351,20 +373,45 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month: data.month, ownerId: it.ownerId, itemKey: it.key, ...body }),
       })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setError(j.error || 'Save failed'); setSavingKey(''); return }
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) {
+        if (prev) patchItem(it, prev)
+        setUnsaved(u => ({ ...u, [key]: { body, label: describeSave(body) } }))
+        setError((j && j.error) || 'That did not save. Nothing was lost — press Retry on the row.')
+        setSavingKey(''); return false
+      }
+      setUnsaved(u => { if (!u[key]) return u; const n = { ...u }; delete n[key]; return n })
       patchItem(it, { status: j.status, note: j.note, comments: j.comments || it.comments, touched: true, updatedBy: j.updatedBy, updatedAt: j.updatedAt })
-    } catch (e: any) { setError(String(e?.message || e)) }
+    } catch (e: any) {
+      if (prev) patchItem(it, prev)
+      setUnsaved(u => ({ ...u, [key]: { body, label: describeSave(body) } }))
+      setError('No connection — that change did not save. Press Retry on the row when you are back online.')
+      setSavingKey(''); return false
+    }
     setSavingKey('')
+    return true
   }
 
-  const setStatus = (it: Item, s: Status) => { patchItem(it, { status: s, touched: true }); save(it, { status: s }) }
+  const retrySave = async (it: Item) => {
+    const key = it.ownerId + '|' + it.key
+    const pending = unsaved[key]
+    if (!pending) return
+    if (pending.body.status) patchItem(it, { status: pending.body.status as Status, touched: true })
+    await save(it, pending.body, { status: it.status, touched: it.touched })
+  }
+
+  const setStatus = (it: Item, s: Status) => {
+    if (it.status === s) return
+    const prev = { status: it.status, touched: it.touched }
+    patchItem(it, { status: s, touched: true })
+    save(it, { status: s }, prev)
+  }
 
   const saveNote = (it: Item) => {
     const k = it.ownerId + '|' + it.key
     const v = drafts[k]
     if (v === undefined || v === it.note) return
-    save(it, { note: v })
+    save(it, { note: v }, { note: it.note })
   }
 
   const addComment = (it: Item) => {
@@ -700,6 +747,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           </div>
           {/* Approving moves the row into "Approved & closed" — the list you are working shrinks. */}
           <div className="flex items-center gap-1">
+            {unsaved[k] && (
+              <button onClick={() => retrySave(it)} disabled={savingKey === k}
+                title={'Your ' + unsaved[k].label + ' never reached the server — press to try again'}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200 hover:bg-rose-100">
+                <AlertTriangle size={10} /> Not saved · Retry
+              </button>
+            )}
             {it.status === 'done' ? (
               <>
                 <span className={'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset ' + STATUS_CLS.done}>
@@ -811,6 +865,28 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 <div className="text-[10px] text-muted mt-1">
                   {fmt(it.net / it.monthNights)} per night across the {it.monthNights} night{it.monthNights === 1 ? '' : 's'} on this statement
                   {it.splitMonth ? ' (the rest of the stay pays out on another statement)' : ''}
+                </div>
+              )}
+              {/* WHY THIS NUMBER IS NOT THE NUMBER ON THE BOOKING. Shown whenever the month
+                  contains reversals, or the booking's own value differs — the exact confusion
+                  the team hit on cancellations. */}
+              {(it.reversed < -0.005 || (it.resValue != null && Math.abs(it.resValue - it.net) > 1)) && (
+                <div className="mt-2 pt-2 border-t border-line text-[11px] text-muted space-y-0.5">
+                  <div className="font-semibold text-ink text-[10px] uppercase tracking-wide">How this total was built</div>
+                  <div>
+                    Posted this month <span className="font-semibold text-ink tabular-nums">{fmt(it.posted)}</span>
+                    {it.reversed < -0.005 && <> · taken back <span className="font-semibold text-rose-700 tabular-nums">{fmt(it.reversed)}</span></>}
+                    {' '}· leaves <span className="font-semibold text-ink tabular-nums">{fmt(it.net)}</span>
+                  </div>
+                  {it.resValue != null && (
+                    <div>
+                      The booking in Guesty is worth <span className="font-semibold text-ink tabular-nums">{fmt(it.resValue)}</span> in total
+                      {it.splitMonth ? ' across the whole stay, which spans two statements' : ''}
+                      {it.canceled ? ' — it was canceled, so the statement carries only what was kept or reversed, not the full stay' : ''}
+                      {!it.canceled && !it.splitMonth && ' — the statement figure is the owner’s share after commission and fees, so the two are not the same number'}
+                      .
+                    </div>
+                  )}
                 </div>
               )}
             </div>
