@@ -154,6 +154,9 @@ export type AuditOwner = {
   paid: number                   // PO total — money that actually moved to the owner
   hasPayout: boolean             // a payout has posted for this statement (PO rows exist)
   ties: boolean                  // earnings match the payout, or the balance when none has posted
+  stmtStatus: string             // Guesty's own status: PENDING = still a draft being built
+  isDraft: boolean               // PENDING/DRAFT — its balance is provisional and moves
+  generatedAt: string            // when Guesty last (re)generated this statement
   items: number                  // count; the items themselves live in the flat list
   open: number                   // items waiting on a person (review + action)
   done: number                   // items a person approved and closed
@@ -420,9 +423,21 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const rules = await auditRules()
 
   // 1. The generated statements for this month — the documents being audited.
-  const { data: stmtRows, error: stErr } = await sb.from('guesty_owner_statements')
-    .select('id, owner_id, owner_name, period_month, due_to_owner')
+  //    stmtStatus matters more than it looks: a PENDING statement is a DRAFT that Guesty is still
+  //    building, and its dueToOwner is recomputed on every pull (3020 Seville regenerated at
+  //    15:54 on 2026-08-12, three minutes after a sync). Comparing our line-item total against a
+  //    draft balance and calling the difference "off" is how the board spent a week reporting a
+  //    $113k problem that did not exist. Status comes along so the UI can say draft out loud.
+  const stmtCols = 'id, owner_id, owner_name, period_month, due_to_owner'
+  let { data: stmtRows, error: stErr } = await sb.from('guesty_owner_statements')
+    .select(stmtCols + ', stmt_status:raw->>status, stmt_generated_at:raw->>generatedAt')
     .eq('period_month', month)
+  if (stErr) {
+    // The mirror refused the JSON accessors — never lose the audit over a status label.
+    const plain = await sb.from('guesty_owner_statements').select(stmtCols).eq('period_month', month)
+    stmtRows = plain.data as any[]
+    stErr = plain.error
+  }
   if (stErr) throw new Error('statements read: ' + stErr.message)
   const stmts = (stmtRows || []) as any[]
   const stmtByOwner: Record<string, any> = {}
@@ -480,6 +495,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const ownerOf = (id: string): AuditOwner => owners[id] || (owners[id] = {
     ownerId: id, ownerName: '', hasStatement: !!stmtByOwner[id],
     dueToOwner: stmtByOwner[id] ? (Number(stmtByOwner[id].due_to_owner ?? 0) || 0) : null,
+    stmtStatus: String(stmtByOwner[id]?.stmt_status || ''),
+    isDraft: /pending|draft/i.test(String(stmtByOwner[id]?.stmt_status || '')),
+    generatedAt: String(stmtByOwner[id]?.stmt_generated_at || ''),
     rental: 0, commission: 0, other: 0, net: 0, paid: 0, hasPayout: false, ties: false, items: 0, open: 0,
     done: 0, clear: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null, stmtNote: '',
   })
