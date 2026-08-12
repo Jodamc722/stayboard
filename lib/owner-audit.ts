@@ -30,13 +30,26 @@ import { MONTH_LABEL, money } from './owner-statements'
 
 export type AuditFlagType =
   | 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev'
-  | 'passthru' | 'no_reservation' | 'commission_off'
+  | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
 export type AuditLine = { date: string; label: string; code: string; amount: number }
 export type AuditComment = { author: string; body: string; at: string }
-export type AuditStatus = 'review' | 'action' | 'done'
+// THE REVIEW LADDER. Only three of these are ever stored — 'clear' is computed, never written.
+//
+//   clear   nothing found on this row and nobody needed to look. NOT an accomplishment, and NOT
+//           counted as review work: the old model auto-marked every unflagged row 'done', so the
+//           board read "1202 of 1254 completed · 96%" when exactly 18 rows had ever been opened
+//           by a human. A number that flatters is worse than no number.
+//   review  something was flagged and it is waiting on a person.
+//   action  a person looked and it needs fixing in Guesty — still open, deliberately.
+//   done    a person made the call and closed it out (approved). The ONLY status that counts as
+//           completed work, and the only one that can be reached by clicking.
+export type AuditStatus = 'review' | 'action' | 'done' | 'clear'
+// What a human is allowed to set. 'clear' is the engine's word for "we found nothing", so it can
+// never be written in — otherwise a click would erase the distinction the ladder exists to make.
+export const WRITABLE_STATUSES: AuditStatus[] = ['review', 'action', 'done']
 
 export type AuditItem = {
   key: string                    // confirmation code, or line:<code>:<label>
@@ -71,8 +84,11 @@ export type AuditItem = {
   rate: number | null            // in-month rental / in-month nights (what the statement shows)
   avgRate: number | null         // THE JUDGED RATE: whole-reservation accommodation value / total
                                  // nights (folio-based, immune to partially-posted ledgers)
-  lines: AuditLine[]
+  lines: AuditLine[]             // capped for payload size — see lineCount
+  lineCount: number              // how many statement line items this row REALLY has, so the
+                                 // detail never shows a truncated table that quietly fails to add up
   flags: AuditFlag[]
+  needsReview: boolean           // carries at least one flag above informational
   status: AuditStatus
   touched: boolean               // true when a human explicitly set the status
   note: string
@@ -133,8 +149,9 @@ export type AuditOwner = {
   paid: number
   ties: boolean
   items: number                  // count; the items themselves live in the flat list
-  open: number                   // items still at review/action
-  done: number                   // items completed
+  open: number                   // items waiting on a person (review + action)
+  done: number                   // items a person approved and closed
+  clear: number                  // items with nothing flagged — no human decision needed
   high: number                   // items carrying a HIGH flag
   reviewFlags: number            // items carrying a review-severity flag (and no high)
   notes: number                  // items with an audit note
@@ -153,12 +170,15 @@ export type AuditData = {
   totals: {
     owners: number; statements: number; reservations: number
     flagged: number; high: number
-    review: number; action: number; done: number
+    review: number; action: number; done: number; clear: number
     signedOff: number
     prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
-  coverage: { ready: boolean; missing: string[] }
+  // syncedAt = when the mirror last finished sweeping THIS month from Guesty. Shown on the board:
+  // an audit run against stale accounting data is worse than no audit, and a dead sync is invisible
+  // unless the page says so out loud.
+  coverage: { ready: boolean; missing: string[]; syncedAt: string | null }
   rules: AuditRules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
@@ -223,15 +243,6 @@ const OWNERISH_RE = /owner/i
 // are discounted on purpose, so they get TAGGED and their low-rate reads as informational.
 const FF_RE = /friends?\s*(&|and)\s*family|\bf\s*&\s*f\b|\bfnf\b|\bff\b|friends?[-_ ]?family|family[-_ ]?friends?|\bcomp(ed|limentary)?\b/i
 
-// THE owner / friends-&-family test. Exported because this is a business law, not a local detail:
-// an owner hold and an F&F comp are inventory decisions, so they must never be read as a pricing
-// error (owner audit) OR as a guest walking away (revenue cancel rate). One definition, imported
-// everywhere — the audit found this same regex pair silently re-implemented across the app.
-export function isOwnerOrFriendsFamily(source: string, tagBlob: string, guestName: string): boolean {
-  return FF_RE.test(tagBlob) || FF_RE.test(guestName)
-    || OWNERISH_RE.test(source) || OWNERISH_RE.test(tagBlob) || OWNERISH_RE.test(guestName)
-}
-
 // ── EDITABLE RULES ────────────────────────────────────────────────────────────
 // The thresholds behind the flags are policy, not physics. Stored in app_settings (JSON over
 // TEXT, via lib/app-settings) and merged over these defaults, so a missing or mangled setting
@@ -260,6 +271,7 @@ export type AuditRules = {
   passthruLo: number                           // commission/rental band treated as a wash
   passthruHi: number
   commTolerance: number                        // flag when commission % strays this many points from the owner's usual rate
+  offBookingMin: number                        // $ from this size up, a charge with no booking behind it needs a look
   enabled: Record<AuditFlagType, boolean>      // per-flag kill switch
 }
 export const DEFAULT_AUDIT_RULES: AuditRules = {
@@ -267,7 +279,8 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   lastMinDays: 3, lastMinExtra: 20,
   lowRate: 60, passthruLo: 0.9, passthruHi: 1.1,
   commTolerance: 5,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true },
+  offBookingMin: 250,
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -294,6 +307,7 @@ function sanitizeRules(s: any, base: AuditRules): AuditRules {
     passthruLo: Math.min(1, Math.max(0.5, num(s?.passthruLo, base.passthruLo))),
     passthruHi: Math.max(1, Math.min(2, num(s?.passthruHi, base.passthruHi))),
     commTolerance: Math.min(30, Math.max(1, num(s?.commTolerance, base.commTolerance))),
+    offBookingMin: Math.max(0, num(s?.offBookingMin, base.offBookingMin)),
     enabled,
   }
 }
@@ -399,9 +413,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const stmtByOwner: Record<string, any> = {}
   for (const s of stmts) stmtByOwner[String(s.owner_id || '')] = s
 
-  // 2. Ledger coverage — has the mirror actually swept this month?
-  const { data: cov } = await sb.from('guesty_ledger_months').select('month, status').eq('month', month)
-  const covered = ((cov || []) as any[]).some(r => r.status === 'done')
+  // 2. Ledger coverage — has the mirror actually swept this month, and how long ago?
+  const { data: cov } = await sb.from('guesty_ledger_months').select('month, status, completed_at').eq('month', month)
+  const covRows = (cov || []) as any[]
+  const covered = covRows.some(r => r.status === 'done')
+  const syncedAt = covRows
+    .map(r => (r.completed_at ? String(r.completed_at) : ''))
+    .filter(Boolean)
+    .sort()
+    .pop() || null
 
   // 3. Every recognized ledger row for the month. Scalar selects only (PERF LAW: never pull
   //    whole raw JSONB over thousands of rows); falls back to a plain select if the mirror
@@ -444,7 +464,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     ownerId: id, ownerName: '', hasStatement: !!stmtByOwner[id],
     dueToOwner: stmtByOwner[id] ? (Number(stmtByOwner[id].due_to_owner ?? 0) || 0) : null,
     rental: 0, commission: 0, other: 0, net: 0, paid: 0, ties: false, items: 0, open: 0,
-    done: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null, stmtNote: '',
+    done: 0, clear: 0, high: 0, reviewFlags: 0, notes: 0, commentCount: 0, signOff: null, stmtNote: '',
   })
 
   for (const r of rows) {
@@ -925,13 +945,30 @@ export async function buildAudit(month: string): Promise<AuditData> {
         const amt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
         flags.push({ type: 'refund', severity: 'review', amount: amt, detail: 'Refund-looking line outside any reservation — verify.' })
       }
+      // MONEY THAT BELONGS TO NO BOOKING. Management fees, owner charges, one-off adjustments:
+      // real money moving on the owner's statement with no reservation to explain it, and until
+      // now it carried no flag at all — July 2026 hid a −$1,430 "Revenue Management Fee" on Rock
+      // Soffer's statement in the completed pile. Small housekeeping amounts stay informational.
+      if (on.off_booking && !flags.some(f => f.severity !== 'info') && Math.abs(net) > 0.005) {
+        const big = Math.abs(net) >= rules.offBookingMin
+        flags.push({
+          type: 'off_booking', severity: big ? 'review' : 'info', amount: net,
+          detail: (net < 0 ? 'The owner is charged $' + Math.abs(net).toFixed(2) : 'The owner is credited $' + net.toFixed(2))
+            + ' on a statement line with no booking behind it'
+            + (big ? ' — confirm it is meant to be on this statement.' : ' (small housekeeping amount).'),
+        })
+      }
     }
 
     const worst: AuditSeverity = flags.some(f => f.severity === 'high') ? 'high'
       : flags.some(f => f.severity === 'review') ? 'review' : 'info'
     const key = g.resCode || g.lineKey
     const saved = reviews[g.ownerId + '|' + key]
-    const defaultStatus: AuditStatus = worst === 'info' ? 'done' : 'review'
+    // A row nobody needs to look at is CLEAR, not "done" — see the AuditStatus ladder. Only a
+    // human click can produce 'done', so the completed count means what it says.
+    const needsReview = worst !== 'info'
+    const defaultStatus: AuditStatus = needsReview ? 'review' : 'clear'
+    const savedStatus = saved ? String(saved.status) : ''
     const comments: AuditComment[] = Array.isArray(saved?.comments) ? saved.comments : []
 
     items.push({
@@ -954,8 +991,13 @@ export async function buildAudit(month: string): Promise<AuditData> {
       rental: g.rental, commission: g.commission, other: g.other, net,
       rate, avgRate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
+      lineCount: g.lines.length,
       flags,
-      status: saved ? (String(saved.status) as AuditStatus) : defaultStatus,
+      needsReview,
+      // Stored statuses win, but only the ones a human can actually set. Rows saved as 'done'
+      // under the old auto-complete behaviour stay done — those were real clicks.
+      status: (savedStatus && WRITABLE_STATUSES.includes(savedStatus as AuditStatus))
+        ? (savedStatus as AuditStatus) : defaultStatus,
       touched: !!saved,
       note: saved ? String(saved.note || '') : '',
       comments,
@@ -973,8 +1015,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const o = owners[it.ownerId]
     if (!o) continue
     o.items++
-    if (it.status !== 'done') o.open++
-    else o.done++
+    // OPEN = waiting on a person. Rows with nothing wrong are not work and never were:
+    // counting them made every statement look 96% done and un-signable at the same time.
+    if (it.status === 'review' || it.status === 'action') o.open++
+    else if (it.status === 'done') o.done++
+    else o.clear++
     if (it.flags.some(f => f.severity === 'high')) o.high++
     else if (it.flags.some(f => f.severity === 'review')) o.reviewFlags++
     if (it.note) o.notes++
@@ -1093,6 +1138,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     review: items.filter(i => i.status === 'review').length,
     action: items.filter(i => i.status === 'action').length,
     done: items.filter(i => i.status === 'done').length,
+    clear: items.filter(i => i.status === 'clear').length,
     signedOff: Object.values(owners).filter(o => o.signOff).length,
     prepOpen: prep.filter(p => !prepResolved(p)).length,
     rental: money(Object.values(owners).reduce((a, o) => a + o.rental, 0)),
@@ -1108,7 +1154,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     owners: Object.values(owners).sort((a, b) => a.ownerName.localeCompare(b.ownerName)),
     items,
     totals: t,
-    coverage: { ready: covered, missing: covered ? [] : [month] },
+    coverage: { ready: covered, missing: covered ? [] : [month], syncedAt },
     rules,
     prep: prep.sort((a, b) =>
       Number(prepResolved(a)) - Number(prepResolved(b))
