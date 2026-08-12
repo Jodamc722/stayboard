@@ -99,7 +99,7 @@ type Data = {
     review: number; action: number; done: number; clear: number; signedOff: number; prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
-  coverage: { ready: boolean; missing: string[]; syncedAt: string | null }
+  coverage: { ready: boolean; missing: string[]; syncedAt: string | null; resScanned: number; ownerStaysFound: number }
   rules: Rules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
