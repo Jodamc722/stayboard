@@ -34,6 +34,8 @@ export function LaborEconStrip({ days = 7 }: { days?: number }) {
   if (err) return null
   const hk = d?.departments?.housekeeping
   const mt = d?.departments?.maintenance
+  const sup = d?.departments?.supervision
+  const econ = d?.econ
   const pay = d?.payroll
   const band = pay?.band
   const bandTone = band === 'over' ? 'bad' : band === 'watch' ? 'warn' : band === 'on_target' ? 'good' : undefined
@@ -47,14 +49,14 @@ export function LaborEconStrip({ days = 7 }: { days?: number }) {
         <a href="/labor" className="text-[11px] font-semibold text-indigo-600 hover:underline inline-flex items-center gap-0.5">Full labor board <ArrowRight size={11} /></a>
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-y-3 items-start">
-        <Tile label="Cost / clean" value={v(hk?.costPerClean, fmt$)} sub="all HK staff" />
+        <Tile label="Cost / clean" value={v(hk?.costPerClean, fmt$)} sub="housekeepers only" />
         <Tile label="Fee / clean" value={v(hk?.feePerClean, fmt$)} sub="in-house units" />
-        <Tile label="HK margin" value={v(hk?.margin, fmt$)} tone={hk && hk.margin < 0 ? 'bad' : 'good'} sub="rev - labor" />
-        <Tile label="Maint wages" value={v(mt?.payroll, fmt$)} sub="Homebase" />
-        <Tile label="Maint billable" value={v(mt?.billableRevenue, fmt$)} sub="Breezeway billing" />
-        <Tile label="Maint margin" value={v(mt?.billableMargin, fmt$)} tone={mt && mt.billableMargin < 0 ? 'bad' : 'good'} sub="billable - wages" />
+        <Tile label="HK margin" value={v(hk?.margin, fmt$)} tone={hk && hk.margin < 0 ? 'bad' : 'good'} sub="fees - HK wages" />
+        <Tile label="Maint billable" value={v(mt?.billableRevenue, fmt$)} sub="charge on the task" />
+        <Tile label="Maint margin" value={v(mt?.margin ?? mt?.billableMargin, fmt$)} tone={mt && (mt.margin ?? mt.billableMargin) < 0 ? 'bad' : 'good'} sub={L0 ? undefined : 'vs ' + fmt$(mt?.payroll) + ' wages'} />
+        <Tile label="Supervisors" value={v(sup?.payroll, fmt$)} sub={L0 ? undefined : (sup?.coveragePct != null ? sup.coveragePct + '% of mgmt fees' : 'overhead')} />
         <Tile label="Payroll" value={v(pay?.actual, fmt$)} sub={L0 ? undefined : 'sched ' + fmt$(pay?.scheduled)} />
-        <Tile label="In-house rev" value={v(pay?.revenueInhouse, fmt$)} sub={L0 ? undefined : 'vendor ' + fmt$(pay?.revenueVendor)} />
+        <Tile label="Total margin" value={v(econ?.margin, fmt$)} tone={econ && econ.margin < 0 ? 'bad' : 'good'} sub={L0 ? undefined : 'cleaning + billable - payroll'} />
         <Tile label="Labor %" value={v(pay?.laborPct, (n) => n + '%')} tone={bandTone as any} sub={L0 ? undefined : 'goal <= ' + (pay?.goalPct ?? '—') + '%'} />
       </div>
     </section>
