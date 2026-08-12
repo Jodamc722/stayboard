@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 
     type Row = {
       unit: string; building: string; room: string; item: string; code: string; product: string
-      placement: string; qty: number; cost: number | null; total: number | null
+      spec: string; placement: string; qty: number; cost: number | null; total: number | null
       vendor: string; sku: string; url: string; stage: string; po: string; note: string
     }
     const rows: Row[] = ((lines || []) as any[]).map(l => {
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
         unit: str(l.unit_name), building: str(l.building),
         room: roomEn[str(l.room)] || str(l.room),
         item: itemEn[str(l.room) + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
-        code: str(l.code), product: str(l.product),
+        code: str(l.code), product: str(l.product), spec: str(l.spec),
         placement: str(l.placement), qty, cost,
         total: cost == null ? null : Math.round(cost * qty * 100) / 100,
         vendor: str(l.vendor), sku: str(l.vendor_sku), url: str(l.url),
@@ -83,10 +83,10 @@ export async function GET(req: NextRequest) {
     // ── CSV ──
     if (fmt === 'csv') {
       const esc = (v: any) => { const t = str(v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t }
-      const head = ['Code', 'Product', 'Building', 'Unit', 'Room', 'Replacing', 'Where it goes', 'Qty', 'Unit cost', 'Line total', 'Vendor', 'Vendor SKU', 'Stage', 'PO', 'Product link', 'Note']
-      const body = rows.map(r => [r.code, r.product, r.building, r.unit, r.room, r.item, r.placement, r.qty,
+      const head = ['Code', 'Product', 'Size / spec', 'Building', 'Unit', 'Room', 'Replacing', 'Where it goes', 'Qty', 'Unit cost', 'Line total', 'Vendor', 'Vendor SKU', 'Stage', 'PO', 'Product link', 'Note']
+      const body = rows.map(r => [r.code, r.product, r.spec, r.building, r.unit, r.room, r.item, r.placement, r.qty,
         r.cost == null ? '' : r.cost, r.total == null ? '' : r.total, r.vendor, r.sku, r.stage, r.po, r.url, r.note].map(esc).join(','))
-      const csv = [head.join(','), ...body, '', ['', '', '', '', '', '', '', '', 'Total', grand].map(esc).join(',')].join('\n')
+      const csv = [head.join(','), ...body, '', ['', '', '', '', '', '', '', '', '', 'Total', grand].map(esc).join(',')].join('\n')
       return new NextResponse(csv, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
           rows: rs.map(r => [
             r.code || '—',
             r.product || r.item,
-            r.room + (r.placement ? ' · ' + r.placement : ''),
+            (r.spec ? r.spec + ' — ' : '') + r.room + (r.placement ? ' · ' + r.placement : ''),
             String(r.qty),
             r.cost == null ? 'TBC' : usd(r.cost),
             r.stage === STAGE_LABEL.declined ? 'not taken' : (r.total == null ? 'TBC' : usd(r.total)),
@@ -128,8 +128,9 @@ export async function GET(req: NextRequest) {
         ],
         columns: [
           { header: 'Code', width: 12 },
-          { header: 'Product', width: 30 },
-          { header: 'Where it goes', width: 30 },
+          { header: 'Product', width: 26 },
+          { header: 'Size / spec', width: 12 },
+          { header: 'Where it goes', width: 26 },
           { header: 'Qty', width: 6, align: 'r' },
           { header: 'Each', width: 10, align: 'r' },
           { header: 'Total', width: 12, align: 'r' },
@@ -155,55 +156,56 @@ export async function GET(req: NextRequest) {
     const H = (v: string): XCell => ({ v, s: 3 })
     const sheet1: XSheet = {
       name: 'Order lines',
-      widths: [11, 30, 14, 24, 18, 22, 22, 6, 11, 12, 16, 14, 13, 12, 30],
+      widths: [11, 30, 14, 14, 24, 18, 22, 22, 6, 11, 12, 16, 14, 13, 12, 30],
       rows: [],
       links: [],
     }
     sheet1.rows.push([{ v: 'FF&E Order ' + str(order.order_no), s: 2 }])
     sheet1.rows.push([{ v: str(order.title) || str(order.owner_name), s: 8 }])
     sheet1.rows.push([])
-    sheet1.rows.push(['Code', 'Product', 'Building', 'Unit', 'Room', 'Replacing', 'Where it goes', 'Qty',
+    sheet1.rows.push(['Code', 'Product', 'Size / spec', 'Building', 'Unit', 'Room', 'Replacing', 'Where it goes', 'Qty',
       'Unit cost', 'Line total', 'Vendor', 'Vendor SKU', 'Stage', 'PO', 'Product link'].map(H))
     let r0 = sheet1.rows.length
     for (const r of rows) {
       sheet1.rows.push([
-        { v: r.code }, { v: r.product || r.item }, { v: r.building }, { v: r.unit }, { v: r.room },
+        { v: r.code }, { v: r.product || r.item }, { v: r.spec }, { v: r.building }, { v: r.unit }, { v: r.room },
         { v: r.item }, { v: r.placement }, { v: r.qty, num: true },
         r.cost == null ? { v: '' } : { v: r.cost, num: true, s: 4 },
         r.total == null ? { v: '' } : { v: r.total, num: true, s: 4 },
         { v: r.vendor }, { v: r.sku }, { v: r.stage }, { v: r.po },
         { v: r.url, s: r.url ? 9 : 0 },
       ])
-      if (r.url) sheet1.links!.push({ ref: 'O' + (r0 + 1), url: r.url })
+      if (r.url) sheet1.links!.push({ ref: 'P' + (r0 + 1), url: r.url })
       r0 += 1
     }
     sheet1.rows.push([])
-    sheet1.rows.push([{ v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' },
+    sheet1.rows.push([{ v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' },
       { v: 'Order total', s: 7 }, { v: Math.round(grand * 100) / 100, num: true, s: 6 }])
 
     // A second sheet the way a buyer actually orders: one row per product code, not per unit.
-    const byCode: Record<string, { code: string; product: string; vendor: string; sku: string; qty: number; cost: number | null; units: Set<string> }> = {}
+    const byCode: Record<string, { code: string; product: string; spec: string; vendor: string; sku: string; qty: number; cost: number | null; units: Set<string> }> = {}
     for (const r of live) {
-      const k = r.code || ('~' + r.item)
-      const b = byCode[k] = byCode[k] || { code: r.code, product: r.product || r.item, vendor: r.vendor, sku: r.sku, qty: 0, cost: r.cost, units: new Set<string>() }
+      // Grouped by code AND spec: a 9x12 rug and an 8x10 rug are two different things to buy.
+      const k = (r.code || ('~' + r.item)) + '|' + r.spec
+      const b = byCode[k] = byCode[k] || { code: r.code, product: r.product || r.item, spec: r.spec, vendor: r.vendor, sku: r.sku, qty: 0, cost: r.cost, units: new Set<string>() }
       b.qty += r.qty
       b.units.add(r.unit)
       if (b.cost == null) b.cost = r.cost
     }
     const sheet2: XSheet = {
       name: 'By product',
-      widths: [11, 34, 18, 16, 8, 12, 13, 9],
+      widths: [11, 34, 14, 18, 16, 8, 12, 13, 9],
       rows: [
         [{ v: 'What to buy', s: 2 }],
-        [{ v: 'One row per product code — total quantity across every unit on this order.', s: 8 }],
+        [{ v: 'One row per product code and size — total quantity across every unit on this order.', s: 8 }],
         [],
-        ['Code', 'Product', 'Vendor', 'Vendor SKU', 'Qty', 'Unit cost', 'Extended', 'Units'].map(H),
+        ['Code', 'Product', 'Size / spec', 'Vendor', 'Vendor SKU', 'Qty', 'Unit cost', 'Extended', 'Units'].map(H),
       ],
     }
     const codeRows = Object.values(byCode).sort((a, b) => (a.code || 'zz').localeCompare(b.code || 'zz'))
     for (const b of codeRows) {
       sheet2.rows.push([
-        { v: b.code || '—' }, { v: b.product }, { v: b.vendor }, { v: b.sku },
+        { v: b.code || '—' }, { v: b.product }, { v: b.spec }, { v: b.vendor }, { v: b.sku },
         { v: b.qty, num: true },
         b.cost == null ? { v: '' } : { v: b.cost, num: true, s: 4 },
         b.cost == null ? { v: '' } : { v: Math.round(b.cost * b.qty * 100) / 100, num: true, s: 4 },
@@ -211,7 +213,7 @@ export async function GET(req: NextRequest) {
       ])
     }
     sheet2.rows.push([])
-    sheet2.rows.push([{ v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: 'Order total', s: 7 },
+    sheet2.rows.push([{ v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: '' }, { v: 'Order total', s: 7 },
       { v: Math.round(grand * 100) / 100, num: true, s: 6 }])
 
     const buf = makeXlsx([sheet1, sheet2])
