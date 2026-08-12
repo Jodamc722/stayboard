@@ -22,6 +22,7 @@ import { getLaborSettings } from './labor-settings'
 import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
 import { laborAmount } from './billing'
 import { blockedUnits, type BlockedRun } from './blocked-units'
+import { laborEconomics } from './labor-econ'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -450,17 +451,10 @@ const numBadge = (n: number, hot: boolean) =>
 
 export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const d = await gather(variant)
-  // BLOCKED UNITS (Jon, 2026-08-10 — "urgent"). Scoped to this brief's market so a Miami
-  // supervisor gets Miami's blocks and not a portfolio-wide list they cannot act on. Best-effort:
-  // if the Guesty calendar call fails the rest of the brief still goes out on time.
-  let blocked: BlockedRun[] = []
-  let blockedLinked = 0
-  try {
-    const rep = await blockedUnits(30)
-    const mine = (rs: BlockedRun[]) => variant === 'full' ? rs : rs.filter(r => r.market === variant)
-    blocked = mine(rep.runs)
-    blockedLinked = mine(rep.linkedRuns).length
-  } catch { /* card renders as absent rather than blocking the send */ }
+  // BLOCKED UNITS LIVE ON THE GM BRIEF ONLY (Jon, 2026-08-12: "the blocked unit should only go in
+  // the GM brief"). A block is a revenue decision — who took the unit off the calendar and why —
+  // and it is not something a market crew can act on at 7am, so it was pulling attention away
+  // from the work they can actually do. buildGmBrief() still carries the full card.
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
@@ -635,171 +629,71 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
     // ---- Team economics yesterday (FULL brief only - carries dollars) --------
-    // Sections by role: HK / Maintenance / Other. Rev = guest cleaning fees.
-    // Billable = billable labor from Breezeway tasks (rates + billing adjustments,
-    // same math as the Billable Hours sheet). Margins = revenue totals minus labor.
+    //
+    // Jon, 2026-08-12: "Cleaning revenue, billable labor, their payroll, their costs, their
+    // margins — and I need it broken down by each department."
+    //
+    // Every number here comes out of lib/labor-econ, the same engine the labor board and the
+    // Monday email read, so the brief can never quietly disagree with the dashboard. What each
+    // crew is judged on differs, and the table says so out loud:
+    //   Housekeeping  cleaning fees earned vs housekeeper wages  → margin, and cost per clean
+    //   Maintenance   charges entered on tasks vs their wages    → margin
+    //   Supervisors   no margin. Overhead carried by management fees, shown beside it.
     if (variant === 'full') {
-      const { data: tRows } = await db2.from('breezeway_tasks_sync')
-        .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
-        .gte('finished_at', yd).lte('finished_at', yd + 'T23:59:59').limit(3000)
-      const rows2 = (tRows || []) as any[]
-      const ids2 = rows2.map(t => String(t.id))
-      const dets2: Record<string, any> = {}
-      const adjs2: Record<string, any> = {}
-      for (let i2 = 0; i2 < ids2.length; i2 += 400) {
-        const chunk2 = ids2.slice(i2, i2 + 400)
-        if (!chunk2.length) break
-        try { const { data } = await db2.from('breezeway_billing_details').select('task_id,rate_type,costs,supplies').in('task_id', chunk2); for (const d3 of (data || []) as any[]) dets2[String(d3.task_id)] = d3 } catch { /* no detail yet */ }
-        try { const { data } = await db2.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk2); for (const a3 of (data || []) as any[]) adjs2[String(a3.task_id)] = a3 } catch { /* overlay optional */ }
-      }
-      const kindOf = (t: any) => {
-        const s2 = (String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()
-        // Strips/walkthroughs and delivery errands are NOT departure cleans.
-        if (/strip|walkthrough|walk-through|deliver|mattress/.test(s2)) return 'other'
-        if (/clean|housekeep|turn/.test(s2)) return 'clean'
-        if (/inspect|walk/.test(s2)) return 'inspection'
-        if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s2)) return 'maintenance'
-        return 'other'
-      }
-      // Billable labor for a task, same math as the billing sheet. Cleans are
-      // excluded - their money is the guest cleaning fee, already in Rev.
-      // WHAT WE CHARGE FOR THE TASK, AS ENTERED (Jon, 2026-08-10: "billable labor is the actual
-      // number in the Breezeway task, not $40 x hours worked — that's just how we charge for the
-      // task"). This used to run laborAmount(rate_paid...), and rate_paid is 0 on every task in
-      // this account, so the column read $0 for everyone. The cost line item IS the price of the
-      // job — several are literally described "Labor" at $40 — so it is summed as-is.
-      const ownerAmt = (arr: any, field: string): number =>
-        (Array.isArray(arr) ? arr : []).reduce((a: number, x: any) => {
-          if (x && x.bill_to && String(x.bill_to) === 'guest') return a
-          if (field === 'supply' && x && x.billable === false) return a
-          const v = Number(field === 'cost' ? x?.cost : (x?.total_price != null ? x.total_price : x?.unit_cost))
-          return a + (Number.isFinite(v) ? v : 0)
-        }, 0)
-      const billableOf = (t: any): number => {
-        if (kindOf(t) === 'clean') return 0
-        const adj = adjs2[String(t.id)]
-        if (adj && adj.excluded) return 0
-        if (adj && adj.override_amount != null) return Number(adj.override_amount) || 0
-        const det = dets2[String(t.id)]
-        if (!det) return 0
-        return Math.round((ownerAmt(det.costs, 'cost') + ownerAmt(det.supplies, 'supply')) * 100) / 100
-      }
-      const roster2: string[] = []
-      for (const t of yTc) if (roster2.indexOf(t.name) < 0) roster2.push(t.name)
-      const alias2: Record<string, string | null> = {}
-      const who = (t: any): string | null => {
-        const raw = t.assignee_name || t.finished_by_name || null
-        if (!raw) return null
-        if (!(raw in alias2)) alias2[raw] = nameMatchesRoster(String(raw), roster2)
-        return alias2[raw] || String(raw)
-      }
-      const usedT: Record<string, boolean> = {}
-      const revBy: Record<string, number> = {}
-      for (const r of (rr2.data || []) as any[]) {
-        const info = mk2[String(r.listing_id)]
-        if (!info || info.vendor) continue
-        const m2 = rows2.filter(t => !usedT[String(t.id)] && kindOf(t) === 'clean' && String(t.reference_property_id) === String(r.listing_id))[0]
-        if (!m2) continue
-        usedT[String(m2.id)] = true
-        const w = who(m2)
-        if (!w) continue
-        const f = Number((r as any).cleaning)
-        if (Number.isFinite(f)) revBy[w] = (revBy[w] || 0) + f
-      }
-      type PR = { name: string; market: string; cleans: number; insp: number; billable: number; cost: number }
-      const prs: Record<string, PR> = {}
-      const mkCount: Record<string, Record<string, number>> = {}
-      for (const t of rows2) {
-        const w = who(t)
-        if (!w) continue
-        prs[w] = prs[w] || { name: w, market: '', cleans: 0, insp: 0, billable: 0, cost: 0 }
-        const k2 = kindOf(t)
-        if (k2 === 'clean') prs[w].cleans++
-        else if (k2 === 'inspection') prs[w].insp++
-        prs[w].billable += billableOf(t)
-        const info = mk2[String(t.reference_property_id)]
-        if (info) { mkCount[w] = mkCount[w] || {}; const mk3 = info.vendor ? 'vendor' : info.m; mkCount[w][mk3] = (mkCount[w][mk3] || 0) + 1 }
-      }
-      for (const t of yTc) {
-        if (!t.laborCost) continue
-        const key2 = Object.keys(prs).filter(n2 => nameMatches(n2, t.name))[0] || t.name
-        prs[key2] = prs[key2] || { name: t.name, market: '', cleans: 0, insp: 0, billable: 0, cost: 0 }
-        prs[key2].cost += t.laborCost
-      }
-      // Role per person: Homebase role first, then what they actually did.
-      const roleOf = (name: string): string => {
-        const card2 = yTc.filter(t => nameMatches(t.name, name))[0]
-        const s3 = card2 && card2.role ? String(card2.role).toLowerCase() : ''
-        if (/clean|housekeep|turn/.test(s3)) return 'hk'
-        if (/maint|tech|repair|handy/.test(s3)) return 'maint'
-        const p3 = prs[name]
-        if (p3 && p3.cleans > 0) return 'hk'
-        if (p3 && p3.billable > 0) return 'maint'
-        return 'other'
-      }
-      for (const n2 of Object.keys(prs)) {
-        const cc = mkCount[n2] || {}
-        let best = '', bn = 0
-        for (const mk3 of Object.keys(cc)) if (cc[mk3] > bn) { best = mk3; bn = cc[mk3] }
-        prs[n2].market = best || 'no tasks'
-      }
-      const mkAgg: Record<string, { cost: number; cleans: number }> = {}
-      for (const n2 of Object.keys(prs)) {
-        const p2 = prs[n2]
-        if (!p2.cleans) continue
-        mkAgg[p2.market] = mkAgg[p2.market] || { cost: 0, cleans: 0 }
-        mkAgg[p2.market].cost += p2.cost
-        mkAgg[p2.market].cleans += p2.cleans
-      }
-      let allCost0 = 0, allCleans0 = 0
-      for (const mk3 of Object.keys(mkAgg)) { allCost0 += mkAgg[mk3].cost; allCleans0 += mkAgg[mk3].cleans }
-      const usd = (n3: number) => '$' + String(Math.round(n3))
-      const cpc = (x?: { cost: number; cleans: number }) => x && x.cleans && x.cost ? usd(x.cost / x.cleans) : 'n/a'
-      const mkLine = 'Cost / clean: Miami ' + cpc(mkAgg['miami']) + ', Broward ' + cpc(mkAgg['broward']) + ', North ' + cpc(mkAgg['north']) + ', All ' + (allCleans0 && allCost0 ? usd(allCost0 / allCleans0) : 'n/a')
-      const list2 = Object.keys(prs).map(n2 => prs[n2]).filter(p2 => p2.cleans || p2.insp || p2.billable > 0 || p2.cost > 0)
-      const sections: { key: string; title: string; people: PR[] }[] = [
-        { key: 'hk', title: 'HOUSEKEEPING', people: [] },
-        { key: 'maint', title: 'MAINTENANCE', people: [] },
-        { key: 'other', title: 'OTHER', people: [] },
-      ]
-      for (const p2 of list2) {
-        const rk = roleOf(p2.name)
-        const sec = sections.filter(s4 => s4.key === rk)[0] || sections[2]
-        sec.people.push(p2)
-      }
-      let grandCost = 0, grandRev = 0, grandBill = 0
-      const personRow = (p2: PR) => {
-        const rev = revBy[p2.name] || 0
-        const cpp = p2.cleans && p2.cost ? usd(p2.cost / p2.cleans) : 'n/a'
-        return '<tr><td style="' + S.td + '">' + esc(p2.name) + '<br><span style="color:#6b7280">' + esc(p2.market) + '</span></td>' +
-          '<td style="' + S.td + '">' + (p2.cleans || 0) + (p2.insp ? '<br><span style="color:#6b7280">' + p2.insp + ' insp</span>' : '') + '</td>' +
-          '<td style="' + S.td + '">' + (p2.cost ? usd(p2.cost) : 'n/a') + '</td>' +
-          '<td style="' + S.td + '">' + cpp + '</td>' +
-          '<td style="' + S.td + '">' + (rev ? usd(rev) : 'n/a') + '</td>' +
-          '<td style="' + S.td + '">' + (p2.billable ? usd(p2.billable) : 'n/a') + '</td></tr>'
-      }
+      const ec = await laborEconomics({ from: yd, to: yd, market: 'all' })
+      const usd = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
+      const cpcLine = (() => {
+        const m = ec.costPerCleanByMarket || {}
+        const one = (k: string) => (m[k] != null ? usd(m[k] as number) : 'n/a')
+        return 'Cost / clean: Miami ' + one('miami') + ', Broward ' + one('broward') +
+          ', North ' + one('north') + ', All ' + (ec.costPerClean != null ? usd(ec.costPerClean) : 'n/a')
+      })()
+      const hoursTxt = (h: number) => (h > 0 ? String(Math.round(h * 10) / 10) + 'h' : '—')
+      const personRow = (p: any) => '<tr>' +
+        '<td style="' + S.td + '">' + esc(p.name) + '<br><span style="color:#6b7280">' + esc(p.market || '') + '</span></td>' +
+        '<td style="' + S.td + '">' + hoursTxt(p.hours) + '</td>' +
+        '<td style="' + S.td + '">' + (p.payroll ? usd(p.payroll) : '—') + '</td>' +
+        '<td style="' + S.td + '">' + (p.cleans || '—') + '</td>' +
+        '<td style="' + S.td + '">' + (p.cleaningRevenue ? usd(p.cleaningRevenue) : '—') + '</td>' +
+        '<td style="' + S.td + '">' + (p.billableRevenue ? usd(p.billableRevenue) : '—') + '</td>' +
+        '<td style="' + S.td + ';font-weight:600;color:' + (p.margin < 0 ? '#dc2626' : '#047857') + '">' + usd(p.margin) + '</td>' +
+        '</tr>'
       let trRows = ''
-      for (const sec of sections) {
-        if (!sec.people.length) continue
-        sec.people.sort((a2, b2) => ((revBy[b2.name] || 0) + b2.billable) - ((revBy[a2.name] || 0) + a2.billable))
-        const sCost = sec.people.reduce((a2, p2) => a2 + p2.cost, 0)
-        const sRev = sec.people.reduce((a2, p2) => a2 + (revBy[p2.name] || 0), 0)
-        const sBill = sec.people.reduce((a2, p2) => a2 + p2.billable, 0)
-        const sCleans = sec.people.reduce((a2, p2) => a2 + p2.cleans, 0)
-        grandCost += sCost; grandRev += sRev; grandBill += sBill
-        const sMargin = sRev + sBill - sCost
-        let label = sec.title + ': ' + usd(sCost) + ' labor'
-        if (sec.key === 'hk') label += ', ' + sCleans + ' cleans, ' + usd(sRev) + ' cleaning rev'
-        if (sBill > 0) label += ', ' + usd(sBill) + ' billable labor'
-        label += ' - margin ' + (sMargin < 0 ? '-$' + Math.abs(Math.round(sMargin)) : usd(sMargin))
-        trRows += '<tr><td colspan="6" style="' + S.td + ';background:#f5f5f4;font-weight:bold">' + label + '</td></tr>'
-        trRows += sec.people.map(personRow).join('')
+      let shown = 0
+      for (const d of ec.departments) {
+        const rows = ec.people.filter((p: any) => p.dept === d.key)
+        if (!rows.length) continue
+        rows.sort((a: any, b: any) => b.revenue - a.revenue || b.payroll - a.payroll)
+        shown += rows.length
+        const bits: string[] = [usd(d.payroll) + ' payroll (' + hoursTxt(d.hours) + ')']
+        if (d.cleans) bits.push(d.cleans + ' cleans, ' + usd(d.cleaningRevenue) + ' cleaning rev')
+        if (d.billableRevenue) bits.push(usd(d.billableRevenue) + ' billable')
+        // Supervisors are deliberately NOT given a margin — see the note above.
+        const tail = d.key === 'supervision'
+          ? ' — overhead vs ' + usd(ec.managementFee) + ' management fees'
+          : (d.revenue > 0 || d.payroll > 0 ? ' — margin ' + usd(d.margin) : '')
+        const head = d.label.toUpperCase() + ': ' + bits.join(', ') + tail +
+          (d.key === 'housekeeping' && d.costPerClean != null ? ' · ' + usd(d.costPerClean) + ' / clean' : '')
+        trRows += '<tr><td colspan="7" style="' + S.td + ';background:#f5f5f4;font-weight:bold">' + esc(head) + '</td></tr>'
+        trRows += rows.map(personRow).join('')
       }
-      const grandMargin = grandRev + grandBill - grandCost
-      trRows += '<tr><td colspan="6" style="' + S.td + ';font-weight:bold;border-top:2px solid #111827">TOTAL: ' + usd(grandCost) + ' labor vs ' + usd(grandRev + grandBill) + ' revenue (' + usd(grandRev) + ' cleaning + ' + usd(grandBill) + ' billable) - margin ' + (grandMargin < 0 ? '-$' + Math.abs(Math.round(grandMargin)) : usd(grandMargin)) + '</td></tr>'
-      crewCard = trRows ? card('Team economics yesterday: cost per clean, rev vs labor', list2.length,
-        '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + mkLine + '. Vendor revenue kept separate.</p>' +
-        table(['Person', 'Cleans', 'Labor', 'Cost/clean', 'Cleaning rev', 'Billable labor'], trRows), '#0891b2') : ''
+      if (trRows) {
+        const totalRev = ec.cleaningRevenue + ec.billableRevenue
+        trRows += '<tr><td colspan="7" style="' + S.td + ';font-weight:bold;border-top:2px solid #111827">' +
+          'TOTAL: ' + usd(ec.payroll) + ' payroll vs ' + usd(totalRev) + ' revenue (' +
+          usd(ec.cleaningRevenue) + ' cleaning + ' + usd(ec.billableRevenue) + ' billable) — margin ' + usd(ec.margin) +
+          ' · with ' + usd(ec.managementFee) + ' management fees: ' + usd(ec.marginWithFee) + '</td></tr>'
+        // The coverage line is the honesty check: a task finished with no charge entered earns
+        // nothing here, so a low billable number may be a data-entry gap rather than a slow day.
+        const gap = ec.coverage.tasksWithNoCharge
+        const note = '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + esc(cpcLine) +
+          '. Billable = the charge entered on the Breezeway task. Vendor-cleaned units earned ' +
+          usd(ec.cleaningRevenueVendor) + ', kept separate.' +
+          (gap ? ' <span style="color:#b45309">' + gap + ' task' + (gap === 1 ? '' : 's') + ' finished with no charge entered.</span>' : '') +
+          '</p>'
+        crewCard = card('Team economics yesterday — by department', shown,
+          note + table(['Person', 'Hours', 'Payroll', 'Cleans', 'Cleaning rev', 'Billable', 'Margin'], trRows), '#0891b2')
+      }
     }
   } catch { /* Homebase down — the brief still sends */ }
 
@@ -828,7 +722,6 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${accessNotice()}
 
   ${eyebrow('Act now')}
-  ${blockedCard(blocked, { showMarket: variant === 'full', linked: blockedLinked })}
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
