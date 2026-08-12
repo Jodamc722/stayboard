@@ -20,11 +20,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
 import { appendReservationNote } from '@/lib/claim-note'
 import { pullReservationsByIds } from '@/lib/guesty'
+import { syncOwners, syncOwnerStatements, syncLedgerMonth } from '@/lib/guesty-owner-sync'
 import { MONTH_LABEL } from '@/lib/owner-statements'
-import { auditMonths, buildAudit, defaultAuditMonth, saveAuditRules, AuditStatus, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
+import { auditMonths, buildAudit, defaultAuditMonth, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// 300s: the 'sync' action sweeps a whole month of statement line items out of Guesty.
+export const maxDuration = 300
 
 async function whoAmI(): Promise<{ ok: boolean; internal: boolean; email: string }> {
   const supabase = createClient()
@@ -50,7 +52,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-const STATUSES: AuditStatus[] = ['review', 'action', 'done']
+// 'clear' is the engine's own word for "nothing found here" — it is computed per row and must
+// never arrive from a click, or approving a row would be indistinguishable from never looking.
+const STATUSES: AuditStatus[] = WRITABLE_STATUSES
 
 export async function POST(req: NextRequest) {
   const who = await whoAmI()
@@ -68,6 +72,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, rules })
     } catch (e: any) {
       return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+    }
+  }
+
+  // ── SYNC — pull this month's statements and line items fresh from Guesty, on demand.
+  // The hourly cron keeps the mirror current on its own; this is the button for when someone
+  // has just generated or re-recognized statements in Guesty and wants them on the board NOW,
+  // without waiting up to an hour. Signed-in users only (it spends Guesty API budget), and one
+  // month at a time so it finishes inside the function's time budget.
+  if (action === 'sync') {
+    if (!who.internal) return NextResponse.json({ ok: false, error: 'Only a signed-in user can refresh statements from Guesty.' }, { status: 403 })
+    const m = String(body.month || '')
+    if (!/^\d{4}-\d{2}$/.test(m)) return NextResponse.json({ ok: false, error: 'month required' }, { status: 400 })
+    try {
+      await syncOwners()
+      await syncOwnerStatements()
+      // Leave headroom under maxDuration so a slow sweep returns a real answer instead of a
+      // gateway timeout; the month is marked pending and the cron finishes it either way.
+      const r = await syncLedgerMonth(m, Date.now() + 200_000)
+      return NextResponse.json({ ok: true, month: m, rows: (r as any)?.rows ?? null, status: (r as any)?.status ?? null })
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 })
     }
   }
 
