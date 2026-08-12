@@ -51,6 +51,45 @@ export async function POST(req: NextRequest) {
   const sb = supabaseAdmin()
 
   try {
+    // ── PEEK: why doesn't this statement tie? Read-only, signed-in users only.
+    //    ?peek=<owner name fragment>&month=YYYY-MM
+    // Returns Guesty's own statement object next to OUR ledger arithmetic, split by charge code
+    // AND by the recognized flag — because the recognized slice is what the audit reads, so
+    // anything sitting outside it is invisible money and the usual reason a statement is "off".
+    const peek = qs.get('peek')
+    if (peek) {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return NextResponse.json({ error: 'sign in to use peek' }, { status: 403 })
+      const month = String(qs.get('month') || etMonth()).slice(0, 7)
+      const { data: st } = await sb.from('guesty_owner_statements')
+        .select('id, owner_id, owner_name, period_month, ending_balance, due_to_owner, raw')
+        .eq('period_month', month).ilike('owner_name', '%' + peek + '%').limit(1)
+      const s = (st || [])[0] as any
+      if (!s) return NextResponse.json({ ok: false, error: 'no statement for ' + peek + ' in ' + month }, { status: 404 })
+      const byCode: Record<string, { recognized: number; unrecognized: number; nRec: number; nUnrec: number }> = {}
+      for (let off = 0; off < 60_000; off += 1000) {
+        const { data, error } = await sb.from('guesty_owner_ledger')
+          .select('charge_code, amount, recognized')
+          .eq('entry_month', month).eq('owner_id', s.owner_id)
+          .range(off, off + 999)
+        if (error) break
+        const batch = (data || []) as any[]
+        for (const r of batch) {
+          const c = String(r.charge_code || '?')
+          const b = byCode[c] || (byCode[c] = { recognized: 0, unrecognized: 0, nRec: 0, nUnrec: 0 })
+          const eff = Math.round(-(Number(r.amount) || 0) * 100) / 100
+          if (r.recognized) { b.recognized = Math.round((b.recognized + eff) * 100) / 100; b.nRec++ }
+          else { b.unrecognized = Math.round((b.unrecognized + eff) * 100) / 100; b.nUnrec++ }
+        }
+        if (batch.length < 1000) break
+      }
+      return NextResponse.json({
+        ok: true, month, owner: s.owner_name,
+        statement: { dueToOwner: s.due_to_owner, endingBalance: s.ending_balance, rawKeys: Object.keys(s.raw || {}), raw: s.raw },
+        ledgerByCode: byCode,
+      })
+    }
     if (qs.get('status') === '1') {
       const [owners, stmts, ledger, months] = await Promise.all([
         sb.from('guesty_owners').select('id', { count: 'exact', head: true }),
