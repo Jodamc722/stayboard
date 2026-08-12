@@ -24,8 +24,8 @@ import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
-import { laborAmount, billingMonth } from '@/lib/billing'
 import { staffByName, resolveStaff } from '@/lib/staffing'
+import { laborEconomics } from '@/lib/labor-econ'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -377,138 +377,99 @@ export async function GET(req: Request) {
       costBasis: cleaningTaskPay > 0 ? 'breezeway rate_paid' : 'homebase payroll',
     }
 
-    // ---- Department economics: housekeeping vs maintenance ----------------
-    const deptOf = (r: string | null) => {
-      const s = (r || '').toLowerCase()
-      if (/inspect|audit|quality/.test(s)) return 'inspection'
-      if (/clean|housekeep|turn/.test(s)) return 'housekeeping'
-      if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
-      return 'other'
-    }
-    // WHO COUNTS AS MAINTENANCE — in order of how much we trust it (Jon 2026-08-10: "not
-    // assumptions"). 1) the staff record a human set on /users → Staffing, 2) the role text typed
-    // into Homebase, 3) only then a guess from what they did in Breezeway. Before this, a person
-    // whose Homebase role was blank was classified by majority vote, which put ALL of a mixed
-    // worker's clocked hours into one department.
-    const deptOfPerson = (name: string, role: string | null) => {
-      const rec = resolveStaff(name, staffIdx)
-      const byStaff = deptOf(rec?.role || null)
-      if (byStaff !== 'other') return byStaff
-      const byRole = deptOf(role)
-      if (byRole !== 'other') return byRole
-      let m = 0, c = 0, insp = 0
-      for (const t of taskRows) {
-        const d = doer(t)
-        if (!d || !nameMatches(d, name)) continue
-        const k = classify(t)
-        if (k === 'maintenance') m++
-        else if (k === 'clean') c++
-        else if (k === 'inspection') insp++
-      }
-      if (!m && !c && !insp) return 'other'
-      if (insp > c && insp > m) return 'inspection'
-      return m > c ? 'maintenance' : 'housekeeping'
-    }
-    const agg: Record<string, { hours: number; payroll: number; people: Set<string> }> = {}
-    for (const t of timecards) {
-      const k = deptOfPerson(t.name, t.role)
-      agg[k] = agg[k] || { hours: 0, payroll: 0, people: new Set() }
-      agg[k].hours += t.hours ?? 0
-      agg[k].payroll += t.laborCost ?? 0
-      agg[k].people.add(t.name)
-    }
-    const hk = agg['housekeeping'] || { hours: 0, payroll: 0, people: new Set<string>() }
-    const insp = agg['inspection'] || { hours: 0, payroll: 0, people: new Set<string>() }
-    const mt = agg['maintenance'] || { hours: 0, payroll: 0, people: new Set<string>() }
-    const mtPeopleArr = Array.from(mt.people)
-    const mtTaskMinutes = taskRows
-      .filter(t => classify(t) === 'maintenance')
-      .filter(t => { const d = doer(t); return !!d && mtPeopleArr.some(p => nameMatches(d, p)) })
-      .reduce((a, t) => a + Math.min(num(t.total_minutes) ?? 0, 480), 0) // cap runaway Breezeway timers at 8h/task
-    // Supervisor payroll inside housekeeping - shown separately, kept in cost/clean.
-    const hkSupPay = round2(Array.from(hk.people).filter(nm2 => isSupervisor(nm2))
-      .reduce((a, nm2) => a + timecards.filter(t => t.name === nm2).reduce((x, t) => x + (t.laborCost ?? 0), 0), 0))
-
-    // BILLABLE MAINTENANCE — read from the SAME engine as the Billable Hours sheet (lib/billing).
+    // ---- Department economics — ONE engine, shared with the briefs ---------
     //
-    // The old version here priced each task with laborAmount(rate_paid, ...) alone. Breezeway
-    // carries a rate on ZERO tasks (verified against live data 2026-08-09), so that returned ~$0
-    // and this board reported $35 of billable maintenance in a week where the Billable Hours sheet
-    // showed $1,565. It looked like a "reviewed-only" filter; it was not — review status has never
-    // been part of either calculation. The real cause: the team enters FLAT AMOUNTS in Breezeway,
-    // which arrive as billing-detail cost/supply items, and those were being ignored here.
-    // billingMonth() applies the whole rule — labor + items, owner-billable only, honouring
-    // exclusions and overrides — so calling it is the only way the two screens can agree.
-    let mtBillable = 0, mtBilledTasks = 0
-    try {
-      const mtIdSet = new Set(taskRows.filter(t => classify(t) === 'maintenance').map(t => String(t.id)))
-      if (mtIdSet.size) {
-        const months = Array.from(new Set([String(start).slice(0, 7), String(end).slice(0, 7)]))
-        const seen = new Set<string>()
-        for (const m of months) {
-          const bm = await billingMonth(m)
-          for (const bt of (bm.tasks || [])) {
-            const id = String((bt as any).id)
-            if (!mtIdSet.has(id) || seen.has(id)) continue
-            seen.add(id)
-            const amt = Number((bt as any).billedAmount) || 0
-            if (amt > 0) { mtBillable += amt; mtBilledTasks++ }
-          }
-        }
-        mtBillable = Math.round(mtBillable * 100) / 100
-      }
-    } catch { /* billing detail unavailable — billable simply reads as zero, never blocks the board */ }
-
-    // Payroll split three ways. This is the one number that survives money-hiding intact: it says
-    // where the labor dollar goes without ever saying how big it is.
-    const deptPayrollTotal = hk.payroll + insp.payroll + mt.payroll
+    // Jon, 2026-08-12: "Housekeeping is just housekeepers. Yoslenis is a supervisor and shouldn't
+    // be counted in the margin targets — that should be its own separate category."
+    //
+    // Crews now come from the declared roster (lib/crew), not from majority-of-tasks: Ethan Tucker
+    // logged 27 housekeeping tasks in August and is still a maintenance tech; Yoslenis logged 42
+    // and supervises. Under the old vote their wages sat inside the cost per clean and inside the
+    // housekeeping margin. Billable is the charge entered on the Breezeway task — the cost field —
+    // never rate x hours. All of it lives in lib/labor-econ.ts so this board, the morning brief and
+    // the Monday email cannot drift apart.
+    const econ = await laborEconomics({ from: start, to: end, market: marketParam })
+    const dep = (k: string) => econ.departments.filter(d => d.key === k)[0]
+    const hkD = dep('housekeeping'), supD = dep('supervision')
+    const mtD = dep('maintenance'), inspD = dep('inspection'), othD = dep('other')
+    const deptPayrollTotal = econ.payroll
+    // Maintenance time ON TASK from Breezeway (what was worked) stays separate from clocked
+    // Homebase hours (what it cost) — the gap between them is the utilisation number.
+    const mtNames = mtD.names
+    const mtTaskMinutes = taskRows
+      .filter(t => /maint|repair|fix|hvac|plumb|electric|pest/.test(`${t.type_department || ''} ${t.name || ''}`.toLowerCase()))
+      .filter(t => { const d0 = doer(t); return !!d0 && mtNames.some(p => nameMatches(d0 as string, p)) })
+      .reduce((a, t) => a + Math.min(num(t.total_minutes) ?? 0, 480), 0) // cap runaway timers at 8h
     const departments = {
       housekeeping: {
-        people: hk.people.size, hours: round2(hk.hours), payroll: round2(hk.payroll),
-        supervisorPayroll: hkSupPay, cleanerPayroll: round2(hk.payroll - hkSupPay),
-        supervisors: SUP_NAMES,
-        revenue: inhouseFees,
-        vendorRevenue: vendorFees,
-        margin: round2(inhouseFees - hk.payroll),
-        costPerClean: tasks.clean ? round2(hk.payroll / tasks.clean) : null,
-        feePerClean: tasks.clean ? round2(inhouseFees / tasks.clean) : null,
-        departureCleans: tasks.clean,
-        otherHkTasks: hkNonDeparture,   // common areas, pool, trash, office, linen refreshes
-        laborPct: inhouseFees > 0 && hk.payroll > 0 ? round2((hk.payroll / inhouseFees) * 100) : null,
-        marginPct: pctOf(inhouseFees - hk.payroll, inhouseFees),
-        supervisorSharePct: pctOf(hkSupPay, hk.payroll),
-        payrollSharePct: pctOf(hk.payroll, deptPayrollTotal),
+        people: hkD.people, hours: hkD.hours, payroll: hkD.payroll,
+        cleanerPayroll: hkD.payroll,          // housekeepers only, by construction now
+        supervisorPayroll: supD.payroll,      // reported here for context, NOT inside the margin
+        supervisors: supD.names,
+        revenue: hkD.cleaningRevenue,
+        vendorRevenue: econ.cleaningRevenueVendor,
+        margin: hkD.margin,
+        departureCleans: hkD.cleans,
+        costPerClean: hkD.costPerClean,
+        costPerCleanLoaded: econ.costPerCleanLoaded,
+        costPerCleanByMarket: econ.costPerCleanByMarket,
+        feePerClean: hkD.cleans ? round2(hkD.cleaningRevenue / hkD.cleans) : null,
+        otherHkTasks: hkNonDeparture,
+        laborPct: hkD.cleaningRevenue > 0 && hkD.payroll > 0 ? round2((hkD.payroll / hkD.cleaningRevenue) * 100) : null,
+        marginPct: hkD.marginPct,
+        payrollSharePct: pctOf(hkD.payroll, deptPayrollTotal),
+        basis: hkD.basis,
+      },
+      // OVERHEAD, MEASURED HONESTLY. Supervisors don't turn units and don't bill work out, so
+      // there is no margin to compute against cleaning. What pays for them is the management fee
+      // on the stays they keep standards on, so that is what sits beside their payroll.
+      supervision: {
+        people: supD.people, names: supD.names,
+        hours: supD.hours, payroll: supD.payroll,
+        cleaningRevenue: supD.cleaningRevenue,   // a supervisor who really did a departure clean
+        billableRevenue: supD.billableRevenue,
+        managementFee: econ.managementFee,
+        coveragePct: pctOf(supD.payroll, econ.managementFee),
+        payrollSharePct: pctOf(supD.payroll, deptPayrollTotal),
+        basis: supD.basis,
       },
       inspection: {
-        people: insp.people.size, hours: round2(insp.hours), payroll: round2(insp.payroll),
+        people: inspD.people, hours: inspD.hours, payroll: inspD.payroll,
         inspections: tasks.inspection,
-        costPerInspection: tasks.inspection ? round2(insp.payroll / tasks.inspection) : null,
-        payrollSharePct: pctOf(insp.payroll, deptPayrollTotal),
+        costPerInspection: tasks.inspection && inspD.payroll ? round2(inspD.payroll / tasks.inspection) : null,
+        payrollSharePct: pctOf(inspD.payroll, deptPayrollTotal),
+        basis: inspD.basis,
       },
-      // TWO DIFFERENT FACTS, NEVER MIXED (Jon 2026-08-10: "maintenance hours should be pulled from
-      // Breezeway and payroll from Homebase — not assumptions").
-      //   hours   = time ON MAINTENANCE TASKS, from Breezeway total_minutes. What was worked.
+      //   hours   = time ON MAINTENANCE TASKS, from Breezeway. What was worked.
       //   payroll = what Homebase actually paid those people. What it cost.
-      // `hours` used to be the Homebase clocked total, so a maintenance tech who also did a clean
-      // had that clean's hours counted as maintenance. Clocked time is still reported, under its
-      // own name, because the gap between the two IS the utilisation number.
+      //   billable = the charge entered on the task. What the work earned.
       maintenance: {
-        people: mt.people.size,
-        hours: round2(mtTaskMinutes / 60),           // Breezeway — time on maintenance tasks
-        payroll: round2(mt.payroll),                 // Homebase — actual wages
-        clockedHours: round2(mt.hours),              // Homebase — hours on the clock
-        source: { hours: 'breezeway', payroll: 'homebase' },
+        people: mtD.people, names: mtNames,
+        hours: round2(mtTaskMinutes / 60),
+        payroll: mtD.payroll,
+        clockedHours: mtD.hours,
+        source: { hours: 'breezeway', payroll: 'homebase', billable: 'breezeway cost field' },
         tasksCompleted: tasks.maintenance,
-        teamNames: mtPeopleArr,
-        taskHours: round2(mtTaskMinutes / 60),       // kept: same number, older key
-        utilizationPct: mt.hours > 0 ? round2((mtTaskMinutes / 60 / mt.hours) * 100) : null,
-        costPerTask: tasks.maintenance ? round2(mt.payroll / tasks.maintenance) : null,
-        billableRevenue: mtBillable, // Breezeway billing: rate math + owner adjustments
-        billableTasks: mtBilledTasks,
-        billableMargin: Math.round((mtBillable - mt.payroll) * 100) / 100, // billable vs wages
-        // "Did the work we billed out cover the crew?" — the margin question without the amounts.
-        billableCoveragePct: pctOf(mtBillable, mt.payroll),
-        payrollSharePct: pctOf(mt.payroll, deptPayrollTotal),
+        teamNames: mtNames,
+        taskHours: round2(mtTaskMinutes / 60),
+        utilizationPct: mtD.hours > 0 ? round2((mtTaskMinutes / 60 / mtD.hours) * 100) : null,
+        costPerTask: tasks.maintenance && mtD.payroll ? round2(mtD.payroll / tasks.maintenance) : null,
+        billableRevenue: mtD.billableRevenue,
+        billableTasks: mtD.billableTasks,
+        tasksNoCharge: mtD.tasksNoCharge,
+        materials: mtD.materials,
+        cleaningRevenue: mtD.cleaningRevenue,
+        margin: mtD.margin,
+        billableMargin: mtD.margin,
+        billableCoveragePct: pctOf(mtD.billableRevenue, mtD.payroll),
+        payrollSharePct: pctOf(mtD.payroll, deptPayrollTotal),
+        basis: mtD.basis,
+      },
+      other: {
+        people: othD.people, names: othD.names, hours: othD.hours, payroll: othD.payroll,
+        cleaningRevenue: othD.cleaningRevenue, billableRevenue: othD.billableRevenue,
+        margin: othD.margin, payrollSharePct: pctOf(othD.payroll, deptPayrollTotal),
+        basis: othD.basis,
       },
     }
 
@@ -528,6 +489,9 @@ export async function GET(req: Request) {
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
       ...kpis, tasks, economics, payroll, today: todayBlock,
       perCleaner, personTasks, personRevenue, attribution, unattributed, settings,
+      // The same P&L the briefs print, per person and per crew, so nothing has to be re-derived
+      // on the client and no two screens can disagree.
+      econ,
       nameAliases: Object.keys(aliasCache).filter(k => aliasCache[k] && aliasCache[k] !== k).reduce((o: any, k) => { o[k] = aliasCache[k]; return o }, {}),
     }
     // The percentages above were computed for everyone; only the amounts are gated. `moneyHidden`
