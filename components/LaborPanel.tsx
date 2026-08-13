@@ -293,6 +293,72 @@ export function LaborPanel() {
         </div>
       )}
 
+      {/* VENDOR-MANAGED UNITS WE WORKED ON OURSELVES.
+          Two jobs: allocate our own cost when we step onto a vendor's building, and check the
+          vendor's invoice against the checkouts that actually happened. */}
+      {!hideMoney && econ?.vendorWork?.byBuilding?.length > 0 && (
+        <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
+          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">
+            Vendor buildings <span className="normal-case font-normal">· what they owe us a clean for, and what we did ourselves</span>
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+                <th className="py-1 pr-3">Building</th><th className="py-1 pr-3">Checkouts</th>
+                <th className="py-1 pr-3">Cleans vendor logged</th><th className="py-1 pr-3">Cleaning rev</th>
+                <th className="py-1 pr-3">Our jobs there</th><th className="py-1 pr-3">Our cleans</th><th className="py-1">We billed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {econ.vendorWork.byBuilding.map((b: any) => (
+                <tr key={b.building} className="border-t border-line">
+                  <td className="py-1.5 pr-3 font-medium text-ink">{b.building}</td>
+                  <td className="py-1.5 pr-3">{b.checkouts || '—'}</td>
+                  {/* More cleans logged than checkouts is the invoice red flag. */}
+                  <td className={'py-1.5 pr-3 ' + (b.vendorCleansLogged > b.checkouts ? 'text-red-600 font-medium' : '')}>
+                    {b.vendorCleansLogged || '—'}
+                    {b.vendorCleansLogged > b.checkouts && <span className="ml-1 text-[10px]">over checkouts</span>}
+                  </td>
+                  <td className="py-1.5 pr-3">{b.cleaningRevenue ? fmt$(b.cleaningRevenue) : '—'}</td>
+                  <td className={'py-1.5 pr-3 ' + (b.ourTasks ? 'text-amber-700 font-medium' : '')}>{b.ourTasks || '—'}</td>
+                  <td className={'py-1.5 pr-3 ' + (b.ourCleans ? 'text-amber-700 font-medium' : '')}>{b.ourCleans || '—'}</td>
+                  <td className="py-1.5">{b.ourBilled ? fmt$(b.ourBilled) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {econ.vendorWork.ourTaskCount > 0 && (
+            <div className="mt-3">
+              <p className="text-[11px] text-amber-700 mb-1">
+                {econ.vendorWork.ourTaskCount} job{econ.vendorWork.ourTaskCount === 1 ? '' : 's'} our crew did on vendor-managed units
+                {econ.vendorWork.ourCleanCount > 0 ? ' (' + econ.vendorWork.ourCleanCount + ' of them departure cleans)' : ''} —
+                {econ.vendorWork.unbilled > 0 ? ' ' + econ.vendorWork.unbilled + ' with nothing billed to anyone.' : ' all billed.'}
+              </p>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-wide text-muted">
+                    <th className="py-1 pr-3">Date</th><th className="py-1 pr-3">Unit</th><th className="py-1 pr-3">Who</th>
+                    <th className="py-1 pr-3">Job</th><th className="py-1 pr-3">Time</th><th className="py-1">Billed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {econ.vendorWork.ourTasks.slice(0, 25).map((t: any, i: number) => (
+                    <tr key={i} className="border-t border-line/60">
+                      <td className="py-1 pr-3 text-muted">{t.date}</td>
+                      <td className="py-1 pr-3 text-ink">{t.unit}</td>
+                      <td className="py-1 pr-3">{t.person}</td>
+                      <td className="py-1 pr-3">{t.kind === 'clean' ? <b>Departure clean</b> : t.task.slice(0, 46)}</td>
+                      <td className="py-1 pr-3 text-muted">{t.minutes ? t.minutes + 'm' : '—'}</td>
+                      <td className={'py-1 ' + (t.billed ? '' : 'text-amber-700')}>{t.billed ? fmt$(t.billed) : 'not billed'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* THE WHOLE LABOR P&L ON ONE LINE PER CREW — what it earned, what it cost, what is left. */}
       {!hideMoney && econ && (
         <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
