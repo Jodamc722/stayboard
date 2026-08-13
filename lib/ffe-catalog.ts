@@ -106,16 +106,38 @@ export const normalizeTier = (v: any): string => {
 }
 
 /**
+ * A product name turned into something worth typing into a search box.
+ *
+ * Our names are written to be read on a work order — `Nightstand — 2-drawer with USB, 22"W` — and
+ * that is the right thing for a person carrying a box into a unit. Pasted into a retailer's search
+ * it is close to noise: the em dash and the inch marks come back percent-encoded and the engine
+ * treats them as terms. This converts the punctuation into the words a shopper would actually use,
+ * which is the difference between the first row of results being nightstands and being nothing.
+ */
+export function searchQuery(name: string): string {
+  return String(name || '')
+    .replace(/[—–]/g, ' ')
+    .replace(/(\d+(?:\.\d+)?)\s*"\s*W\b/gi, '$1 inch wide')
+    .replace(/(\d+(?:\.\d+)?)\s*"\s*H\b/gi, '$1 inch tall')
+    .replace(/(\d+(?:\.\d+)?)\s*"\s*D\b/gi, '$1 inch deep')
+    .replace(/(\d+(?:\.\d+)?)\s*"/g, '$1 inch')
+    .replace(/[,;:·]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 150)
+}
+
+/**
  * An Amazon SEARCH link for a product name.
  *
  * DELIBERATELY A SEARCH, NOT A PRODUCT PAGE. A made-up ASIN is a dead link, and a dead link in a
  * catalog is worse than no link — it wastes the buyer's time and quietly destroys trust in every
  * other link on the page. A search always resolves and always lands on the right query; when
  * somebody picks the actual item, they paste the real product URL over it and it stops being a
- * search. `startsWith('https://www.amazon.com/s?')` is how the UI knows which is which.
+ * search. `isSearchLink` below is how the UI knows which is which.
  */
 export const amazonSearch = (q: string): string =>
-  'https://www.amazon.com/s?k=' + encodeURIComponent(String(q || '').trim()).replace(/%20/g, '+')
+  'https://www.amazon.com/s?k=' + encodeURIComponent(searchQuery(q)).replace(/%20/g, '+')
 
 export const isSearchLink = (u: string | null | undefined): boolean =>
   /^https?:\/\/(www\.)?(amazon\.com\/s\?|wayfair\.com\/keyword)/i.test(String(u || ''))
