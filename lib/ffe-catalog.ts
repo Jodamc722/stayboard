@@ -42,6 +42,84 @@ export const FFE_CATEGORIES: FfeCategory[] = [
 export const CATEGORY_BY_KEY: Record<string, FfeCategory> =
   Object.fromEntries(FFE_CATEGORIES.map(c => [c.key, c]))
 
+// ── KIND: WHAT SORT OF THING IT IS ──────────────────────────────────────────────────────────────
+// Jon, 2026-08-13: "Also have in each of these tabs, Amenities, etc that we kind of already have."
+//
+// A catalog is not one list. A sofa and a bottle of dish soap are both things we buy for a unit, but
+// they are bought by different people, on different cycles, from different suppliers, and approved
+// in completely different ways — a sofa goes to an owner, a pack of sponges never does. Splitting on
+// KIND is what stops the furniture list from being buried under consumables the day somebody adds
+// them, which is the normal way these catalogs die.
+export type FfeKind = { key: string; label: string; blurb: string }
+
+export const FFE_KINDS: FfeKind[] = [
+  { key: 'furniture', label: 'Furniture', blurb: 'The big things — sofas, beds, case goods, rugs, TVs. Owner-visible, long lead times.' },
+  { key: 'amenity',   label: 'Amenities', blurb: 'What makes the unit work for a guest — coffee maker, cookware, hair dryer, speaker.' },
+  { key: 'linen',     label: 'Linen & bath', blurb: 'Sheets, towels, pillows, protectors. Bought in par levels, replaced on a cycle.' },
+  { key: 'supply',    label: 'Supplies', blurb: 'Consumables and turnover stock — paper goods, cleaning, bulbs, batteries.' },
+]
+
+export const KIND_BY_KEY: Record<string, FfeKind> = Object.fromEntries(FFE_KINDS.map(k => [k.key, k]))
+export const KIND_KEYS: string[] = FFE_KINDS.map(k => k.key)
+export const normalizeKind = (v: any): string => {
+  const s = String(v || '').trim().toLowerCase()
+  if (KIND_BY_KEY[s]) return s
+  // What people type in a spreadsheet column instead of our key.
+  if (/^(amenit|appliance|kitchen|electronic)/.test(s)) return 'amenity'
+  if (/^(linen|bed(ding)?|bath|towel|sheet)/.test(s)) return 'linen'
+  if (/^(supply|supplies|consumable|cleaning|paper)/.test(s)) return 'supply'
+  return 'furniture'
+}
+
+// ── TIER: HOW GOOD A VERSION OF IT ──────────────────────────────────────────────────────────────
+// Jon, 2026-08-13: "think through different tiers 1, tier 2, tier 3 and custom."
+//
+// The same product ROLE at three price points. Every unit needs a nightstand; the entire argument
+// with an owner is which nightstand. Holding all three in the catalog turns "what would the cheaper
+// one cost" into a filter instead of a week of re-quoting.
+//
+// TIER 1 IS THE ENTRY LEVEL AND TIER 3 IS THE BEST — ascending. The labels below carry that on
+// screen ("Tier 1 · Value") so nobody has to remember which way round it goes. If the house meaning
+// is the reverse, this list is the only place it needs changing.
+//
+// CUSTOM is the fourth on purpose: the one-off a designer specified for one building. It must be
+// orderable without quietly becoming the default for everyone else.
+export type FfeTier = { key: string; label: string; short: string; blurb: string }
+
+export const FFE_TIERS: FfeTier[] = [
+  { key: 'tier1', label: 'Tier 1 · Value',    short: 'T1', blurb: 'Entry level. Gets a unit furnished and rentable at the lowest defensible cost.' },
+  { key: 'tier2', label: 'Tier 2 · Standard', short: 'T2', blurb: 'Our normal spec. What most units get unless there is a reason not to.' },
+  { key: 'tier3', label: 'Tier 3 · Premium',  short: 'T3', blurb: 'Upgraded. For higher-ADR units and owners who want the building to show better.' },
+  { key: 'custom', label: 'Custom',           short: 'CU', blurb: 'A one-off for one building or one owner. Never the default for anyone else.' },
+]
+
+export const TIER_BY_KEY: Record<string, FfeTier> = Object.fromEntries(FFE_TIERS.map(t => [t.key, t]))
+export const TIER_KEYS: string[] = FFE_TIERS.map(t => t.key)
+export const normalizeTier = (v: any): string => {
+  const s = String(v || '').trim().toLowerCase().replace(/\s+/g, '')
+  if (TIER_BY_KEY[s]) return s
+  if (/^(t|tier|level|grade)?1$/.test(s) || /^(value|budget|entry|economy|good)$/.test(s)) return 'tier1'
+  if (/^(t|tier|level|grade)?2$/.test(s) || /^(standard|std|mid|better|normal)$/.test(s)) return 'tier2'
+  if (/^(t|tier|level|grade)?3$/.test(s) || /^(premium|best|luxury|lux|high|upgrade)$/.test(s)) return 'tier3'
+  if (/^(custom|bespoke|one-?off|special|designer)$/.test(s)) return 'custom'
+  return 'tier2'
+}
+
+/**
+ * An Amazon SEARCH link for a product name.
+ *
+ * DELIBERATELY A SEARCH, NOT A PRODUCT PAGE. A made-up ASIN is a dead link, and a dead link in a
+ * catalog is worse than no link — it wastes the buyer's time and quietly destroys trust in every
+ * other link on the page. A search always resolves and always lands on the right query; when
+ * somebody picks the actual item, they paste the real product URL over it and it stops being a
+ * search. `startsWith('https://www.amazon.com/s?')` is how the UI knows which is which.
+ */
+export const amazonSearch = (q: string): string =>
+  'https://www.amazon.com/s?k=' + encodeURIComponent(String(q || '').trim()).replace(/%20/g, '+')
+
+export const isSearchLink = (u: string | null | undefined): boolean =>
+  /^https?:\/\/(www\.)?(amazon\.com\/s\?|wayfair\.com\/keyword)/i.test(String(u || ''))
+
 /** Which category a checklist item most likely belongs to — used to pre-filter the product picker. */
 export function categoryForItem(itemKey: string): string {
   const k = String(itemKey || '')
