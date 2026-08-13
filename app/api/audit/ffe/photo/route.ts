@@ -4,6 +4,11 @@
 // the sofa ends it. Same storage pipeline the property-audit photos already use — resize with
 // sharp, drop it in the public audit-photos bucket — so there is one bucket to manage, not two.
 //
+// TWO KINDS OF PHOTO (Jon, 2026-08-13: "attach photos of the replacement"). ?kind=existing is the
+// piece being replaced — evidence. ?kind=replacement is the piece being bought — the thing the
+// owner is approving and the installer is looking for in the box. They are stored in separate
+// columns because they answer separate questions and one must never overwrite the other.
+//
 // Auth is the FF&E share code, exactly like every other call on this feature: the link is the key
 // and it resolves to one unit. No AI here on purpose — this photo is evidence of a specific piece,
 // not something to be interpreted.
@@ -34,6 +39,7 @@ export async function POST(req: NextRequest) {
   const code = String(form.get('code') || '')
   const room = String(form.get('room') || '').slice(0, 40)
   const itemKey = String(form.get('itemKey') || '').slice(0, 40)
+  const kind = String(form.get('kind') || 'existing') === 'replacement' ? 'replacement' : 'existing'
   if (!room || !itemKey) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
 
   const { data: ls } = await db.from('guesty_listings').select('id,status').limit(2000)
@@ -56,7 +62,7 @@ export async function POST(req: NextRequest) {
   } catch { return NextResponse.json({ error: 'could not read that file as an image' }, { status: 415 }) }
 
   try { await ensureBucket(db) } catch (e: any) { return NextResponse.json({ error: String(e?.message || e) }, { status: 500 }) }
-  const path = 'ffe/' + scope.id + '/' + room + '-' + itemKey + '-' + Date.now() + '.jpg'
+  const path = 'ffe/' + scope.id + '/' + room + '-' + itemKey + '-' + kind + '-' + Date.now() + '.jpg'
   const up = await db.storage.from(BUCKET).upload(path, jpeg, { contentType: 'image/jpeg', upsert: true })
   if (up.error) return NextResponse.json({ error: 'upload: ' + up.error.message }, { status: 500 })
   const url = db.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
@@ -65,8 +71,9 @@ export async function POST(req: NextRequest) {
   try {
     const { data: ex } = await db.from('ffe_answers')
       .select('id').eq('listing_id', scope.id).eq('room', room).eq('item_key', itemKey).limit(1)
-    if (ex && ex[0]) await db.from('ffe_answers').update({ photo_url: url, updated_at: new Date().toISOString() }).eq('id', ex[0].id)
+    const col = kind === 'replacement' ? 'replacement_photo' : 'photo_url'
+    if (ex && ex[0]) await db.from('ffe_answers').update({ [col]: url, updated_at: new Date().toISOString() }).eq('id', ex[0].id)
   } catch { /* the URL is still returned; the client re-saves with it */ }
 
-  return NextResponse.json({ ok: true, url })
+  return NextResponse.json({ ok: true, url, kind })
 }
