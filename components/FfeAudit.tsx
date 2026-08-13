@@ -2,9 +2,10 @@
 // FF&E AUDIT — the phone form a walker actually uses (Jon, 2026-08-10).
 //
 // Built for one hand, in a hallway, on a phone. The decisions that follow from that:
-//   • ONE CONTROL PER LINE: how many does this unit need. That is the question Jon's own sheet
-//     asks ("NUMBER NEEDED / CANTIDAD"), and zero is how you say "not needed" — so the common case
-//     is a single tap on +. Size, note and photo only unfold once the number is above zero.
+//   • THREE VERBS PER LINE — Add, Replace, Fix — because Jon's whole point is "confirm what needs
+//     to be fixed, replaced, or added". Only Add and Replace buy anything; Fix routes itself to the
+//     team's Fixes board and says so on the row. The sheet's NUMBER NEEDED sits under it, defaulted
+//     per item, so nightstands open at 2. Size, note and photo unfold once something is being bought.
 //   • Where the size changes what gets bought — rug, TV, stand vs wall mount, bed — the form asks
 //     for it on the spot, with one-tap chips and a free box. "Area rug x1" is not an order.
 //   • Every tap saves on its own. There is no Submit to forget, and closing the browser mid-unit
@@ -190,6 +191,7 @@ export function FfeAudit({ code }: { code: string }) {
 
   const save = async (roomKey: string, item: FfeItem, answer: string, qty?: number, note?: string, spec?: string) => {
     const k = roomKey + '::' + item.key
+    const d0 = data?.answers[k]?.answer
     setBusy(b => ({ ...b, [k]: 'saving' }))
     // Optimistic: the row shows the new answer immediately, and only reverts if the save fails.
     setData(d => d ? { ...d, answers: { ...d.answers, [k]: { answer, qty: qty ?? d.answers[k]?.qty ?? 1, note: note ?? d.answers[k]?.note ?? null, spec: spec ?? d.answers[k]?.spec ?? null, photoUrl: d.answers[k]?.photoUrl ?? null } } } : d)
@@ -202,6 +204,8 @@ export function FfeAudit({ code }: { code: string }) {
       if (!r.ok || !j.ok) throw new Error(j?.error || 'save failed')
       setBusy(b => ({ ...b, [k]: 'saved' }))
       setTimeout(() => setBusy(b => { const n = { ...b }; delete n[k]; return n }), 1200)
+      // A Fix answer opens a fix on the team board — reflect that in the list below straight away.
+      if (answer === 'fix' || d0 === 'fix') loadFixes()
     } catch (e: any) {
       // Distinguish "we could not reach the server" from "the server says storage is not set up".
       // Telling someone to check their signal when the database is missing a table sends them
@@ -281,7 +285,7 @@ export function FfeAudit({ code }: { code: string }) {
         {rooms.map(room => {
           const isOpen = !!open[room.key]
           const roomAnswered = room.items.filter(i => data.answers[room.key + '::' + i.key]).length
-          const roomReplace = room.items.filter(i => ['replace', 'add'].includes(data.answers[room.key + '::' + i.key]?.answer || '')).length
+          const roomReplace = room.items.filter(i => ['replace', 'add', 'fix'].includes(data.answers[room.key + '::' + i.key]?.answer || '')).length
           return (
             <div key={room.key} className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
               <button onClick={() => setOpen(o => ({ ...o, [room.key]: !o[room.key] }))}
@@ -313,14 +317,19 @@ export function FfeAudit({ code }: { code: string }) {
                     const yesLabel = isAdd ? t(FFE_ANSWERS.add) : t(FFE_ANSWERS.replace)
                     const chosen = a?.answer
                     const needed = chosen === 'replace' || chosen === 'add'
-                    const qty = needed ? (a?.qty ?? 1) : 0
+                    const isFix = chosen === 'fix'
+                    // Nightstands come as a pair, so the first tap on Replace should say 2, not 1.
+                    const defQty = item.qty && item.qty > 0 ? item.qty : 1
+                    const qty = needed ? (a?.qty ?? defQty) : 0
                     const showDetail = needed
-                    // THE SHEET ASKS FOR A NUMBER, so the number is the control. Stepping up from
-                    // zero IS the answer "we need some"; stepping back to zero is "not needed".
                     const setQty = (n: number) => {
-                      const v = Math.max(0, Math.min(99, Math.round(n)))
-                      save(room.key, item, v > 0 ? yes : 'keep', v > 0 ? v : 1, a?.note || undefined)
+                      const v = Math.max(1, Math.min(99, Math.round(n)))
+                      save(room.key, item, chosen === 'add' ? 'add' : 'replace', v, a?.note || undefined, a?.spec ?? undefined)
                     }
+                    // ADD / REPLACE / FIX (Jon, 2026-08-12). Three outcomes, and only two of them
+                    // buy anything — FIX goes to the team board, which the row says out loud.
+                    const pick = (v: string) =>
+                      save(room.key, item, v, v === 'add' || v === 'replace' ? (a?.qty ?? defQty) : 1, a?.note || undefined, a?.spec ?? undefined)
                     return (
                       <div key={item.key} className="px-4 py-3">
                         <div className="flex items-start justify-between gap-3">
@@ -339,26 +348,51 @@ export function FfeAudit({ code }: { code: string }) {
                           {state === 'saved' ? <span className="text-[10px] text-emerald-600 font-bold shrink-0 mt-1">✓</span> : null}
                         </div>
 
-                        {/* NUMBER NEEDED / CANTIDAD — the sheet's last column, as one control.
-                            48px targets: this is used one-handed, standing up. */}
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="text-[11px] text-neutral-500 flex-1 min-w-0">
-                            {isAdd ? t(FFE_UI.ask.add) : t(FFE_UI.qty)}
-                          </span>
-                          <div className="flex items-center rounded-xl border-2 border-neutral-200 overflow-hidden shrink-0">
-                            <button onClick={() => setQty(qty - 1)} disabled={qty <= 0} aria-label="minus"
-                              className="w-11 h-[46px] text-[20px] font-bold text-neutral-600 disabled:text-neutral-300 active:bg-neutral-100">−</button>
-                            <span className={'w-12 text-center text-[17px] font-bold tabular-nums ' +
-                              (qty > 0 ? 'text-neutral-900' : 'text-neutral-300')}>{qty}</span>
-                            <button onClick={() => setQty(qty + 1)} aria-label="plus"
-                              className="w-11 h-[46px] text-[20px] font-bold text-neutral-600 active:bg-neutral-100">+</button>
-                          </div>
-                          <button onClick={() => save(room.key, item, 'keep')}
-                            className={'min-h-[46px] px-3 rounded-xl text-[12.5px] font-bold border-2 shrink-0 ' +
-                              (chosen === 'keep' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-neutral-200 text-neutral-600 active:bg-neutral-50')}>
-                            {t(FFE_UI.none)}
-                          </button>
+                        {/* ADD · REPLACE · FIX — 48px targets, used one-handed standing up. */}
+                        <div className="mt-2 grid grid-cols-3 gap-1.5">
+                          {([
+                            { v: 'add', on: 'bg-blue-600 border-blue-600' },
+                            { v: 'replace', on: 'bg-amber-500 border-amber-500' },
+                            { v: 'fix', on: 'bg-violet-600 border-violet-600' },
+                          ] as const).map(b => (
+                            <button key={b.v} onClick={() => pick(b.v)}
+                              className={'min-h-[48px] rounded-xl text-[13.5px] font-bold border-2 transition-colors ' +
+                                (chosen === b.v ? b.on + ' text-white' : 'bg-white border-neutral-200 text-neutral-700 active:bg-neutral-50')}>
+                              {t((FFE_ANSWERS as any)[b.v])}
+                            </button>
+                          ))}
                         </div>
+                        <button onClick={() => save(room.key, item, 'keep')}
+                          className={'mt-1.5 w-full min-h-[40px] rounded-xl text-[12.5px] font-bold border-2 ' +
+                            (chosen === 'keep' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-neutral-200 text-neutral-500 active:bg-neutral-50')}>
+                          {t(FFE_UI.none)}
+                        </button>
+
+                        {/* NUMBER NEEDED / CANTIDAD — only once something is being bought. */}
+                        {needed ? (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-[11.5px] text-neutral-500 flex-1 min-w-0">{t(FFE_UI.qty)}</span>
+                            <div className="flex items-center rounded-xl border-2 border-neutral-200 overflow-hidden shrink-0">
+                              <button onClick={() => setQty(qty - 1)} disabled={qty <= 1} aria-label="minus"
+                                className="w-11 h-[46px] text-[20px] font-bold text-neutral-600 disabled:text-neutral-300 active:bg-neutral-100">−</button>
+                              <span className="w-12 text-center text-[17px] font-bold tabular-nums text-neutral-900">{qty}</span>
+                              <button onClick={() => setQty(qty + 1)} aria-label="plus"
+                                className="w-11 h-[46px] text-[20px] font-bold text-neutral-600 active:bg-neutral-100">+</button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {/* A FIX SAYS WHERE IT IS GOING. Nobody should have to learn from experience
+                            that this one does not reach the owner. */}
+                        {isFix ? (
+                          <div className="mt-2 rounded-xl bg-violet-50 border border-violet-200 px-3 py-2">
+                            <p className="text-[11.5px] font-semibold text-violet-800">{t(FFE_UI.fixGoesTo)}</p>
+                            <input type="text" placeholder={t(FFE_UI.fixWhat)}
+                              defaultValue={a?.note || ''}
+                              onBlur={e => { if (e.target.value !== (a?.note || '')) save(room.key, item, 'fix', 1, e.target.value, a?.spec ?? undefined) }}
+                              className="mt-1.5 w-full rounded-lg border border-violet-200 px-2.5 py-2 text-[13.5px] bg-white" />
+                          </div>
+                        ) : null}
 
                         {state === 'error' ? (
                           <p className="mt-1.5 text-[11.5px] text-rose-600 font-semibold">{t(FFE_UI.offline)}</p>
