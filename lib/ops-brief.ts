@@ -642,12 +642,17 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     if (variant === 'full') {
       const ec = await laborEconomics({ from: yd, to: yd, market: 'all' })
       const usd = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
-      const cpcLine = (() => {
-        const m = ec.costPerCleanByMarket || {}
-        const one = (k: string) => (m[k] != null ? usd(m[k] as number) : 'n/a')
-        return 'Cost / clean: Miami ' + one('miami') + ', Broward ' + one('broward') +
-          ', North ' + one('north') + ', All ' + (ec.costPerClean != null ? usd(ec.costPerClean) : 'n/a')
-      })()
+      // THE THREE HOUSEKEEPING CATEGORIES, on their own line: Miami, Broward, Vendor-cleaned.
+      // Labor cost per clean AND time per clean, both over housekeeper cleans only.
+      const bucketLine = (ec.buckets || []).map((b: any) => {
+        if (!b.inHouse) return b.label + ' ' + b.cleans + ' cleans, ' + usd(b.cleaningRevenue) + ' rev (no in-house labor)'
+        const cpc = b.laborCostPerClean != null ? usd(b.laborCostPerClean) : 'n/a'
+        const tpc = b.hoursPerClean != null ? b.hoursPerClean + 'h' : 'n/a'
+        return b.label + ' ' + b.cleans + ' cleans, ' + cpc + ' / clean, ' + tpc + ' each'
+      }).join(' · ')
+      const cpcLine = 'Housekeeping: ' + (bucketLine || 'no cleans') +
+        (ec.costPerClean != null ? ' — all in-house ' + usd(ec.costPerClean) + ' / clean' : '') +
+        (ec.hoursPerClean != null ? ', ' + ec.hoursPerClean + 'h each' : '')
       const hoursTxt = (h: number) => (h > 0 ? String(Math.round(h * 10) / 10) + 'h' : '—')
       const personRow = (p: any) => '<tr>' +
         '<td style="' + S.td + '">' + esc(p.name) + '<br><span style="color:#6b7280">' + esc(p.market || '') + '</span></td>' +
@@ -672,8 +677,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const tail = d.key === 'supervision'
           ? ' — overhead vs ' + usd(ec.managementFee) + ' management fees'
           : (d.revenue > 0 || d.payroll > 0 ? ' — margin ' + usd(d.margin) : '')
+        // Cost per clean appears on the housekeeping line and nowhere else, by design.
         const head = d.label.toUpperCase() + ': ' + bits.join(', ') + tail +
-          (d.key === 'housekeeping' && d.costPerClean != null ? ' · ' + usd(d.costPerClean) + ' / clean' : '')
+          (d.key === 'housekeeping' && d.costPerClean != null
+            ? ' · ' + usd(d.costPerClean) + ' / clean' + (d.hoursPerClean != null ? ', ' + d.hoursPerClean + 'h each' : '')
+            : '')
         trRows += '<tr><td colspan="7" style="' + S.td + ';background:#f5f5f4;font-weight:bold">' + esc(head) + '</td></tr>'
         trRows += rows.map(personRow).join('')
       }
