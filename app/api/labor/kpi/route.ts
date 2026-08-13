@@ -410,9 +410,11 @@ export async function GET(req: Request) {
         vendorRevenue: econ.cleaningRevenueVendor,
         margin: hkD.margin,
         departureCleans: hkD.cleans,
-        costPerClean: hkD.costPerClean,
-        costPerCleanLoaded: econ.costPerCleanLoaded,
+        costPerClean: econ.costPerClean,          // housekeeper wages ÷ housekeeper cleans
+        hoursPerClean: econ.hoursPerClean,        // the same denominator, in time
         costPerCleanByMarket: econ.costPerCleanByMarket,
+        hoursPerCleanByMarket: econ.hoursPerCleanByMarket,
+        buckets: econ.buckets,                    // Miami / Broward / Vendor-cleaned
         feePerClean: hkD.cleans ? round2(hkD.cleaningRevenue / hkD.cleans) : null,
         otherHkTasks: hkNonDeparture,
         laborPct: hkD.cleaningRevenue > 0 && hkD.payroll > 0 ? round2((hkD.payroll / hkD.cleaningRevenue) * 100) : null,
@@ -453,7 +455,9 @@ export async function GET(req: Request) {
         teamNames: mtNames,
         taskHours: round2(mtTaskMinutes / 60),
         utilizationPct: mtD.hours > 0 ? round2((mtTaskMinutes / 60 / mtD.hours) * 100) : null,
-        costPerTask: tasks.maintenance && mtD.payroll ? round2(mtD.payroll / tasks.maintenance) : null,
+        // No cost-per-clean here by design (Jon, 2026-08-12). Maintenance is judged on what it
+        // billed plus any real departure clean it turned, against its wages.
+        revenue: round2(mtD.cleaningRevenue + mtD.billableRevenue),
         billableRevenue: mtD.billableRevenue,
         billableTasks: mtD.billableTasks,
         tasksNoCharge: mtD.tasksNoCharge,
@@ -488,6 +492,8 @@ export async function GET(req: Request) {
     const body = {
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
       ...kpis, tasks, economics, payroll, today: todayBlock,
+      // The three housekeeping categories and the layer stack, straight off the shared engine.
+      buckets: econ.buckets, layers: econ.layers,
       perCleaner, personTasks, personRevenue, attribution, unattributed, settings,
       // The same P&L the briefs print, per person and per crew, so nothing has to be re-derived
       // on the client and no two screens can disagree.
