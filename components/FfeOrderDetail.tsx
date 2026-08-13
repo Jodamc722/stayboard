@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, ArrowLeft, Copy, Check, Send, FileSpreadsheet, FileText, Trash2, Package,
-  ExternalLink, Truck, Wrench, ShoppingBag, MessageSquare, ClipboardList,
+  ExternalLink, Truck, Wrench, ShoppingBag, MessageSquare, ClipboardList, Store,
 } from 'lucide-react'
 import { money, ORDER_STATUS_LABEL, STAGE_LABEL } from '@/lib/ffe-catalog'
 
@@ -160,7 +160,12 @@ export function FfeOrderDetail({ id }: { id: string }) {
         </a>
         <a href={'/api/audit/ffe/orders/export?fmt=csv&id=' + id}
           className="rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted">CSV</a>
-        {/* THE INSTALL SHEET. One page per unit, no prices — what goes in and where it goes. */}
+        {/* TWO SHEETS, TWO JOBS. The buy list is organised by supplier, for whoever places the
+            orders; the work order by unit, for whoever puts the furniture in. */}
+        <a href={'/api/audit/ffe/orders/export?fmt=buylist&id=' + id}
+          className="rounded-xl border-2 border-ink px-3 py-2 text-[12px] font-bold text-ink inline-flex items-center gap-1.5">
+          <Store className="w-3.5 h-3.5" /> Buy list
+        </a>
         <a href={'/api/audit/ffe/orders/export?fmt=workorder&id=' + id}
           className="rounded-xl border-2 border-ink px-3 py-2 text-[12px] font-bold text-ink inline-flex items-center gap-1.5">
           <ClipboardList className="w-3.5 h-3.5" /> Work orders
@@ -261,7 +266,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
                       {l.roomLabel}{l.placement && l.placement !== l.roomLabel ? ' — ' + l.placement : ''} · {l.itemLabel}
                       {l.received_at ? <span className="text-emerald-600 font-semibold"> · received</span> : null}
                       {l.spec ? ' · ' : ''}{l.spec ? <span className="font-semibold text-ink">{l.spec}</span> : null}
-                      {l.vendor ? ' · ' + l.vendor : ''}{l.po_number ? ' · PO ' + l.po_number : ''}
+                      {l.vendor ? ' · ' + l.vendor : <span className="text-amber-700 font-semibold"> · no supplier yet</span>}{l.po_number ? ' · PO ' + l.po_number : ''}
                     </div>
                   </div>
                   <select value={l.catalog_id || ''} onChange={e => post({ action: 'setLine', lineId: l.id, catalogId: e.target.value })}
