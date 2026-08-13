@@ -128,6 +128,8 @@ export type DeptEcon = {
   margin: number
   marginPct: number | null
   costPerClean: number | null
+  /** Housekeeping only. How long a turn takes, alongside what it costs. */
+  hoursPerClean: number | null
   billableTasks: number
   tasksNoCharge: number
   /** What this crew is measured against, in plain words — so a screen never has to guess. */
@@ -152,11 +154,21 @@ export type LaborEcon = {
   materials: number
   managementFee: number
   payroll: number
-  /** Cost per clean, housekeepers only — the number Jon manages. */
+  /** Housekeeper wages ÷ the units housekeepers turned, in-house markets only. */
   costPerClean: number | null
-  /** The same clean with the supervisors' wages loaded on top. */
-  costPerCleanLoaded: number | null
+  /** The same denominator, in time rather than money. */
+  hoursPerClean: number | null
   costPerCleanByMarket: Record<string, number | null>
+  hoursPerCleanByMarket: Record<string, number | null>
+  /** Miami / Broward / Vendor-cleaned, the three housekeeping categories. */
+  buckets: Array<{
+    key: string; label: string; inHouse: boolean; people: number
+    cleans: number; cleaningRevenue: number; payroll: number; hours: number
+    laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
+    margin: number; marginPct: number | null
+  }>
+  /** The stack: housekeeping labor, maintenance billables, maintenance cleans, supervisor overhead. */
+  layers: any
   /** Operating margin on work we sell: cleaning + billable - all payroll. */
   margin: number
   /** With the management fee included — the whole labor line against everything labor earns. */
@@ -172,7 +184,7 @@ export type LaborEcon = {
 const EMPTY_DEPT = (key: Dept): DeptEcon => ({
   key, label: DEPT_LABEL[key], people: 0, names: [], hours: 0, payroll: 0, cleans: 0,
   cleaningRevenue: 0, billableRevenue: 0, materials: 0, revenue: 0, margin: 0, marginPct: null,
-  costPerClean: null, billableTasks: 0, tasksNoCharge: 0, basis: '',
+  costPerClean: null, hoursPerClean: null, billableTasks: 0, tasksNoCharge: 0, basis: '',
 })
 
 const BASIS: Record<Dept, string> = {
@@ -262,16 +274,28 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const cleanTasks = taskRows.filter(t => kindOfTask(t) === 'clean')
   const usedTask: Record<string, boolean> = {}
   const revBy: Record<string, number> = {}
+  // EVERY ATTRIBUTED CLEAN, KEPT AS A ROW: who did it, which market the unit is in, what the guest
+  // paid. The buckets below are built from these rows rather than from person-level totals, so a
+  // housekeeper who works both markets lands in both — which is the whole point of the split.
+  const cleanRecs: { who: string; market: string; fee: number }[] = []
   let cleaningInhouse = 0, cleaningVendor = 0, managementFee = 0
-  let cleansAttributed = 0
+  let cleansAttributed = 0, vendorCleans = 0
   for (const r of resRows) {
     const co = String(r.check_out).slice(0, 10)
     const coNext = dISO(addDays(new Date(co + 'T12:00:00Z'), 1))
-    const vendor = !!lmap[String(r.listing_id)]?.vendor
+    const li = lmap[String(r.listing_id)]
+    const vendor = !!li?.vendor
     const fee = num(r.cleaning) ?? 0
-    if (vendor) cleaningVendor += fee; else cleaningInhouse += fee
     managementFee += num(r.commission) ?? 0
-    if (vendor) continue                       // vendor units: not our crew's revenue to earn
+    if (vendor) {
+      // VENDOR-CLEANED UNITS ARE THEIR OWN BUCKET (Jon, 2026-08-12). A checkout there needed a
+      // clean and earned a fee, but no in-house hour went into it — so it carries revenue and a
+      // clean count, and never a cost per clean.
+      cleaningVendor += fee
+      if (fee > 0) vendorCleans++
+      continue
+    }
+    cleaningInhouse += fee
     const match = cleanTasks.filter(t => !usedTask[String(t.id)] &&
       String(t.reference_property_id) === String(r.listing_id) &&
       (String(t.finished_at).slice(0, 10) === co || String(t.finished_at).slice(0, 10) === coNext))[0]
@@ -281,6 +305,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (!w) continue
     cleansAttributed++
     revBy[w] = round2((revBy[w] || 0) + fee)
+    cleanRecs.push({ who: w, market: li ? li.market : 'unassigned', fee })
   }
 
   // ── per person ───────────────────────────────────────────────────────────
@@ -370,31 +395,119 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     x.revenue = round2(x.cleaningRevenue + x.billableRevenue)
     x.margin = round2(x.revenue - x.payroll)
     x.marginPct = x.revenue > 0 ? round2((x.margin / x.revenue) * 100) : null
-    x.costPerClean = x.cleans > 0 && x.payroll > 0 ? round2(x.payroll / x.cleans) : null
+    // COST PER CLEAN EXISTS FOR HOUSEKEEPING AND NOWHERE ELSE (Jon, 2026-08-12: "For the
+    // maintenance section you wouldn't need to do a cost per clean... supervisors should not be
+    // added in the cost per clean"). A tech who happens to turn a unit earns the fee; he is still
+    // not measured on cost per clean, and neither is a supervisor.
+    x.costPerClean = d === 'housekeeping' && x.cleans > 0 && x.payroll > 0 ? round2(x.payroll / x.cleans) : null
+    x.hoursPerClean = d === 'housekeeping' && x.cleans > 0 && x.hours > 0 ? round2(x.hours / x.cleans) : null
     x.basis = BASIS[d]
   }
 
+  // ── THE THREE HOUSEKEEPING BUCKETS ───────────────────────────────────────
+  // Jon, 2026-08-12: "make sure their housekeepers are in three categories: Miami and Broward,
+  // Vendor clean."
+  //
+  // Cleans are counted where the UNIT is, not where the person is filed. A housekeeper's payroll
+  // is then split across the markets she actually cleaned in, in proportion to her cleans there —
+  // 8 Miami and 4 Broward puts two-thirds of her wages on Miami. Assigning a whole person to one
+  // market overstates one side and understates the other, and several of the crew cross daily.
+  //
+  // Only HOUSEKEEPER wages and HOUSEKEEPER cleans go into these buckets. Supervisors are fixed
+  // overhead and stay out. Maintenance stays out too, even when a tech does a real departure
+  // clean: that fee is his revenue, in his own section.
+  const hkNames: Record<string, boolean> = {}
+  for (const p of people) if (p.dept === 'housekeeping') hkNames[p.name] = true
+
+  type Bucket = {
+    key: string; label: string; inHouse: boolean
+    cleans: number; cleaningRevenue: number; payroll: number; hours: number
+    laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
+    margin: number; marginPct: number | null; people: number
+  }
+  const mkBucket = (key: string, inHouse: boolean): Bucket => ({
+    key, label: key.charAt(0).toUpperCase() + key.slice(1), inHouse,
+    cleans: 0, cleaningRevenue: 0, payroll: 0, hours: 0,
+    laborCostPerClean: null, hoursPerClean: null, feePerClean: null,
+    margin: 0, marginPct: null, people: 0,
+  })
+  const buckets: Record<string, Bucket> = {}
+  const bucketFor = (k: string, inHouse = true) => (buckets[k] = buckets[k] || mkBucket(k, inHouse))
+  if (market === 'all' || market === 'miami') bucketFor('miami')
+  if (market === 'all' || market === 'broward') bucketFor('broward')
+
+  // cleans + revenue, from the clean rows, housekeepers only
+  const hkCleansByPerson: Record<string, Record<string, number>> = {}
+  for (const rec of cleanRecs) {
+    if (!hkNames[rec.who]) continue
+    const b = bucketFor(rec.market)
+    b.cleans++
+    b.cleaningRevenue = round2(b.cleaningRevenue + rec.fee)
+    hkCleansByPerson[rec.who] = hkCleansByPerson[rec.who] || {}
+    hkCleansByPerson[rec.who][rec.market] = (hkCleansByPerson[rec.who][rec.market] || 0) + 1
+  }
+  // payroll + hours, split by each housekeeper's share of cleans per market
+  const bucketNames: Record<string, Record<string, boolean>> = {}
+  for (const p of people) {
+    if (p.dept !== 'housekeeping') continue
+    const mine = hkCleansByPerson[p.name]
+    const total = mine ? Object.keys(mine).reduce((a, m) => a + mine[m], 0) : 0
+    if (total > 0) {
+      for (const m of Object.keys(mine)) {
+        const share = mine[m] / total
+        const b = bucketFor(m)
+        b.payroll = round2(b.payroll + p.payroll * share)
+        b.hours = round2(b.hours + p.hours * share)
+        bucketNames[m] = bucketNames[m] || {}; bucketNames[m][p.name] = true
+      }
+    } else if (p.payroll > 0 || p.hours > 0) {
+      // A housekeeper who clocked in but turned no units — common-area work, a training day, a
+      // no-show unit. Still housekeeping labor, so it belongs to her market's cost per clean.
+      const b = bucketFor(p.market && p.market !== 'unassigned' ? p.market : 'unassigned')
+      b.payroll = round2(b.payroll + p.payroll)
+      b.hours = round2(b.hours + p.hours)
+      bucketNames[b.key] = bucketNames[b.key] || {}; bucketNames[b.key][p.name] = true
+    }
+  }
+  // the vendor bucket: revenue and a clean count, never a cost per clean
+  if (market === 'all' || market === 'vendor') {
+    const v = bucketFor('vendor', false)
+    v.label = 'Vendor-cleaned'
+    v.cleans = vendorCleans
+    v.cleaningRevenue = round2(cleaningVendor)
+  }
+  for (const k of Object.keys(buckets)) {
+    const b = buckets[k]
+    b.people = Object.keys(bucketNames[k] || {}).length
+    b.laborCostPerClean = b.inHouse && b.cleans > 0 && b.payroll > 0 ? round2(b.payroll / b.cleans) : null
+    b.hoursPerClean = b.inHouse && b.cleans > 0 && b.hours > 0 ? round2(b.hours / b.cleans) : null
+    b.feePerClean = b.cleans > 0 && b.cleaningRevenue > 0 ? round2(b.cleaningRevenue / b.cleans) : null
+    b.margin = round2(b.cleaningRevenue - b.payroll)
+    b.marginPct = b.cleaningRevenue > 0 ? round2((b.margin / b.cleaningRevenue) * 100) : null
+  }
+  const ORDER = ['miami', 'broward', 'north', 'unassigned', 'vendor']
+  const bucketList = Object.keys(buckets)
+    .sort((a, b) => (ORDER.indexOf(a) < 0 ? 8 : ORDER.indexOf(a)) - (ORDER.indexOf(b) < 0 ? 8 : ORDER.indexOf(b)))
+    .map(k => buckets[k])
+
   const hk = byDept['housekeeping']
   const sup = byDept['supervision']
+  const mt = byDept['maintenance']
   const cleansTotal = people.reduce((a, p) => a + p.cleans, 0)
-  // COST PER CLEAN IS HOUSEKEEPER WAGES OVER TURNOVERS (Jon, 2026-08-12: "Housekeeping is just
-  // housekeepers"). The loaded version adds the supervisors on top, which is the number to use
-  // when asking what a clean really costs the company rather than what the crew costs.
-  const costPerClean = hk.cleans > 0 && hk.payroll > 0 ? round2(hk.payroll / hk.cleans) : null
-  const costPerCleanLoaded = cleansTotal > 0 && (hk.payroll + sup.payroll) > 0
-    ? round2((hk.payroll + sup.payroll) / cleansTotal) : null
-
-  const mkAgg: Record<string, { payroll: number; cleans: number }> = {}
-  for (const p of people) {
-    if (p.dept !== 'housekeeping' || !p.cleans) continue
-    const m = p.market || 'unassigned'
-    mkAgg[m] = mkAgg[m] || { payroll: 0, cleans: 0 }
-    mkAgg[m].payroll += p.payroll
-    mkAgg[m].cleans += p.cleans
-  }
+  // The headline cost per clean: housekeeper wages over the units housekeepers actually turned,
+  // in-house markets only. Supervisors are not in it. Maintenance is not in it. Vendor is not in
+  // it — nobody on our payroll cleaned those.
+  const inHouseB = bucketList.filter(b => b.inHouse)
+  const hkPayrollInHouse = round2(inHouseB.reduce((a, b) => a + b.payroll, 0))
+  const hkHoursInHouse = round2(inHouseB.reduce((a, b) => a + b.hours, 0))
+  const hkCleansInHouse = inHouseB.reduce((a, b) => a + b.cleans, 0)
+  const costPerClean = hkCleansInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansInHouse) : null
+  const hoursPerClean = hkCleansInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansInHouse) : null
   const costPerCleanByMarket: Record<string, number | null> = {}
-  for (const m of Object.keys(mkAgg)) {
-    costPerCleanByMarket[m] = mkAgg[m].cleans && mkAgg[m].payroll ? round2(mkAgg[m].payroll / mkAgg[m].cleans) : null
+  const hoursPerCleanByMarket: Record<string, number | null> = {}
+  for (const b of bucketList) {
+    costPerCleanByMarket[b.key] = b.laborCostPerClean
+    hoursPerCleanByMarket[b.key] = b.hoursPerClean
   }
 
   // What the crews between them actually earned. The gap to `cleaningRevenue` is fees on
@@ -406,10 +519,55 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const materials = round2(people.reduce((a, p) => a + p.materials, 0))
   const cleaningRevenue = round2(cleaningInhouse)
 
+  // ── THE LAYERS ───────────────────────────────────────────────────────────
+  // Jon, 2026-08-12: "There are three layers: housekeeping labor; maintenance labor, that's just
+  // Breezeway task cost; and maintenance can do cleans, so that would be in the cleaning revenue."
+  // Each layer earns its own way, and they stack into the profit picture. Supervisors sit beside
+  // them as fixed overhead — never inside the housekeeping layer.
+  const layers = {
+    housekeeping: {
+      cleans: hkCleansInHouse,
+      revenue: round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0)),
+      payroll: hkPayrollInHouse,
+      hours: hkHoursInHouse,
+      margin: round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0) - hkPayrollInHouse),
+      costPerClean, hoursPerClean,
+    },
+    maintenance: {
+      // No cost per clean here, by design. Revenue is what they billed plus any real departure
+      // clean they turned; the margin is that against their wages.
+      cleaningRevenue: mt.cleaningRevenue,
+      billableRevenue: mt.billableRevenue,
+      revenue: round2(mt.cleaningRevenue + mt.billableRevenue),
+      payroll: mt.payroll,
+      hours: mt.hours,
+      margin: mt.margin,
+      marginPct: mt.marginPct,
+      billableTasks: mt.billableTasks,
+      tasksNoCharge: mt.tasksNoCharge,
+    },
+    supervision: {
+      // Fixed overhead. Revenue still shows under their name when they turn a unit themselves,
+      // it simply never enters the housekeeping bucket.
+      people: sup.people, names: sup.names,
+      payroll: sup.payroll, hours: sup.hours,
+      cleaningRevenue: sup.cleaningRevenue, cleans: sup.cleans,
+      managementFee: round2(managementFee),
+      coveragePct: managementFee > 0 ? round2((sup.payroll / managementFee) * 100) : null,
+    },
+    vendor: {
+      cleans: vendorCleans,
+      revenue: round2(cleaningVendor),
+      feePerClean: vendorCleans > 0 && cleaningVendor > 0 ? round2(cleaningVendor / vendorCleans) : null,
+    },
+  }
+
   return {
     from, to, market,
     people,
     departments: DEPTS.map(d => byDept[d]),
+    buckets: bucketList,
+    layers,
     cleans: cleansTotal,
     cleaningRevenue,
     cleaningRevenueAttributed: attributedRev,
@@ -420,8 +578,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     managementFee: round2(managementFee),
     payroll,
     costPerClean,
-    costPerCleanLoaded,
+    hoursPerClean,
     costPerCleanByMarket,
+    hoursPerCleanByMarket,
     margin: round2(cleaningRevenue + billableRevenue - payroll),
     marginWithFee: round2(cleaningRevenue + billableRevenue + managementFee - payroll),
     coverage: {
