@@ -92,8 +92,10 @@ export async function GET(req: NextRequest) {
         id: str(l.id),
         code: l.code || null,
         product: l.product || null,
-        itemEn: itemEn[rk + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
-        itemEs: itemEs[rk + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
+        // The title snapshotted onto the line wins: it is the wording the walker and the builder
+        // saw, numbering and all, and the owner must not be shown a different name for it.
+        itemEn: str(l.title) || itemEn[rk + '::' + str(l.item_key)] || str(l.item_key),
+        itemEs: str(l.title) || itemEs[rk + '::' + str(l.item_key)] || str(l.item_key),
         placement: l.placement || null,
         spec: l.spec || null,
         imageUrl: l.image_url || null,
