@@ -19,6 +19,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
 import { categoryForItem, LINE_STAGES } from '@/lib/ffe-catalog'
+import { BUYS } from '@/lib/ffe-checklist'
 import { orderCode } from '@/lib/ffe-links'
 
 export const dynamic = 'force-dynamic'
@@ -132,9 +133,10 @@ export async function GET(req: NextRequest) {
     const ownerId = str(sp.get('pending')).trim()
     const units = await ffePortfolio(db)
     if (!ownerId) {
-      // Owners that have anything flagged at all, so the picker is not 60 empty names.
+      // Owners with something to BUY. A Fix answer is deliberately not counted here — it belongs
+      // on the Fixes board, not in an owner's order.
       const { data: ans, error } = await db.from('ffe_answers')
-        .select('listing_id,answer').in('answer', ['replace', 'add']).limit(20000)
+        .select('listing_id,answer').in('answer', BUYS).limit(20000)
       if (error) return fail(error.message)
       const byListing: Record<string, number> = {}
       for (const a of ((ans || []) as any[])) byListing[str(a.listing_id)] = (byListing[str(a.listing_id)] || 0) + 1
@@ -157,7 +159,7 @@ export async function GET(req: NextRequest) {
 
     const [{ data: ans, error: aErr }, { data: onOrder }, { data: prods }, ov] = await Promise.all([
       db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,spec,photo_url')
-        .in('listing_id', ids).in('answer', ['replace', 'add']).limit(20000),
+        .in('listing_id', ids).in('answer', BUYS).limit(20000),
       db.from('ffe_order_lines').select('listing_id,room,item_key,order_id').in('listing_id', ids).limit(20000),
       db.from('ffe_catalog').select('id,code,name_en,category,item_keys,vendor,vendor_sku,unit_cost,url,image_url,room_hint')
         .eq('active', true).limit(2000),
