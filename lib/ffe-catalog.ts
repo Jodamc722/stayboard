@@ -161,6 +161,38 @@ export const ORDER_STATUS_LABEL: Record<string, string> = {
   draft: 'Draft', sent: 'With owner', approved: 'Approved', changes: 'Changes requested', closed: 'Closed',
 }
 
+// ── WHERE WE BUY IT (Jon, 2026-08-13: "not sure yet where we will purchase from but could be
+// Amazon, a partner with HostGPO, Wayfair, City Furniture, etc.") ───────────────────────────────
+//
+// A SUGGESTION LIST, NOT A CLOSED ONE. These are the places Jon named plus the obvious neighbours;
+// the vendor field stays free text so a one-off local supplier is never a blocker. The value of the
+// list is CONSISTENT SPELLING — "Wayfair", "wayfair" and "Wayfair Pro" are one vendor to a person
+// and three to a group-by, and the buy list is only useful if it groups.
+export type FfeVendor = { name: string; note?: string; gpo?: boolean }
+
+export const FFE_VENDORS: FfeVendor[] = [
+  { name: 'HostGPO', gpo: true, note: 'Group purchasing — member rates across partner brands' },
+  { name: 'Amazon Business', note: 'Fast, good for small items and replacements' },
+  { name: 'Wayfair Professional', note: 'Trade account pricing' },
+  { name: 'City Furniture', note: 'Local delivery and white glove in South Florida' },
+  { name: 'CB2 / Crate & Barrel Trade' },
+  { name: 'West Elm Trade' },
+  { name: 'Article' },
+  { name: 'Home Depot Pro' },
+  { name: 'Local supplier' },
+]
+
+/** Money per piece from whichever source is preferred, or the cheapest if nobody has chosen. */
+export function bestSource<T extends { unit_cost: number | null; preferred?: boolean }>(sources: T[]): T | null {
+  const list = (sources || []).filter(Boolean)
+  if (!list.length) return null
+  const pick = list.find(s => s.preferred)
+  if (pick) return pick
+  const priced = list.filter(s => s.unit_cost != null)
+    .sort((a, b) => Number(a.unit_cost) - Number(b.unit_cost))
+  return priced[0] || list[0]
+}
+
 // ── FIXES ───────────────────────────────────────────────────────────────────────────────────────
 // Jon, 2026-08-12: "This would not need to be shared with owner unless it's 350 or more to fix."
 // ONE number, defined once. Every screen that decides whether an owner sees a fix reads it from
