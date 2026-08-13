@@ -18,7 +18,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
-import { categoryForItem, LINE_STAGES } from '@/lib/ffe-catalog'
+import { categoryForItem, LINE_STAGES, bestSource } from '@/lib/ffe-catalog'
 import { BUYS } from '@/lib/ffe-checklist'
 import { orderCode } from '@/lib/ffe-links'
 
@@ -43,6 +43,41 @@ function priceOf(v: any): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null
 }
 const clean = (v: any, max: number) => { const s = str(v).trim(); return s ? s.slice(0, max) : null }
+
+/**
+ * A catalog product plus WHERE IT IS BOUGHT (Jon, 2026-08-13: "not sure yet where we will purchase
+ * from — could be Amazon, HostGPO, Wayfair, City Furniture").
+ *
+ * The product row carries the code and the name; the supplier, their SKU, their link and their
+ * price live on ffe_catalog_sources, one row per place you could buy it. Reading the product alone
+ * gave a line with no vendor and no price — which is exactly what a buy list cannot group by. This
+ * resolves the chosen source (or the cheapest, if nobody has chosen) and folds it into the product
+ * so every caller below gets one object with everything a line needs.
+ */
+async function productsWithSource(db: any, ids: string[]): Promise<Record<string, any>> {
+  if (!ids.length) return {}
+  const { data: prods } = await db.from('ffe_catalog').select('*').in('id', ids).limit(2000)
+  let srcs: any[] = []
+  try {
+    const { data } = await db.from('ffe_catalog_sources').select('*').in('catalog_id', ids).limit(5000)
+    srcs = (data || []) as any[]
+  } catch { /* migration 038 not run — fall back to whatever is on the product itself */ }
+  const byProduct: Record<string, any[]> = {}
+  for (const x of srcs) (byProduct[str(x.catalog_id)] = byProduct[str(x.catalog_id)] || []).push(x)
+
+  const out: Record<string, any> = {}
+  for (const p of ((prods || []) as any[])) {
+    const best = bestSource(byProduct[str(p.id)] || [])
+    out[str(p.id)] = {
+      ...p,
+      vendor: best ? best.vendor : p.vendor,
+      vendor_sku: best ? (best.vendor_sku || p.vendor_sku) : p.vendor_sku,
+      url: best && best.url ? best.url : p.url,
+      unit_cost: best && best.unit_cost != null ? Number(best.unit_cost) : p.unit_cost,
+    }
+  }
+  return out
+}
 
 async function overrides(db: any): Promise<FfeOverride[]> {
   try {
@@ -224,11 +259,14 @@ export async function GET(req: NextRequest) {
       .map((g: any) => ({ ...g, rooms: Object.values(g.rooms) }))
       .sort((a: any, b: any) => String(a.unitName).localeCompare(String(b.unitName), undefined, { numeric: true }))
 
+    // Price the picker from the chosen supplier too, so the number in the builder is the number on
+    // the order rather than a blank that fills in later.
+    const withSource = await productsWithSource(db, ((prods || []) as any[]).map(p => str(p.id)))
     return NextResponse.json({
       ok: true,
       owner: { ownerId, ownerName: mine[0]?.ownerName || 'Owner', units: mine.length },
       groups: out,
-      products: (prods || []),
+      products: ((prods || []) as any[]).map(p => withSource[str(p.id)] || p),
     })
   } catch (e: any) { return fail(e?.message || e) }
 }
@@ -290,8 +328,7 @@ export async function POST(req: NextRequest) {
         if (!cid) {
           Object.assign(patch, { catalog_id: null, code: null, product: null, image_url: null, url: null, vendor: null, vendor_sku: null })
         } else {
-          const { data: p } = await db.from('ffe_catalog').select('*').eq('id', cid).limit(1)
-          const prod = (p || [])[0]
+          const prod = (await productsWithSource(db, [cid]))[cid]
           if (!prod) return NextResponse.json({ error: 'product not found' }, { status: 404 })
           // Snapshot, not a join — see migration 034. An approved quote must not re-price itself.
           Object.assign(patch, {
@@ -317,8 +354,7 @@ export async function POST(req: NextRequest) {
       const ids: string[] = Array.isArray(body.lineIds) ? body.lineIds.map(String).slice(0, 2000) : []
       const cid = str(body.catalogId)
       if (!ids.length || !cid) return NextResponse.json({ error: 'lineIds and catalogId required' }, { status: 400 })
-      const { data: p } = await db.from('ffe_catalog').select('*').eq('id', cid).limit(1)
-      const prod = (p || [])[0]
+      const prod = (await productsWithSource(db, [cid]))[cid]
       if (!prod) return NextResponse.json({ error: 'product not found' }, { status: 404 })
       const patch: any = {
         catalog_id: prod.id, code: prod.code, product: prod.name_en,
@@ -430,11 +466,7 @@ async function insertLines(db: any, orderId: string, raw: any, units: FfeUnit[],
   const have = new Set(((existing || []) as any[]).map(l => str(l.listing_id) + '|' + str(l.room) + '|' + str(l.item_key)))
 
   const catIds = Array.from(new Set(list.map(l => str(l.catalogId)).filter(Boolean)))
-  let prodById: Record<string, any> = {}
-  if (catIds.length) {
-    const { data: prods } = await db.from('ffe_catalog').select('*').in('id', catIds).limit(2000)
-    prodById = Object.fromEntries(((prods || []) as any[]).map(p => [str(p.id), p]))
-  }
+  const prodById: Record<string, any> = catIds.length ? await productsWithSource(db, catIds) : {}
 
   const rows: any[] = []
   for (const l of list) {
