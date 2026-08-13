@@ -3,6 +3,9 @@
 //   ?id=<orderId>&fmt=xlsx    line items for accounting or to hand a vendor
 //   ?id=<orderId>&fmt=pdf     the printable quote an owner files or signs
 //   ?id=<orderId>&fmt=csv     the plain fallback
+//   ?id=<orderId>&fmt=workorder   THE INSTALL SHEET — one page per unit (Jon, 2026-08-13:
+//                             "create work orders report, as items come in per unit. Here what goes
+//                             in unit and here where it goes.")
 //
 // All three are generated from ffe_order_lines at request time, so the page, the spreadsheet and
 // the PDF cannot drift apart — there is no second copy of the numbers to forget to update.
@@ -54,7 +57,7 @@ export async function GET(req: NextRequest) {
     type Row = {
       unit: string; building: string; room: string; item: string; code: string; product: string
       spec: string; placement: string; qty: number; cost: number | null; total: number | null
-      vendor: string; sku: string; url: string; stage: string; po: string; note: string
+      vendor: string; sku: string; url: string; stage: string; stageKey: string; received: string; po: string; note: string
     }
     const rows: Row[] = ((lines || []) as any[]).map(l => {
       const qty = Math.max(1, num(l.qty, 1))
@@ -68,6 +71,8 @@ export async function GET(req: NextRequest) {
         total: cost == null ? null : Math.round(cost * qty * 100) / 100,
         vendor: str(l.vendor), sku: str(l.vendor_sku), url: str(l.url),
         stage: STAGE_LABEL[str(l.stage)] || str(l.stage),
+        stageKey: str(l.stage),
+        received: l.received_at ? String(l.received_at).slice(0, 10) : '',
         po: str(l.po_number), note: str(l.note),
       }
     }).sort((a, b) =>
@@ -91,6 +96,72 @@ export async function GET(req: NextRequest) {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
           'Content-Disposition': `attachment; filename="${base}-${stamp}.csv"`,
+        },
+      })
+    }
+
+    // ── WORK ORDERS: one page per unit, for whoever carries the boxes upstairs ──
+    // Deliberately NOT a quote. No prices, no owner, no totals — a person standing in a hallway
+    // with a dolly needs to know what belongs in this unit and which room each piece goes to, and
+    // every number on the page beyond a quantity is noise they have to read past.
+    if (fmt === 'workorder') {
+      // Default to what has actually been bought. A sheet listing things nobody ordered sends
+      // somebody looking for a box that does not exist.
+      const ONWAY = ['ordered', 'delivered', 'installed']
+      const wanted = sp.get('all') ? rows : rows.filter(r => ONWAY.indexOf(r.stageKey) >= 0)
+      const scope = str(sp.get('unit')).trim()
+      const use = scope ? wanted.filter(r => r.unit === scope) : wanted
+
+      const byUnit: Record<string, Row[]> = {}
+      for (const r of use) (byUnit[r.unit] = byUnit[r.unit] || []).push(r)
+      const unitNames = Object.keys(byUnit).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+
+      const sections: QuoteSection[] = []
+      for (const unit of unitNames) {
+        const rs = byUnit[unit].slice().sort((a, b) => a.room.localeCompare(b.room) || a.item.localeCompare(b.item))
+        sections.push({
+          newPage: true,
+          heading: unit,
+          sub: (rs[0]?.building || '') + ' · ' + rs.reduce((a, r) => a + r.qty, 0) + ' piece(s)',
+          rows: rs.map(r => [
+            r.received ? 'YES' : '[  ]',
+            r.code || '—',
+            r.product || r.item,
+            r.spec || '—',
+            // WHERE IT GOES, in the words the walker used: the room, then the placement note.
+            r.room + (r.placement && r.placement !== r.room ? ' — ' + r.placement : ''),
+            String(r.qty),
+          ]),
+        })
+      }
+
+      const pdf = buildQuotePdf({
+        title: 'Work order — ' + str(order.order_no),
+        subtitle: str(order.title) || str(order.owner_name),
+        meta: [
+          { label: 'Units', value: String(unitNames.length) },
+          { label: 'Pieces', value: String(use.reduce((a, r) => a + r.qty, 0)) },
+          { label: 'Received', value: use.filter(r => r.received).length + ' of ' + use.length + ' lines' },
+          { label: 'Printed', value: stamp },
+        ],
+        columns: [
+          { header: 'Got it', width: 8 },
+          { header: 'Code', width: 12 },
+          { header: 'What it is', width: 30 },
+          { header: 'Size / spec', width: 14 },
+          { header: 'Where it goes', width: 30 },
+          { header: 'Qty', width: 6, align: 'r' },
+        ],
+        sections,
+        totals: [{ label: 'Pieces to place', value: String(use.reduce((a, r) => a + r.qty, 0)), strong: true }],
+        note: str(order.note) || undefined,
+        footer: 'Tick each piece as it goes in. Anything missing or damaged, photograph it and tell the office ' +
+          'before it is installed. This sheet lists only what has been ordered.',
+      })
+      return new NextResponse(pdf as any, {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${safe(str(order.order_no) + '-work-order' + (scope ? '-' + scope : ''))}-${stamp}.pdf"`,
         },
       })
     }
