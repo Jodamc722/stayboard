@@ -241,6 +241,26 @@ export async function GET(req: NextRequest) {
 
     const td = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:left'
     const th = 'padding:6px 8px;border-bottom:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;color:#6b7280'
+    // THE THREE HOUSEKEEPING CATEGORIES — Miami, Broward, Vendor-cleaned.
+    const bucketRows = (econ.buckets || []).map((b: any) =>
+      '<tr><td style="' + td + '"><b>' + b.label + '</b>' + (b.inHouse ? '' : ' <span style="color:#9ca3af">no in-house labor</span>') + '</td>' +
+      '<td style="' + td + ';text-align:right">' + (b.cleans || '-') + '</td>' +
+      '<td style="' + td + ';text-align:right">' + (b.payroll ? money(b.payroll) : '-') + '</td>' +
+      '<td style="' + td + ';text-align:right">' + (b.laborCostPerClean != null ? money(b.laborCostPerClean) : '-') + '</td>' +
+      '<td style="' + td + ';text-align:right">' + (b.hoursPerClean != null ? b.hoursPerClean + 'h' : '-') + '</td>' +
+      '<td style="' + td + ';text-align:right">' + (b.cleaningRevenue ? money(b.cleaningRevenue) : '-') + '</td>' +
+      '<td style="' + td + ';text-align:right;font-weight:600;color:' + (b.margin < 0 ? '#dc2626' : '#047857') + '">' + money(b.margin) + '</td>' +
+      '<td style="' + td + ';text-align:right">' + (b.marginPct != null ? b.marginPct + '%' : '-') + '</td></tr>').join('')
+    const bucketTable = bucketRows
+      ? '<p style="margin:18px 0 6px;font-size:13px;font-weight:700">Housekeeping by market</p>' +
+        '<table width="100%" cellspacing="0" cellpadding="0">' +
+        '<tr><th style="' + th + '">Bucket</th><th style="' + th + ';text-align:right">Cleans</th><th style="' + th + ';text-align:right">Payroll</th>' +
+        '<th style="' + th + ';text-align:right">Labor / clean</th><th style="' + th + ';text-align:right">Time / clean</th>' +
+        '<th style="' + th + ';text-align:right">Cleaning rev</th><th style="' + th + ';text-align:right">Margin</th><th style="' + th + ';text-align:right">Margin %</th></tr>' +
+        bucketRows + '</table>' +
+        '<p style="margin:6px 0 0;font-size:11.5px;color:#6b7280">Housekeeper wages over the units housekeepers turned. Supervisors are fixed overhead and are not in these numbers; maintenance is not either, even when a tech turns a unit.</p>'
+      : ''
+
     // GROUPED BY CREW, each with the header that says what it earns and what it costs.
     const DEPT_ORDER: { key: string; title: string }[] = [
       { key: 'housekeeping', title: 'HOUSEKEEPING' }, { key: 'supervision', title: 'SUPERVISORS' },
@@ -269,7 +289,10 @@ export async function GET(req: NextRequest) {
       const tail = d.key === 'supervision'
         ? ' &mdash; overhead vs ' + money(econ.managementFee) + ' management fees'
         : ' &mdash; margin ' + money(dd.margin)
-      const cpc = d.key === 'housekeeping' && dd.costPerClean != null ? ' &middot; ' + money(dd.costPerClean) + ' / clean' : ''
+      // Housekeeping is the only crew with a cost per clean (Jon, 2026-08-12).
+      const cpc = d.key === 'housekeeping' && dd.costPerClean != null
+        ? ' &middot; ' + money(dd.costPerClean) + ' / clean' + (dd.hoursPerClean != null ? ', ' + dd.hoursPerClean + 'h each' : '')
+        : ''
       rows += '<tr><td colspan="7" style="' + td + ';background:#f5f5f4;font-weight:bold">' + d.title + ': ' + bits.join(', ') + tail + cpc + '</td></tr>'
       rows += mine.map(personTr).join('')
     }
@@ -340,6 +363,7 @@ export async function GET(req: NextRequest) {
         '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Labor is at <b style="color:' + bandColor + '">' + (pct != null ? pct + '%' : '&mdash;') + '</b> of in-house cleaning revenue <span style="color:#9ca3af">(housekeeping wages only)</span> &mdash; <span style="color:' + bandColor + '">' + band + '</span> (goal &le; ' + settings.pct_good + '%). Scheduled cost for the week was ' + money(schedCost) + '.</p>', '#4338ca') +
 
       card('Per person &mdash; revenue generated vs labor cost',
+        bucketTable +
         '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">Person</th><th style="' + th + '">Hours</th><th style="' + th + '">Payroll</th><th style="' + th + '">Cleans</th><th style="' + th + '">Cleaning rev</th><th style="' + th + '">Billable</th><th style="' + th + '">Margin</th></tr>' + rows + '</table>' +
         '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Revenue = guest cleaning fees on checkouts matched to that person&#39;s Breezeway cleans (in-house units only). People with hours but no cleans are maintenance, inspections, or a name that does not match between Homebase and Breezeway.</p>') +
 
