@@ -48,8 +48,9 @@ export function LaborEconStrip({ days = 7 }: { days?: number }) {
           <DollarSign size={11} /> Labor economics - last {days}d</p>
         <a href="/labor" className="text-[11px] font-semibold text-indigo-600 hover:underline inline-flex items-center gap-0.5">Full labor board <ArrowRight size={11} /></a>
       </div>
-      <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-y-3 items-start">
-        <Tile label="Cost / clean" value={v(hk?.costPerClean, fmt$)} sub="housekeepers only" />
+      <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-y-3 items-start">
+        <Tile label="Labor $ / clean" value={v(hk?.costPerClean, fmt$)} sub="housekeepers only" />
+        <Tile label="Time / clean" value={v(hk?.hoursPerClean, (n) => n + 'h')} sub="hours ÷ cleans" />
         <Tile label="Fee / clean" value={v(hk?.feePerClean, fmt$)} sub="in-house units" />
         <Tile label="HK margin" value={v(hk?.margin, fmt$)} tone={hk && hk.margin < 0 ? 'bad' : 'good'} sub="fees - HK wages" />
         <Tile label="Maint billable" value={v(mt?.billableRevenue, fmt$)} sub="charge on the task" />
