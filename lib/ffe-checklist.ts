@@ -114,6 +114,16 @@ export function variantLabelEs(es: string, bedroomNo: number | undefined, bedroo
   return es + ' — Pedido ' + bedroomNo
 }
 
+/**
+ * Undo what variantLabel did: "Nightstands — Order 2" back to "Nightstands".
+ *
+ * This lives here, next to the two functions that ADD the suffix, so the format is written down in
+ * exactly one place. The order form needs it to show one row for a product that is the same in
+ * every bedroom, instead of three rows that differ only by a number.
+ */
+export const stripVariant = (label: string): string =>
+  String(label || '').replace(/\s*—\s*(Order|Pedido)\s+\d+\s*$/i, '').trim()
+
 export const FFE_ROOMS: FfeRoom[] = [
   // ── INTERIOR FURNISHINGS / MUEBLES DE INTERIOR ────────────────────────────────────────────────
   {
@@ -253,6 +263,20 @@ export const FFE_ROOMS: FfeRoom[] = [
     ],
   },
 ]
+
+/**
+ * Which bedroom slot a room is: master -> 1, guest1 -> 2, guest2 -> 3.
+ *
+ * Derived from FFE_ROOMS rather than hand-written, so adding a fourth bedroom is one edit above and
+ * every screen that groups by bedroom follows. A room that is not a bedroom is simply absent, which
+ * is how the order form tells "this is a per-bedroom decision" from "this is one per unit".
+ */
+export const BEDROOM_NO: Record<string, number> = Object.fromEntries(
+  FFE_ROOMS.filter(r => r.bedroomNo).map(r => [r.key, r.bedroomNo as number]))
+
+/** Room order as the walk presents it, so the order form can sort groups the same way. */
+export const ROOM_ORDER: Record<string, number> = Object.fromEntries(
+  FFE_ROOMS.map((r, i) => [r.key, i]))
 
 // ── REQUIRED ACTIONS / TAREAS PENDIENTES (page 2 of the sheet) ──────────────────────────────────
 // These are the sheet's own standing instructions. Two of them are things a walker does IN the unit,
