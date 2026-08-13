@@ -265,12 +265,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   }
 
   // ── cleaning fees: one checkout, one clean, one fee ──────────────────────
-  const resRows = (await pageAll((a, b) => sb.from('guesty_reservations')
+  const resRowsAll = await pageAll((a, b) => sb.from('guesty_reservations')
     .select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission')
     .gte('check_out', from).lte('check_out', to)
-    .not('status', 'in', '("canceled","cancelled","declined")').range(a, b)))
-    .filter(r => inMarketListing(r.listing_id))
+    .not('status', 'in', '("canceled","cancelled","declined")').range(a, b))
 
+  // MATCHING RUNS OVER EVERY MARKET, EVEN ON A MARKET TAB. The market filter decides what is
+  // REPORTED, never what is CALCULATED. A housekeeper who works Miami and Broward has her wages
+  // split by her share of cleans in each — and that split can only be computed if both markets'
+  // cleans are visible. Filtering first made the Miami tab charge Miami for her whole week while
+  // crediting it with only her Miami cleans: $102 a clean against a true $77.
+  const cleanTasksAll = taskRowsAll.filter(t => kindOfTask(t) === 'clean')
   const cleanTasks = taskRows.filter(t => kindOfTask(t) === 'clean')
   const usedTask: Record<string, boolean> = {}
   const revBy: Record<string, number> = {}
@@ -282,32 +287,34 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const feeByTask: Record<string, number> = {}
   let cleaningInhouse = 0, cleaningVendor = 0, managementFee = 0
   let cleansAttributed = 0, vendorCleans = 0
-  for (const r of resRows) {
+  for (const r of resRowsAll) {
     const co = String(r.check_out).slice(0, 10)
     const coNext = dISO(addDays(new Date(co + 'T12:00:00Z'), 1))
     const li = lmap[String(r.listing_id)]
     const vendor = !!li?.vendor
     const fee = num(r.cleaning) ?? 0
-    managementFee += num(r.commission) ?? 0
+    // Totals stay scoped to the tab; the fee-to-clean matching below does not.
+    const inMk = inMarketListing(r.listing_id)
+    if (inMk) managementFee += num(r.commission) ?? 0
     if (vendor) {
       // VENDOR-CLEANED UNITS ARE THEIR OWN BUCKET (Jon, 2026-08-12). A checkout there needed a
       // clean and earned a fee, but no in-house hour went into it — so it carries revenue and a
       // clean count, and never a cost per clean.
-      cleaningVendor += fee
-      if (fee > 0) vendorCleans++
+      if (inMk) { cleaningVendor += fee; if (fee > 0) vendorCleans++ }
       continue
     }
-    cleaningInhouse += fee
-    const match = cleanTasks.filter(t => !usedTask[String(t.id)] &&
+    if (inMk) cleaningInhouse += fee
+    const match = cleanTasksAll.filter(t => !usedTask[String(t.id)] &&
       String(t.reference_property_id) === String(r.listing_id) &&
       (String(t.finished_at).slice(0, 10) === co || String(t.finished_at).slice(0, 10) === coNext))[0]
     if (!match) continue
     usedTask[String(match.id)] = true
     const w = doer(match)
     if (!w) continue
+    feeByTask[String(match.id)] = fee
+    if (!inMk) continue
     cleansAttributed++
     revBy[w] = round2((revBy[w] || 0) + fee)
-    feeByTask[String(match.id)] = fee
   }
 
   // ── per person ───────────────────────────────────────────────────────────
@@ -372,7 +379,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
   }
 
-  let people = Object.keys(acc).map(k => { const { _mk, ...rest } = acc[k]; return rest as PersonEcon })
+  const peopleAll = Object.keys(acc).map(k => { const { _mk, ...rest } = acc[k]; return rest as PersonEcon })
+  let people = peopleAll.slice()
   if (market !== 'all') people = people.filter(p => p.market === market || p.market === 'unassigned')
   people.sort((a, b) => b.revenue - a.revenue || b.payroll - a.payroll)
 
@@ -419,7 +427,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // overhead and stay out. Maintenance stays out too, even when a tech does a real departure
   // clean: that fee is his revenue, in his own section.
   const hkNames: Record<string, boolean> = {}
-  for (const p of people) if (p.dept === 'housekeeping') hkNames[p.name] = true
+  for (const p of peopleAll) if (p.dept === 'housekeeping') hkNames[p.name] = true
 
   type Bucket = {
     key: string; label: string; inHouse: boolean
@@ -435,15 +443,14 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   })
   const buckets: Record<string, Bucket> = {}
   const bucketFor = (k: string, inHouse = true) => (buckets[k] = buckets[k] || mkBucket(k, inHouse))
-  if (market === 'all' || market === 'miami') bucketFor('miami')
-  if (market === 'all' || market === 'broward') bucketFor('broward')
+  bucketFor('miami'); bucketFor('broward')
 
   // EVERY DEPARTURE CLEAN COMPLETED, AS A ROW: who did it, which market the unit is in, and the
   // fee if a checkout matched. Built from the Breezeway tasks — not from the matched checkouts —
   // so a clean that was genuinely done still counts in cost per clean even when the checkout
   // association fails. Counting only matched cleans made every clean look ~10% more expensive
   // than it is (94 of 103 matched in the week this was found).
-  const cleanRecs = cleanTasks.map(t => {
+  const cleanRecs = cleanTasksAll.map(t => {
     const li = lmap[String(t.reference_property_id)]
     const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
     return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0 }
@@ -461,7 +468,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   }
   // payroll + hours, split by each housekeeper's share of cleans per market
   const bucketNames: Record<string, Record<string, boolean>> = {}
-  for (const p of people) {
+  for (const p of peopleAll) {
     if (p.dept !== 'housekeeping') continue
     const mine = hkCleansByPerson[p.name]
     const total = mine ? Object.keys(mine).reduce((a, m) => a + mine[m], 0) : 0
@@ -500,7 +507,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   }
   if (buckets['vendor-inhouse']) buckets['vendor-inhouse'].label = 'Vendor units · our crew'
   const ORDER = ['miami', 'broward', 'north', 'vendor-inhouse', 'unassigned', 'vendor']
+  // A market tab shows its own bucket (plus the two catch-alls, which belong to nobody's market);
+  // the All view shows every one. The MATH above was identical either way — this is presentation.
   const bucketList = Object.keys(buckets)
+    .filter(k => market === 'all' || k === market || k === 'unassigned' || (market === 'vendor' && k === 'vendor-inhouse'))
+    .filter(k => buckets[k].cleans > 0 || buckets[k].payroll > 0 || buckets[k].cleaningRevenue > 0)
     .sort((a, b) => (ORDER.indexOf(a) < 0 ? 8 : ORDER.indexOf(a)) - (ORDER.indexOf(b) < 0 ? 8 : ORDER.indexOf(b)))
     .map(k => buckets[k])
 
