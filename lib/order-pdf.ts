@@ -11,7 +11,15 @@
 import 'server-only'
 
 export type QuoteColumn = { header: string; width: number; align?: 'l' | 'r' }
-export type QuoteSection = { heading: string; sub?: string; rows: string[][]; subtotal?: string }
+export type QuoteSection = {
+  heading: string
+  sub?: string
+  rows: string[][]
+  subtotal?: string
+  /** Start this section on a fresh page. A work order is handed out per unit, so each unit gets
+   *  its own sheet — one that can be torn off and given to the person doing that apartment. */
+  newPage?: boolean
+}
 export type QuoteDoc = {
   title: string
   subtitle?: string
@@ -125,7 +133,8 @@ export function buildQuotePdf(doc: QuoteDoc): Buffer {
   for (const sec of doc.sections) {
     // Never orphan a heading at the foot of a page — a unit name with no rows under it reads as an
     // empty unit, which on a furniture quote is a real misunderstanding.
-    if (y < MARGIN + 90) { newPage(); headerDrawn = false }
+    if (sec.newPage && page.ops.length > 2) { newPage(); headerDrawn = false }
+    else if (y < MARGIN + 90) { newPage(); headerDrawn = false }
     y -= 4
     text(MARGIN, y - 11, 11.5, sec.heading, true)
     if (sec.sub) text(MARGIN + widthOf(sec.heading, 11.5, true) + 10, y - 11, 9, sec.sub, false, true)
