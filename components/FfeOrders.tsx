@@ -25,6 +25,7 @@ type Prod = {
 type PendItem = {
   room: string; itemKey: string; itemLabel: string; title: string | null
   answer: string; qty: number; note: string | null; spec: string | null; photoUrl: string | null; category: string
+  replacementUrl?: string | null; replacementPhoto?: string | null; estCost?: number | null
 }
 type PendRoom = { room: string; roomLabel: string; items: PendItem[] }
 type PendUnit = { listingId: string; unitName: string; building: string; bedrooms: number | null; rooms: PendRoom[] }
@@ -261,11 +262,14 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
   }, [flat])
 
   const chosen = flat.filter(l => !skip[l.k])
-  const estimate = chosen.reduce((a, l) => {
+  // A line is priced if a catalog product prices it OR the walker put a number on it in the unit.
+  const priceOfLine = (l: typeof flat[number]) => {
     const p = prodById[assign[l.k]]
-    return a + (p && p.unit_cost != null ? Number(p.unit_cost) * l.qty : 0)
-  }, 0)
-  const unpriced = chosen.filter(l => { const p = prodById[assign[l.k]]; return !p || p.unit_cost == null }).length
+    if (p && p.unit_cost != null) return Number(p.unit_cost)
+    return l.estCost == null ? null : Number(l.estCost)
+  }
+  const estimate = chosen.reduce((a, l) => { const c = priceOfLine(l); return a + (c == null ? 0 : c * l.qty) }, 0)
+  const unpriced = chosen.filter(l => priceOfLine(l) == null).length
 
   /** Products worth showing for an item: the ones tagged for it, then its category, then the rest. */
   const optionsFor = (itemKey: string, category: string): Prod[] => {
@@ -293,6 +297,7 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
             listingId: l.listingId, room: l.room, itemKey: l.itemKey, title: l.itemLabel,
             qty: l.qty, catalogId: assign[l.k] || null,
             placement: l.itemLabel, note: l.note || null, spec: l.spec || null,
+            replacementUrl: l.replacementUrl || null, replacementPhoto: l.replacementPhoto || null, estCost: l.estCost ?? null,
           })),
         }),
       })
@@ -372,7 +377,10 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
                 </div>
                 {picker(g.lines, g.itemKey, g.category, val)}
                 <span className="text-[12.5px] font-bold text-ink tabular-nums w-20 text-right">
-                  {p && p.unit_cost != null ? money(Number(p.unit_cost) * g.qty) : '—'}
+                  {(() => {
+                    const tot = g.lines.reduce((a: number, l: any) => { const c = priceOfLine(l); return a + (c == null ? 0 : c * l.qty) }, 0)
+                    return tot ? money(tot) : '—'
+                  })()}
                 </span>
               </div>
             )
@@ -403,7 +411,10 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
                       </div>
                       {picker([{ ...it, listingId: u.listingId, unitName: u.unitName, building: u.building, k }] as any, it.itemKey, it.category, assign[k] || '')}
                       <span className="text-[12px] font-bold text-ink tabular-nums w-16 text-right">
-                        {p && p.unit_cost != null ? money(Number(p.unit_cost) * it.qty) : '—'}
+                        {(() => {
+                          const c = (p && p.unit_cost != null) ? Number(p.unit_cost) : (it.estCost == null ? null : Number(it.estCost))
+                          return c == null ? '—' : money(c * it.qty)
+                        })()}
                       </span>
                     </div>
                   )

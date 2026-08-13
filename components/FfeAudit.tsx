@@ -37,7 +37,7 @@ const MORE = {
   undo: { en: 'Undo', es: 'Deshacer' },
 }
 
-type Answer = { answer: string; qty: number | null; note: string | null; spec?: string | null; photoUrl?: string | null }
+type Answer = { answer: string; qty: number | null; note: string | null; spec?: string | null; photoUrl?: string | null; replacementUrl?: string | null; replacementPhoto?: string | null; estCost?: number | null }
 type Data = {
   ok: boolean
   unit: { name: string; building: string; bedrooms: number | null; ownerName: string; today: string; completedAt: string | null }
@@ -90,16 +90,20 @@ export function FfeAudit({ code }: { code: string }) {
   // PHOTO OF THE PIECE BEING REPLACED (Jon, 2026-08-11). Uploaded on its own rather than bundled
   // into the answer save, so a slow photo on a bad connection never blocks the tap that recorded
   // the decision — the answer is already stored by the time the camera opens.
-  const uploadPhoto = async (roomKey: string, item: FfeItem, file: File) => {
-    const k = roomKey + '::' + item.key
+  const uploadPhoto = async (roomKey: string, item: FfeItem, file: File, kind: 'existing' | 'replacement' = 'existing') => {
+    const k = roomKey + '::' + item.key + (kind === 'replacement' ? ':new' : '')
     setPhotoBusy(b => ({ ...b, [k]: 'up' }))
     try {
       const fd = new FormData()
-      fd.append('code', code); fd.append('room', roomKey); fd.append('itemKey', item.key); fd.append('file', file)
+      fd.append('code', code); fd.append('room', roomKey); fd.append('itemKey', item.key); fd.append('file', file); fd.append('kind', kind)
       const r = await fetch('/api/audit/ffe/photo', { method: 'POST', body: fd })
       const j = await r.json()
       if (!r.ok || !j.ok || !j.url) throw new Error(j?.error || 'upload failed')
-      setData(d => d ? { ...d, answers: { ...d.answers, [k]: { ...(d.answers[k] || { answer: 'replace', qty: 1, note: null }), photoUrl: j.url } } } : d)
+      const ak = roomKey + '::' + item.key
+      setData(d => d ? { ...d, answers: { ...d.answers, [ak]: {
+        ...(d.answers[ak] || { answer: 'replace', qty: 1, note: null }),
+        ...(kind === 'replacement' ? { replacementPhoto: j.url } : { photoUrl: j.url }),
+      } } } : d)
       setPhotoBusy(b => { const n = { ...b }; delete n[k]; return n })
     } catch {
       setPhotoBusy(b => ({ ...b, [k]: 'err' }))
@@ -189,16 +193,16 @@ export function FfeAudit({ code }: { code: string }) {
     setCompleting(false)
   }
 
-  const save = async (roomKey: string, item: FfeItem, answer: string, qty?: number, note?: string, spec?: string) => {
+  const save = async (roomKey: string, item: FfeItem, answer: string, qty?: number, note?: string, spec?: string, extra?: { replacementUrl?: string; estCost?: string }) => {
     const k = roomKey + '::' + item.key
     const d0 = data?.answers[k]?.answer
     setBusy(b => ({ ...b, [k]: 'saving' }))
     // Optimistic: the row shows the new answer immediately, and only reverts if the save fails.
-    setData(d => d ? { ...d, answers: { ...d.answers, [k]: { answer, qty: qty ?? d.answers[k]?.qty ?? 1, note: note ?? d.answers[k]?.note ?? null, spec: spec ?? d.answers[k]?.spec ?? null, photoUrl: d.answers[k]?.photoUrl ?? null } } } : d)
+    setData(d => d ? { ...d, answers: { ...d.answers, [k]: { ...(d.answers[k] || {}), answer, qty: qty ?? d.answers[k]?.qty ?? 1, note: note ?? d.answers[k]?.note ?? null, spec: spec ?? d.answers[k]?.spec ?? null } } } : d)
     try {
       const r = await fetch('/api/audit/ffe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, room: roomKey, itemKey: item.key, title: item.en, answer, qty, note, ...(spec === undefined ? {} : { spec }) }),
+        body: JSON.stringify({ code, room: roomKey, itemKey: item.key, title: item.en, answer, qty, note, ...(spec === undefined ? {} : { spec }), ...(extra || {}) }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'save failed')
@@ -433,6 +437,55 @@ export function FfeAudit({ code }: { code: string }) {
                           </div>
                         ) : null}
 
+                        {/* WHAT WE ARE BUYING (Jon, 2026-08-13: "add links... photos of the
+                            replacement, estimated cost to replace"). Captured here, in the unit,
+                            because this is where somebody is looking at the thing and can search
+                            for the right size. It rides onto the order line and the owner's quote. */}
+                        {showDetail ? (
+                          <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50/60 px-3 py-2.5">
+                            <p className="text-[11.5px] font-bold text-blue-900">
+                              {lang === 'en' ? 'The replacement' : 'El reemplazo'}
+                            </p>
+                            <input type="url" inputMode="url" placeholder={lang === 'en' ? 'Link to the one we should buy (https://…)' : 'Enlace del que hay que comprar (https://…)'}
+                              defaultValue={a?.replacementUrl || ''}
+                              onBlur={e => { if (e.target.value !== (a?.replacementUrl || '')) save(room.key, item, chosen as string, a?.qty || 1, a?.note || undefined, a?.spec ?? undefined, { replacementUrl: e.target.value }) }}
+                              className="mt-1.5 w-full rounded-lg border border-blue-200 px-2.5 py-2 text-[13px] bg-white" />
+                            <div className="mt-2 flex items-center gap-2">
+                              <div className="relative flex-1 min-w-0">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-neutral-400">$</span>
+                                <input inputMode="decimal" placeholder={lang === 'en' ? 'Est. cost each' : 'Costo aprox. c/u'}
+                                  defaultValue={a?.estCost == null ? '' : String(a.estCost)}
+                                  onBlur={e => { if (e.target.value !== (a?.estCost == null ? '' : String(a.estCost))) save(room.key, item, chosen as string, a?.qty || 1, a?.note || undefined, a?.spec ?? undefined, { estCost: e.target.value }) }}
+                                  className="w-full rounded-lg border border-blue-200 pl-6 pr-2.5 py-2 text-[13px] bg-white tabular-nums" />
+                              </div>
+                              {a?.estCost != null && qty > 1 ? (
+                                <span className="text-[12px] font-bold text-blue-900 tabular-nums shrink-0">
+                                  = ${(Number(a.estCost) * qty).toLocaleString('en-US')}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-2 flex items-center gap-2">
+                              {a?.replacementPhoto ? (
+                                <a href={a.replacementPhoto} target="_blank" rel="noreferrer" className="shrink-0">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={a.replacementPhoto} alt="" className="w-14 h-14 rounded-lg object-cover border border-blue-200" />
+                                </a>
+                              ) : null}
+                              <label className={'flex-1 min-h-[40px] rounded-xl border-2 border-dashed text-[12.5px] font-semibold flex items-center justify-center cursor-pointer bg-white ' +
+                                (photoBusy[k + ':new'] === 'err' ? 'border-rose-300 text-rose-600' : 'border-blue-300 text-blue-700 active:bg-blue-50')}>
+                                {photoBusy[k + ':new'] === 'up' ? t(MORE.uploading)
+                                  : photoBusy[k + ':new'] === 'err' ? t(MORE.photoFailed)
+                                    : (lang === 'en'
+                                      ? (a?.replacementPhoto ? 'Change photo of the replacement' : '📷 Photo of the replacement')
+                                      : (a?.replacementPhoto ? 'Cambiar foto del reemplazo' : '📷 Foto del reemplazo'))}
+                                <input type="file" accept="image/*" className="hidden"
+                                  onChange={e => { const f = e.target.files && e.target.files[0]; if (f) uploadPhoto(room.key, item, f, 'replacement'); e.currentTarget.value = '' }} />
+                              </label>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {/* And the piece being replaced — evidence, not a shopping decision. */}
                         {showDetail ? (
                           <div className="mt-2 flex items-center gap-2">
                             {a?.photoUrl ? (
@@ -447,7 +500,8 @@ export function FfeAudit({ code }: { code: string }) {
                               (photoBusy[k] === 'err' ? 'border-rose-300 text-rose-600' : 'border-neutral-300 text-neutral-600 active:bg-neutral-50')}>
                               {photoBusy[k] === 'up' ? t(MORE.uploading)
                                 : photoBusy[k] === 'err' ? t(MORE.photoFailed)
-                                : a?.photoUrl ? t(MORE.retakePhoto) : '\uD83D\uDCF7 ' + t(MORE.addPhoto)}
+                                : a?.photoUrl ? t(MORE.retakePhoto)
+                                  : '\uD83D\uDCF7 ' + (lang === 'en' ? 'Photo of what is there now' : 'Foto de lo que hay ahora')}
                               <input type="file" accept="image/*" capture="environment" className="hidden"
                                 onChange={e => { const f = e.target.files && e.target.files[0]; if (f) uploadPhoto(room.key, item, f); e.currentTarget.value = '' }} />
                             </label>
