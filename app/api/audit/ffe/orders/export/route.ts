@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
       return {
         unit: str(l.unit_name), building: str(l.building),
         room: roomEn[str(l.room)] || str(l.room),
-        item: itemEn[str(l.room) + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
+        item: str(l.title) || itemEn[str(l.room) + '::' + str(l.item_key)] || str(l.item_key),
         code: str(l.code), product: str(l.product), spec: str(l.spec),
         placement: str(l.placement), qty, cost,
         total: cost == null ? null : Math.round(cost * qty * 100) / 100,
