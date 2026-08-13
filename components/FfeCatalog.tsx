@@ -2,19 +2,31 @@
 // THE FURNITURE CATALOG (Jon, 2026-08-12: "if we wanted to add lamps, etc. Make the way it
 // populates super easy and robust... with furniture codes").
 //
-// TWO WAYS IN, because the two ways people actually have this information are different:
+// FOUR WAYS IN, because the four ways people actually have this information are different:
 //   • One at a time — you saw a lamp, you have a link and a price. Type the name, the code writes
 //     itself, done in about fifteen seconds.
-//   • Paste a block — a vendor sent a quote, or it is already a spreadsheet. Paste the rows, the
-//     parser finds the price ($) and the link (http) wherever they sit in the line, and you get one
-//     row per product with a code each. Nothing is saved until you have looked at what it read.
+//   • Paste a block — a vendor sent a quote in an email. Paste the rows, the parser finds the price
+//     ($) and the link (http) wherever they sit in the line.
+//   • Upload a file — .xlsx or .csv, which is what a vendor actually sends (Jon, 2026-08-13: "can we
+//     have a place where we can upload a catalog"). It reads the headers, shows you what it found,
+//     and writes nothing until you have looked at it.
+//   • Load the starter catalog — 200 products a rental unit actually needs, across three tiers,
+//     already coded. For the first day, when the catalog is empty and typing it all is the reason
+//     nobody ever does.
 //
-// The code is the point of this screen. Once a lamp is LMP-001 it stays LMP-001 on the order, on
-// the spreadsheet, on the PDF and on the box that arrives — instead of being "lamp" three times in
-// three spellings.
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Loader2, Search, Package, ExternalLink, Pencil, Archive, RotateCcw, ClipboardPaste, X, Store, Star, Trash2 } from 'lucide-react'
-import { FFE_CATEGORIES, FFE_VENDORS, money } from '@/lib/ffe-catalog'
+// TWO AXES, NOT ONE. KIND (furniture / amenities / linen / supplies) is what sort of thing it is —
+// these are bought by different people from different suppliers, and a sofa buried under trash bags
+// is how this screen stops being used. TIER is how good a version of it we are buying: the same role
+// at three price points, so "what would the cheaper one cost" is a filter, not a week of re-quoting.
+//
+// The code is still the point. Once a lamp is LMP-001 it stays LMP-001 on the order, on the
+// spreadsheet, on the PDF and on the box that arrives.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Plus, Loader2, Search, Package, ExternalLink, Pencil, Archive, RotateCcw, ClipboardPaste, X,
+  Store, Star, Trash2, Upload, Sparkles, AlertTriangle, Check, FileSpreadsheet,
+} from 'lucide-react'
+import { FFE_CATEGORIES, FFE_KINDS, FFE_TIERS, FFE_VENDORS, isSearchLink, money } from '@/lib/ffe-catalog'
 
 type Source = {
   id: string; catalog_id: string; vendor: string; vendor_sku: string | null; url: string | null
@@ -23,6 +35,7 @@ type Source = {
 }
 type Product = {
   id: string; code: string; name_en: string; name_es: string | null; category: string
+  tier: string; kind: string
   room_hint: string | null; item_keys: string[] | null; vendor: string | null; vendor_sku: string | null
   unit_cost: number | null; url: string | null; image_url: string | null
   dimensions: string | null; finish: string | null; lead_time_days: number | null
@@ -31,28 +44,51 @@ type Product = {
 }
 type RoomOpt = { key: string; en: string; es: string }
 
+type ImportRow = {
+  name: string; code?: string; category?: string; kind?: string; tier?: string
+  vendor?: string; sku?: string; price?: number | null; url?: string; image?: string
+  spec?: string; notes?: string; duplicate?: boolean
+  skip?: boolean
+}
+
 const blank = {
-  id: '', code: '', nameEn: '', nameEs: '', category: 'lamp', roomHint: '',
+  id: '', code: '', nameEn: '', nameEs: '', category: 'lamp', kind: 'furniture', tier: 'tier2', roomHint: '',
   vendor: '', vendorSku: '', unitCost: '', url: '', imageUrl: '',
   dimensions: '', finish: '', leadTimeDays: '', notes: '',
 }
 type Draft = typeof blank
 
+const TIER_STYLE: Record<string, string> = {
+  tier1: 'bg-neutral-100 text-neutral-600 border-neutral-200',
+  tier2: 'bg-sky-50 text-sky-700 border-sky-200',
+  tier3: 'bg-violet-50 text-violet-700 border-violet-200',
+  custom: 'bg-amber-50 text-amber-700 border-amber-200',
+}
+
 export function FfeCatalog() {
   const [products, setProducts] = useState<Product[] | null>(null)
   const [rooms, setRooms] = useState<RoomOpt[]>([])
+  const [tiersReady, setTiersReady] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [term, setTerm] = useState('')
   const [cat, setCat] = useState('')
+  const [kind, setKind] = useState('furniture')
+  const [tier, setTier] = useState('')
   const [showRetired, setShowRetired] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
-  // WHERE TO BUY IT — open per product, because comparing four vendors is a sit-down task and the
-  // list has to stay scannable when it is not.
   const [openSources, setOpenSources] = useState('')
   const [srcDraft, setSrcDraft] = useState<{ catalogId: string; id?: string; vendor: string; vendorSku: string; url: string; unitCost: string; leadTimeDays: string; memberPrice: boolean; note: string } | null>(null)
   const [paste, setPaste] = useState<{ text: string; category: string } | null>(null)
-  const [pasteResult, setPasteResult] = useState<string>('')
+  const [flash, setFlash] = useState<string>('')
+
+  // UPLOAD — two steps, and the first one writes nothing.
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [imp, setImp] = useState<{
+    filename: string; rows: ImportRow[]; headerFound: boolean; firstRow: string[]
+    totalRows: number; truncated: boolean; kind: string; tier: string
+  } | null>(null)
+  const [seed, setSeed] = useState<{ kinds: string[]; tiers: string[] } | null>(null)
 
   const load = useCallback(async () => {
     setErr('')
@@ -62,6 +98,7 @@ export function FfeCatalog() {
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not load the catalog.')
       setProducts(j.products || [])
       setRooms(j.rooms || [])
+      setTiersReady(j.tiersReady !== false)
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -89,13 +126,26 @@ export function FfeCatalog() {
     return c.prefix + '-' + String(max + 1).padStart(3, '0')
   }
 
+  const live = useMemo(() => (products || []).filter(p => showRetired || p.active), [products, showRetired])
+  const countByKind = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const p of live) m[p.kind || 'furniture'] = (m[p.kind || 'furniture'] || 0) + 1
+    return m
+  }, [live])
+  const countByTier = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const p of live) if (!kind || p.kind === kind) m[p.tier || 'tier2'] = (m[p.tier || 'tier2'] || 0) + 1
+    return m
+  }, [live, kind])
+
   const shown = useMemo(() => {
     const t = term.trim().toLowerCase()
-    return (products || [])
-      .filter(p => showRetired || p.active)
+    return live
+      .filter(p => !kind || (p.kind || 'furniture') === kind)
+      .filter(p => !tier || (p.tier || 'tier2') === tier)
       .filter(p => !cat || p.category === cat)
-      .filter(p => !t || [p.code, p.name_en, p.name_es, p.vendor, p.vendor_sku].some(x => String(x || '').toLowerCase().includes(t)))
-  }, [products, term, cat, showRetired])
+      .filter(p => !t || [p.code, p.name_en, p.name_es, p.vendor, p.vendor_sku, p.dimensions].some(x => String(x || '').toLowerCase().includes(t)))
+  }, [live, term, cat, kind, tier])
 
   const byCategory = useMemo(() => {
     const m: Record<string, Product[]> = {}
@@ -111,24 +161,92 @@ export function FfeCatalog() {
 
   const runPaste = async () => {
     if (!paste || !paste.text.trim()) return
-    const j = await post({ action: 'bulk', text: paste.text, category: paste.category })
+    const j = await post({ action: 'bulk', text: paste.text, category: paste.category, kind, tier: tier || 'tier2' })
     if (j) {
-      setPasteResult(`Added ${j.added} product${j.added === 1 ? '' : 's'}` +
+      setFlash(`Added ${j.added} product${j.added === 1 ? '' : 's'}` +
         (j.skipped?.length ? ` · skipped ${j.skipped.length} line(s) with no product name` : ''))
       setPaste(null)
     }
   }
 
+  // ── UPLOAD STEP 1: read it, show it, write nothing ──
+  const pickFile = async (f: File | null | undefined) => {
+    if (!f) return
+    setBusy(true); setErr('')
+    try {
+      const data: string = await new Promise((res, rej) => {
+        const fr = new FileReader()
+        fr.onload = () => res(String(fr.result || '').split(',')[1] || '')
+        fr.onerror = () => rej(new Error('Could not read that file.'))
+        fr.readAsDataURL(f)
+      })
+      const r = await fetch('/api/audit/ffe/catalog', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'preview', filename: f.name, data, kind, tier: tier || 'tier2' }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not read that file.')
+      setImp({
+        filename: f.name,
+        rows: (j.rows || []).map((x: ImportRow) => ({ ...x, skip: !!x.duplicate })),
+        headerFound: !!j.headerFound, firstRow: j.firstRow || [],
+        totalRows: j.totalRows || 0, truncated: !!j.truncated,
+        kind, tier: tier || 'tier2',
+      })
+      setSeed(null); setPaste(null); setDraft(null)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  // ── UPLOAD STEP 2: commit what is still ticked ──
+  const runImport = async () => {
+    if (!imp) return
+    const rows = imp.rows.filter(r => !r.skip).map(r => ({ ...r, kind: imp.kind, tier: r.tier || imp.tier }))
+    if (!rows.length) { setErr('Nothing is selected to import.'); return }
+    const j = await post({ action: 'import', rows, skipDuplicates: false })
+    if (j) {
+      setFlash(`Imported ${j.added} new product${j.added === 1 ? '' : 's'}` +
+        (j.updated ? ` · updated ${j.updated}` : '') + (j.skipped ? ` · skipped ${j.skipped}` : ''))
+      setImp(null)
+    }
+  }
+
+  const runSeed = async () => {
+    if (!seed) return
+    const j = await post({ action: 'seed', kinds: seed.kinds, tiers: seed.tiers })
+    if (j) {
+      setFlash(`Loaded ${j.added} starter product${j.added === 1 ? '' : 's'}` +
+        (j.skipped ? ` · ${j.skipped} were already in the catalog` : '') +
+        '. Prices are estimates and the links are Amazon searches — replace them as you pick real items.')
+      setSeed(null)
+    }
+  }
+
+  const toggle = (list: string[], k: string) => list.indexOf(k) >= 0 ? list.filter(x => x !== k) : [...list, k]
+
   if (err && !products) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div>
   if (!products) return <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted"><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading catalog…</div>
+
+  const kindMeta = FFE_KINDS.find(k => k.key === kind)
 
   return (
     <div className="space-y-3">
       {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div> : null}
-      {pasteResult ? (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[12.5px] text-emerald-800 flex items-center gap-2">
-          {pasteResult}
-          <button onClick={() => setPasteResult('')} className="ml-auto text-emerald-700"><X className="w-3.5 h-3.5" /></button>
+      {flash ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[12.5px] text-emerald-800 flex items-start gap-2">
+          <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span className="flex-1">{flash}</span>
+          <button onClick={() => setFlash('')} className="text-emerald-700"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      ) : null}
+      {!tiersReady ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12.5px] text-amber-800 flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            Tiers and kinds are not switched on in the database yet — migration 039 still needs running. Everything
+            else works; until then every product reads as Furniture · Tier 2 and those two fields will not save.
+          </span>
         </div>
       ) : null}
 
@@ -137,11 +255,42 @@ export function FfeCatalog() {
         quote, the vendor spreadsheet and the box, so the same lamp is the same lamp in all 53 units.
       </p>
 
+      {/* KIND TABS — furniture and trash bags are not the same list */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-line pb-2">
+        <button onClick={() => { setKind(''); setCat('') }}
+          className={'rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ' + (!kind ? 'bg-ink text-white' : 'text-muted hover:bg-app')}>
+          Everything <span className="tabular-nums opacity-70">{live.length}</span>
+        </button>
+        {FFE_KINDS.map(k => (
+          <button key={k.key} onClick={() => { setKind(k.key); setCat('') }}
+            className={'rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ' + (kind === k.key ? 'bg-ink text-white' : 'text-muted hover:bg-app')}>
+            {k.label} <span className="tabular-nums opacity-70">{countByKind[k.key] || 0}</span>
+          </button>
+        ))}
+      </div>
+      {kindMeta ? <p className="text-[11.5px] text-muted -mt-1">{kindMeta.blurb}</p> : null}
+
+      {/* TIER CHIPS — the same role at three price points */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button onClick={() => setTier('')}
+          className={'rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ' +
+            (!tier ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
+          All tiers
+        </button>
+        {FFE_TIERS.map(t => (
+          <button key={t.key} onClick={() => setTier(tier === t.key ? '' : t.key)} title={t.blurb}
+            className={'rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ' +
+              (tier === t.key ? 'bg-ink text-white border-ink' : TIER_STYLE[t.key] + ' hover:opacity-80')}>
+            {t.label} <span className="tabular-nums opacity-70">{countByTier[t.key] || 0}</span>
+          </button>
+        ))}
+      </div>
+
       {/* controls */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input value={term} onChange={e => setTerm(e.target.value)} placeholder="Search code, name, vendor…"
+          <input value={term} onChange={e => setTerm(e.target.value)} placeholder="Search code, name, size, vendor…"
             className="rounded-xl border border-line bg-white pl-8 pr-3 py-2 text-[12.5px] w-64" />
         </div>
         <select value={cat} onChange={e => setCat(e.target.value)}
@@ -153,15 +302,175 @@ export function FfeCatalog() {
           <input type="checkbox" checked={showRetired} onChange={e => setShowRetired(e.target.checked)} /> Show retired
         </label>
         <div className="flex-1" />
-        <button onClick={() => setPaste({ text: '', category: cat || 'lamp' })}
+        <button onClick={() => { setSeed({ kinds: ['furniture'], tiers: ['tier2'] }); setImp(null); setPaste(null) }}
+          className="rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5" /> Starter catalog
+        </button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" className="hidden"
+          onChange={e => pickFile(e.target.files?.[0])} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5 disabled:opacity-50">
+          <Upload className="w-3.5 h-3.5" /> Upload a file
+        </button>
+        <button onClick={() => { setPaste({ text: '', category: cat || 'lamp' }); setImp(null); setSeed(null) }}
           className="rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
           <ClipboardPaste className="w-3.5 h-3.5" /> Paste a list
         </button>
-        <button onClick={() => setDraft({ ...blank, category: cat || 'lamp' })}
+        <button onClick={() => setDraft({ ...blank, category: cat || 'lamp', kind: kind || 'furniture', tier: tier || 'tier2' })}
           className="rounded-xl bg-ink text-white px-3 py-2 text-[12px] font-semibold inline-flex items-center gap-1.5">
           <Plus className="w-3.5 h-3.5" /> Add a product
         </button>
       </div>
+
+      {/* ── STARTER CATALOG ─────────────────────────────────────────────────────────── */}
+      {seed ? (
+        <div className="rounded-2xl border border-line bg-white p-4 shadow-soft space-y-3">
+          <div className="flex items-start gap-2">
+            <Sparkles className="w-4 h-4 text-brand-700 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-bold text-ink">Load the starter catalog</p>
+              <p className="text-[12px] text-muted mt-0.5">
+                200 products a short-term rental unit actually needs, already coded and sized — sofa widths, rug
+                dimensions, TV sizes, mount VESA ratings, sheet and towel par levels. Pick what you want.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Which kinds</p>
+              <div className="space-y-1">
+                {FFE_KINDS.map(k => (
+                  <label key={k.key} className="flex items-start gap-2 text-[12.5px] text-ink">
+                    <input type="checkbox" className="mt-0.5" checked={seed.kinds.indexOf(k.key) >= 0}
+                      onChange={() => setSeed(s => s && ({ ...s, kinds: toggle(s.kinds, k.key) }))} />
+                    <span><span className="font-semibold">{k.label}</span> <span className="text-muted">— {k.blurb}</span></span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Which tiers</p>
+              <div className="space-y-1">
+                {FFE_TIERS.filter(t => t.key !== 'custom').map(t => (
+                  <label key={t.key} className="flex items-start gap-2 text-[12.5px] text-ink">
+                    <input type="checkbox" className="mt-0.5" checked={seed.tiers.indexOf(t.key) >= 0}
+                      onChange={() => setSeed(s => s && ({ ...s, tiers: toggle(s.tiers, t.key) }))} />
+                    <span><span className="font-semibold">{t.label}</span> <span className="text-muted">— {t.blurb}</span></span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted mt-2">
+                Loading all three tiers gives you the price comparison to take to an owner. Loading just Standard
+                gives you a clean working list. Nothing stops you adding the others later.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11.5px] text-amber-800">
+            <span className="font-semibold">Read this before you press the button.</span> Every link is an Amazon
+            <span className="font-semibold"> search</span>, not a product page — I will not invent product URLs, because a dead
+            link in a buying catalog is worse than no link. Each search lands on the right query; when somebody picks the
+            real item they paste the real URL over it. The prices are <span className="font-semibold">planning estimates</span> for
+            budgeting, not quotes — a real price arrives when you add a vendor source, and that is what an owner&apos;s
+            quote prices from.
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={runSeed} disabled={busy || !seed.kinds.length || !seed.tiers.length}
+              className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">
+              {busy ? 'Loading…' : 'Load these products'}
+            </button>
+            <button onClick={() => setSeed(null)} className="text-[12px] font-semibold text-muted">Cancel</button>
+            <span className="text-[11.5px] text-muted">Anything already in the catalog by name is skipped, so this is safe to run twice.</span>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── UPLOAD PREVIEW ──────────────────────────────────────────────────────────── */}
+      {imp ? (
+        <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+          <div className="px-4 py-3 border-b border-line flex flex-wrap items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-brand-700" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-ink truncate">{imp.filename}</p>
+              <p className="text-[11.5px] text-muted">
+                {imp.headerFound
+                  ? `Read the header row and matched your columns. ${imp.rows.length} product${imp.rows.length === 1 ? '' : 's'} found.`
+                  : `No header row recognised — read each line by shape instead ($ is the price, http is the link). ${imp.rows.length} found.`}
+                {imp.truncated ? ' Showing the first 500.' : ''}
+                {' '}Nothing has been saved yet.
+              </p>
+            </div>
+            <select value={imp.kind} onChange={e => setImp(v => v && ({ ...v, kind: e.target.value }))}
+              className="rounded-lg border border-line px-2 py-1.5 text-[12px]">
+              {FFE_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+            </select>
+            <select value={imp.tier} onChange={e => setImp(v => v && ({ ...v, tier: e.target.value }))}
+              className="rounded-lg border border-line px-2 py-1.5 text-[12px]">
+              {FFE_TIERS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </select>
+            <button onClick={() => setImp(null)} className="text-muted hover:text-ink p-1"><X className="w-4 h-4" /></button>
+          </div>
+
+          <div className="max-h-[22rem] overflow-auto">
+            <table className="w-full text-[12px]">
+              <thead className="bg-app/60 sticky top-0">
+                <tr className="text-left text-[10.5px] uppercase tracking-wide text-muted">
+                  <th className="px-3 py-2 w-8"></th>
+                  <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2">Size / spec</th>
+                  <th className="px-3 py-2">Vendor</th>
+                  <th className="px-3 py-2 text-right">Price</th>
+                  <th className="px-3 py-2 w-8"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {imp.rows.map((r, i) => (
+                  <tr key={i} className={r.skip ? 'opacity-40' : ''}>
+                    <td className="px-3 py-1.5">
+                      <input type="checkbox" checked={!r.skip}
+                        onChange={() => setImp(v => v && ({ ...v, rows: v.rows.map((x, j) => j === i ? { ...x, skip: !x.skip } : x) }))} />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input value={r.name}
+                        onChange={e => setImp(v => v && ({ ...v, rows: v.rows.map((x, j) => j === i ? { ...x, name: e.target.value } : x) }))}
+                        className="w-full bg-transparent text-ink font-medium outline-none focus:bg-app rounded px-1" />
+                      {r.duplicate ? <span className="text-[10px] font-bold uppercase text-amber-700">already in the catalog</span> : null}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <select value={r.category || 'misc'}
+                        onChange={e => setImp(v => v && ({ ...v, rows: v.rows.map((x, j) => j === i ? { ...x, category: e.target.value } : x) }))}
+                        className="bg-transparent text-muted text-[11.5px] outline-none">
+                        {FFE_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-3 py-1.5 text-muted">{r.spec || '—'}</td>
+                    <td className="px-3 py-1.5 text-muted">{r.vendor || '—'}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-ink">{r.price == null ? '—' : money(r.price)}</td>
+                    <td className="px-3 py-1.5">
+                      {r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3.5 h-3.5" /></a> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="px-4 py-3 border-t border-line flex flex-wrap items-center gap-2">
+            <button onClick={runImport} disabled={busy || !imp.rows.some(r => !r.skip)}
+              className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">
+              {busy ? 'Importing…' : `Import ${imp.rows.filter(r => !r.skip).length} product${imp.rows.filter(r => !r.skip).length === 1 ? '' : 's'}`}
+            </button>
+            <button onClick={() => setImp(null)} className="text-[12px] font-semibold text-muted">Cancel</button>
+            <span className="text-[11.5px] text-muted">
+              Rows already in the catalog are unticked by default. Tick one and it updates that product&apos;s price and link
+              instead of adding a second copy.
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       {/* paste block */}
       {paste ? (
@@ -177,7 +486,9 @@ export function FfeCatalog() {
             One product per line. Columns can be tabs, commas or pipes, in any order — anything starting
             <span className="font-mono"> http</span> is read as the link and anything that looks like <span className="font-mono">$189</span> as
             the price. The first remaining column is the product name. Every row gets the next code in{' '}
-            <span className="font-semibold text-ink">{FFE_CATEGORIES.find(c => c.key === paste.category)?.label}</span>.
+            <span className="font-semibold text-ink">{FFE_CATEGORIES.find(c => c.key === paste.category)?.label}</span>, filed under{' '}
+            <span className="font-semibold text-ink">{FFE_KINDS.find(k => k.key === kind)?.label || 'Furniture'}</span>.
+            If it is an actual file, use Upload instead — it reads .xlsx and .csv directly.
           </p>
           <textarea value={paste.text} onChange={e => setPaste(p => p && ({ ...p, text: e.target.value }))}
             rows={7} autoFocus placeholder={'Brushed brass table lamp\t$89\thttps://…\nArc floor lamp, matte black, $249, https://…'}
@@ -204,6 +515,16 @@ export function FfeCatalog() {
               placeholder="Nombre en español (optional)"
               className="rounded-lg border border-line px-2.5 py-1.5 text-[13px]" />
           </div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            <select value={draft.kind} onChange={e => setDraft(d => d && ({ ...d, kind: e.target.value }))}
+              className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]">
+              {FFE_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+            </select>
+            <select value={draft.tier} onChange={e => setDraft(d => d && ({ ...d, tier: e.target.value }))}
+              className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]">
+              {FFE_TIERS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </select>
+          </div>
           <div className="grid sm:grid-cols-3 gap-2">
             <select value={draft.category} onChange={e => setDraft(d => d && ({ ...d, category: e.target.value }))}
               className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]">
@@ -227,7 +548,7 @@ export function FfeCatalog() {
             <input value={draft.unitCost} onChange={e => setDraft(d => d && ({ ...d, unitCost: e.target.value }))}
               placeholder="Unit cost, e.g. 89" inputMode="decimal"
               className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
-            <input value={draft.vendor} onChange={e => setDraft(d => d && ({ ...d, vendor: e.target.value }))}
+            <input list="ffe-vendors" value={draft.vendor} onChange={e => setDraft(d => d && ({ ...d, vendor: e.target.value }))}
               placeholder="Vendor" className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
             <input value={draft.vendorSku} onChange={e => setDraft(d => d && ({ ...d, vendorSku: e.target.value }))}
               placeholder="Vendor SKU" className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-mono" />
@@ -243,7 +564,7 @@ export function FfeCatalog() {
           </div>
           <div className="grid sm:grid-cols-2 gap-2">
             <input value={draft.dimensions} onChange={e => setDraft(d => d && ({ ...d, dimensions: e.target.value }))}
-              placeholder='Dimensions, e.g. 26" H x 14" dia' className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+              placeholder={`Size — e.g. 8' x 10', or 58"W x 16"D x 22"H`} className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
             <input value={draft.finish} onChange={e => setDraft(d => d && ({ ...d, finish: e.target.value }))}
               placeholder="Finish / colour" className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
           </div>
@@ -264,9 +585,13 @@ export function FfeCatalog() {
       {!shown.length ? (
         <div className="rounded-2xl border border-line bg-white p-10 text-center">
           <Package className="w-5 h-5 text-muted mx-auto mb-2" />
-          <p className="text-sm font-semibold text-ink">Nothing here yet.</p>
+          <p className="text-sm font-semibold text-ink">
+            {live.length ? 'Nothing matches those filters.' : 'Nothing here yet.'}
+          </p>
           <p className="text-[12.5px] text-muted mt-1">
-            Add a product, or paste a vendor list. You need a catalog before an order can carry codes.
+            {live.length
+              ? 'Try another kind or tier, or clear the search.'
+              : 'Load the starter catalog to get 200 products in one press, or upload a vendor file. You need a catalog before an order can carry codes.'}
           </p>
         </div>
       ) : FFE_CATEGORIES.filter(c => byCategory[c.key]?.length).map(c => (
@@ -288,21 +613,27 @@ export function FfeCatalog() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[11px] font-mono font-bold text-brand-700">{p.code}</span>
                     <span className="text-[13px] font-semibold text-ink">{p.name_en}</span>
+                    <span className={'text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded border ' + (TIER_STYLE[p.tier] || TIER_STYLE.tier2)}>
+                      {FFE_TIERS.find(t => t.key === p.tier)?.short || 'T2'}
+                    </span>
                     {!p.active ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-neutral-200 text-neutral-600">retired</span> : null}
                   </div>
                   <div className="text-[11.5px] text-muted truncate">
-                    {[p.vendor, p.vendor_sku, p.finish, p.dimensions, p.lead_time_days ? p.lead_time_days + ' day lead' : ''].filter(Boolean).join(' · ') || '—'}
+                    {[p.dimensions, p.vendor, p.vendor_sku, p.finish, p.lead_time_days ? p.lead_time_days + ' day lead' : ''].filter(Boolean).join(' · ') || '—'}
                   </div>
                 </div>
                 <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(p.unit_cost)}</span>
                 {p.url ? (
-                  <a href={p.url} target="_blank" rel="noreferrer" title="Open the product page" className="text-muted hover:text-ink p-1">
-                    <ExternalLink className="w-3.5 h-3.5" />
+                  <a href={p.url} target="_blank" rel="noreferrer"
+                    title={isSearchLink(p.url) ? 'This is still a search, not a chosen product — open it, pick the item, then paste the real link in' : 'Open the product page'}
+                    className={(isSearchLink(p.url) ? 'text-amber-500 hover:text-amber-600' : 'text-muted hover:text-ink') + ' p-1'}>
+                    {isSearchLink(p.url) ? <Search className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />}
                   </a>
                 ) : null}
                 <button title="Edit" className="text-muted hover:text-ink p-1"
                   onClick={() => setDraft({
                     id: p.id, code: p.code, nameEn: p.name_en, nameEs: p.name_es || '', category: p.category,
+                    kind: p.kind || 'furniture', tier: p.tier || 'tier2',
                     roomHint: p.room_hint || '', vendor: p.vendor || '', vendorSku: p.vendor_sku || '',
                     unitCost: p.unit_cost == null ? '' : String(p.unit_cost), url: p.url || '', imageUrl: p.image_url || '',
                     dimensions: p.dimensions || '', finish: p.finish || '',
@@ -416,7 +747,9 @@ export function FfeCatalog() {
 
       <p className="text-[11px] text-muted">
         Products are retired, never deleted — a code that has been on an owner&apos;s approved quote has to keep
-        meaning what it meant. Retired products stop appearing in the order builder.
+        meaning what it meant. Retired products stop appearing in the order builder. A{' '}
+        <Search className="w-3 h-3 inline text-amber-500" /> instead of a link icon means that product still points at a
+        search rather than a chosen item.
       </p>
     </div>
   )
