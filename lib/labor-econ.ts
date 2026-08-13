@@ -37,7 +37,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { getTimecards, type Timecard } from './homebase-labor'
 import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
-import { vendorRegex } from './ops-presets'
+import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
 import { getCrew, type Dept, DEPTS, DEPT_LABEL } from './crew'
 import { resolveStaff } from './staffing'
@@ -108,6 +108,8 @@ export type PersonEcon = {
   tasks: number
   billableTasks: number        // tasks carrying a charge
   tasksNoCharge: number        // non-clean tasks with nothing entered — the coverage gap
+  /** Clocked a Homebase hour in this window. False = an outside cleaner, not our labor. */
+  onPayroll: boolean
   revenue: number              // cleaning + billable
   margin: number               // revenue - payroll
   costPerClean: number | null
@@ -169,6 +171,8 @@ export type LaborEcon = {
   }>
   /** The stack: housekeeping labor, maintenance billables, maintenance cleans, supervisor overhead. */
   layers: any
+  /** Our own crew's work inside vendor-managed buildings, plus the per-building invoice check. */
+  vendorWork: any
   /** Operating margin on work we sell: cleaning + billable - all payroll. */
   margin: number
   /** With the management fee included — the whole labor line against everything labor earns. */
@@ -324,7 +328,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     name, dept: 'other', declared: false, market: '', role: null,
     hours: 0, payroll: 0, wageRate: null, cleans: 0, cleaningRevenue: 0,
     billableRevenue: 0, materials: 0, tasks: 0, billableTasks: 0, tasksNoCharge: 0,
-    revenue: 0, margin: 0, costPerClean: null, _mk: {},
+    onPayroll: false, revenue: 0, margin: 0, costPerClean: null, _mk: {},
   })
   const keyFor = (name: string): string => {
     const hit = Object.keys(acc).filter(n => nameMatches(n, name))[0]
@@ -371,9 +375,14 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   for (const k of Object.keys(acc)) {
     const p = acc[k]
     // Fallback only bites for people nobody has named: what they actually did, cleans first.
+    p.onPayroll = p.hours > 0 || p.payroll > 0
+    // AN OUTSIDE CLEANER IS NOT ONE OF OUR HOUSEKEEPERS. Somebody who turns units in Breezeway but
+    // never clocks a Homebase hour is a vendor's cleaner, not our labor — counting them added
+    // cleans to the denominator with no wages in the numerator, quietly making every clean look
+    // cheaper. Only an explicit roster entry can put a non-payroll name on a crew.
     let guess: Dept | null = null
-    if (p.cleans > 0 || (cleansAllBy[p.name] || 0) > 0) guess = 'housekeeping'
-    else if (p.billableRevenue > 0) guess = 'maintenance'
+    if (p.onPayroll && (p.cleans > 0 || (cleansAllBy[p.name] || 0) > 0)) guess = 'housekeeping'
+    else if (p.onPayroll && p.billableRevenue > 0) guess = 'maintenance'
     p.dept = crew.deptOf(p.name, p.role, guess)
     p.declared = crew.isDeclared(p.name)
     const rec = resolveStaff(p.name, crew.staff)
@@ -555,6 +564,82 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const materials = round2(people.reduce((a, p) => a + p.materials, 0))
   const cleaningRevenue = round2(cleaningInhouse)
 
+  // ── VENDOR UNITS WE TOUCHED OURSELVES ────────────────────────────────────
+  // Jon, 2026-08-13: "identify when we clean a unit for vendors — need to know so we can allocate
+  // those costs to us properly... and for invoice management, making sure vendors are charging
+  // cleans properly."
+  //
+  // Two questions, one table:
+  //   COST US    every job our own crew did inside a vendor-managed building. That is our wage
+  //              bill on somebody else's unit, and it is invisible everywhere else because the
+  //              vendor bucket carries no labor by design.
+  //   OWED THEM  per building: how many checkouts actually needed a clean, and how many cleans
+  //              the vendor logged against them. An invoice claiming more cleans than there were
+  //              checkouts is the thing this is meant to catch.
+  const buildingOf = (name: string): string | null => {
+    for (const v of (presets.vendorBuildings || []) as VendorBuilding[]) {
+      if (!v || !v.enabled) continue
+      const terms = (v.terms || []).concat(v.wordTerms || [])
+      for (const t of terms) {
+        if (!t) continue
+        const re = (v.wordTerms || []).indexOf(t) >= 0
+          ? new RegExp('\\b' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i')
+          : new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*'), 'i')
+        if (re.test(name)) return v.label
+      }
+    }
+    return null
+  }
+  const onPayrollNames: Record<string, boolean> = {}
+  for (const p of peopleAll) if (p.onPayroll) onPayrollNames[p.name] = true
+  const deptByName: Record<string, Dept> = {}
+  for (const p of peopleAll) deptByName[p.name] = p.dept
+
+  const ourTasks: Array<{ date: string; unit: string; building: string; person: string; dept: string; task: string; kind: TaskKind; minutes: number | null; billed: number }> = []
+  const vb: Record<string, { building: string; checkouts: number; cleaningRevenue: number; vendorCleansLogged: number; ourTasks: number; ourCleans: number; ourBilled: number }> = {}
+  const vbFor = (b: string) => (vb[b] = vb[b] || { building: b, checkouts: 0, cleaningRevenue: 0, vendorCleansLogged: 0, ourTasks: 0, ourCleans: 0, ourBilled: 0 })
+
+  for (const r of resRowsAll) {
+    const li = lmap[String(r.listing_id)]
+    if (!li || !li.vendor) continue
+    const b = buildingOf(li.name) || 'Other vendor'
+    const row = vbFor(b)
+    row.checkouts++
+    row.cleaningRevenue = round2(row.cleaningRevenue + (num(r.cleaning) ?? 0))
+  }
+  for (const t of taskRowsAll) {
+    const li = lmap[String(t.reference_property_id)]
+    if (!li || !li.vendor) continue
+    const b = buildingOf(li.name) || 'Other vendor'
+    const row = vbFor(b)
+    const w = doer(t)
+    const kind = kindOfTask(t)
+    if (kind === 'clean') row.vendorCleansLogged++
+    if (!w || !onPayrollNames[w]) continue     // the vendor's own crew — not our cost
+    const ch = chargeOf(t)
+    row.ourTasks++
+    if (kind === 'clean') { row.ourCleans++; row.vendorCleansLogged-- }
+    row.ourBilled = round2(row.ourBilled + ch.billable)
+    ourTasks.push({
+      date: String(t.finished_at || '').slice(0, 10),
+      unit: li.name, building: b, person: w, dept: deptByName[w] || 'other',
+      task: String(t.name || t.type_department || 'Task'), kind,
+      minutes: num(t.total_minutes), billed: ch.billable,
+    })
+  }
+  ourTasks.sort((a, b2) => String(b2.date).localeCompare(String(a.date)))
+  const vendorWork = {
+    ourTasks: ourTasks.slice(0, 200),
+    ourTaskCount: ourTasks.length,
+    ourCleanCount: ourTasks.filter(t => t.kind === 'clean').length,
+    ourBilled: round2(ourTasks.reduce((a, t) => a + t.billed, 0)),
+    // Time logged on these jobs is usually 0 in Breezeway, so an hours-based cost would be a
+    // fiction. The count and what we charged are the facts; the wage cost is flagged, not guessed.
+    ourMinutes: ourTasks.reduce((a, t) => a + (t.minutes || 0), 0),
+    unbilled: ourTasks.filter(t => t.billed === 0).length,
+    byBuilding: Object.keys(vb).map(b => vb[b]).sort((a, b2) => b2.checkouts - a.checkouts),
+  }
+
   // ── THE LAYERS ───────────────────────────────────────────────────────────
   // Jon, 2026-08-12: "There are three layers: housekeeping labor; maintenance labor, that's just
   // Breezeway task cost; and maintenance can do cleans, so that would be in the cleaning revenue."
@@ -604,6 +689,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     departments: DEPTS.map(d => byDept[d]),
     buckets: bucketList,
     layers,
+    vendorWork,
     cleans: cleansTotal,
     cleaningRevenue,
     cleaningRevenueAttributed: attributedRev,
