@@ -15,8 +15,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, ArrowLeft, Copy, Check, Send, FileSpreadsheet, FileText, Trash2, Package,
   ExternalLink, Truck, Wrench, ShoppingBag, MessageSquare, ClipboardList, Store,
+  Building2, Layers, Split, Link2, AlertTriangle,
 } from 'lucide-react'
 import { money, ORDER_STATUS_LABEL, STAGE_LABEL } from '@/lib/ffe-catalog'
+import { BEDROOM_NO, ROOM_ORDER, stripVariant } from '@/lib/ffe-checklist'
 
 type Line = {
   id: string; listing_id: string; unit_name: string; building: string; room: string; item_key: string
@@ -55,6 +57,20 @@ export function FfeOrderDetail({ id }: { id: string }) {
   const [copied, setCopied] = useState(false)
   const [po, setPo] = useState<{ po: string; ref: string } | null>(null)
 
+  // TWO WAYS TO READ THE SAME ORDER, because two different people read it.
+  //   By unit  — what goes in 1101. This is the install crew's view and the work order's shape.
+  //   By item  — every nightstand in the order at once. This is the BUYER's view, and it is where
+  //              the decision actually gets made: you pick one nightstand and it lands on all
+  //              twelve units, instead of choosing the same product twelve times.
+  const [view, setView] = useState<'unit' | 'item'>('item')
+
+  // Jon, 2026-08-13: "make it default to have the same item, but... select one style for bedroom 3
+  // and bedroom 1." So bedroom items arrive MERGED — one nightstand decision covering every
+  // bedroom — and splitting is a deliberate click, per item, when you want the primary to differ
+  // from the guest rooms. Split state is per item_key: split the nightstands without splitting the
+  // dressers.
+  const [split, setSplit] = useState<Record<string, boolean>>({})
+
   const load = useCallback(async () => {
     setErr('')
     try {
@@ -90,6 +106,93 @@ export function FfeOrderDetail({ id }: { id: string }) {
     for (const l of lines) (m[l.unit_name || l.listing_id] = m[l.unit_name || l.listing_id] || []).push(l)
     return m
   }, [lines])
+
+  // ── ONE DECISION PER ROW ────────────────────────────────────────────────────────────────────
+  // A group is one buying decision: "the nightstands", not "the nightstand in 1101". Bedroom items
+  // collapse across bedrooms unless that item has been split, so the default really is the same
+  // product everywhere and difference is something you choose.
+  type Group = {
+    key: string; itemKey: string; label: string; where: string
+    bedroom: boolean; slots: number[]; splitable: boolean; lines: Line[]; sort: number
+  }
+  const groups = useMemo(() => {
+    const m: Record<string, Group> = {}
+    // How many bedroom slots this item spans across the whole order — a 1-bed-only item has
+    // nothing to split, so it should not offer to.
+    const slotsPerItem: Record<string, Set<number>> = {}
+    for (const l of lines) {
+      const bn = BEDROOM_NO[l.room]
+      if (bn) (slotsPerItem[l.item_key] = slotsPerItem[l.item_key] || new Set()).add(bn)
+    }
+
+    for (const l of lines) {
+      const bn = BEDROOM_NO[l.room]
+      const spans = bn ? (slotsPerItem[l.item_key]?.size || 1) : 0
+      const merged = !!bn && spans > 1 && !split[l.item_key]
+      const key = merged ? 'bed::' + l.item_key : l.room + '::' + l.item_key
+      if (!m[key]) {
+        m[key] = {
+          key, itemKey: l.item_key,
+          label: merged ? stripVariant(l.itemLabel) : l.itemLabel,
+          where: '', bedroom: !!bn, slots: [], splitable: !!bn && spans > 1,
+          lines: [], sort: (ROOM_ORDER[l.room] ?? 99) * 100 + (merged ? 0 : (bn || 0)),
+        }
+      }
+      const g = m[key]
+      g.lines.push(l)
+      if (bn && g.slots.indexOf(bn) < 0) g.slots.push(bn)
+      if (!bn && !g.where) g.where = l.roomLabel
+      // An order can hold 1-bed and 3-bed units together, so the same group can see both
+      // "Nightstands" and "Nightstands — Order 1". Keep the fuller label rather than whichever unit
+      // happened to sort first — and keep it language-agnostic by comparing length, not parsing.
+      if (!merged && l.itemLabel.length > g.label.length) g.label = l.itemLabel
+    }
+
+    const out = Object.values(m)
+    for (const g of out) {
+      g.slots.sort((a, b) => a - b)
+      if (g.bedroom) {
+        g.where = g.slots.length > 1
+          ? 'Bedrooms ' + g.slots.slice(0, -1).join(', ') + ' & ' + g.slots[g.slots.length - 1]
+          : 'Bedroom ' + g.slots[0]
+      }
+      g.lines.sort((a, b) => (a.unit_name || '').localeCompare(b.unit_name || '', undefined, { numeric: true }))
+    }
+    return out.sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label))
+  }, [lines, split])
+
+  /** What a group currently points at: one product, several, or nothing yet. */
+  const productOf = (g: Group) => {
+    const ids = Array.from(new Set(g.lines.map(l => l.catalog_id || '')))
+    if (ids.length === 1 && ids[0]) {
+      const l = g.lines.find(x => x.catalog_id)
+      return { one: true, id: ids[0], label: (l?.code ? l.code + ' · ' : '') + (l?.product || '') }
+    }
+    if (ids.length === 1) return { one: false, id: '', label: '' }
+    return { one: false, id: '', label: ids.filter(Boolean).length + ' different products' }
+  }
+
+  /** Set one product across every line in the group — the whole point of this view. */
+  const applyToGroup = async (g: Group, catalogId: string) => {
+    if (!catalogId) return
+    await post({ action: 'applyProduct', lineIds: g.lines.map(l => l.id), catalogId })
+  }
+
+  /**
+   * Re-merge a split item: bedroom 1's product becomes every bedroom's product, then the rows
+   * collapse back into one. Without the apply this would only hide the difference, not undo it.
+   */
+  const matchBedrooms = async (itemKey: string) => {
+    const fam = lines.filter(l => l.item_key === itemKey && BEDROOM_NO[l.room])
+    const lead = fam.find(l => BEDROOM_NO[l.room] === 1 && l.catalog_id)
+    const rest = fam.filter(l => l.id !== lead?.id)
+    if (lead?.catalog_id && rest.length) {
+      await post({ action: 'applyProduct', lineIds: rest.map(l => l.id), catalogId: lead.catalog_id })
+    }
+    setSplit(s => { const n = { ...s }; delete n[itemKey]; return n })
+  }
+
+  const undecided = groups.filter(g => !productOf(g).one).length
 
   const shareUrl = shareCode ? (typeof window !== 'undefined' ? window.location.origin : '') + '/audit/ffe/order/' + shareCode : ''
   const copy = async () => {
@@ -225,8 +328,92 @@ export function FfeOrderDetail({ id }: { id: string }) {
         </div>
       ) : null}
 
+      {/* WHICH VIEW. Buying and installing are different jobs and they want opposite shapes. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
+          <button onClick={() => setView('item')}
+            className={'rounded-lg px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1.5 ' +
+              (view === 'item' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+            <Layers className="w-3.5 h-3.5" /> By item
+          </button>
+          <button onClick={() => setView('unit')}
+            className={'rounded-lg px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1.5 ' +
+              (view === 'unit' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+            <Building2 className="w-3.5 h-3.5" /> By unit
+          </button>
+        </div>
+        <p className="text-[11.5px] text-muted flex-1 min-w-[240px]">
+          {view === 'item'
+            ? <>Pick the product once and it lands on every unit. Bedrooms share one choice unless you split them.{undecided ? <span className="text-amber-700 font-semibold"> {undecided} still to decide.</span> : null}</>
+            : <>What goes into each unit — the shape of the work order the install crew carries.</>}
+        </p>
+      </div>
+
+      {/* ── BY ITEM: one row per buying decision ─────────────────────────────────────────────── */}
+      {view === 'item' ? groups.map(g => {
+        const prod = productOf(g)
+        const liveL = g.lines.filter(l => l.stage !== 'declined')
+        const sub = liveL.reduce((a, l) => a + (l.unit_cost == null ? 0 : Number(l.unit_cost) * l.qty), 0)
+        const pieces = liveL.reduce((a, l) => a + (l.qty || 1), 0)
+        const units = Array.from(new Set(g.lines.map(l => l.unit_name).filter(Boolean)))
+        const allSel = g.lines.every(l => sel[l.id])
+        return (
+          <div key={g.key} className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
+            <div className="px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <input type="checkbox" checked={allSel}
+                onChange={e => setSel(s => { const n = { ...s }; for (const l of g.lines) { if (e.target.checked) n[l.id] = true; else delete n[l.id] } return n })} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[13.5px] font-bold text-ink">{g.label}</span>
+                  {g.bedroom && !split[g.itemKey] && g.slots.length > 1
+                    ? <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">same in every bedroom</span>
+                    : null}
+                </div>
+                <div className="text-[11.5px] text-muted">
+                  {g.where} · {units.length} unit{units.length === 1 ? '' : 's'} · {pieces} piece{pieces === 1 ? '' : 's'}
+                </div>
+              </div>
+              <div className="flex-1" />
+              {/* THE DECISION. One select, every line in the group. */}
+              <select value={prod.one ? prod.id : ''} disabled={busy}
+                onChange={e => applyToGroup(g, e.target.value)}
+                className={'rounded-lg border bg-white px-2 py-1.5 text-[12px] max-w-[280px] ' +
+                  (prod.one ? 'border-line' : 'border-amber-300 bg-amber-50')}>
+                <option value="">{prod.label || 'Choose a product…'}</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.code} · {p.name_en}{p.unit_cost != null ? ' — ' + money(p.unit_cost) : ''}</option>)}
+              </select>
+              <span className="text-[13px] font-bold text-ink tabular-nums w-24 text-right">{sub ? money(sub) : '—'}</span>
+            </div>
+
+            <div className="px-4 pb-3 -mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {g.splitable ? (
+                split[g.itemKey] ? (
+                  <button onClick={() => matchBedrooms(g.itemKey)} disabled={busy}
+                    className="text-[11.5px] font-semibold text-brand-700 inline-flex items-center gap-1">
+                    <Link2 className="w-3 h-3" /> Use the same in every bedroom
+                  </button>
+                ) : (
+                  <button onClick={() => setSplit(s => ({ ...s, [g.itemKey]: true }))}
+                    className="text-[11.5px] font-semibold text-brand-700 inline-flex items-center gap-1">
+                    <Split className="w-3 h-3" /> Different per bedroom
+                  </button>
+                )
+              ) : null}
+              {!prod.one && prod.label ? (
+                <span className="text-[11px] text-amber-700 font-semibold inline-flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> {prod.label} on these lines — choosing one above replaces them all
+                </span>
+              ) : null}
+              <span className="text-[11px] text-muted truncate">
+                {units.slice(0, 8).join(', ')}{units.length > 8 ? ` +${units.length - 8} more` : ''}
+              </span>
+            </div>
+          </div>
+        )
+      }) : null}
+
       {/* lines */}
-      {Object.keys(byUnit).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(unit => {
+      {view === 'unit' ? Object.keys(byUnit).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(unit => {
         const us = byUnit[unit]
         const sub = us.filter(l => l.stage !== 'declined').reduce((a, l) => a + (l.unit_cost == null ? 0 : Number(l.unit_cost) * l.qty), 0)
         const allSel = us.every(l => sel[l.id])
@@ -290,7 +477,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
             </div>
           </div>
         )
-      })}
+      }) : null}
 
       <p className="text-[11px] text-muted">
         This is a furniture order. Nothing here creates a Breezeway task, a maintenance ticket or a billing line —
