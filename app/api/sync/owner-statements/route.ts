@@ -132,9 +132,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true, month, statementsGeneratedUpTo: genMax, reservationsScanned: scanned,
         codesOnStatements: onStatement.size,
-        earnedButNotOnAnyStatement: { count: missing.length, money: Math.round(missingMoney * 100) / 100, byOwner: byOwner(missing), rows: missing.slice(0, 40) },
-        changedAfterTheStatementWasBuilt: { count: changed.length, byOwner: byOwner(changed), rows: changed.slice(0, 40) },
-        canceledAfterTheStatementWasBuilt: { count: canceledAfter.length, stillOnStatement: canceledAfter.filter(r => r.onStatement).length, rows: canceledAfter.slice(0, 40) },
+        earnedButNotOnAnyStatement: { count: missing.length, money: Math.round(missingMoney * 100) / 100, byOwner: byOwner(missing), rows: missing.slice(0, 400) },
+        changedAfterTheStatementWasBuilt: { count: changed.length, byOwner: byOwner(changed), rows: changed.slice(0, 200) },
+        canceledAfterTheStatementWasBuilt: { count: canceledAfter.length, stillOnStatement: canceledAfter.filter(r => r.onStatement).length, rows: canceledAfter.slice(0, 200) },
       })
     }
 
