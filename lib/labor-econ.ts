@@ -274,10 +274,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const cleanTasks = taskRows.filter(t => kindOfTask(t) === 'clean')
   const usedTask: Record<string, boolean> = {}
   const revBy: Record<string, number> = {}
-  // EVERY ATTRIBUTED CLEAN, KEPT AS A ROW: who did it, which market the unit is in, what the guest
-  // paid. The buckets below are built from these rows rather than from person-level totals, so a
-  // housekeeper who works both markets lands in both — which is the whole point of the split.
-  const cleanRecs: { who: string; market: string; fee: number }[] = []
+  // THE FEE A MATCHED CHECKOUT PAID, KEYED BY THE CLEAN THAT EARNED IT. Revenue is what the
+  // checkout association produces; the CLEAN COUNT comes from Breezeway (below), because Jon's
+  // definition is "the number of cleans scheduled in Breezeway... Breezeway is an indication that
+  // the clean was completed that day". A completed clean whose checkout we could not match still
+  // took hours and still belongs in the denominator — it just earned no attributed revenue.
+  const feeByTask: Record<string, number> = {}
   let cleaningInhouse = 0, cleaningVendor = 0, managementFee = 0
   let cleansAttributed = 0, vendorCleans = 0
   for (const r of resRows) {
@@ -305,7 +307,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (!w) continue
     cleansAttributed++
     revBy[w] = round2((revBy[w] || 0) + fee)
-    cleanRecs.push({ who: w, market: li ? li.market : 'unassigned', fee })
+    feeByTask[String(match.id)] = fee
   }
 
   // ── per person ───────────────────────────────────────────────────────────
@@ -436,6 +438,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   if (market === 'all' || market === 'miami') bucketFor('miami')
   if (market === 'all' || market === 'broward') bucketFor('broward')
 
+  // EVERY DEPARTURE CLEAN COMPLETED, AS A ROW: who did it, which market the unit is in, and the
+  // fee if a checkout matched. Built from the Breezeway tasks — not from the matched checkouts —
+  // so a clean that was genuinely done still counts in cost per clean even when the checkout
+  // association fails. Counting only matched cleans made every clean look ~10% more expensive
+  // than it is (94 of 103 matched in the week this was found).
+  const cleanRecs = cleanTasks.map(t => {
+    const li = lmap[String(t.reference_property_id)]
+    const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
+    return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0 }
+  }).filter(r => !!r.who) as { who: string; market: string; fee: number }[]
+
   // cleans + revenue, from the clean rows, housekeepers only
   const hkCleansByPerson: Record<string, Record<string, number>> = {}
   for (const rec of cleanRecs) {
@@ -485,7 +498,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     b.margin = round2(b.cleaningRevenue - b.payroll)
     b.marginPct = b.cleaningRevenue > 0 ? round2((b.margin / b.cleaningRevenue) * 100) : null
   }
-  const ORDER = ['miami', 'broward', 'north', 'unassigned', 'vendor']
+  if (buckets['vendor-inhouse']) buckets['vendor-inhouse'].label = 'Vendor units · our crew'
+  const ORDER = ['miami', 'broward', 'north', 'vendor-inhouse', 'unassigned', 'vendor']
   const bucketList = Object.keys(buckets)
     .sort((a, b) => (ORDER.indexOf(a) < 0 ? 8 : ORDER.indexOf(a)) - (ORDER.indexOf(b) < 0 ? 8 : ORDER.indexOf(b)))
     .map(k => buckets[k])
