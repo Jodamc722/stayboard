@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, type FfeOverride } from '@/lib/ffe-checklist'
+import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, BUYS, type FfeOverride } from '@/lib/ffe-checklist'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { isLiveStay } from '@/lib/stay-status'
 import { unitCode, buildingCode, ownerCode, resolveCode } from '@/lib/ffe-links'
@@ -95,7 +95,7 @@ async function progress(db: any, ids: string[]) {
     for (const a of ((data || []) as any[])) {
       const id = String(a.listing_id)
       answered[id] = (answered[id] || 0) + 1
-      if (['replace', 'add'].includes(str(a.answer))) toOrder[id] = (toOrder[id] || 0) + 1
+      if (BUYS.includes(str(a.answer))) toOrder[id] = (toOrder[id] || 0) + 1
     }
   } catch { setupRequired = true }
   try {
@@ -341,7 +341,9 @@ export async function POST(req: NextRequest) {
     const itemKey = str(body.itemKey).slice(0, 40)
     if (!room || !itemKey) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
     const answer = str(body.answer)
-    if (!['replace', 'add', 'keep', 'na'].includes(answer)) return NextResponse.json({ error: 'bad answer' }, { status: 400 })
+    // FIX joined the list on 2026-08-12. It saves like any other answer and then routes itself to
+    // the Fixes board below, because a repair is not a purchase and must never reach a quote.
+    if (!['replace', 'add', 'fix', 'keep', 'na'].includes(answer)) return NextResponse.json({ error: 'bad answer' }, { status: 400 })
     const qtyN = Number(body.qty)
     const row = {
       listing_id: listingId, room, item_key: itemKey,
@@ -362,6 +364,34 @@ export async function POST(req: NextRequest) {
       ? await db.from('ffe_answers').update(row).eq('id', ex[0].id)
       : await db.from('ffe_answers').insert(row)
     if (r.error) return dbFail(r.error.message)
+
+    // ---- FIX ROUTES ITSELF (Jon, 2026-08-12: "add, replace, or fix... the goal is to confirm what
+    // needs to be fixed, replaced, or added") ----
+    // Marking an item FIX opens a fix on the team board straight from the walk. Changing the answer
+    // away from FIX withdraws it again — but ONLY if the office has not touched it yet: once a fix
+    // has been costed, assigned or started, it is the team's, not the walk form's, to close.
+    try {
+      const l2 = all.find(x => x.id === listingId)
+      const { data: fx } = await db.from('ffe_fixes')
+        .select('id,status,est_cost,assigned_to,order_id,created_by')
+        .eq('listing_id', listingId).eq('room', room).eq('item_key', itemKey).limit(1)
+      const existing = (fx || [])[0]
+      if (answer === 'fix') {
+        const frow = {
+          listing_id: listingId, unit_name: l2?.name || null, building: l2?.building || null,
+          room, item_key: itemKey,
+          title: row.title,
+          note: row.note,
+          status: 'open', created_by: 'walk', updated_at: row.updated_at,
+        }
+        if (existing) await db.from('ffe_fixes').update({ title: frow.title, note: frow.note, updated_at: frow.updated_at }).eq('id', existing.id)
+        else await db.from('ffe_fixes').insert(frow)
+      } else if (existing && str(existing.created_by) === 'walk' && str(existing.status) === 'open'
+        && existing.est_cost == null && !existing.assigned_to && !existing.order_id) {
+        await db.from('ffe_fixes').delete().eq('id', existing.id)
+      }
+    } catch { /* the fixes table may not exist yet — the answer itself is already saved */ }
+
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return dbFail(e?.message || e)
