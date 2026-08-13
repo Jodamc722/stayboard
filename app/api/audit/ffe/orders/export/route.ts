@@ -3,6 +3,9 @@
 //   ?id=<orderId>&fmt=xlsx    line items for accounting or to hand a vendor
 //   ?id=<orderId>&fmt=pdf     the printable quote an owner files or signs
 //   ?id=<orderId>&fmt=csv     the plain fallback
+//   ?id=<orderId>&fmt=buylist     THE PURCHASING SHEET — one page per vendor (Jon, 2026-08-13:
+//                             "not sure yet where we will purchase from but could be Amazon, a
+//                             partner with HostGPO, Wayfair, City Furniture")
 //   ?id=<orderId>&fmt=workorder   THE INSTALL SHEET — one page per unit (Jon, 2026-08-13:
 //                             "create work orders report, as items come in per unit. Here what goes
 //                             in unit and here where it goes.")
@@ -96,6 +99,93 @@ export async function GET(req: NextRequest) {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
           'Content-Disposition': `attachment; filename="${base}-${stamp}.csv"`,
+        },
+      })
+    }
+
+    // ── BUY LIST: one page per vendor, for whoever places the orders ──
+    // The mirror image of the work order. That sheet is organised by WHERE IT GOES; this one by
+    // WHERE IT COMES FROM, because those are two different people doing two different jobs on two
+    // different days. Quantities are rolled up across every unit — you buy 26 nightstands once, not
+    // twice a unit — and the units are listed underneath so a partial delivery can still be placed.
+    if (fmt === 'buylist') {
+      // Only what the owner has actually said yes to. Buying off an unapproved quote is the
+      // expensive mistake this whole feature exists to prevent.
+      const BUYABLE = ['approved', 'ordered', 'delivered', 'installed']
+      const use = (sp.get('all') ? rows : rows.filter(r => BUYABLE.indexOf(r.stageKey) >= 0))
+        .filter(r => r.stageKey !== 'declined')
+
+      type Grp = { code: string; product: string; spec: string; sku: string; url: string; qty: number; cost: number | null; units: Record<string, number> }
+      const byVendor: Record<string, Record<string, Grp>> = {}
+      for (const r of use) {
+        const v = r.vendor || 'Not decided yet'
+        const k = (r.code || '~' + r.item) + '|' + r.spec
+        const g = (byVendor[v] = byVendor[v] || {})
+        const row = g[k] = g[k] || { code: r.code, product: r.product || r.item, spec: r.spec, sku: r.sku, url: r.url, qty: 0, cost: r.cost, units: {} }
+        row.qty += r.qty
+        row.units[r.unit] = (row.units[r.unit] || 0) + r.qty
+        if (row.cost == null) row.cost = r.cost
+      }
+
+      // Whoever we have not chosen a supplier for goes LAST and is named as such, so it reads as a
+      // decision still outstanding rather than a vendor called "Not decided yet".
+      const vendors = Object.keys(byVendor).sort((a, b) =>
+        (a === 'Not decided yet' ? 1 : 0) - (b === 'Not decided yet' ? 1 : 0) || a.localeCompare(b))
+
+      let grandBuy = 0
+      const sections: QuoteSection[] = vendors.map(v => {
+        const gs = Object.values(byVendor[v]).sort((a, b) => (a.code || 'zz').localeCompare(b.code || 'zz'))
+        const sub = gs.reduce((a, g) => a + (g.cost == null ? 0 : g.cost * g.qty), 0)
+        grandBuy += sub
+        return {
+          newPage: true,
+          heading: v,
+          sub: gs.length + ' line(s) · ' + gs.reduce((a, g) => a + g.qty, 0) + ' piece(s)',
+          rows: gs.map(g => [
+            g.code || '—',
+            g.product,
+            g.spec || '—',
+            g.sku || '—',
+            String(g.qty),
+            g.cost == null ? 'TBC' : usd(g.cost),
+            g.cost == null ? 'TBC' : usd(Math.round(g.cost * g.qty * 100) / 100),
+            Object.keys(g.units).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+              .map(u => u + (g.units[u] > 1 ? ' x' + g.units[u] : '')).join(', '),
+          ]),
+          subtotal: 'Subtotal ' + usd(sub),
+        }
+      })
+
+      const pdf = buildQuotePdf({
+        title: 'Buy list — ' + str(order.order_no),
+        subtitle: str(order.title) || str(order.owner_name),
+        meta: [
+          { label: 'Suppliers', value: String(vendors.length) },
+          { label: 'Pieces', value: String(use.reduce((a, r) => a + r.qty, 0)) },
+          { label: 'Undecided', value: byVendor['Not decided yet'] ? Object.keys(byVendor['Not decided yet']).length + ' line(s)' : 'none' },
+          { label: 'Printed', value: stamp },
+        ],
+        columns: [
+          { header: 'Code', width: 11 },
+          { header: 'Product', width: 24 },
+          { header: 'Size / spec', width: 11 },
+          { header: 'Their SKU', width: 12 },
+          { header: 'Qty', width: 6, align: 'r' },
+          { header: 'Each', width: 9, align: 'r' },
+          { header: 'Extended', width: 11, align: 'r' },
+          { header: 'For which units', width: 26 },
+        ],
+        sections,
+        totals: [{ label: 'To spend', value: usd(Math.round(grandBuy * 100) / 100), strong: true }],
+        note: str(order.note) || undefined,
+        footer: 'Quantities are rolled up across every unit on this order. Lines under "Not decided yet" still ' +
+          'need a supplier chosen — set one on the product in the Catalog tab and reprint. Only owner-approved ' +
+          'lines appear here.',
+      })
+      return new NextResponse(pdf as any, {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${safe(str(order.order_no) + '-buy-list')}-${stamp}.pdf"`,
         },
       })
     }
