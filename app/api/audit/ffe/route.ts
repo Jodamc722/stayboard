@@ -25,6 +25,12 @@ export const maxDuration = 45
 
 const str = (v: any) => (v == null ? '' : String(v))
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
+/** A typed-in price. Blank stays blank — "not priced yet" and "free" are different facts. */
+function estOf(v: any): number | null {
+  if (v == null || v === '') return null
+  const n = Number(String(v).replace(/[$,\s]/g, ''))
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null
+}
 
 // TELL THE TRUTH WHEN THE TABLES ARE MISSING. Until migration 032 has been run, every save fails
 // with a PostgREST schema-cache error, and the walker's phone showed "check your signal" — which
@@ -217,12 +223,18 @@ export async function GET(req: NextRequest) {
     const custom: Record<string, { key: string; en: string; es: string }[]> = {}
     try {
       const { data } = await db.from('ffe_answers')
-        .select('room,item_key,title,answer,qty,note,spec,photo_url').eq('listing_id', l.id).limit(1000)
+        .select('room,item_key,title,answer,qty,note,spec,photo_url,replacement_url,replacement_photo,est_cost').eq('listing_id', l.id).limit(1000)
       const known = new Set<string>()
       for (const r of merged) for (const i of r.items) known.add(r.key + '::' + i.key)
       for (const a of ((data || []) as any[])) {
         const room = str(a.room), key = str(a.item_key), k = room + '::' + key
-        answers[k] = { answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null, spec: a.spec ?? null, photoUrl: a.photo_url ?? null }
+        answers[k] = {
+          answer: str(a.answer), qty: a.qty ?? null, note: a.note ?? null, spec: a.spec ?? null,
+          photoUrl: a.photo_url ?? null,
+          replacementUrl: a.replacement_url ?? null,
+          replacementPhoto: a.replacement_photo ?? null,
+          estCost: a.est_cost ?? null,
+        }
         if (!known.has(k) && str(a.title)) {
           (custom[room] = custom[room] || []).push({ key, en: str(a.title), es: str(a.title) })
         }
@@ -353,6 +365,12 @@ export async function POST(req: NextRequest) {
       note: str(body.note).slice(0, 500) || null,
       // The size / which-one answer, so "9x12" reaches the vendor instead of "area rug x1".
       ...('spec' in body ? { spec: str(body.spec).slice(0, 120) || null } : {}),
+      // WHAT WE ARE ACTUALLY BUYING — the link and the rough price, captured in the unit where
+      // somebody is standing in front of the thing rather than reconstructed at a desk later.
+      ...('replacementUrl' in body
+        ? { replacement_url: /^https?:\/\//i.test(str(body.replacementUrl).trim()) ? str(body.replacementUrl).trim().slice(0, 500) : null }
+        : {}),
+      ...('estCost' in body ? { est_cost: estOf(body.estCost) } : {}),
       // Only overwrite the photo when the client actually sends one — re-answering an item must
       // not silently drop the picture already attached to it.
       ...(str(body.photoUrl) ? { photo_url: str(body.photoUrl).slice(0, 500) } : {}),
