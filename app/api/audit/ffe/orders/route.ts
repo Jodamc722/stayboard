@@ -51,21 +51,32 @@ async function overrides(db: any): Promise<FfeOverride[]> {
   } catch { return [] }
 }
 
-/** Room and item labels, so an order line reads "Master bedroom · Nightstands" and not "master::nightstands". */
-function labelIndex(units: FfeUnit[], ov: FfeOverride[]) {
-  const rooms: Record<string, string> = {}
-  const items: Record<string, string> = {}
-  const seen = new Set<number>()
-  for (const u of units) {
-    const bd = u.bedrooms == null ? 1 : u.bedrooms
-    if (seen.has(bd)) continue
-    seen.add(bd)
-    for (const r of mergeChecklist(u.bedrooms, ov)) {
-      rooms[r.key] = r.en
-      for (const i of r.items) items[r.key + '::' + i.key] = i.en
+/**
+ * Room and item labels, so a line reads "Primary bedroom · Nightstands — Order 1" rather than
+ * "master::nightstands".
+ *
+ * KEYED BY BEDROOM COUNT, and that is the whole point. The first version built one flat map across
+ * every unit and kept the first label it saw for a key — so master::nightstands got its name from
+ * whichever studio happened to be first in the list, came out as plain "Nightstands", and a 3-bed
+ * unit showed "Nightstands", "Nightstands — Order 2", "Nightstands — Order 3". The numbering only
+ * exists relative to a unit's own bedroom count, so the lookup has to carry it.
+ */
+function labelIndex(ov: FfeOverride[]) {
+  const cache: Record<string, { rooms: Record<string, string>; items: Record<string, string> }> = {}
+  return (bedrooms: number | null) => {
+    const bd = bedrooms == null ? 1 : bedrooms
+    const k = String(bd)
+    if (!cache[k]) {
+      const rooms: Record<string, string> = {}
+      const items: Record<string, string> = {}
+      for (const r of mergeChecklist(bedrooms, ov)) {
+        rooms[r.key] = r.en
+        for (const i of r.items) items[r.key + '::' + i.key] = i.en
+      }
+      cache[k] = { rooms, items }
     }
+    return cache[k]
   }
-  return { rooms, items }
 }
 
 export async function GET(req: NextRequest) {
@@ -88,16 +99,22 @@ export async function GET(req: NextRequest) {
       const order = (ords || [])[0]
       if (!order) return NextResponse.json({ error: 'order not found' }, { status: 404 })
       const [units, ov] = await Promise.all([ffePortfolio(db), overrides(db)])
-      const L = labelIndex(units, ov)
+      const labelsFor = labelIndex(ov)
+      const bedroomsBy: Record<string, number | null> = Object.fromEntries(units.map(u => [u.id, u.bedrooms]))
       return NextResponse.json({
         ok: true,
         order,
         shareCode: orderCode(str(order.id)),
-        lines: ((lines || []) as any[]).map(l => ({
-          ...l,
-          roomLabel: L.rooms[str(l.room)] || str(l.room),
-          itemLabel: L.items[str(l.room) + '::' + str(l.item_key)] || str(l.title) || str(l.item_key),
-        })),
+        lines: ((lines || []) as any[]).map(l => {
+          const L = labelsFor(bedroomsBy[str(l.listing_id)] ?? null)
+          return {
+            ...l,
+            roomLabel: L.rooms[str(l.room)] || str(l.room),
+            // The title stored on the line is what the builder showed and what the owner was sent.
+            // It wins over a recomputed label so every screen says the same words.
+            itemLabel: str(l.title) || L.items[str(l.room) + '::' + str(l.item_key)] || str(l.item_key),
+          }
+        }),
       })
     }
 
@@ -168,7 +185,7 @@ export async function GET(req: NextRequest) {
     if (aErr) return fail(aErr.message)
 
     const already = new Set(((onOrder || []) as any[]).map(l => str(l.listing_id) + '|' + str(l.room) + '|' + str(l.item_key)))
-    const L = labelIndex(mine, ov)
+    const labelsFor = labelIndex(ov)
     const unitById: Record<string, FfeUnit> = Object.fromEntries(mine.map(x => [x.id, x]))
 
     const groups: Record<string, any> = {}
@@ -178,6 +195,7 @@ export async function GET(req: NextRequest) {
       if (already.has(key)) continue
       const unit = unitById[lid]
       if (!unit) continue
+      const L = labelsFor(unit.bedrooms)
       const g = groups[lid] = groups[lid] || {
         listingId: lid, unitName: unit.name, building: unit.building, bedrooms: unit.bedrooms, rooms: {} as any,
       }
