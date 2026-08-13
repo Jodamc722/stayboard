@@ -361,12 +361,18 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.cleaningRevenue = round2(p.cleaningRevenue + revBy[k])
   }
 
+  // A PERSON'S CREW CANNOT DEPEND ON WHICH TAB YOU ARE LOOKING AT. The fallback used to read
+  // p.cleans, which is market-scoped: on the Broward tab every Miami housekeeper showed zero
+  // cleans, fell through to 'other', and Broward's whole housekeeping payroll vanished — the tab
+  // reported no cost per clean at all. Counting their cleans across ALL markets fixes it.
+  const cleansAllBy: Record<string, number> = {}
+  for (const t of cleanTasksAll) { const w = doer(t); if (w) cleansAllBy[w] = (cleansAllBy[w] || 0) + 1 }
   // crew + market per person, then the arithmetic
   for (const k of Object.keys(acc)) {
     const p = acc[k]
     // Fallback only bites for people nobody has named: what they actually did, cleans first.
     let guess: Dept | null = null
-    if (p.cleans > 0) guess = 'housekeeping'
+    if (p.cleans > 0 || (cleansAllBy[p.name] || 0) > 0) guess = 'housekeeping'
     else if (p.billableRevenue > 0) guess = 'maintenance'
     p.dept = crew.deptOf(p.name, p.role, guess)
     p.declared = crew.isDeclared(p.name)
@@ -522,7 +528,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // The headline cost per clean: housekeeper wages over the units housekeepers actually turned,
   // in-house markets only. Supervisors are not in it. Maintenance is not in it. Vendor is not in
   // it — nobody on our payroll cleaned those.
-  const inHouseB = bucketList.filter(b => b.inHouse)
+  // On a market tab the headline tile must be that market's own number. Blending in the
+  // catch-all buckets (a housekeeper with hours but no cleans) made the Miami tile read $75
+  // while Miami's own row read $73 — two different answers to one question on one screen.
+  const inHouseB = market === 'all'
+    ? bucketList.filter(b => b.inHouse)
+    : bucketList.filter(b => b.inHouse && b.key === market)
   const hkPayrollInHouse = round2(inHouseB.reduce((a, b) => a + b.payroll, 0))
   const hkHoursInHouse = round2(inHouseB.reduce((a, b) => a + b.hours, 0))
   const hkCleansInHouse = inHouseB.reduce((a, b) => a + b.cleans, 0)
