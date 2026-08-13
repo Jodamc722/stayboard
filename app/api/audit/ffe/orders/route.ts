@@ -175,7 +175,7 @@ export async function GET(req: NextRequest) {
     if (!ids.length) return NextResponse.json({ ok: true, owner: null, groups: [], products: [] })
 
     const [{ data: ans, error: aErr }, { data: onOrder }, { data: prods }, ov] = await Promise.all([
-      db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,spec,photo_url')
+      db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,spec,photo_url,replacement_url,replacement_photo,est_cost')
         .in('listing_id', ids).in('answer', BUYS).limit(20000),
       db.from('ffe_order_lines').select('listing_id,room,item_key,order_id').in('listing_id', ids).limit(20000),
       db.from('ffe_catalog').select('id,code,name_en,category,item_keys,vendor,vendor_sku,unit_cost,url,image_url,room_hint')
@@ -212,6 +212,10 @@ export async function GET(req: NextRequest) {
         // The size the walker recorded standing in the room — it has to reach the vendor.
         spec: a.spec || null,
         photoUrl: a.photo_url || null,
+        // What the walker said we should buy — link, picture and rough price.
+        replacementUrl: a.replacement_url || null,
+        replacementPhoto: a.replacement_photo || null,
+        estCost: a.est_cost == null ? null : Number(a.est_cost),
         category: categoryForItem(str(a.item_key)),
       })
     }
@@ -347,7 +351,11 @@ export async function POST(req: NextRequest) {
         if ('poNumber' in body) patch.po_number = clean(body.poNumber, 64)
         if ('vendorRef' in body) patch.vendor_ref = clean(body.vendorRef, 64)
       }
-      if (stage === 'delivered') patch.delivered_at = now
+      if (stage === 'delivered') {
+        patch.delivered_at = now
+        patch.received_at = now
+        if ('receivedBy' in body) patch.received_by = clean(body.receivedBy, 120)
+      }
       if (stage === 'installed') patch.installed_at = now
       const r = await db.from('ffe_order_lines').update(patch).in('id', ids)
       if (r.error) return fail(r.error.message)
@@ -447,12 +455,16 @@ async function insertLines(db: any, orderId: string, raw: any, units: FfeUnit[],
       catalog_id: prod ? prod.id : null,
       code: prod ? prod.code : null,
       product: prod ? prod.name_en : null,
-      image_url: prod ? prod.image_url : null,
-      url: prod ? prod.url : null,
+      // A CATALOG PRODUCT WINS, BUT THE WALKER'S RESEARCH IS NOT THROWN AWAY. If nobody has picked
+      // a product yet, the link, photo and price captured in the unit become the line — so an order
+      // built straight off a walk is already something a person could act on.
+      image_url: prod ? prod.image_url : (clean(l.replacementPhoto, 500) || null),
+      url: prod ? prod.url : (clean(l.replacementUrl, 500) || null),
       vendor: prod ? prod.vendor : null,
       vendor_sku: prod ? prod.vendor_sku : null,
       qty: Math.max(1, Math.min(999, Math.round(num(l.qty, 1)))),
-      unit_cost: 'unitCost' in l ? priceOf(l.unitCost) : (prod && prod.unit_cost != null ? prod.unit_cost : null),
+      unit_cost: 'unitCost' in l ? priceOf(l.unitCost)
+        : (prod && prod.unit_cost != null ? prod.unit_cost : priceOf(l.estCost)),
       placement: clean(l.placement, 160),
       spec: clean(l.spec, 120),
       stage: 'draft',
