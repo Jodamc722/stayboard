@@ -7,10 +7,11 @@
 // The first version of this file was written from the items Jon listed in chat and never read the
 // sheet. That was wrong in three ways worth naming, because they are the whole reason for the
 // rewrite:
-//   1. THE QUESTION IS "HOW MANY", NOT "YES OR NO". The sheet's last column is NUMBER NEEDED /
-//      CANTIDAD and its footer says "Enter the total quantity required for this unit." A unit needs
-//      four dining chairs, not "dining chairs: replace". Quantity is now the primary control and
-//      zero is how you say "not needed" — see qtyFirst below.
+//   1. THE ANSWER IS ADD / REPLACE / FIX, WITH A NUMBER (Jon, 2026-08-12: "the goal of that whole
+//      thing is to just confirm what needs to be fixed, replaced, or added... you can add the
+//      number needed"). Three verbs, because they are three different outcomes: ADD and REPLACE buy
+//      something, FIX does not — a FIX answer goes to the Fixes board and never onto a quote. The
+//      sheet's NUMBER NEEDED column rides alongside, defaulted per item: nightstands are a pair.
 //   2. TERRACES WERE MISSING ENTIRELY. The sheet has a whole second page of outdoor furniture.
 //      Every terrace item was invisible in the app.
 //   3. THE WORDING IS THE SHEET'S WORDING, both languages, including the ones that carry an
@@ -43,7 +44,9 @@ export type FfeItem = {
   es: string
   ask?: FfeAsk         // default 'replace'
   hint?: { en: string; es: string }
-  spec?: FfeSpec       // asked only once the quantity is above zero
+  spec?: FfeSpec       // asked only once something is being ordered
+  qty?: number         // how many this item comes in — nightstands are a pair, so 2
+  variant?: boolean    // each bedroom gets its OWN one of these — see "Order N" below
   extra?: boolean      // true = not on Jon's sheet, kept because a walker needs it
 }
 
@@ -65,19 +68,51 @@ export type FfeRoom = {
   en: string
   es: string
   minBedrooms?: number   // needs at least this many bedrooms
+  bedroomNo?: number     // 1 = primary, 2 = first guest, 3 = second guest — drives "Order N"
   optional?: boolean     // not every unit has one — the sheet's terraces
   note?: { en: string; es: string }
   items: FfeItem[]
 }
 
-const A = (key: string, en: string, es: string, ask?: FfeAsk, hint?: { en: string; es: string }, spec?: FfeSpec): FfeItem =>
-  ({ key, en, es, ask, hint, spec })
-const X = (key: string, en: string, es: string, ask?: FfeAsk, hint?: { en: string; es: string }, spec?: FfeSpec): FfeItem =>
-  ({ key, en, es, ask, hint, spec, extra: true })
+const A = (key: string, en: string, es: string, ask?: FfeAsk, hint?: { en: string; es: string }, spec?: FfeSpec, qty?: number, variant?: boolean): FfeItem =>
+  ({ key, en, es, ask, hint, spec, qty, variant })
+const X = (key: string, en: string, es: string, ask?: FfeAsk, hint?: { en: string; es: string }, spec?: FfeSpec, qty?: number, variant?: boolean): FfeItem =>
+  ({ key, en, es, ask, hint, spec, qty, variant, extra: true })
 
-// THE SHEET SAYS QUANTITY. The form asks "how many does this unit need" and treats 0 as "none" —
-// one control instead of a yes/no plus a number, which is both fewer taps and the actual question.
-export const qtyFirst = true
+// ── ONE ITEM, ONE OF THREE OUTCOMES ─────────────────────────────────────────────────────────────
+// ADD      the unit does not have it — buy one          -> order line
+// REPLACE  it is there and has to be swapped            -> order line
+// FIX      it is there and can be repaired              -> Fixes board, never a quote line
+// NONE     nothing needed
+// FIX is the one that used to fall on the floor: it is not a purchase, so it had no home on a
+// purchasing form, and it either got lost or got raised as a maintenance ticket. Now it is a first
+// class answer that routes itself.
+export const FFE_OUTCOMES = ['add', 'replace', 'fix', 'keep'] as const
+export type FfeOutcome = typeof FFE_OUTCOMES[number]
+/** Which answers become something to buy. FIX is deliberately not one of them. */
+export const BUYS: string[] = ['add', 'replace']
+
+/**
+ * "Nightstands — Order 2".
+ *
+ * Jon, 2026-08-12: "If it's three bedrooms, we should consider getting three different types of
+ * nightstands, and we should label it: Nightstands order 1 / order 2 / order 3 ... so that we can
+ * get customized links for each."
+ *
+ * Numbering only appears when the unit HAS more than one bedroom — a studio does not need to be
+ * told its nightstands are order 1 of 1. The number is the bedroom's position, so Order 2 is always
+ * the first guest room in every unit rather than whatever happened to be filled in first.
+ */
+export function variantLabel(en: string, bedroomNo: number | undefined, bedrooms: number | null): string {
+  const bd = typeof bedrooms === 'number' && bedrooms > 0 ? bedrooms : 1
+  if (!bedroomNo || bd < 2) return en
+  return en + ' — Order ' + bedroomNo
+}
+export function variantLabelEs(es: string, bedroomNo: number | undefined, bedrooms: number | null): string {
+  const bd = typeof bedrooms === 'number' && bedrooms > 0 ? bedrooms : 1
+  if (!bedroomNo || bd < 2) return es
+  return es + ' — Pedido ' + bedroomNo
+}
 
 export const FFE_ROOMS: FfeRoom[] = [
   // ── INTERIOR FURNISHINGS / MUEBLES DE INTERIOR ────────────────────────────────────────────────
@@ -124,16 +159,18 @@ export const FFE_ROOMS: FfeRoom[] = [
     ],
   },
   {
-    key: 'master', en: 'Primary bedroom', es: 'Dormitorio principal',
+    key: 'master', en: 'Primary bedroom', es: 'Dormitorio principal', bedroomNo: 1,
     items: [
-      A('nightstands', 'Nightstand — choose from 2 styles', 'Mesa de noche — elegir entre 2 estilos', undefined, undefined, SPEC.style2),
-      A('bedroom_lamps', 'Nightstand lamp', 'Lámpara para mesa de noche'),
-      A('dresser', 'Dresser', 'Cómoda'),
+      A('nightstands', 'Nightstands', 'Mesas de noche', undefined,
+        { en: 'They come as a pair — 2 unless this room is different.', es: 'Vienen en par — 2 salvo que esta habitación sea distinta.' },
+        SPEC.style2, 2, true),
+      A('bedroom_lamps', 'Nightstand lamps', 'Lámparas de mesa de noche', undefined, undefined, undefined, 2, true),
+      A('dresser', 'Dresser', 'Cómoda', undefined, undefined, undefined, undefined, true),
       A('bedroom_tv_stand', 'TV stand — if needed', 'Mueble para televisor — si es necesario', undefined, undefined, SPEC.mount),
       X('bedroom_tv', 'TV', 'Televisor', undefined,
         { en: 'The 65-inch smart TV already in the unit moves here — check before ordering one.',
           es: 'El televisor de 65 pulgadas que ya está en la unidad se mueve aquí — revise antes de pedir otro.' }, SPEC.tv),
-      X('bed_frame', 'Bed frame / headboard', 'Base de cama / cabecera', undefined, undefined, SPEC.bed),
+      X('bed_frame', 'Bed frame / headboard', 'Base de cama / cabecera', undefined, undefined, SPEC.bed, undefined, true),
       X('mattress', 'Mattress', 'Colchón', undefined, undefined, SPEC.bed),
       X('mirror', 'Mirror', 'Espejo'),
       X('bedroom_art', 'Wall art', 'Arte para pared'),
@@ -142,14 +179,16 @@ export const FFE_ROOMS: FfeRoom[] = [
     ],
   },
   {
-    key: 'guest1', en: 'Guest bedroom', es: 'Habitación de huéspedes', minBedrooms: 2,
+    key: 'guest1', en: 'Guest bedroom', es: 'Habitación de huéspedes', minBedrooms: 2, bedroomNo: 2,
     items: [
-      A('nightstands', 'Nightstand — choose from 2 styles', 'Mesa de noche — elegir entre 2 estilos', undefined, undefined, SPEC.style2),
-      A('bedroom_lamps', 'Nightstand lamp', 'Lámpara para mesa de noche'),
-      A('dresser', 'Dresser', 'Cómoda'),
+      A('nightstands', 'Nightstands', 'Mesas de noche', undefined,
+        { en: 'They come as a pair — 2 unless this room is different.', es: 'Vienen en par — 2 salvo que esta habitación sea distinta.' },
+        SPEC.style2, 2, true),
+      A('bedroom_lamps', 'Nightstand lamps', 'Lámparas de mesa de noche', undefined, undefined, undefined, 2, true),
+      A('dresser', 'Dresser', 'Cómoda', undefined, undefined, undefined, undefined, true),
       A('bedroom_tv_stand', 'TV stand — if needed', 'Mueble para televisor — si es necesario', undefined, undefined, SPEC.mount),
       X('bedroom_tv', 'TV', 'Televisor', undefined, undefined, SPEC.tv),
-      X('bed_frame', 'Bed frame / headboard', 'Base de cama / cabecera', undefined, undefined, SPEC.bed),
+      X('bed_frame', 'Bed frame / headboard', 'Base de cama / cabecera', undefined, undefined, SPEC.bed, undefined, true),
       X('mattress', 'Mattress', 'Colchón', undefined, undefined, SPEC.bed),
       X('mirror', 'Mirror', 'Espejo'),
       X('bedroom_art', 'Wall art', 'Arte para pared'),
@@ -158,14 +197,16 @@ export const FFE_ROOMS: FfeRoom[] = [
     ],
   },
   {
-    key: 'guest2', en: 'Second guest bedroom', es: 'Segunda habitación de huéspedes', minBedrooms: 3,
+    key: 'guest2', en: 'Second guest bedroom', es: 'Segunda habitación de huéspedes', minBedrooms: 3, bedroomNo: 3,
     items: [
-      A('nightstands', 'Nightstand — choose from 2 styles', 'Mesa de noche — elegir entre 2 estilos', undefined, undefined, SPEC.style2),
-      A('bedroom_lamps', 'Nightstand lamp', 'Lámpara para mesa de noche'),
-      A('dresser', 'Dresser', 'Cómoda'),
+      A('nightstands', 'Nightstands', 'Mesas de noche', undefined,
+        { en: 'They come as a pair — 2 unless this room is different.', es: 'Vienen en par — 2 salvo que esta habitación sea distinta.' },
+        SPEC.style2, 2, true),
+      A('bedroom_lamps', 'Nightstand lamps', 'Lámparas de mesa de noche', undefined, undefined, undefined, 2, true),
+      A('dresser', 'Dresser', 'Cómoda', undefined, undefined, undefined, undefined, true),
       A('bedroom_tv_stand', 'TV stand — if needed', 'Mueble para televisor — si es necesario', undefined, undefined, SPEC.mount),
       X('bedroom_tv', 'TV', 'Televisor', undefined, undefined, SPEC.tv),
-      X('bed_frame', 'Bed frame / headboard', 'Base de cama / cabecera', undefined, undefined, SPEC.bed),
+      X('bed_frame', 'Bed frame / headboard', 'Base de cama / cabecera', undefined, undefined, SPEC.bed, undefined, true),
       X('mattress', 'Mattress', 'Colchón', undefined, undefined, SPEC.bed),
       X('bedroom_art', 'Wall art', 'Arte para pared'),
       X('bedroom_curtains', 'Curtains / blinds', 'Cortinas / persianas', undefined, undefined, SPEC.drop),
@@ -242,17 +283,23 @@ export const FFE_ACTIONS: FfeAction[] = [
 
 // The three answers. KEEP is deliberately not "no" — the crew is judging the piece, not themselves.
 export const FFE_ANSWERS = {
-  replace: { en: 'Needed', es: 'Se necesita' },
-  keep: { en: 'Not needed', es: 'No hace falta' },
   add: { en: 'Add', es: 'Agregar' },
+  replace: { en: 'Replace', es: 'Reemplazar' },
+  fix: { en: 'Fix', es: 'Reparar' },
+  keep: { en: 'Nothing needed', es: 'Nada hace falta' },
   na: { en: 'Not here', es: 'No hay' },
+}
+export const FFE_ANSWER_HELP = {
+  add: { en: 'The unit does not have one', es: 'La unidad no tiene' },
+  replace: { en: 'It is here but has to be swapped', es: 'Está pero hay que cambiarlo' },
+  fix: { en: 'It can be repaired — goes to the team, not the owner', es: 'Se puede reparar — va al equipo, no al dueño' },
 }
 
 export const FFE_UI = {
   title: { en: 'Furniture & Decor Checklist', es: 'Lista de muebles y decoración' },
   intro: {
-    en: 'Room by room, enter how many this unit needs. Leave it at zero if nothing is needed. Add a note when it helps.',
-    es: 'Habitación por habitación, escriba cuántos necesita esta unidad. Déjelo en cero si no hace falta nada. Agregue una nota si ayuda.',
+    en: 'Room by room: does it need to be added, replaced or fixed? Then how many. Anything you mark Fix goes to the team, not onto the owner\u2019s order.',
+    es: 'Habitación por habitación: ¿hay que agregar, reemplazar o reparar? Luego cuántos. Lo que marque Reparar va al equipo, no al pedido del dueño.',
   },
   ask: {
     replace: { en: 'How many needed?', es: '¿Cuántos se necesitan?' },
@@ -260,7 +307,9 @@ export const FFE_UI = {
     check: { en: 'Confirm', es: 'Confirmar' },
   },
   qty: { en: 'Number needed', es: 'Cantidad' },
-  none: { en: 'None needed', es: 'No hace falta' },
+  none: { en: 'Nothing needed', es: 'Nada hace falta' },
+  fixWhat: { en: 'What needs fixing?', es: '¿Qué hay que reparar?' },
+  fixGoesTo: { en: 'This goes to the team as a fix, not onto the order.', es: 'Esto va al equipo como reparación, no al pedido.' },
   note: { en: 'Note (optional)', es: 'Nota (opcional)' },
   saved: { en: 'Saved', es: 'Guardado' },
   saving: { en: 'Saving…', es: 'Guardando…' },
@@ -300,6 +349,15 @@ export function mergeChecklist(bedrooms: number | null, overrides: FfeOverride[]
   const byRoom: Record<string, FfeOverride[]> = {}
   for (const o of overrides || []) (byRoom[String(o.room)] = byRoom[String(o.room)] || []).push(o)
 
+  // A hand-typed override always wins the label — if somebody renamed it on the Checklist tab, that
+  // is the name, numbering and all.
+  const num = (i: FfeItem, room: FfeRoom, edited: boolean): FfeItem =>
+    (!i.variant || edited) ? i : {
+      ...i,
+      en: variantLabel(i.en, room.bedroomNo, bedrooms),
+      es: variantLabelEs(i.es, room.bedroomNo, bedrooms),
+    }
+
   return roomsFor(bedrooms).map(room => {
     const ov = byRoom[room.key] || []
     const hidden = new Set(ov.filter(o => o.hidden).map(o => String(o.item_key)))
@@ -310,10 +368,11 @@ export function mergeChecklist(bedrooms: number | null, overrides: FfeOverride[]
       .filter(i => !hidden.has(i.key))
       .map((i, idx) => {
         const e = edits[i.key]
+        const withLabel = num(i, room, !!(e && e.en))
         return {
-          ...i,
-          en: e && e.en ? e.en : i.en,
-          es: e && e.es ? e.es : i.es,
+          ...withLabel,
+          en: e && e.en ? e.en : withLabel.en,
+          es: e && e.es ? e.es : withLabel.es,
           ask: (e && e.ask ? e.ask : i.ask) as FfeItem['ask'],
           sort: e && typeof e.sort === 'number' ? e.sort : idx,
         }
