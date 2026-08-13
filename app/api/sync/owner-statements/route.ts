@@ -51,6 +51,93 @@ export async function POST(req: NextRequest) {
   const sb = supabaseAdmin()
 
   try {
+    // ── GAP: the month's RESERVATIONS against the month's STATEMENTS. Read-only, signed-in only.
+    //    ?gap=1&month=YYYY-MM
+    // The audit reads statements; this reads the other side and asks what does not line up:
+    //   · a stay that earned money and never reached a statement (revenue nobody billed)
+    //   · a statement line whose booking is not in the mirror at all
+    //   · a booking CHANGED OR CANCELED AFTER its statement was generated — the statement is now
+    //     describing a booking that no longer looks like that, which is the failure mode you only
+    //     get once statements exist.
+    if (qs.get('gap') === '1') {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return NextResponse.json({ error: 'sign in to use gap' }, { status: 403 })
+      const month = String(qs.get('month') || etMonth()).slice(0, 7)
+      const [y, m] = month.split('-').map(Number)
+      const start = new Date(Date.UTC(y, m - 1, 1)).toISOString().slice(0, 10)
+      const endExcl = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10)
+
+      // Statements: when each was generated, and which listings it covers.
+      const { data: stRows } = await sb.from('guesty_owner_statements')
+        .select('owner_id, owner_name, raw').eq('period_month', month)
+      const genByListing: Record<string, { owner: string; gen: string }> = {}
+      let genMax = ''
+      for (const s of (stRows || []) as any[]) {
+        const gen = String(s.raw?.generatedAt || '')
+        if (gen > genMax) genMax = gen
+        for (const l of (Array.isArray(s.raw?.listings) ? s.raw.listings : [])) {
+          const lid = String(l?.id || l?._id || '')
+          if (lid) genByListing[lid] = { owner: String(s.owner_name || ''), gen }
+        }
+      }
+
+      // Every reservation code that carries recognized money this month.
+      const onStatement = new Set<string>()
+      for (let off = 0; off < 100_000; off += 1000) {
+        // Same selector the audit uses — the code lives in the row's JSON, not in a column.
+        const { data, error } = await sb.from('guesty_owner_ledger')
+          .select('res:raw->reservationConfirmationCode->>title')
+          .eq('recognized', true).eq('entry_month', month)
+          .range(off, off + 999)
+        if (error) break
+        const batch = (data || []) as any[]
+        for (const r of batch) { const c = String((r as any).res || '').trim(); if (c) onStatement.add(c) }
+        if (batch.length < 1000) break
+      }
+
+      const missing: any[] = []; const changed: any[] = []; const canceledAfter: any[] = []
+      let scanned = 0, missingMoney = 0
+      for (let off = 0; off < 20_000; off += 1000) {
+        const { data, error } = await sb.from('guesty_reservations')
+          .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id, money_total, upd:raw->>lastUpdatedAt')
+          .gt('check_out', start).lt('check_in', endExcl)
+          .range(off, off + 999)
+        if (error) break
+        const batch = (data || []) as any[]
+        scanned += batch.length
+        for (const r of batch) {
+          const code = String(r.confirmation_code || '').trim()
+          const status = String(r.status || '').toLowerCase()
+          const money = Number(r.money_total) || 0
+          const dead = /cancel|inquiry|declin|expir/.test(status)
+          const lid = String(r.listing_id || '')
+          const st = genByListing[lid]
+          const row = {
+            code, guest: String(r.guest_name || ''), unit: lid,
+            checkIn: String(r.check_in || ''), checkOut: String(r.check_out || ''),
+            status, source: String(r.source || ''), money: Math.round(money * 100) / 100,
+            owner: st ? st.owner : '(listing not on any statement)',
+          }
+          if (!dead && money > 1 && code && !onStatement.has(code)) { missing.push(row); missingMoney += money }
+          const upd = String((r as any).upd || '')
+          if (st && st.gen && upd && upd > st.gen) {
+            if (/cancel/.test(status)) canceledAfter.push({ ...row, changedAt: upd, statementBuilt: st.gen, onStatement: onStatement.has(code) })
+            else if (onStatement.has(code)) changed.push({ ...row, changedAt: upd, statementBuilt: st.gen })
+          }
+        }
+        if (batch.length < 1000) break
+      }
+      const byOwner = (arr: any[]) => arr.reduce((a: any, r: any) => { a[r.owner] = (a[r.owner] || 0) + 1; return a }, {})
+      return NextResponse.json({
+        ok: true, month, statementsGeneratedUpTo: genMax, reservationsScanned: scanned,
+        codesOnStatements: onStatement.size,
+        earnedButNotOnAnyStatement: { count: missing.length, money: Math.round(missingMoney * 100) / 100, byOwner: byOwner(missing), rows: missing.slice(0, 40) },
+        changedAfterTheStatementWasBuilt: { count: changed.length, byOwner: byOwner(changed), rows: changed.slice(0, 40) },
+        canceledAfterTheStatementWasBuilt: { count: canceledAfter.length, stillOnStatement: canceledAfter.filter(r => r.onStatement).length, rows: canceledAfter.slice(0, 40) },
+      })
+    }
+
     // ── PEEK: why doesn't this statement tie? Read-only, signed-in users only.
     //    ?peek=<owner name fragment>&month=YYYY-MM
     // Returns Guesty's own statement object next to OUR ledger arithmetic, split by charge code
