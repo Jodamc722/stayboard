@@ -496,6 +496,7 @@ export async function GET(req: Request) {
       buckets: econ.buckets, layers: econ.layers,
       // Our crew's work inside vendor-managed buildings + the per-building invoice check.
       vendorWork: econ.vendorWork,
+      matchDiag: econ.matchDiag,
       perCleaner, personTasks, personRevenue, attribution, unattributed, settings,
       // The same P&L the briefs print, per person and per crew, so nothing has to be re-derived
       // on the client and no two screens can disagree.
