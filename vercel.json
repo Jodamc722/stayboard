@@ -57,6 +57,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/labor-trueup",
+      "schedule": "0 13 * * 1"
+    },
+    {
       "path": "/api/cron/labor-weekly",
       "schedule": "0 12 * * 1"
     },
