@@ -179,6 +179,7 @@ export type LaborEcon = {
   margin: number
   /** With the management fee included — the whole labor line against everything labor earns. */
   marginWithFee: number
+  matchDiag: any
   coverage: {
     cleansAttributed: number
     cleansUnassigned: number
@@ -343,6 +344,53 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (!inMk) continue
     cleansAttributed++
     revBy[w] = round2((revBy[w] || 0) + fee)
+  }
+
+  // ── HOW LATE DOES A CLEAN LAND? (diagnostic, changes nothing) ────────────
+  // Jon, 2026-08-14: "can you see if cleans were moved to another day — sometimes you'll see a BFC
+  // block for clean in the calendar and the clean was moved."
+  //
+  // The fee-to-clean rule only looks at the checkout day and the day after. If crews genuinely
+  // clean two or three days later — the unit is blocked, nobody is arriving, the clean is done
+  // when it suits — then those fees look unattributed and every one of them is a real clean that
+  // somebody did. Before widening the window, measure it: for every fee we FAILED to match, cast a
+  // wide net (-2 to +10 days) and record how far away the nearest unused clean actually was.
+  const missDiag: Record<string, { checkouts: number; fees: number }> = {}
+  let missNoCleanAtAll = 0, missFeesNoClean = 0
+  {
+    const usedWide: Record<string, boolean> = {}
+    for (const r of resRowsAll) {
+      const li = lmap[String(r.listing_id)]
+      if (!li || li.vendor) continue
+      if (!inMarketListing(r.listing_id)) continue
+      const fee = num(r.cleaning) ?? 0
+      if (fee <= 0) continue
+      const co = String(r.check_out).slice(0, 10)
+      const day0 = new Date(co + 'T12:00:00Z').getTime()
+      // already matched by the live rule? then it is not a miss
+      const liveHit = cleanTasksAll.filter(t => usedTask[String(t.id)] &&
+        String(t.reference_property_id) === String(r.listing_id) &&
+        (String(t.finished_at).slice(0, 10) === co ||
+         String(t.finished_at).slice(0, 10) === dISO(addDays(new Date(co + 'T12:00:00Z'), 1))))[0]
+      if (liveHit) continue
+      let best: { off: number; id: string } | null = null
+      for (const t of cleanTasksAll) {
+        if (String(t.reference_property_id) !== String(r.listing_id)) continue
+        const id = String(t.id)
+        if (usedTask[id] || usedWide[id]) continue
+        const d = String(t.finished_at).slice(0, 10)
+        if (!d) continue
+        const off = Math.round((new Date(d + 'T12:00:00Z').getTime() - day0) / 864e5)
+        if (off < -2 || off > 10) continue
+        if (!best || Math.abs(off) < Math.abs(best.off)) best = { off, id }
+      }
+      if (!best) { missNoCleanAtAll++; missFeesNoClean = round2(missFeesNoClean + fee); continue }
+      usedWide[best.id] = true
+      const k = String(best.off)
+      missDiag[k] = missDiag[k] || { checkouts: 0, fees: 0 }
+      missDiag[k].checkouts++
+      missDiag[k].fees = round2(missDiag[k].fees + fee)
+    }
   }
 
   // ── per person ───────────────────────────────────────────────────────────
@@ -829,6 +877,13 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     hoursPerCleanByMarket,
     margin: round2(cleaningRevenue + billableRevenue - payroll),
     marginWithFee: round2(cleaningRevenue + billableRevenue + managementFee - payroll),
+    // What the fee-to-clean window is missing, and by how many days.
+    matchDiag: {
+      byOffsetDays: missDiag,
+      feesWithNoCleanAnywhere: missFeesNoClean,
+      checkoutsWithNoCleanAnywhere: missNoCleanAtAll,
+      windowNow: 'checkout day or day+1',
+    },
     coverage: {
       cleansAttributed,
       cleansUnassigned: cleanTasks.filter(t => !doer(t)).length,
