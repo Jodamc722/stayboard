@@ -326,7 +326,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   // ── cleaning fees: one checkout, one clean, one fee ──────────────────────
   const resRowsAll = await pageAll((a, b) => sb.from('guesty_reservations')
-    .select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission')
+    .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission')
     .gte('check_out', from).lte('check_out', to)
     .not('status', 'in', '("canceled","cancelled","declined")').range(a, b))
 
@@ -352,7 +352,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   let feesCleanNotClosed = 0, feesCleanNoAssignee = 0, feesNoCleanFound = 0
   let movedCleans = 0
   const movedOffsets: Record<string, number> = {}
-  const pending: { listingId: string; co: string; coNext: string; fee: number; inMk: boolean }[] = []
+  const pending: { listingId: string; co: string; coNext: string; fee: number; inMk: boolean; source: string; unit: string }[] = []
+  // WHICH CHANNEL DID AN UNMATCHED FEE COME FROM? (Jon, 2026-08-14: "it's likely Expedia fees that
+  // need to be split out in folio — Expedia bulks fees into one category.") If a channel bundles
+  // its fees, a cleaning fee can land on a stay that never needed a separate clean, and chasing a
+  // missing clean for it is chasing a ghost. Splitting the shortfall by source says whether this
+  // is an operations problem or a folio-mapping one.
+  const noCleanBySource: Record<string, { fees: number; checkouts: number }> = {}
+  const notClosedBySource: Record<string, { fees: number; checkouts: number }> = {}
+  const noCleanExamples: { unit: string; co: string; source: string; fee: number; code: string }[] = []
+  const srcOf = (v: any) => String(v || 'unknown').toLowerCase()
   for (const r of resRowsAll) {
     const co = String(r.check_out).slice(0, 10)
     const coNext = dISO(addDays(new Date(co + 'T12:00:00Z'), 1))
@@ -370,7 +379,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       continue
     }
     if (inMk) cleaningInhouse += fee
-    pending.push({ listingId: String(r.listing_id), co, coNext, fee, inMk })
+    pending.push({ listingId: String(r.listing_id), co, coNext, fee, inMk, source: srcOf(r.source), unit: (li && li.name) || String(r.listing_id) })
   }
 
   // TWO PASSES, CONFIDENT ONE FIRST. A clean on the checkout day (or the morning after) is the
@@ -389,6 +398,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       // The clean is on the board but was never closed (or was deleted when it moved). The money
       // is real and the work almost certainly happened — it just cannot be credited to a person.
       feesCleanNotClosed = round2(feesCleanNotClosed + p.fee)
+      const b = notClosedBySource[p.source] = notClosedBySource[p.source] || { fees: 0, checkouts: 0 }
+      b.fees = round2(b.fees + p.fee); b.checkouts++
     }
   }
   const unclaimed: typeof pending = []
@@ -410,7 +421,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       if (off < -2 || off > 7) continue
       if (!best || Math.abs(off) < Math.abs(best.off)) best = { off, t }
     }
-    if (!best) { if (p.inMk) feesNoCleanFound = round2(feesNoCleanFound + p.fee); continue }
+    if (!best) {
+      if (p.inMk) {
+        feesNoCleanFound = round2(feesNoCleanFound + p.fee)
+        const b = noCleanBySource[p.source] = noCleanBySource[p.source] || { fees: 0, checkouts: 0 }
+        b.fees = round2(b.fees + p.fee); b.checkouts++
+        if (noCleanExamples.length < 40) noCleanExamples.push({ unit: p.unit, co: p.co, source: p.source, fee: p.fee, code: '' })
+      }
+      continue
+    }
     movedCleans++
     movedOffsets[String(best.off)] = (movedOffsets[String(best.off)] || 0) + 1
     claim(p, best.t)
@@ -910,6 +929,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       noCleanFound: round2(feesNoCleanFound),
       movedCleansMatched: movedCleans,
       movedOffsets,
+      // The shortfall, split by booking channel — so a folio problem is never mistaken for a
+      // missed clean. A channel that bundles its fees shows up here and nowhere else.
+      noCleanBySource,
+      notClosedBySource,
+      noCleanExamples,
       window: 'checkout day or day+1 first, then nearest clean from 2 days early to 7 days late',
     },
     coverage: {
