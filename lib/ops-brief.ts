@@ -641,68 +641,89 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     //   Supervisors   no margin. Overhead carried by management fees, shown beside it.
     if (variant === 'full') {
       const ec = await laborEconomics({ from: yd, to: yd, market: 'all' })
+      const K = ec.kpi
       const usd = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
-      // THE THREE HOUSEKEEPING CATEGORIES, on their own line: Miami, Broward, Vendor-cleaned.
-      // Labor cost per clean AND time per clean, both over housekeeper cleans only.
-      const bucketLine = (ec.buckets || []).map((b: any) => {
-        if (!b.inHouse) return b.label + ' ' + b.cleans + ' cleans, ' + usd(b.cleaningRevenue) + ' rev (no in-house labor)'
-        const cpc = b.laborCostPerClean != null ? usd(b.laborCostPerClean) : 'n/a'
-        const tpc = b.hoursPerClean != null ? b.hoursPerClean + 'h' : 'n/a'
-        return b.label + ' ' + b.cleans + ' cleans, ' + cpc + ' / clean, ' + tpc + ' each'
-      }).join(' · ')
-      const cpcLine = 'Housekeeping: ' + (bucketLine || 'no cleans') +
-        (ec.costPerClean != null ? ' — all in-house ' + usd(ec.costPerClean) + ' / clean' : '') +
-        (ec.hoursPerClean != null ? ', ' + ec.hoursPerClean + 'h each' : '')
+      const pctTxt = (n: number | null) => (n == null ? '—' : Math.round(n) + '%')
       const hoursTxt = (h: number) => (h > 0 ? String(Math.round(h * 10) / 10) + 'h' : '—')
-      const personRow = (p: any) => '<tr>' +
-        '<td style="' + S.td + '">' + esc(p.name) + '<br><span style="color:#6b7280">' + esc(p.market || '') + '</span></td>' +
-        '<td style="' + S.td + '">' + hoursTxt(p.hours) + '</td>' +
-        '<td style="' + S.td + '">' + (p.payroll ? usd(p.payroll) : '—') + '</td>' +
-        '<td style="' + S.td + '">' + (p.cleans || '—') + '</td>' +
-        '<td style="' + S.td + '">' + (p.cleaningRevenue ? usd(p.cleaningRevenue) : '—') + '</td>' +
-        '<td style="' + S.td + '">' + (p.billableRevenue ? usd(p.billableRevenue) : '—') + '</td>' +
-        '<td style="' + S.td + ';font-weight:600;color:' + (p.margin < 0 ? '#dc2626' : '#047857') + '">' + usd(p.margin) + '</td>' +
-        '</tr>'
-      let trRows = ''
-      let shown = 0
-      for (const d of ec.departments) {
-        const rows = ec.people.filter((p: any) => p.dept === d.key)
-        if (!rows.length) continue
-        rows.sort((a: any, b: any) => b.revenue - a.revenue || b.payroll - a.payroll)
-        shown += rows.length
-        const bits: string[] = [usd(d.payroll) + ' payroll (' + hoursTxt(d.hours) + ')']
-        if (d.cleans) bits.push(d.cleans + ' cleans, ' + usd(d.cleaningRevenue) + ' cleaning rev')
-        if (d.billableRevenue) bits.push(usd(d.billableRevenue) + ' billable')
-        // Supervisors are deliberately NOT given a margin — see the note above.
-        const tail = d.key === 'supervision'
-          ? ' — overhead vs ' + usd(ec.managementFee) + ' management fees'
-          : (d.revenue > 0 || d.payroll > 0 ? ' — margin ' + usd(d.margin) : '')
-        // Cost per clean appears on the housekeeping line and nowhere else, by design.
-        const head = d.label.toUpperCase() + ': ' + bits.join(', ') + tail +
-          (d.key === 'housekeeping' && d.costPerClean != null
-            ? ' · ' + usd(d.costPerClean) + ' / clean' + (d.hoursPerClean != null ? ', ' + d.hoursPerClean + 'h each' : '')
-            : '')
-        trRows += '<tr><td colspan="7" style="' + S.td + ';background:#f5f5f4;font-weight:bold">' + esc(head) + '</td></tr>'
-        trRows += rows.map(personRow).join('')
-      }
-      if (trRows) {
-        const totalRev = ec.cleaningRevenue + ec.billableRevenue
-        trRows += '<tr><td colspan="7" style="' + S.td + ';font-weight:bold;border-top:2px solid #111827">' +
-          'TOTAL: ' + usd(ec.payroll) + ' payroll vs ' + usd(totalRev) + ' revenue (' +
-          usd(ec.cleaningRevenue) + ' cleaning + ' + usd(ec.billableRevenue) + ' billable) — margin ' + usd(ec.margin) +
-          ' · with ' + usd(ec.managementFee) + ' management fees: ' + usd(ec.marginWithFee) + '</td></tr>'
-        // The coverage line is the honesty check: a task finished with no charge entered earns
-        // nothing here, so a low billable number may be a data-entry gap rather than a slow day.
-        const gap = ec.coverage.tasksWithNoCharge
-        const note = '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + esc(cpcLine) +
-          '. Billable = the charge entered on the Breezeway task. Vendor-cleaned units earned ' +
-          usd(ec.cleaningRevenueVendor) + ', kept separate.' +
-          (ec.cleaningRevenueUnattributed > 0 ? ' ' + usd(ec.cleaningRevenueUnattributed) + ' of cleaning fees had no clean matched to a person.' : '') +
-          (gap ? ' <span style="color:#b45309">' + gap + ' task' + (gap === 1 ? '' : 's') + ' finished with no charge entered.</span>' : '') +
-          '</p>'
-        crewCard = card('Team economics yesterday — by department', shown,
-          note + table(['Person', 'Hours', 'Payroll', 'Cleans', 'Cleaning rev', 'Billable', 'Margin'], trRows), '#0891b2')
-      }
+      const tone = (m: number) => (m < 0 ? '#dc2626' : '#047857')
+
+      // THE THREE RATIOS, BIG AND FIRST. Each one is revenue over the payroll that earned it.
+      const kpiRow = (label: string, sub: string, rev: number, pay: number, margin: number, mPct: number | null, extra: string) =>
+        '<tr>' +
+        '<td style="' + S.td + ';width:31%"><b>' + label + '</b><br><span style="color:#6b7280;font-size:11.5px">' + sub + '</span></td>' +
+        '<td style="' + S.td + ';text-align:right">' + usd(rev) + '</td>' +
+        '<td style="' + S.td + ';text-align:right">' + usd(pay) + '</td>' +
+        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(margin) + '">' + usd(margin) + '</td>' +
+        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(margin) + '">' + pctTxt(mPct) + '</td>' +
+        '<td style="' + S.td + ';color:#6b7280;font-size:11.5px">' + extra + '</td></tr>'
+
+      let kpiRows = ''
+      kpiRows += kpiRow('Housekeeping', K.housekeeping.cleans + ' revenue cleans · ' + hoursTxt(K.housekeeping.hours),
+        K.housekeeping.revenue, K.housekeeping.payroll, K.housekeeping.margin, K.housekeeping.marginPct,
+        (K.housekeeping.costPerClean != null ? usd(K.housekeeping.costPerClean) + ' cost / clean' : 'no cleans') +
+        (K.housekeeping.revPerClean != null ? ' · ' + usd(K.housekeeping.revPerClean) + ' rev / clean' : '') +
+        (K.housekeeping.hoursPerClean != null ? ' · ' + K.housekeeping.hoursPerClean + 'h each' : ''))
+      kpiRows += kpiRow('Maintenance', K.maintenance.tasksBilled + ' tasks billed · ' + hoursTxt(K.maintenance.hours),
+        K.maintenance.revenue, K.maintenance.payroll, K.maintenance.margin, K.maintenance.marginPct,
+        K.maintenance.tasksNoCharge > 0
+          ? '<span style="color:#b45309">' + K.maintenance.tasksNoCharge + ' finished with no charge entered</span>'
+          : 'every task charged')
+      kpiRows += '<tr><td style="' + S.td + ';border-top:2px solid #111827"><b>Staff total</b><br>' +
+        '<span style="color:#6b7280;font-size:11.5px">everyone whose pay moves with the work</span></td>' +
+        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right"><b>' + usd(K.staff.revenue) + '</b></td>' +
+        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right"><b>' + usd(K.staff.payroll) + '</b></td>' +
+        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right;font-weight:700;color:' + tone(K.staff.margin) + '">' + usd(K.staff.margin) + '</td>' +
+        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right;font-weight:700;color:' + tone(K.staff.margin) + '">' + pctTxt(K.staff.marginPct) + '</td>' +
+        '<td style="' + S.td + ';border-top:2px solid #111827;color:#6b7280;font-size:11.5px">' + pctTxt(K.staff.laborPct) + ' of revenue goes to labor</td></tr>'
+      // Supervisors sit BELOW the line: a fixed cost, never divided into revenue.
+      kpiRows += '<tr><td style="' + S.td + ';background:#fafaf9">Supervisors <span style="color:#6b7280;font-size:11.5px">fixed</span><br>' +
+        '<span style="color:#6b7280;font-size:11.5px">' + esc((K.supervisors.names || []).join(', ') || 'none') + '</span></td>' +
+        '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">n/a</td>' +
+        '<td style="' + S.td + ';background:#fafaf9;text-align:right">' + usd(K.supervisors.payroll) + '</td>' +
+        '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">—</td>' +
+        '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">—</td>' +
+        '<td style="' + S.td + ';background:#fafaf9;color:#6b7280;font-size:11.5px">' + pctTxt(K.supervisors.pctOfManagementFee) + ' of ' + usd(K.supervisors.managementFee) + ' management fees</td></tr>'
+      kpiRows += '<tr><td style="' + S.td + '"><b>All in</b><br><span style="color:#6b7280;font-size:11.5px">staff + supervisors</span></td>' +
+        '<td style="' + S.td + ';text-align:right">' + usd(K.allIn.revenue) + '</td>' +
+        '<td style="' + S.td + ';text-align:right">' + usd(K.allIn.payroll) + '</td>' +
+        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(K.allIn.margin) + '">' + usd(K.allIn.margin) + '</td>' +
+        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(K.allIn.margin) + '">' + pctTxt(K.allIn.marginPct) + '</td>' +
+        '<td style="' + S.td + '"></td></tr>'
+
+      const kpiTable = '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">' +
+        '<tr><th style="' + S.th + '">Crew</th><th style="' + S.th + ';text-align:right">Revenue</th>' +
+        '<th style="' + S.th + ';text-align:right">Payroll</th><th style="' + S.th + ';text-align:right">Margin</th>' +
+        '<th style="' + S.th + ';text-align:right">Margin %</th><th style="' + S.th + '">Read</th></tr>' + kpiRows + '</table>'
+
+      // WHAT TO DO ABOUT IT — only lines that imply an action appear.
+      const acts: string[] = []
+      if (K.maintenance.tasksNoCharge > 0)
+        acts.push('<b>' + K.maintenance.tasksNoCharge + ' maintenance job' + (K.maintenance.tasksNoCharge === 1 ? '' : 's') +
+          ' finished with no cost entered</b> — that work bills nothing until someone types the charge in Breezeway.')
+      if (ec.cleaningRevenueUnattributed > 0)
+        acts.push('<b>' + usd(ec.cleaningRevenueUnattributed) + ' of cleaning fees</b> could not be matched to a person&rsquo;s clean — check Breezeway assignees.')
+      if (ec.vendorWork && ec.vendorWork.ourTaskCount > 0)
+        acts.push('<b>' + ec.vendorWork.ourTaskCount + ' job' + (ec.vendorWork.ourTaskCount === 1 ? '' : 's') +
+          ' our crew did on vendor-managed units</b>' + (ec.vendorWork.unbilled > 0 ? ' — ' + ec.vendorWork.unbilled + ' billed to nobody.' : '.'))
+      if (K.housekeeping.marginPct != null && K.housekeeping.marginPct < 40)
+        acts.push('Housekeeping margin at <b>' + pctTxt(K.housekeeping.marginPct) + '</b> — labor is taking ' + pctTxt(K.housekeeping.laborPct) + ' of cleaning revenue.')
+      const actionBlock = acts.length
+        ? '<p style="margin:10px 0 0;font-size:12.5px;color:#374151"><b>Worth acting on</b></p><ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#374151">' +
+          acts.map(a2 => '<li style="margin:2px 0">' + a2 + '</li>').join('') + '</ul>'
+        : ''
+
+      // Per-market cost per clean, one line.
+      const mkLine = (ec.buckets || []).filter((b2: any) => b2.cleans > 0).map((b2: any) =>
+        b2.label + ' ' + b2.cleans + (b2.laborCostPerClean != null ? ' @ ' + usd(b2.laborCostPerClean) : '') +
+        (b2.hoursPerClean != null ? ' / ' + b2.hoursPerClean + 'h' : '')).join(' · ')
+
+      crewCard = card('Yesterday by the numbers — revenue vs payroll', null,
+        kpiTable +
+        (mkLine ? '<p style="margin:10px 0 0;font-size:12.5px;color:#374151"><b>Cleans by market</b> ' + esc(mkLine) + '</p>' : '') +
+        actionBlock +
+        '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Revenue cleans = departure cleans that earned a guest fee, plus cleaning tasks with a charge entered. ' +
+        'Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
+        'Supervisors are a fixed cost and are never divided into revenue.</p>', '#0891b2')
     }
   } catch { /* Homebase down — the brief still sends */ }
 
