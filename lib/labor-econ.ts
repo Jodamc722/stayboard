@@ -171,6 +171,8 @@ export type LaborEcon = {
   }>
   /** The stack: housekeeping labor, maintenance billables, maintenance cleans, supervisor overhead. */
   layers: any
+  /** Revenue over payroll: housekeeping, maintenance, all revenue-facing staff, supervisors apart. */
+  kpi: any
   /** Our own crew's work inside vendor-managed buildings, plus the per-building invoice check. */
   vendorWork: any
   /** Operating margin on work we sell: cleaning + billable - all payroll. */
@@ -247,6 +249,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   }
 
   // WHAT WE CHARGED FOR THIS TASK — the cost field, as entered. Never derived from hours.
+  // The charge typed on a task, whatever kind it is. Used both for maintenance billables and to
+  // decide whether a cleaning task earned anything.
+  const chargeOfRaw = (t: any): number => {
+    const a = adjs[String(t.id)]
+    if (a && a.excluded) return 0
+    if (a && a.override_amount != null) return Number(a.override_amount) || 0
+    const d = details[String(t.id)]
+    if (!d) return 0
+    return round2(ownerTotal(d.costs, 'cost'))
+  }
   const chargeOf = (t: any): { billable: number; materials: number } => {
     if (kindOfTask(t) === 'clean') return { billable: 0, materials: 0 }   // paid by the guest fee
     const a = adjs[String(t.id)]
@@ -256,6 +268,18 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (!d) return { billable: 0, materials: 0 }
     return { billable: round2(ownerTotal(d.costs, 'cost')), materials: round2(ownerTotal(d.supplies, 'supply')) }
   }
+
+  // CLEANING TASKS THAT CARRY A CHARGE. Not departure cleans, but paid cleaning work all the
+  // same — a linen refresh, a mid-stay, a re-clean. They earn, so they count as cleans.
+  const chargedCleanTasks = taskRowsAll.filter(t => {
+    if (kindOfTask(t) === 'clean') return false                 // already a departure clean
+    const s2 = (String(t.type_department || '') + ' ' + String(t.name || '')).toLowerCase()
+    if (!/clean|housekeep|linen|refresh|turn/.test(s2)) return false
+    if (/strip|walkthrough|walk-through|deliver|mattress/.test(s2)) return false
+    return chargeOfRaw(t) > 0
+  })
+  const chargedCleanIds: Record<string, boolean> = {}
+  for (const t of chargedCleanTasks) chargedCleanIds[String(t.id)] = true
 
   // ── names: everything keys on the Homebase spelling ──────────────────────
   const rosterNames: string[] = []
@@ -344,10 +368,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const kind = kindOfTask(t)
     if (kind === 'clean') p.cleans++
     const ch = chargeOf(t)
-    p.billableRevenue = round2(p.billableRevenue + ch.billable)
-    p.materials = round2(p.materials + ch.materials)
-    if (ch.billable > 0) p.billableTasks++
-    else if (kind !== 'clean') p.tasksNoCharge++
+    // A charged CLEANING task is cleaning revenue (counted via cleanRecs below), not a billable —
+    // otherwise the same $25 linen refresh would show up in both columns.
+    const isChargedClean = chargedCleanIds[String(t.id)]
+    if (!isChargedClean) {
+      p.billableRevenue = round2(p.billableRevenue + ch.billable)
+      p.materials = round2(p.materials + ch.materials)
+      if (ch.billable > 0) p.billableTasks++
+      else if (kind !== 'clean') p.tasksNoCharge++
+    } else {
+      p.cleans++          // a revenue-generating clean, even though it is not a departure clean
+    }
     const li = lmap[String(t.reference_property_id)]
     if (li) { const mk = li.vendor ? 'vendor' : li.market; p._mk[mk] = (p._mk[mk] || 0) + 1 }
   }
@@ -465,11 +496,31 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // so a clean that was genuinely done still counts in cost per clean even when the checkout
   // association fails. Counting only matched cleans made every clean look ~10% more expensive
   // than it is (94 of 103 matched in the week this was found).
-  const cleanRecs = cleanTasksAll.map(t => {
+  // A CLEAN COUNTS WHEN IT EARNED SOMETHING (Jon, 2026-08-13: "the goal is to track only revenue
+  // generating cleans — either departure cleans or billable Breezeway tasks with cost").
+  //
+  // Two ways a clean earns:
+  //   the guest's cleaning fee, on a departure clean matched to a checkout, or
+  //   a charge typed on any cleaning task — a linen refresh, a mid-stay, a re-clean.
+  // Checked against the live month before building this: departure cleans carry a cost entry on
+  // ZERO of 310 tasks, so fee and charge never land on the same job and nothing double-counts.
+  //
+  // Everything else the housekeeping department does — strips, exterior walkthroughs, the pool,
+  // common areas, trash, office cleaning — earns nothing and is deliberately outside both the
+  // numerator and the denominator. It is real work, it is just not a clean we get paid for.
+  const cleanRecs = (cleanTasksAll.map(t => {
     const li = lmap[String(t.reference_property_id)]
     const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
-    return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0 }
-  }).filter(r => !!r.who) as { who: string; market: string; fee: number }[]
+    return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0, charged: false }
+  }).concat(chargedCleanTasks.map(t => {
+    const li = lmap[String(t.reference_property_id)]
+    const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
+    return { who: doer(t), market: mk, fee: chargeOfRaw(t), charged: true }
+  })))
+    .filter(r => !!r.who)
+    // ONLY REVENUE-GENERATING CLEANS. A departure clean whose checkout never matched earned
+    // nothing measurable, so it cannot sit in a denominator that divides revenue.
+    .filter(r => r.fee > 0) as { who: string; market: string; fee: number; charged: boolean }[]
 
   // cleans + revenue, from the clean rows, housekeepers only
   const hkCleansByPerson: Record<string, Record<string, number>> = {}
@@ -563,6 +614,78 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const billableRevenue = round2(people.reduce((a, p) => a + p.billableRevenue, 0))
   const materials = round2(people.reduce((a, p) => a + p.materials, 0))
   const cleaningRevenue = round2(cleaningInhouse)
+
+  // ── THE DAILY KPI: REVENUE OVER PAYROLL, THREE WAYS ──────────────────────
+  // Jon, 2026-08-13: "total rev for cleans / payroll to get an understanding of profit margins,
+  // same for maintenance rev / payroll, then total rev / total payroll for actual staff, below
+  // supervisor as they are static — we need them regardless of rev to manage."
+  //
+  // So three ratios that each answer one question, and a fourth line that is not a ratio at all:
+  //   HOUSEKEEPING   what cleaning earned (guest fees + charged cleaning tasks) over what the
+  //                  housekeepers cost. This is the cost-per-clean engine's own numbers.
+  //   MAINTENANCE    what the techs billed out over what the techs cost.
+  //   STAFF          both of those together — every person whose pay should move with revenue.
+  //                  Supervisors are NOT in it.
+  //   SUPERVISORS    a fixed cost shown underneath, never divided into revenue. You carry them to
+  //                  run the operation whether or not a single unit turns.
+  const pct = (a: number, b: number) => (b > 0 ? round2((a / b) * 100) : null)
+  const hkRevenue = round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0))
+  const insp = byDept['inspection']
+  const hkCharged = round2(cleanRecs.filter(r => r.charged && hkNames[r.who]).reduce((a, r) => a + r.fee, 0))
+  const staffRevenue = round2(hkRevenue + mt.cleaningRevenue + mt.billableRevenue + insp.billableRevenue)
+  const staffPayroll = round2(hkPayrollInHouse + mt.payroll + insp.payroll)
+  const kpi = {
+    housekeeping: {
+      cleans: hkCleansInHouse,
+      revenue: hkRevenue,
+      cleaningFees: round2(hkRevenue - hkCharged),
+      chargedCleans: hkCharged,
+      payroll: hkPayrollInHouse,
+      hours: hkHoursInHouse,
+      margin: round2(hkRevenue - hkPayrollInHouse),
+      marginPct: pct(hkRevenue - hkPayrollInHouse, hkRevenue),
+      laborPct: pct(hkPayrollInHouse, hkRevenue),
+      costPerClean, hoursPerClean,
+      revPerClean: hkCleansInHouse > 0 ? round2(hkRevenue / hkCleansInHouse) : null,
+    },
+    maintenance: {
+      revenue: round2(mt.billableRevenue + mt.cleaningRevenue),
+      billable: mt.billableRevenue,
+      cleaningRevenue: mt.cleaningRevenue,
+      payroll: mt.payroll,
+      hours: mt.hours,
+      margin: round2(mt.billableRevenue + mt.cleaningRevenue - mt.payroll),
+      marginPct: pct(mt.billableRevenue + mt.cleaningRevenue - mt.payroll, mt.billableRevenue + mt.cleaningRevenue),
+      laborPct: pct(mt.payroll, mt.billableRevenue + mt.cleaningRevenue),
+      tasksBilled: mt.billableTasks,
+      tasksNoCharge: mt.tasksNoCharge,
+    },
+    // Everyone whose pay should move with the work. Supervisors excluded on purpose.
+    staff: {
+      revenue: staffRevenue,
+      payroll: staffPayroll,
+      hours: round2(hkHoursInHouse + mt.hours + insp.hours),
+      margin: round2(staffRevenue - staffPayroll),
+      marginPct: pct(staffRevenue - staffPayroll, staffRevenue),
+      laborPct: pct(staffPayroll, staffRevenue),
+    },
+    supervisors: {
+      payroll: sup.payroll,
+      hours: sup.hours,
+      people: sup.people,
+      names: sup.names,
+      managementFee: round2(managementFee),
+      pctOfManagementFee: pct(sup.payroll, managementFee),
+      note: 'fixed cost — carried regardless of revenue',
+    },
+    // The whole labor line including the fixed layer, for the one number that hides nothing.
+    allIn: {
+      revenue: staffRevenue,
+      payroll: round2(staffPayroll + sup.payroll),
+      margin: round2(staffRevenue - staffPayroll - sup.payroll),
+      marginPct: pct(staffRevenue - staffPayroll - sup.payroll, staffRevenue),
+    },
+  }
 
   // ── VENDOR UNITS WE TOUCHED OURSELVES ────────────────────────────────────
   // Jon, 2026-08-13: "identify when we clean a unit for vendors — need to know so we can allocate
@@ -689,6 +812,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     departments: DEPTS.map(d => byDept[d]),
     buckets: bucketList,
     layers,
+    kpi,
     vendorWork,
     cleans: cleansTotal,
     cleaningRevenue,
