@@ -179,7 +179,7 @@ export type LaborEcon = {
   margin: number
   /** With the management fee included — the whole labor line against everything labor earns. */
   marginWithFee: number
-  matchDiag: any
+  feeAudit: any
   coverage: {
     cleansAttributed: number
     cleansUnassigned: number
@@ -232,6 +232,37 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,total_minutes')
     .gte('finished_at', from).lte('finished_at', to + 'T23:59:59').range(a, b))
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
+
+  // THE CLEAN A FEE BELONGS TO MAY SIT OUTSIDE THIS WINDOW (Jon, 2026-08-14: "sometimes you'll see
+  // a BFC block for clean in the calendar and the clean was moved").
+  //
+  // Measured over 14 live days before building this: of the fees the old day/day+1 rule could not
+  // match, 4 had their clean 2 days early to 9 days late — and 61 had no FINISHED clean at all,
+  // because 97 of 331 departure cleans in that fortnight were never closed (67 deleted, most of
+  // them moved-and-recreated, 30 still open). A clean the crew genuinely did but nobody closed is
+  // not a clean that never happened, and the fee it earned should not silently disappear.
+  //
+  // So fee matching searches a PADDED pool — pulled by scheduled date as well as finish date, two
+  // days before the window to a week after — while the cost-per-clean denominator keeps using only
+  // cleans actually finished inside the window. Revenue found; work not double-counted.
+  const padFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -2))
+  const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 7))
+  const poolCols = 'id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,scheduled_date,status,total_minutes'
+  const poolByFinish = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').range(a, b))
+  const poolBySched = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    .select(poolCols).gte('scheduled_date', padFrom).lte('scheduled_date', padTo).range(a, b))
+  const poolSeen: Record<string, boolean> = {}
+  const cleanPool: any[] = []
+  for (const t of poolByFinish.concat(poolBySched)) {
+    const id = String(t.id)
+    if (poolSeen[id] || kindOfTask(t) !== 'clean') continue
+    poolSeen[id] = true
+    cleanPool.push(t)
+  }
+  // The day a clean actually landed: when it was finished, else the day it was scheduled for.
+  const cleanDay = (t: any): string => String(t.finished_at || '').slice(0, 10) || String(t.scheduled_date || '').slice(0, 10)
+  const isClosed = (t: any) => !!t.finished_at && String(t.status || '').toLowerCase() !== 'deleted'
 
   const ids = taskRows.map(t => String(t.id))
   const details: Record<string, any> = {}
@@ -316,6 +347,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const feeByTask: Record<string, number> = {}
   let cleaningInhouse = 0, cleaningVendor = 0, managementFee = 0
   let cleansAttributed = 0, vendorCleans = 0
+  // Where a fee ended up, so nothing can quietly vanish: credited to a person, matched to a clean
+  // nobody closed, matched to a clean with no assignee, or no clean found at all.
+  let feesCleanNotClosed = 0, feesCleanNoAssignee = 0, feesNoCleanFound = 0
+  let movedCleans = 0
+  const movedOffsets: Record<string, number> = {}
+  const pending: { listingId: string; co: string; coNext: string; fee: number; inMk: boolean }[] = []
   for (const r of resRowsAll) {
     const co = String(r.check_out).slice(0, 10)
     const coNext = dISO(addDays(new Date(co + 'T12:00:00Z'), 1))
@@ -333,64 +370,50 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       continue
     }
     if (inMk) cleaningInhouse += fee
-    const match = cleanTasksAll.filter(t => !usedTask[String(t.id)] &&
-      String(t.reference_property_id) === String(r.listing_id) &&
-      (String(t.finished_at).slice(0, 10) === co || String(t.finished_at).slice(0, 10) === coNext))[0]
-    if (!match) continue
-    usedTask[String(match.id)] = true
-    const w = doer(match)
-    if (!w) continue
-    feeByTask[String(match.id)] = fee
-    if (!inMk) continue
-    cleansAttributed++
-    revBy[w] = round2((revBy[w] || 0) + fee)
+    pending.push({ listingId: String(r.listing_id), co, coNext, fee, inMk })
   }
 
-  // ── HOW LATE DOES A CLEAN LAND? (diagnostic, changes nothing) ────────────
-  // Jon, 2026-08-14: "can you see if cleans were moved to another day — sometimes you'll see a BFC
-  // block for clean in the calendar and the clean was moved."
-  //
-  // The fee-to-clean rule only looks at the checkout day and the day after. If crews genuinely
-  // clean two or three days later — the unit is blocked, nobody is arriving, the clean is done
-  // when it suits — then those fees look unattributed and every one of them is a real clean that
-  // somebody did. Before widening the window, measure it: for every fee we FAILED to match, cast a
-  // wide net (-2 to +10 days) and record how far away the nearest unused clean actually was.
-  const missDiag: Record<string, { checkouts: number; fees: number }> = {}
-  let missNoCleanAtAll = 0, missFeesNoClean = 0
-  {
-    const usedWide: Record<string, boolean> = {}
-    for (const r of resRowsAll) {
-      const li = lmap[String(r.listing_id)]
-      if (!li || li.vendor) continue
-      if (!inMarketListing(r.listing_id)) continue
-      const fee = num(r.cleaning) ?? 0
-      if (fee <= 0) continue
-      const co = String(r.check_out).slice(0, 10)
-      const day0 = new Date(co + 'T12:00:00Z').getTime()
-      // already matched by the live rule? then it is not a miss
-      const liveHit = cleanTasksAll.filter(t => usedTask[String(t.id)] &&
-        String(t.reference_property_id) === String(r.listing_id) &&
-        (String(t.finished_at).slice(0, 10) === co ||
-         String(t.finished_at).slice(0, 10) === dISO(addDays(new Date(co + 'T12:00:00Z'), 1))))[0]
-      if (liveHit) continue
-      let best: { off: number; id: string } | null = null
-      for (const t of cleanTasksAll) {
-        if (String(t.reference_property_id) !== String(r.listing_id)) continue
-        const id = String(t.id)
-        if (usedTask[id] || usedWide[id]) continue
-        const d = String(t.finished_at).slice(0, 10)
-        if (!d) continue
-        const off = Math.round((new Date(d + 'T12:00:00Z').getTime() - day0) / 864e5)
-        if (off < -2 || off > 10) continue
-        if (!best || Math.abs(off) < Math.abs(best.off)) best = { off, id }
-      }
-      if (!best) { missNoCleanAtAll++; missFeesNoClean = round2(missFeesNoClean + fee); continue }
-      usedWide[best.id] = true
-      const k = String(best.off)
-      missDiag[k] = missDiag[k] || { checkouts: 0, fees: 0 }
-      missDiag[k].checkouts++
-      missDiag[k].fees = round2(missDiag[k].fees + fee)
+  // TWO PASSES, CONFIDENT ONE FIRST. A clean on the checkout day (or the morning after) is the
+  // obvious owner of that fee and gets first claim on it. Only then do we look wider, and there
+  // the nearest day wins — so a clean moved to Thursday is matched to Thursday's fee, not stolen
+  // by a checkout a week away. Every clean is still consumed exactly once.
+  const claim = (p: typeof pending[0], t: any) => {
+    usedTask[String(t.id)] = true
+    feeByTask[String(t.id)] = p.fee
+    if (!p.inMk) return
+    if (isClosed(t)) {
+      const w = doer(t)
+      if (w) { cleansAttributed++; revBy[w] = round2((revBy[w] || 0) + p.fee) }
+      else feesCleanNoAssignee = round2(feesCleanNoAssignee + p.fee)
+    } else {
+      // The clean is on the board but was never closed (or was deleted when it moved). The money
+      // is real and the work almost certainly happened — it just cannot be credited to a person.
+      feesCleanNotClosed = round2(feesCleanNotClosed + p.fee)
     }
+  }
+  const unclaimed: typeof pending = []
+  for (const p of pending) {
+    const hit = cleanPool.filter(t => !usedTask[String(t.id)] &&
+      String(t.reference_property_id) === p.listingId &&
+      (cleanDay(t) === p.co || cleanDay(t) === p.coNext))[0]
+    if (hit) claim(p, hit); else unclaimed.push(p)
+  }
+  for (const p of unclaimed) {
+    const day0 = new Date(p.co + 'T12:00:00Z').getTime()
+    let best: { off: number; t: any } | null = null
+    for (const t of cleanPool) {
+      if (usedTask[String(t.id)]) continue
+      if (String(t.reference_property_id) !== p.listingId) continue
+      const d = cleanDay(t)
+      if (!d) continue
+      const off = Math.round((new Date(d + 'T12:00:00Z').getTime() - day0) / 864e5)
+      if (off < -2 || off > 7) continue
+      if (!best || Math.abs(off) < Math.abs(best.off)) best = { off, t }
+    }
+    if (!best) { if (p.inMk) feesNoCleanFound = round2(feesNoCleanFound + p.fee); continue }
+    movedCleans++
+    movedOffsets[String(best.off)] = (movedOffsets[String(best.off)] || 0) + 1
+    claim(p, best.t)
   }
 
   // ── per person ───────────────────────────────────────────────────────────
@@ -878,11 +901,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     margin: round2(cleaningRevenue + billableRevenue - payroll),
     marginWithFee: round2(cleaningRevenue + billableRevenue + managementFee - payroll),
     // What the fee-to-clean window is missing, and by how many days.
-    matchDiag: {
-      byOffsetDays: missDiag,
-      feesWithNoCleanAnywhere: missFeesNoClean,
-      checkoutsWithNoCleanAnywhere: missNoCleanAtAll,
-      windowNow: 'checkout day or day+1',
+    // EVERY CLEANING FEE, ACCOUNTED FOR. These four add up to the in-house total, so a number
+    // that looks low can always be explained rather than argued about.
+    feeAudit: {
+      credited: round2(attributedRev),
+      cleanNotClosed: round2(feesCleanNotClosed),
+      cleanNoAssignee: round2(feesCleanNoAssignee),
+      noCleanFound: round2(feesNoCleanFound),
+      movedCleansMatched: movedCleans,
+      movedOffsets,
+      window: 'checkout day or day+1 first, then nearest clean from 2 days early to 7 days late',
     },
     coverage: {
       cleansAttributed,
