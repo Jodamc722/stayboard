@@ -220,6 +220,39 @@ export function FfeAudit({ code }: { code: string }) {
     }
   }
 
+  /**
+   * TAKE THE ANSWER BACK (Jon, 2026-08-14: "can you create a delete option").
+   *
+   * Not the same as "Nothing needed". Nothing needed is a statement — somebody stood in the room
+   * and decided the piece is fine. An unanswered item is the absence of a statement. Before this,
+   * a mis-tap could only be converted into a different claim, never withdrawn, so the progress
+   * count and the owner's list both inherited a decision nobody actually made.
+   */
+  const clear = async (roomKey: string, item: FfeItem) => {
+    const k = roomKey + '::' + item.key
+    const before = data?.answers[k]
+    setBusy(b => ({ ...b, [k]: 'saving' }))
+    setData(d => { if (!d) return d; const a = { ...d.answers }; delete a[k]; return { ...d, answers: a } })
+    try {
+      const r = await fetch('/api/audit/ffe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, action: 'clearAnswer', room: roomKey, itemKey: item.key }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'could not clear')
+      setBusy(b => ({ ...b, [k]: 'saved' }))
+      setTimeout(() => setBusy(b => { const n = { ...b }; delete n[k]; return n }), 1200)
+      if (before?.answer === 'fix') loadFixes()
+    } catch (e: any) {
+      // Put it back exactly as it was — an undo that silently loses the answer is worse than none.
+      if (before) setData(d => d ? { ...d, answers: { ...d.answers, [k]: before } } : d)
+      const msg = String(e?.message || '')
+      setBusy(b => ({ ...b, [k]: 'error' }))
+      if (/already on an order/i.test(msg)) setSetupErr(msg)
+      else if (/not set up|migration/i.test(msg)) setSetupErr(msg)
+    }
+  }
+
   if (err) return (
     <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-6">
       <div className="rounded-2xl border border-rose-200 bg-white px-5 py-6 text-center max-w-sm">
@@ -332,8 +365,12 @@ export function FfeAudit({ code }: { code: string }) {
                     }
                     // ADD / REPLACE / FIX (Jon, 2026-08-12). Three outcomes, and only two of them
                     // buy anything — FIX goes to the team board, which the row says out loud.
+                    // Tapping the answer you are already on takes it back rather than re-saving it,
+                    // which is what "undo" means to the thumb that just mis-tapped.
                     const pick = (v: string) =>
-                      save(room.key, item, v, v === 'add' || v === 'replace' ? (a?.qty ?? defQty) : 1, a?.note || undefined, a?.spec ?? undefined)
+                      chosen === v
+                        ? clear(room.key, item)
+                        : save(room.key, item, v, v === 'add' || v === 'replace' ? (a?.qty ?? defQty) : 1, a?.note || undefined, a?.spec ?? undefined)
                     return (
                       <div key={item.key} className="px-4 py-3">
                         <div className="flex items-start justify-between gap-3">
@@ -366,11 +403,16 @@ export function FfeAudit({ code }: { code: string }) {
                             </button>
                           ))}
                         </div>
-                        <button onClick={() => save(room.key, item, 'keep')}
+                        <button onClick={() => pick('keep')}
                           className={'mt-1.5 w-full min-h-[40px] rounded-xl text-[12.5px] font-bold border-2 ' +
                             (chosen === 'keep' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-neutral-200 text-neutral-500 active:bg-neutral-50')}>
                           {t(FFE_UI.none)}
                         </button>
+                        {/* Only says so once there is something to undo — otherwise it is noise on
+                            all 44 rows of a fresh walk. */}
+                        {chosen ? (
+                          <p className="mt-1 text-center text-[10.5px] text-neutral-400">{t(FFE_UI.clear)}</p>
+                        ) : null}
 
                         {/* NUMBER NEEDED / CANTIDAD — only once something is being bought. */}
                         {needed ? (
