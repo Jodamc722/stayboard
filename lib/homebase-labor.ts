@@ -48,11 +48,45 @@ export type Timecard = {
   open: boolean              // clocked in, not yet out
 }
 
+// HOMEBASE CAPS ONE TIMECARD RESPONSE, SILENTLY.
+//
+// A single call for a 30-day range came back with a fraction of the punches: the 30-day board
+// reported FEWER hours than the 7-day one, only 7 of 30 people had any payroll at all, and the
+// 30-day true-up priced a clean at $25 against a real $70-plus. Nothing errored — the array was
+// just short, and every downstream number inherited the hole.
+//
+// So the range is fetched a week at a time and merged. One punch can only appear once (same
+// person, same day, same clock-in), so overlapping edges are harmless.
+const WEEK_MS = 7 * 864e5
 export async function getTimecards(startDate: string, endDate: string): Promise<Timecard[]> {
   const loc = await getLocationUuid()
-  const raw = arr(await hb(
-    `/locations/${loc}/timecards?start_date=${startDate}&end_date=${endDate}`
-  ))
+  const spans: Array<[string, string]> = []
+  const s0 = new Date(startDate + 'T12:00:00Z').getTime()
+  const e0 = new Date(endDate + 'T12:00:00Z').getTime()
+  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+  for (let a = s0; a <= e0; a += WEEK_MS) {
+    const b = Math.min(a + WEEK_MS - 864e5, e0)
+    spans.push([iso(a), iso(b)])
+  }
+  if (!spans.length) spans.push([startDate, endDate])
+  const pages = await Promise.all(spans.map(async ([a, b]) => {
+    try { return arr(await hb(`/locations/${loc}/timecards?start_date=${a}&end_date=${b}`)) } catch { return [] as Json[] }
+  }))
+  const seen: Record<string, boolean> = {}
+  const raw: Json[] = []
+  for (const page of pages) {
+    for (const t of page) {
+      const nested = (t && (t.employee || t.user)) || {}
+      const key = [
+        [t?.first_name, t?.last_name].filter(Boolean).join(' ') || nested?.name || nested?.full_name || '',
+        t?.date || t?.shift_date || '',
+        t?.clock_in || t?.clock_in_at || t?.start_at || '',
+      ].join('|')
+      if (seen[key]) continue
+      seen[key] = true
+      raw.push(t)
+    }
+  }
   return raw.map((t: Json): Timecard => {
     const nested = pick(t, 'employee', 'user') || {}
     const name =
