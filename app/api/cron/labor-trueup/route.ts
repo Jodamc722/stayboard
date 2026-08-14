@@ -1,6 +1,6 @@
-// LABOR TRUE-UP — every 7 days, re-settle the last 30.
+// LABOR TRUE-UP — every day, re-settle the last 30.
 //
-// Jon, 2026-08-14: "make sure to true up every 7 days for the last 30 days."
+// Jon, 2026-08-14: "make sure we run trueup everyday for past days loading back 30 days."
 //
 // WHY A TRUE-UP EXISTS AT ALL. A cleaning fee is earned the day a guest checks out, but the clean
 // that earns it is often closed later — or moved, deleted and recreated for another day. Measured
@@ -12,7 +12,13 @@
 // stored last time, and reports what moved. Nothing here is an estimate: it is the same engine the
 // board and the briefs use, run again on a window whose data has settled.
 //
-// GET                → run, store the snapshot, email the recipients (silent if not configured)
+// Because it now runs DAILY, it does not email daily. A true-up is only news when history
+// actually moved, so the mail goes out when something settled beyond a rounding error — or on
+// demand with ?force=1. The snapshot is stored every single run either way, so the trail is
+// unbroken even on the quiet days.
+//
+// GET                → run, store the snapshot, email only if something moved
+// GET ?force=1       → run and always email
 // GET ?preview=1     → return the HTML without sending or storing (signed in)
 // GET ?test=1        → send to YOU only
 import { NextRequest, NextResponse } from 'next/server'
@@ -34,7 +40,7 @@ const r1 = (n: number) => Math.round(n * 10) / 10
 
 type Snap = {
   from: string; to: string; takenAt: string
-  cleans: number; cleaningRevenue: number; credited: number
+  cleans: number; cleaningRevenue: number; hkRevenue?: number; credited: number
   billable: number; payroll: number; margin: number
   costPerClean: number | null
 }
@@ -57,6 +63,7 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'
+  const force = sp.get('force') === '1'
   try {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -72,7 +79,8 @@ export async function GET(req: NextRequest) {
     const snap: Snap = {
       from, to, takenAt: new Date().toISOString(),
       cleans: K.housekeeping.cleans,
-      cleaningRevenue: K.housekeeping.revenue,
+      cleaningRevenue: ec.cleaningRevenue,        // in-house, all crews — the same base 'credited' is drawn from
+      hkRevenue: K.housekeeping.revenue,
       credited: ec.feeAudit ? ec.feeAudit.credited : 0,
       billable: K.maintenance.billable,
       payroll: K.allIn.payroll,
@@ -83,7 +91,8 @@ export async function GET(req: NextRequest) {
     // ── what settled since last time ───────────────────────────────────────
     const rows =
       deltaRow('Revenue cleans', prev ? prev.cleans : null, snap.cleans, (n: any) => String(Math.round(n))) +
-      deltaRow('Cleaning revenue', prev ? prev.cleaningRevenue : null, snap.cleaningRevenue, money) +
+      deltaRow('In-house cleaning revenue', prev ? prev.cleaningRevenue : null, snap.cleaningRevenue, money) +
+      deltaRow('Housekeeping share of it', prev && prev.hkRevenue != null ? prev.hkRevenue : null, K.housekeeping.revenue, money) +
       deltaRow('Fees credited to a person', prev ? prev.credited : null, snap.credited, money) +
       deltaRow('Maintenance billable', prev ? prev.billable : null, snap.billable, money) +
       deltaRow('Payroll (all in)', prev ? prev.payroll : null, snap.payroll, money) +
@@ -159,7 +168,7 @@ export async function GET(req: NextRequest) {
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td></tr>' +
       '</table></div>' +
-      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Runs every 7 days over the trailing 30. Full detail on the Labor board.</p>' +
+      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Runs every day over the trailing 30, and only writes when something settles. Full detail on the Labor board.</p>' +
       '</div></body></html>'
 
     if (preview) return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
