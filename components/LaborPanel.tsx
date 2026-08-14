@@ -251,6 +251,70 @@ export function LaborPanel() {
         </div>
       )}
 
+      {/* REVENUE OVER PAYROLL, THREE WAYS — the same table the daily brief leads with.
+          Supervisors sit below the line: a fixed cost, never divided into revenue. */}
+      {!hideMoney && econ?.kpi && (
+        <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
+          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">
+            Revenue vs payroll <span className="normal-case font-normal">· margin by crew</span>
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+                <th className="py-1 pr-3">Crew</th><th className="py-1 pr-3 text-right">Revenue</th>
+                <th className="py-1 pr-3 text-right">Payroll</th><th className="py-1 pr-3 text-right">Margin</th>
+                <th className="py-1 pr-3 text-right">Margin %</th><th className="py-1">Read</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-line">
+                <td className="py-1.5 pr-3 font-medium text-ink">Housekeeping<div className="text-[11px] text-muted font-normal">{econ.kpi.housekeeping.cleans} revenue cleans · {econ.kpi.housekeeping.hours}h</div></td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeeping.revenue)}</td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeeping.payroll)}</td>
+                <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.housekeeping.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.housekeeping.margin)}</td>
+                <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.housekeeping.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.housekeeping.marginPct)}</td>
+                <td className="py-1 text-[11px] text-muted">{fmt$(econ.kpi.housekeeping.costPerClean)} cost · {fmt$(econ.kpi.housekeeping.revPerClean)} rev / clean</td>
+              </tr>
+              <tr className="border-t border-line">
+                <td className="py-1.5 pr-3 font-medium text-ink">Maintenance<div className="text-[11px] text-muted font-normal">{econ.kpi.maintenance.tasksBilled} tasks billed · {econ.kpi.maintenance.hours}h</div></td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.maintenance.revenue)}</td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.maintenance.payroll)}</td>
+                <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.maintenance.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.maintenance.margin)}</td>
+                <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.maintenance.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.maintenance.marginPct)}</td>
+                <td className="py-1 text-[11px] text-amber-700">{econ.kpi.maintenance.tasksNoCharge > 0 ? econ.kpi.maintenance.tasksNoCharge + ' finished with no charge' : ''}</td>
+              </tr>
+              <tr className="border-t-2 border-ink font-medium">
+                <td className="py-1.5 pr-3">Staff total<div className="text-[11px] text-muted font-normal">pay that moves with the work</div></td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.staff.revenue)}</td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.staff.payroll)}</td>
+                <td className={'py-1.5 pr-3 text-right ' + (econ.kpi.staff.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.staff.margin)}</td>
+                <td className={'py-1.5 pr-3 text-right ' + (econ.kpi.staff.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.staff.marginPct)}</td>
+                <td className="py-1 text-[11px] text-muted">{pct(econ.kpi.staff.laborPct)} of revenue to labor</td>
+              </tr>
+              <tr className="border-t border-line bg-app/40">
+                <td className="py-1.5 pr-3">Supervisors <span className="text-[11px] text-muted">fixed</span><div className="text-[11px] text-muted">{(econ.kpi.supervisors.names || []).join(', ') || '—'}</div></td>
+                <td className="py-1.5 pr-3 text-right text-muted">n/a</td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.supervisors.payroll)}</td>
+                <td className="py-1.5 pr-3 text-right text-muted">—</td>
+                <td className="py-1.5 pr-3 text-right text-muted">—</td>
+                <td className="py-1 text-[11px] text-muted">{pct(econ.kpi.supervisors.pctOfManagementFee)} of {fmt$(econ.kpi.supervisors.managementFee)} mgmt fees</td>
+              </tr>
+              <tr className="border-t border-line">
+                <td className="py-1.5 pr-3 font-medium">All in<div className="text-[11px] text-muted font-normal">staff + supervisors</div></td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.allIn.revenue)}</td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.allIn.payroll)}</td>
+                <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.allIn.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.allIn.margin)}</td>
+                <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.allIn.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.allIn.marginPct)}</td>
+                <td className="py-1"></td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="mt-2 text-[11px] text-muted">
+            Revenue cleans = departure cleans that earned a guest fee, plus cleaning tasks with a charge entered. Strips, common areas, pool, trash and office cleaning earn nothing and are outside both sides.
+          </p>
+        </div>
+      )}
+
       {/* THE THREE HOUSEKEEPING CATEGORIES — Miami, Broward, Vendor-cleaned.
           Cost per clean is housekeeper wages over the units housekeepers turned in that market.
           A housekeeper who works both markets has her wages split by her share of cleans in each.
