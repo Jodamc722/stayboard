@@ -332,6 +332,10 @@ export const FFE_UI = {
   },
   qty: { en: 'Number needed', es: 'Cantidad' },
   none: { en: 'Nothing needed', es: 'Nada hace falta' },
+  // Jon, 2026-08-14: "can you create a delete option". Tapping the answer you already chose takes
+  // it back, so a mis-tap returns the item to unanswered instead of leaving a claim behind.
+  clear: { en: 'Tap again to undo', es: 'Toque otra vez para deshacer' },
+  cleared: { en: 'Cleared', es: 'Borrado' },
   fixWhat: { en: 'What needs fixing?', es: '¿Qué hay que reparar?' },
   fixGoesTo: { en: 'This goes to the team as a fix, not onto the order.', es: 'Esto va al equipo como reparación, no al pedido.' },
   note: { en: 'Note (optional)', es: 'Nota (opcional)' },
