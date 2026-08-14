@@ -1,6 +1,8 @@
 // PUBLIC property guide - the link we send guests: what is on this week, hours, menu, things to do.
-// Fully open (no login, no password). The SAME url with ?admin=1 asks for the StayBoard admin
-// password and turns the page into an editor. Content lives in app_settings under 'guide:<slug>'.
+// The plain guest link is ALWAYS read-only — no Edit button, even for a signed-in admin previewing
+// it. Editing lives on a SEPARATE, password-protected link: the same url with ?admin=1, which asks
+// for the StayBoard admin password (or an already-signed-in admin). Content lives in app_settings
+// under 'guide:<slug>'.
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
@@ -37,9 +39,15 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   }
 }
 
-export default async function GuidePage({ params }: { params: { slug: string } }) {
+export default async function GuidePage({ params, searchParams }: { params: { slug: string }; searchParams?: { [k: string]: string | string[] | undefined } }) {
   const slug = normSlug(params.slug) || 'garden'
   const content = await load(slug)
+  // Editing is ONLY available on the separate edit link (…?admin=1). The plain guest link never
+  // exposes an Edit button — not even to a signed-in admin — so anything we send guests stays
+  // read-only. On the edit link, a signed-in admin edits directly; anyone else must enter the
+  // admin password (the password prompt is handled client-side in GuideView).
+  const editParam = searchParams ? searchParams.admin : undefined
+  const editMode = (Array.isArray(editParam) ? editParam[0] : editParam) === '1'
   let signedIn = false
   try {
     const { data } = await createClient().auth.getUser()
@@ -47,5 +55,5 @@ export default async function GuidePage({ params }: { params: { slug: string } }
   } catch { signedIn = false }
   let unlocked = false
   try { unlocked = verifyEditToken(cookies().get('sb_guide')?.value) } catch { unlocked = false }
-  return <GuideView slug={slug} initial={content} canEdit={signedIn || unlocked} />
+  return <GuideView slug={slug} initial={content} canEdit={editMode && (signedIn || unlocked)} />
 }
