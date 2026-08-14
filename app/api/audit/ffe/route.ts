@@ -349,6 +349,51 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, itemKey: key, title })
     }
 
+    // ---- TAKE IT BACK (Jon, 2026-08-14: "can you create a delete option") ----
+    //
+    // Until now every tap on this form was permanent in one direction: you could change Replace to
+    // Keep, but you could not say "I never meant to answer this at all". Those are different facts.
+    // A unit with 43 of 44 items answered and one left blank is a walk in progress; the same unit
+    // with that item marked Keep is a walk that made a claim about it. The counts, the owner's
+    // list and the order all read the first one correctly and the second one wrongly.
+    //
+    // WHAT IT WILL NOT DO: clear an item that is already on an order. Once a line exists, somebody
+    // has priced it and possibly sent it to an owner — deleting the answer underneath that would
+    // leave a line nobody can trace back. Change the line on the order instead.
+    if (String(body.action || '') === 'clearAnswer') {
+      const room0 = str(body.room).slice(0, 40)
+      const key0 = str(body.itemKey).slice(0, 40)
+      if (!room0 || !key0) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
+
+      try {
+        const { data: onOrder } = await db.from('ffe_order_lines')
+          .select('id,order_id').eq('listing_id', listingId).eq('room', room0).eq('item_key', key0).limit(1)
+        if (onOrder && onOrder[0]) {
+          return NextResponse.json({
+            error: 'This one is already on an order — remove it from the order first, then it can be cleared here.',
+          }, { status: 409 })
+        }
+      } catch { /* orders may not be migrated yet; nothing to protect */ }
+
+      // Withdraw a fix this walk opened, on exactly the terms the answer-change path already uses:
+      // only while it is still untouched by the office.
+      try {
+        const { data: fx } = await db.from('ffe_fixes')
+          .select('id,status,est_cost,assigned_to,order_id,created_by')
+          .eq('listing_id', listingId).eq('room', room0).eq('item_key', key0).limit(1)
+        const f = (fx || [])[0]
+        if (f && str(f.created_by) === 'walk' && str(f.status) === 'open'
+          && f.est_cost == null && !f.assigned_to && !f.order_id) {
+          await db.from('ffe_fixes').delete().eq('id', f.id)
+        }
+      } catch { /* fixes table may not exist yet */ }
+
+      const del = await db.from('ffe_answers').delete()
+        .eq('listing_id', listingId).eq('room', room0).eq('item_key', key0)
+      if (del.error) return dbFail(del.error.message)
+      return NextResponse.json({ ok: true, cleared: true })
+    }
+
     const room = str(body.room).slice(0, 40)
     const itemKey = str(body.itemKey).slice(0, 40)
     if (!room || !itemKey) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
