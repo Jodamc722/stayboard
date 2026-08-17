@@ -108,10 +108,14 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   // "Add to drafts" — one click puts this email into support@'s Gmail Drafts (Jon, 2026-08-17).
   const [draftBusy, setDraftBusy] = useState<string | null>(null)
   const [drafted, setDrafted] = useState<Record<string, boolean>>({})
+  // The failure reason, shown NEXT TO the button. The first version pushed errors to the banner at
+  // the top of the page — invisible from inside a tall draft panel, so a refusal read as "nothing
+  // happened" (Jon, 2026-08-17: "not working").
+  const [draftErr, setDraftErr] = useState<Record<string, string>>({})
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
 
   async function addToDrafts(id: string, d: { to: string; cc: string; subject: string; body: string }) {
-    setDraftBusy(id); setErr(null)
+    setDraftBusy(id); setDraftErr(x => ({ ...x, [id]: '' }))
     try {
       const r = await fetch('/api/reservation-notices/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -121,7 +125,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not create the draft.')
       setDrafted(x => ({ ...x, [id]: true }))
       setMsg(`Draft created in ${j.from} — attach the form there and send.`)
-    } catch (e: any) { setErr(e.message || String(e)) } finally { setDraftBusy(null) }
+    } catch (e: any) { setDraftErr(x => ({ ...x, [id]: e.message || String(e) })) } finally { setDraftBusy(null) }
   }
   const [pulling, setPulling] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -647,6 +651,12 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                       </button>
                       {!sentCopy && <span className="text-[11px] text-muted inline-flex items-center gap-1"><Clock size={11} /> Hit Mark sent once it&apos;s gone.</span>}
                     </div>
+                    {draftErr[r.id] && (
+                      <div className="px-3 pb-2 text-[12px] text-rose-700 flex items-start gap-1.5">
+                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                        <span>{draftErr[r.id]}{/support@/.test(draftErr[r.id]) ? <> — connect it under <b>Users &rarr; Morning Ops Brief &rarr; Mailbox connections</b>, signing into Google as support@.</> : null}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 )
