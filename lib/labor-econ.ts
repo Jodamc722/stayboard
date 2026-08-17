@@ -41,6 +41,7 @@ import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
 import { getCrew, type Dept, DEPTS, DEPT_LABEL } from './crew'
 import { resolveStaff } from './staffing'
+import { laborAmount } from './billing'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
@@ -173,6 +174,8 @@ export type LaborEcon = {
   layers: any
   /** Revenue over payroll: housekeeping, maintenance, all revenue-facing staff, supervisors apart. */
   kpi: any
+  /** Maintenance charges by task vs what the maintenance crew was credited — attribution check. */
+  maintAudit: any
   /** Our own crew's work inside vendor-managed buildings, plus the per-building invoice check. */
   vendorWork: any
   /** Operating margin on work we sell: cleaning + billable - all payroll. */
@@ -229,7 +232,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   // ── the window's work + the money entered on it ───────────────────────────
   const taskRowsAll = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,total_minutes')
+    .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,total_minutes,rate_paid')
     .gte('finished_at', from).lte('finished_at', to + 'T23:59:59').range(a, b))
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
 
@@ -271,25 +274,43 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const chunk = ids.slice(i, i + 400)
     if (!chunk.length) break
     try {
-      const { data } = await sb.from('breezeway_billing_details').select('task_id,costs,supplies').in('task_id', chunk)
+      const { data } = await sb.from('breezeway_billing_details').select('task_id,costs,supplies,rate_type').in('task_id', chunk)
       for (const d of (data || []) as any[]) details[String(d.task_id)] = d
     } catch { /* a task with no detail simply carries no charge */ }
     try {
-      const { data } = await sb.from('billing_adjustments').select('task_id,excluded,override_amount').in('task_id', chunk)
+      const { data } = await sb.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk)
       for (const a of (data || []) as any[]) adjs[String(a.task_id)] = a
     } catch { /* overlay optional */ }
   }
 
-  // WHAT WE CHARGED FOR THIS TASK — the cost field, as entered. Never derived from hours.
-  // The charge typed on a task, whatever kind it is. Used both for maintenance billables and to
-  // decide whether a cleaning task earned anything.
+  // WHAT WE CHARGED FOR THIS TASK — as entered on the task. Never derived from wages or hours.
+  //
+  // Breezeway puts the charge in TWO places and the owner's invoice adds both (lib/billing.ts,
+  // which is what actually prints on a statement):
+  //   1. the task RATE — 'piece' (Breezeway's default) means the rate IS the price of the job;
+  //      'hourly' means rate x hours. This is Jon's "Ronnie charged $25 on each of 10 tasks".
+  //   2. owner-billable cost line items on the task.
+  // This engine used to read ONLY (2), so any job priced by its rate reported as "$0 billed — no
+  // charge entered" while the owner was invoiced for it. Same helper as the invoice now, so the
+  // labor board and the statement can never disagree. (Measured 2026-08-17: rates are barely used
+  // today — 1 of 692 maintenance tasks — so this changes almost nothing now and stops the line
+  // going silently wrong the day the team starts pricing jobs by rate.)
+  const rateChargeOf = (t: any): number => {
+    const a = adjs[String(t.id)]
+    const d = details[String(t.id)]
+    return laborAmount(
+      num(t.rate_paid),
+      d && d.rate_type ? String(d.rate_type) : null,
+      num(t.total_minutes),
+      a && a.billed_hours != null ? Number(a.billed_hours) : null,
+    )
+  }
   const chargeOfRaw = (t: any): number => {
     const a = adjs[String(t.id)]
     if (a && a.excluded) return 0
     if (a && a.override_amount != null) return Number(a.override_amount) || 0
     const d = details[String(t.id)]
-    if (!d) return 0
-    return round2(ownerTotal(d.costs, 'cost'))
+    return round2(rateChargeOf(t) + (d ? ownerTotal(d.costs, 'cost') : 0))
   }
   const chargeOf = (t: any): { billable: number; materials: number } => {
     if (kindOfTask(t) === 'clean') return { billable: 0, materials: 0 }   // paid by the guest fee
@@ -297,8 +318,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (a && a.excluded) return { billable: 0, materials: 0 }
     if (a && a.override_amount != null) return { billable: Number(a.override_amount) || 0, materials: 0 }
     const d = details[String(t.id)]
-    if (!d) return { billable: 0, materials: 0 }
-    return { billable: round2(ownerTotal(d.costs, 'cost')), materials: round2(ownerTotal(d.supplies, 'supply')) }
+    return {
+      billable: round2(rateChargeOf(t) + (d ? ownerTotal(d.costs, 'cost') : 0)),
+      materials: round2(d ? ownerTotal(d.supplies, 'supply') : 0),
+    }
   }
 
   // CLEANING TASKS THAT CARRY A CHARGE. Not departure cleans, but paid cleaning work all the
@@ -719,6 +742,50 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   //   SUPERVISORS    a fixed cost shown underneath, never divided into revenue. You carry them to
   //                  run the operation whether or not a single unit turns.
   const pct = (a: number, b: number) => (b > 0 ? round2((a / b) * 100) : null)
+
+  // ── MAINTENANCE BILLING RECONCILIATION ───────────────────────────────────
+  // Jon, 2026-08-17: "we have an issue with calculating maintenance labor — check to make sure you
+  // are adding this properly."
+  //
+  // He was right, and the hole is not arithmetic — it is attribution. Maintenance revenue below is
+  // what the maintenance CREW billed, because revenue follows the person who did the work. But a
+  // charged maintenance job does not care whose name is on it: supervisors, the office and people
+  // nobody has put on a crew close them too, and every dollar they billed used to vanish from this
+  // line (measured 30d to 2026-08-16: $6,855 of maintenance charges existed, the crew was credited
+  // with $4,350 — Oscar Arciniegas alone had billed $1,240 while belonging to no crew).
+  //
+  // So we total the charges on every maintenance-DEPARTMENT task in the window and name who earned
+  // the difference. Either those people belong on the maintenance roster — one line in the
+  // crew_roles setting fixes it — or maintenance margin is understating what the department earned.
+  // Shown, not silently absorbed.
+  const maintTaskCharge: Record<string, number> = {}
+  const maintTaskCount: Record<string, number> = {}
+  let maintTaskBillables = 0
+  for (const t of taskRows) {
+    if (kindOfTask(t) !== 'maintenance') continue
+    const amt = chargeOfRaw(t)
+    if (!(amt > 0)) continue
+    maintTaskBillables = round2(maintTaskBillables + amt)
+    const w = doer(t) || '— nobody assigned —'
+    const k = keyFor(w)
+    maintTaskCharge[k] = round2((maintTaskCharge[k] || 0) + amt)
+    maintTaskCount[k] = (maintTaskCount[k] || 0) + 1
+  }
+  const maintCrew: Record<string, boolean> = {}
+  for (const p of people) if (p.dept === 'maintenance') maintCrew[p.name] = true
+  const billedOutsideCrew = Object.keys(maintTaskCharge)
+    .filter(n => !maintCrew[n])
+    .map(n => ({ name: n, amount: maintTaskCharge[n], tasks: maintTaskCount[n], dept: (people.filter(p => p.name === n)[0] || { dept: 'unrostered' as any }).dept }))
+    .sort((a, b) => b.amount - a.amount)
+  const outsideTotal = round2(billedOutsideCrew.reduce((a, x) => a + x.amount, 0))
+  const maintAudit = {
+    taskBillables: maintTaskBillables,          // every charge on a maintenance task, whoever closed it
+    creditedToCrew: round2(maintTaskBillables - outsideTotal),
+    billedOutsideCrew: outsideTotal,
+    outsideDetail: billedOutsideCrew.slice(0, 8),
+    note: 'maintenance-department tasks with a charge, split by whether the person is on the maintenance crew',
+  }
+
   const hkRevenue = round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0))
   const insp = byDept['inspection']
   const hkCharged = round2(cleanRecs.filter(r => r.charged && hkNames[r.who]).reduce((a, r) => a + r.fee, 0))
@@ -749,6 +816,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       laborPct: pct(mt.payroll, mt.billableRevenue + mt.cleaningRevenue),
       tasksBilled: mt.billableTasks,
       tasksNoCharge: mt.tasksNoCharge,
+      // What maintenance WORK billed vs what the maintenance CREW was credited with. See maintAudit.
+      taskBillables: maintAudit.taskBillables,
+      billedOutsideCrew: maintAudit.billedOutsideCrew,
+      outsideDetail: maintAudit.outsideDetail,
     },
     // Everyone whose pay should move with the work. Supervisors excluded on purpose.
     staff: {
@@ -903,6 +974,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     buckets: bucketList,
     layers,
     kpi,
+    maintAudit,
     vendorWork,
     cleans: cleansTotal,
     cleaningRevenue,
