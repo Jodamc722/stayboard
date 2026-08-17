@@ -152,6 +152,8 @@ export type LaborEcon = {
   cleaningRevenueGross: number
   /** The channel's cut on the cleaning fees: gross - net. */
   channelCut: number
+  /** Expedia-bundled cleaning fees rebuilt from the unit's own modal fee. An estimate — shown. */
+  bundledFeeBackfill: { checkouts: number; amount: number; basis: string }
   /** Of that, the part tied to a named person via their departure clean. */
   cleaningRevenueAttributed: number
   /** The rest: a checkout whose clean we could not match to anybody. Shown, never hidden —
@@ -357,6 +359,49 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
     .gte('check_out', from).lte('check_out', to)
     .not('status', 'in', '("canceled","cancelled","declined")').range(a, b))
+
+  // ── EXPEDIA CLEANING BACK-FILL ───────────────────────────────────────────
+  // Expedia-family channels bundle the cleaning fee INTO the accommodation fare, so the reservation
+  // arrives with fareCleaning = 0. Left alone, that checkout looks like a clean that earned nothing:
+  // it is dropped from the revenue AND from the clean count, so a real turnover our crew did simply
+  // disappears from cost per clean. Roughly a third of Expedia bookings arrive this way.
+  //
+  // So rebuild the fee from the unit's OWN non-Expedia bookings and split it back out of the fare.
+  // MODAL, not average — the most common cleaning fee that unit actually charges, so one odd booking
+  // cannot drag it. Capped at the fare so this can never invent revenue, and skipped entirely for a
+  // unit with no non-Expedia history to learn from (better a known gap than a guessed number).
+  // Same approach lib/owner-report.ts already uses on owner statements, so the two agree.
+  const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
+  const feePool: Record<string, Record<string, number>> = {}
+  for (const r of resRowsAll) {
+    const c = num(r.cleaning) ?? 0
+    if (c > 0 && !EXPEDIA_RE.test(String(r.source || '').toLowerCase())) {
+      const id = String(r.listing_id)
+      const k = String(Math.round(c))
+      feePool[id] = feePool[id] || {}
+      feePool[id][k] = (feePool[id][k] || 0) + 1
+    }
+  }
+  const modalFee: Record<string, number> = {}
+  for (const id in feePool) {
+    let best = 0, bestN = 0
+    for (const k in feePool[id]) { if (feePool[id][k] > bestN) { bestN = feePool[id][k]; best = Number(k) } }
+    modalFee[id] = best
+  }
+  let bundledFilled = 0, bundledFilledAmount = 0
+  for (const r of resRowsAll) {
+    if (!EXPEDIA_RE.test(String(r.source || '').toLowerCase())) continue
+    if ((num(r.cleaning) ?? 0) > 0) continue
+    const m = modalFee[String(r.listing_id)] || 0
+    if (!(m > 0)) continue
+    const gf = num(r.grossFare) ?? 0
+    const take = Math.min(m, gf)
+    if (!(take > 0)) continue
+    ;(r as any).cleaning = take
+    ;(r as any).grossFare = gf - take     // it was inside the fare; move it, never duplicate it
+    bundledFilled++
+    bundledFilledAmount = round2(bundledFilledAmount + take)
+  }
 
   // MATCHING RUNS OVER EVERY MARKET, EVEN ON A MARKET TAB. The market filter decides what is
   // REPORTED, never what is CALCULATED. A housekeeper who works Miami and Broward has her wages
@@ -1060,6 +1105,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // Gross guest cleaning fees before the channel took its cut, and the cut itself. Every margin
     // above runs on the NET number; these two exist so the difference is never invisible.
     cleaningRevenueGross: cleaningGrossAll,
+    // Expedia bundled-fee back-fill: how many checkouts were repaired and for how much. An estimate
+    // by construction, so it is reported rather than folded in silently.
+    bundledFeeBackfill: { checkouts: bundledFilled, amount: bundledFilledAmount, basis: 'modal cleaning fee from the same unit\u2019s non-Expedia bookings' },
     channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),
     cleaningRevenueAttributed: attributedRev,
     cleaningRevenueUnattributed: round2(cleaningRevenue - attributedRev),
