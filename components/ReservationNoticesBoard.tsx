@@ -124,7 +124,13 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not create the draft.')
       setDrafted(x => ({ ...x, [id]: true }))
-      setMsg(`Draft created in ${j.from} — attach the form there and send.`)
+      // Say exactly what rode along. A bare draft when a form was expected is the one case the desk
+      // must hear about — sending the notice without the registration form is the old failure mode.
+      setMsg(j.attached
+        ? `Draft created in ${j.from} with ${j.attached} attached — just review and send.`
+        : j.formMissing
+          ? `Draft created in ${j.from} — but NO form is filed for this notice yet. Hit Build form, then Add to drafts again (it replaces the draft).`
+          : `Draft created in ${j.from} — review and send.`)
     } catch (e: any) { setDraftErr(x => ({ ...x, [id]: e.message || String(e) })) } finally { setDraftBusy(null) }
   }
   const [pulling, setPulling] = useState(false)
