@@ -734,7 +734,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const m = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
         thirty = `<p style="margin:8px 0 0;padding-top:8px;border-top:1px solid #e5e7eb;font-size:12.5px;color:#374151">` +
           `<b>Last 30 days</b> <span style="color:#9ca3af">${snap.from} to ${snap.to}${snap.takenAt ? ' · trued up ' + String(snap.takenAt).slice(0, 10) : ''}</span><br>` +
-          `${snap.cleans} revenue cleans · ${m(snap.costPerClean || 0)} labor / clean · ${m(snap.cleaningRevenue || 0)} in-house cleaning revenue vs ${m(snap.payroll || 0)} payroll` +
+          `${snap.cleans} departure cleans · ${m(snap.costPerClean || 0)} labor / clean · ${m(snap.cleaningRevenue || 0)} net cleaning revenue vs ${m(snap.payroll || 0)} payroll` +
           // The settled market comparison. One day of Miami vs Broward is mostly noise — 30 days is
           // the number to manage on, so it sits right under the 30-day headline.
           (Array.isArray(snap.markets) && snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null).length
@@ -767,6 +767,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       const pctTxt = (n: number | null) => (n == null ? '—' : Math.round(n) + '%')
       const hoursTxt = (h: number) => (h > 0 ? String(Math.round(h * 10) / 10) + 'h' : '—')
       const tone = (m: number) => (m < 0 ? '#dc2626' : '#047857')
+      const round2b = (n: number) => Math.round(n * 100) / 100
 
       // THE THREE RATIOS, BIG AND FIRST. Each one is revenue over the payroll that earned it.
       const kpiRow = (label: string, sub: string, rev: number, pay: number, margin: number, mPct: number | null, extra: string) =>
@@ -779,11 +780,20 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         '<td style="' + S.td + ';color:#6b7280;font-size:11.5px">' + extra + '</td></tr>'
 
       let kpiRows = ''
-      kpiRows += kpiRow('Housekeeping', K.housekeeping.cleans + ' revenue cleans · ' + hoursTxt(K.housekeeping.hours),
-        K.housekeeping.revenue, K.housekeeping.payroll, K.housekeeping.margin, K.housekeeping.marginPct,
+      // Jon, 2026-08-17: "just departure" + "based on what we actually net". So the turnover row is
+      // departure cleans against the cleaning fee NET of the channel's cut, and any other paid
+      // cleaning work (mid-stay, linen refresh, re-clean) gets its own row instead of being averaged
+      // into a cost per clean that would then describe nothing.
+      kpiRows += kpiRow('Housekeeping', K.housekeeping.cleans + ' departure cleans · ' + hoursTxt(K.housekeeping.hours),
+        K.housekeeping.revenue, K.housekeeping.payroll, round2b(K.housekeeping.revenue - K.housekeeping.payroll),
+        K.housekeeping.revenue > 0 ? Math.round(((K.housekeeping.revenue - K.housekeeping.payroll) / K.housekeeping.revenue) * 100) : null,
         (K.housekeeping.costPerClean != null ? usd(K.housekeeping.costPerClean) + ' cost / clean' : 'no cleans') +
-        (K.housekeeping.revPerClean != null ? ' · ' + usd(K.housekeeping.revPerClean) + ' rev / clean' : '') +
+        (K.housekeeping.revPerClean != null ? ' · ' + usd(K.housekeeping.revPerClean) + ' net / clean' : '') +
         (K.housekeeping.hoursPerClean != null ? ' · ' + K.housekeeping.hoursPerClean + 'h each' : ''))
+      if (K.housekeeping.chargedCleans > 0)
+        kpiRows += kpiRow('Other paid cleaning', (K.housekeeping.chargedCleanCount || 0) + ' charged task' + ((K.housekeeping.chargedCleanCount || 0) === 1 ? '' : 's') + ' · not turnovers',
+          K.housekeeping.chargedCleans, 0, K.housekeeping.chargedCleans, 100,
+          'mid-stays, linen refreshes, re-cleans — kept out of cost per clean')
       kpiRows += kpiRow('Maintenance', K.maintenance.tasksBilled + ' tasks billed · ' + hoursTxt(K.maintenance.hours),
         K.maintenance.revenue, K.maintenance.payroll, K.maintenance.margin, K.maintenance.marginPct,
         K.maintenance.tasksNoCharge > 0
@@ -863,7 +873,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
           '<td style="' + S.td + ';text-align:right">' + (b2.hoursPerClean != null ? b2.hoursPerClean + 'h' : '<span style="color:#9ca3af">—</span>') + '</td></tr>'
       }
       const mkTable = mkBuckets.length
-        ? '<p style="margin:12px 0 4px;font-size:12.5px;color:#374151"><b>By market</b> <span style="color:#9ca3af">— housekeeping, yesterday</span></p>' +
+        ? '<p style="margin:12px 0 4px;font-size:12.5px;color:#374151"><b>By market</b> <span style="color:#9ca3af">— departure cleans, net revenue, yesterday</span></p>' +
           '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">' +
           '<tr><th style="' + S.th + '">Market</th><th style="' + S.th + ';text-align:right">Cleans</th>' +
           '<th style="' + S.th + ';text-align:right">Revenue</th><th style="' + S.th + ';text-align:right">Payroll</th>' +
@@ -887,8 +897,10 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         kpiTable +
         mkTable + mkRead +
         actionBlock +
-        '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Revenue cleans = departure cleans that earned a guest fee, plus cleaning tasks with a charge entered. ' +
-        'Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
+        '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Cost per clean counts DEPARTURE cleans only, against the guest cleaning fee ' +
+        '<b>net of the channel&rsquo;s commission</b> — what we actually keep, not what the guest was charged' +
+        (ec.channelCut > 0 ? ' (the channels took ' + usd(ec.channelCut) + ' off ' + usd(ec.cleaningRevenueGross) + ' of cleaning fees)' : '') + '. ' +
+        'Other paid cleaning work is listed on its own row. Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
         'Supervisors are a fixed cost and are never divided into revenue.</p>', '#0891b2', `Yesterday · ${niceDay(yd)}`)
     }
   } catch { /* Homebase down — the brief still sends */ }
