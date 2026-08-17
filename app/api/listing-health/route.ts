@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { computeListingHealth, rollupBuildingHealth, type HealthReview } from '@/lib/health-score'
+import { computeListingHealth, rollupBuildingHealth, channelKeyOfSource, channelWeights, type HealthReview, type ChannelMix, type ChannelKey } from '@/lib/health-score'
 import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf, isLux, isVendorManaged, MARKETS } from '@/lib/segments'
@@ -43,7 +43,7 @@ const computeHealth = unstable_cache(async () => {
       let all: any[] = []
       for (let from = 0; from < 30000; from += 1000) {
         const { data } = await sb.from('guesty_reservations')
-          .select('listing_id, check_in, check_out, status, money_total, nights')
+          .select('listing_id, check_in, check_out, status, money_total, nights, source')
           .in('status', ['confirmed', 'checked_in', 'checked_out'])
           .gte('check_out', occStart).lte('check_in', occToday)
           .order('check_out', { ascending: false })
@@ -89,6 +89,18 @@ const computeHealth = unstable_cache(async () => {
         revInWindow[id] = (revInWindow[id] || 0) + (stayNights > 0 ? total * (nights / stayNights) : total)
       }
     }
+    // ---- Booking mix by channel (last 90d), portfolio-wide ----
+    // Jon 2026-08-17: Airbnb carries almost all of our booking volume, so its reviews must dominate
+    // the health score; a bad Booking/Vrbo score should barely move a unit that is perfect on Airbnb.
+    // Measured here from real reservations (not assumed) and handed to every listing, so the weighting
+    // tracks the business as the mix shifts. Portfolio-wide on purpose: a per-unit mix would be noise
+    // on a unit with 4 bookings.
+    const bookingMix: ChannelMix = {}
+    for (const r of (occResv || []) as any[]) {
+      const k = channelKeyOfSource(r.source)
+      bookingMix[k] = (bookingMix[k] || 0) + 1
+    }
+
     const occPctByListing: Record<string, number> = {}
     for (const id of Object.keys(occNights)) occPctByListing[id] = Math.min(1, occNights[id] / OCC_WINDOW)
     // RevPAR = revenue per AVAILABLE night (incl. vacant) over the window — the hospitality revenue
@@ -152,7 +164,7 @@ const computeHealth = unstable_cache(async () => {
       const revparIndex = medRp && medRp > 0 && revpar != null ? revpar / medRp : null
       // Rebuild the slim raw object from the sub-field selects (same shape computeOptimizeScore expects).
       const slim = { ...l, raw: { publicDescription: l.rawPub, publicDescriptions: l.rawPubs, terms: l.rawTerms, prices: l.rawPrices, integrations: l.rawInts, instantBookable: l.rawIb, instantBook: l.rawIb2, defaultCheckInTime: l.rawCi, checkInTime: l.rawCi2, defaultCheckOutTime: l.rawCo, checkOutTime: l.rawCo2, _photoScore: l.rawPs, cancellationPolicy: l.rawCp, airbnb: l.rawAirbnb, bookingcom: l.rawBcom, title: l.rawTitle, defaultListingMinNights: l.rawMinN, amenities: l.rawAmen } }
-      const h = computeListingHealth(slim, reviews, { openWork: openByListing[String(l.id)] || 0, occIndex, occPct, revparIndex, revpar })
+      const h = computeListingHealth(slim, reviews, { openWork: openByListing[String(l.id)] || 0, occIndex, occPct, revparIndex, revpar, channelMix: bookingMix })
       const nm = l.title || l.nickname || l.id
       const lux = isLux(l.building || building, nm)
       const market = marketOf(l.building || building, l.address_city, nm)
@@ -249,6 +261,20 @@ const computeHealth = unstable_cache(async () => {
       avgResponse: withReviews.length ? Math.round(withReviews.reduce((s: number, x: any) => s + (x.responseRate || 0), 0) / withReviews.length) : null,
       reviewsAnalyzed: activeReviewCount,
       openActions: scored.reduce((s: number, x: any) => s + x.issues.length, 0),
+      // How reviews were weighted: the real 90-day booking mix + the per-review weight it produced.
+      // Surfaced so the header can say plainly "Airbnb = 87% of bookings, so it drives the score".
+      channelWeighting: (() => {
+        const keys = Object.keys(bookingMix) as ChannelKey[]
+        const total = keys.reduce((n, k) => n + (bookingMix[k] || 0), 0)
+        const w = channelWeights(bookingMix)
+        return {
+          window: '90d bookings',
+          total,
+          channels: keys
+            .map(k => ({ channel: k, bookings: bookingMix[k] || 0, sharePct: total ? Math.round(((bookingMix[k] || 0) / total) * 100) : 0, reviewWeight: Math.round((w[k] || 0) * 100) / 100 }))
+            .sort((x, y) => y.bookings - x.bookings),
+        }
+      })(),
     }
 
     const dataPending = ['Conversion / CTR', 'Price vs. comps', 'Calendar openness', 'Live badge status', 'Acceptance & host-cancellation rate']
