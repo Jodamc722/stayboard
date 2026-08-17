@@ -745,7 +745,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
             ? `<br><span style="color:#6b7280">By market: </span>` +
               snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null)
                 .map((k: any) => `<b>${esc(String(k.label))}</b> ${k.cleans} cleans @ ${m(k.costPerClean)}${k.hoursPerClean != null ? ' / ' + k.hoursPerClean + 'h' : ''}`)
-                .join(' &middot; ')
+                .join(' &middot; ') +
+              // Vendor buildings earn too — shown beside the markets, never inside a cost per clean.
+              snap.markets.filter((k: any) => !k.inHouse && (k.revenue > 0 || k.cleans > 0))
+                .map((k: any) => ` &middot; <b>${esc(String(k.label))}</b> ${k.cleans} cleans, ${m(k.revenue)} rev (their crews)`)
+                .join('')
             : '') +
           `</p>`
       }
@@ -824,6 +828,21 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
           K.housekeepingLoaded.revenue, K.housekeepingLoaded.payroll, K.housekeepingLoaded.margin, K.housekeepingLoaded.marginPct,
           (K.housekeepingLoaded.costPerClean != null ? '<b>' + usd(K.housekeepingLoaded.costPerClean) + ' loaded / departure clean</b>' : '') +
           ' · adds ' + usd(K.housekeepingLoaded.supervisorPayroll) + ' of supervision')
+      // VENDOR REVENUE, VISIBLE (Jon, 2026-08-17: "we should also show vendor rev as well"). The
+      // cleaning fees earned on vendor-cleaned buildings (Botanica, PT, Amrit, Capri, Lucerne) are
+      // real revenue to the business even though no in-house hour goes into them — so they get a
+      // row, with no payroll and no margin, and they never touch cost per clean. When our own crew
+      // ALSO billed work inside those buildings, that is named too, because it is the number the
+      // vendor invoices get checked against.
+      if ((ec.cleaningRevenueVendor || 0) > 0 || (ec.vendorWork && ec.vendorWork.ourBilled > 0))
+        kpiRows += '<tr><td style="' + S.td + '"><b>Vendor-cleaned units</b><br>' +
+          '<span style="color:#6b7280;font-size:11.5px">their crews clean — fee revenue only' +
+          (ec.vendorWork && ec.vendorWork.ourBilled > 0 ? ' · our crew billed ' + usd(ec.vendorWork.ourBilled) + ' inside these buildings' : '') + '</span></td>' +
+          '<td style="' + S.td + ';text-align:right">' + usd(ec.cleaningRevenueVendor || 0) + '</td>' +
+          '<td style="' + S.td + ';text-align:right;color:#9ca3af">n/a</td>' +
+          '<td style="' + S.td + ';text-align:right;color:#9ca3af">—</td>' +
+          '<td style="' + S.td + ';text-align:right;color:#9ca3af">—</td>' +
+          '<td style="' + S.td + ';color:#6b7280;font-size:11.5px">kept out of cost per clean and margins</td></tr>'
       // Layer 3: maintenance, on its own side of a divider.
       kpiRows += '<tr><td colspan="6" style="padding:6px 8px 2px;border-top:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Maintenance — tracked separately</td></tr>'
       kpiRows += kpiRow('Maintenance', K.maintenance.tasksBilled + ' tasks billed · ' + hoursTxt(K.maintenance.hours),
