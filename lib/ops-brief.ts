@@ -767,6 +767,18 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     if (variant === 'full') {
       const ec = await laborEconomics({ from: yd, to: yd, market: 'all' })
       const K = ec.kpi
+      // HONESTY GATE (Jon, 2026-08-17: "I just want this to be so accurate"). If Homebase failed to
+      // return any timecard week, payroll is understated and every margin below would be a quiet
+      // lie — a $24 cost per clean that looks perfectly normal. So when the audit says incomplete,
+      // the card says THAT, loudly, and prints no payroll-derived numbers at all.
+      if (ec.payrollAudit && !ec.payrollAudit.complete) {
+        crewCard = card('By the numbers — revenue vs payroll', null,
+          '<p style="margin:0;font-size:13px;line-height:1.6;color:#b91c1c"><b>Payroll data incomplete — numbers withheld.</b> ' +
+          'Homebase did not return ' + (ec.payrollAudit.failedWeeks.length === 1 && ec.payrollAudit.failedWeeks[0] === 'all' ? 'any timecards' : 'timecards for ' + esc(ec.payrollAudit.failedWeeks.join(', '))) +
+          ' after retries. Printing margins on partial payroll would understate labor cost, so this card is blank on purpose. ' +
+          'It will populate on the next run once Homebase responds.</p>', '#dc2626', `Yesterday · ${niceDay(yd)}`)
+        throw Object.assign(new Error('payroll incomplete'), { _handled: true })
+      }
       const usd = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
       const pctTxt = (n: number | null) => (n == null ? '—' : Math.round(n) + '%')
       const hoursTxt = (h: number) => (h > 0 ? String(Math.round(h * 10) / 10) + 'h' : '—')
