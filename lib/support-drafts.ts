@@ -55,6 +55,59 @@ async function guestyMarkSent(reservationId: string, building: string): Promise<
   } catch { /* best effort — the app record stands regardless */ }
 }
 
+// ── AUTO-DRAFT ON ARRIVAL DAY (Jon, 2026-08-17: "auto draft them for the day of arrival") ────
+// Every cron pass: for each of TODAY'S unsent notices with a configured recipient, create the
+// support@ Gmail draft — addressed, written, registration form attached when one is filed — so
+// the desk opens Gmail in the morning and the day's emails are already sitting in Drafts.
+//
+// Once per notice, never a stream of duplicates: a notice already in the watch list (draft still
+// sitting in Drafts) is skipped, and a draft that LEFT Drafts was marked sent by the sweep above,
+// which sets sent_at — also skipped. Deleting the draft in Gmail therefore counts as handled, not
+// as a request for another copy tomorrow.
+export async function autoDraftTodaysNotices(): Promise<{ considered: number; drafted: number; skipped: number; failed: number }> {
+  const { getSetting: gs } = await import('./app-settings')
+  const { RESERVATION_EMAILS_KEY, mergeProperties } = await import('./reservation-emails')
+  const { buildDraft } = await import('./reservation-draft')
+  const { createGmailDraft } = await import('./gmail-send')
+  const db = supabaseAdmin()
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  const { data: rows } = await db.from(TABLE)
+    .select('*').is('deleted_at', null).is('sent_at', null).eq('arrival_date', today).limit(60)
+  const notices = (rows || []) as any[]
+  if (!notices.length) return { considered: 0, drafted: 0, skipped: 0, failed: 0 }
+  const watch = await getSetting<DraftWatch[]>(KEY, []).catch(() => [] as DraftWatch[])
+  const watched: Record<string, boolean> = {}
+  for (const w of (Array.isArray(watch) ? watch : [])) if (w && w.nid) watched[w.nid] = true
+  let props: any[] = []
+  try { props = mergeProperties(await gs<any>(RESERVATION_EMAILS_KEY, null)) } catch { /* no config, nothing to draft */ }
+  let drafted = 0, skipped = 0, failed = 0
+  for (const n of notices) {
+    if (watched[String(n.id)]) { skipped++; continue }
+    const prop = props.find((x: any) => x.id === n.property_id)
+    if (!prop || !(prop.to || '').trim()) { skipped++; continue }
+    let d: any
+    try { d = buildDraft(prop, n) } catch { failed++; continue }
+    const to = String(d.to || '').split(/[,;]+/).map((x: string) => x.trim()).filter(Boolean)
+    const cc = String(d.cc || '').split(/[,;]+/).map((x: string) => x.trim()).filter(Boolean)
+    if (!to.length) { skipped++; continue }
+    const escT = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const html = '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.55;white-space:pre-wrap">' + escT(String(d.body || '')) + '</div>'
+    const attachments: { filename: string; content: Buffer; contentType: string }[] = []
+    if (n.doc_path) {
+      try {
+        const dl = await db.storage.from('reservation-docs').download(String(n.doc_path))
+        if (dl.data) attachments.push({ filename: String(n.doc_name || 'registration-form.pdf'), content: Buffer.from(await dl.data.arrayBuffer()), contentType: 'application/pdf' })
+      } catch { /* draft still goes; the board flags a missing form */ }
+    }
+    const r = await createGmailDraft({ fromEmail: SUPPORT_FROM, to, cc, subject: String(d.subject || ''), html, attachments: attachments.length ? attachments : undefined })
+    if (r.ok && r.id) {
+      await watchSupportDraft({ nid: String(n.id), draftId: r.id, at: new Date().toISOString(), to: to.join(', '), cc: cc.join(', '), subject: String(d.subject || ''), body: String(d.body || '') }).catch(() => null)
+      drafted++
+    } else failed++
+  }
+  return { considered: notices.length, drafted, skipped, failed }
+}
+
 /** Check every watched draft; mark the sent ones. Returns how many were closed out. */
 export async function checkSupportDrafts(): Promise<{ checked: number; markedSent: number }> {
   const cur = await getSetting<DraftWatch[]>(KEY, []).catch(() => [] as DraftWatch[])
