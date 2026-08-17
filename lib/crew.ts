@@ -56,6 +56,10 @@ export const DECLARED: Record<string, Dept> = {
   'Gehron Regis': 'maintenance',
   'Abel Guada': 'maintenance',
   'Ronnie': 'maintenance',
+  // Jon, 2026-08-17 ("Maintenance", answering which crew Oscar belongs on). He was the biggest
+  // biller outside any crew — $1,240 of maintenance charges in 30 days that vanished from the
+  // maintenance line because he was unrostered. His wages and his billables both land here now.
+  'Oscar Arciniegas': 'maintenance',
   // Office / not on a field crew. Named so a stray Breezeway task in someone's name never
   // drags the owner or an agency label into a crew's payroll and margin.
   'Jon McGill': 'other',
