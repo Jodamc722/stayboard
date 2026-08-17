@@ -146,7 +146,12 @@ export type LaborEcon = {
   people: PersonEcon[]
   departments: DeptEcon[]
   cleans: number
+  /** NET of the channel's commission on the cleaning fee — what we actually keep. */
   cleaningRevenue: number
+  /** What the guests were charged, before the channel's cut. */
+  cleaningRevenueGross: number
+  /** The channel's cut on the cleaning fees: gross - net. */
+  channelCut: number
   /** Of that, the part tied to a named person via their departure clean. */
   cleaningRevenueAttributed: number
   /** The rest: a checkout whose clean we could not match to anybody. Shown, never hidden —
@@ -349,7 +354,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   // ── cleaning fees: one checkout, one clean, one fee ──────────────────────
   const resRowsAll = await pageAll((a, b) => sb.from('guesty_reservations')
-    .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission')
+    .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
     .gte('check_out', from).lte('check_out', to)
     .not('status', 'in', '("canceled","cancelled","declined")').range(a, b))
 
@@ -369,6 +374,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // took hours and still belongs in the denominator — it just earned no attributed revenue.
   const feeByTask: Record<string, number> = {}
   let cleaningInhouse = 0, cleaningVendor = 0, managementFee = 0
+  // Gross guest cleaning fees before the channel's cut — kept so the brief can show what the OTAs
+  // take off the top, while every margin below runs on the net figure.
+  let cleaningGrossAll = 0
   let cleansAttributed = 0, vendorCleans = 0
   // Where a fee ended up, so nothing can quietly vanish: credited to a person, matched to a clean
   // nobody closed, matched to a clean with no assignee, or no clean found at all.
@@ -390,7 +398,22 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const coNext = dISO(addDays(new Date(co + 'T12:00:00Z'), 1))
     const li = lmap[String(r.listing_id)]
     const vendor = !!li?.vendor
-    const fee = num(r.cleaning) ?? 0
+    // WHAT WE ACTUALLY NET ON THE CLEAN, NOT WHAT THE GUEST WAS CHARGED (Jon, 2026-08-17: "the
+    // clean cost should be based on what actual guests pay for a clean... or what we actually net").
+    // The channel takes its host-side commission off the WHOLE payout, cleaning fee included, and
+    // the rate is wildly different by channel — Airbnb ~3%, Booking/Expedia ~15%. So the cleaning
+    // fee carries its share: fee - hostServiceFee x (fee / (accommodation + fee)).
+    // hostServiceFee is the OTA cut and net = gross - fee is the same convention lib/owner-report.ts
+    // uses on owner statements, so the labor board and the statements net the same way. (Guesty's
+    // own `netIncome` is NOT used — on Airbnb rows it subtracts hostServiceFee twice.)
+    // `commission` is OUR management fee, not the channel's, and is never netted off here.
+    const feeGross = num(r.cleaning) ?? 0
+    const chFee = Math.max(0, num(r.channelFee) ?? 0)
+    const payoutBase = (num(r.grossFare) ?? 0) + feeGross
+    const fee = payoutBase > 0 && chFee > 0
+      ? round2(Math.max(0, feeGross - chFee * (feeGross / payoutBase)))
+      : feeGross
+    cleaningGrossAll = round2(cleaningGrossAll + (inMarketListing(r.listing_id) ? feeGross : 0))
     // Totals stay scoped to the tab; the fee-to-clean matching below does not.
     const inMk = inMarketListing(r.listing_id)
     if (inMk) managementFee += num(r.commission) ?? 0
@@ -635,10 +658,21 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // nothing measurable, so it cannot sit in a denominator that divides revenue.
     .filter(r => r.fee > 0) as { who: string; market: string; fee: number; charged: boolean }[]
 
-  // cleans + revenue, from the clean rows, housekeepers only
+  // DEPARTURE CLEANS ONLY IN COST PER CLEAN (Jon, 2026-08-17: "just departure").
+  // A turnover and a linen refresh are different jobs at different prices; averaging them produced
+  // a "cost per clean" that answered no question. So the headline denominator is the guest-paid
+  // DEPARTURE clean and nothing else, and charged cleaning tasks — mid-stays, refreshes, re-cleans
+  // — are totalled on their own line below. Both are real revenue; only one is a turnover.
   const hkCleansByPerson: Record<string, Record<string, number>> = {}
+  let chargedCleanCount = 0, chargedCleanRevenue = 0
   for (const rec of cleanRecs) {
     if (!hkNames[rec.who]) continue
+    if (rec.charged) {
+      // Extra paid cleaning work. Counted as revenue, never as a turnover.
+      chargedCleanCount++
+      chargedCleanRevenue = round2(chargedCleanRevenue + rec.fee)
+      continue
+    }
     const b = bucketFor(rec.market)
     b.cleans++
     b.cleaningRevenue = round2(b.cleaningRevenue + rec.fee)
@@ -786,22 +820,33 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     note: 'maintenance-department tasks with a charge, split by whether the person is on the maintenance crew',
   }
 
+  // hkRevenue is DEPARTURE-clean revenue, net of the channel's cut. Charged cleaning tasks are a
+  // separate line (hkCharged) so they never move cost per clean, but they ARE added back into the
+  // staff/all-in totals — the money is real, it just is not a turnover.
   const hkRevenue = round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0))
   const insp = byDept['inspection']
-  const hkCharged = round2(cleanRecs.filter(r => r.charged && hkNames[r.who]).reduce((a, r) => a + r.fee, 0))
-  const staffRevenue = round2(hkRevenue + mt.cleaningRevenue + mt.billableRevenue + insp.billableRevenue)
+  const hkCharged = chargedCleanRevenue
+  const staffRevenue = round2(hkRevenue + hkCharged + mt.cleaningRevenue + mt.billableRevenue + insp.billableRevenue)
   const staffPayroll = round2(hkPayrollInHouse + mt.payroll + insp.payroll)
+  const hkAllRevenue = round2(hkRevenue + hkCharged)
   const kpi = {
     housekeeping: {
-      cleans: hkCleansInHouse,
-      revenue: hkRevenue,
-      cleaningFees: round2(hkRevenue - hkCharged),
+      cleans: hkCleansInHouse,                       // departure cleans only
+      revenue: hkRevenue,                            // net departure-clean fees
+      cleaningFees: hkRevenue,
+      basisNote: 'departure cleans, net of the channel commission on the cleaning fee',
+      // Gross guest cleaning fees before the OTA cut, so the difference is visible.
+      revenueGross: cleaningGrossAll,
+      channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),
+      // Paid cleaning work that is NOT a turnover — mid-stays, linen refreshes, re-cleans.
       chargedCleans: hkCharged,
+      chargedCleanCount,
+      revenueWithCharged: hkAllRevenue,
       payroll: hkPayrollInHouse,
       hours: hkHoursInHouse,
-      margin: round2(hkRevenue - hkPayrollInHouse),
-      marginPct: pct(hkRevenue - hkPayrollInHouse, hkRevenue),
-      laborPct: pct(hkPayrollInHouse, hkRevenue),
+      margin: round2(hkAllRevenue - hkPayrollInHouse),
+      marginPct: pct(hkAllRevenue - hkPayrollInHouse, hkAllRevenue),
+      laborPct: pct(hkPayrollInHouse, hkAllRevenue),
       costPerClean, hoursPerClean,
       revPerClean: hkCleansInHouse > 0 ? round2(hkRevenue / hkCleansInHouse) : null,
     },
@@ -978,6 +1023,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     vendorWork,
     cleans: cleansTotal,
     cleaningRevenue,
+    // Gross guest cleaning fees before the channel took its cut, and the cut itself. Every margin
+    // above runs on the NET number; these two exist so the difference is never invisible.
+    cleaningRevenueGross: cleaningGrossAll,
+    channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),
     cleaningRevenueAttributed: attributedRev,
     cleaningRevenueUnattributed: round2(cleaningRevenue - attributedRev),
     cleaningRevenueVendor: round2(cleaningVendor),
