@@ -811,6 +811,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
           ' finished with no cost entered</b> — that work bills nothing until someone types the charge in Breezeway.')
       if (ec.cleaningRevenueUnattributed > 0)
         acts.push('<b>' + usd(ec.cleaningRevenueUnattributed) + ' of cleaning fees</b> could not be matched to a person&rsquo;s clean — check Breezeway assignees.')
+      // Charged maintenance work closed by people who are not on the maintenance crew. It is real
+      // revenue that never reaches the maintenance line, so the margin below reads worse than the
+      // department actually did. Naming them is the whole point — one crew_roles entry fixes it.
+      if (K.maintenance.billedOutsideCrew > 0)
+        acts.push('<b>' + usd(K.maintenance.billedOutsideCrew) + ' of maintenance charges</b> were billed by people not on the maintenance crew (' +
+          (K.maintenance.outsideDetail || []).slice(0, 3).map((o: any) => esc(String(o.name)) + ' ' + usd(o.amount)).join(', ') +
+          ') — maintenance margin is understated until they are on the roster.')
       if (ec.vendorWork && ec.vendorWork.ourTaskCount > 0)
         acts.push('<b>' + ec.vendorWork.ourTaskCount + ' job' + (ec.vendorWork.ourTaskCount === 1 ? '' : 's') +
           ' our crew did on vendor-managed units</b>' + (ec.vendorWork.unbilled > 0 ? ' — ' + ec.vendorWork.unbilled + ' billed to nobody.' : '.'))
