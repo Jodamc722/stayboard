@@ -66,6 +66,114 @@ const KIND_CLS: Record<Exc['kind'], string> = {
   guest: 'bg-pink-100 text-pink-700', unassigned: 'bg-amber-100 text-amber-800', idle: 'bg-violet-100 text-violet-700',
 }
 
+/** One definition of "needs a human", shared by the ops board and Command Center. */
+function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[], staff: Staffing | null | undefined): Exc[] {
+  const out: Exc[] = []
+  const behindBy: Record<string, BehindRow> = {}
+  for (const b of (data?.behind?.units || [])) behindBy[b.unit] = b
+
+  for (const u of units) {
+    if (u.allDone) continue
+    const open = u.tasks.filter(t => !t.done && !t.guestyOnly)
+    const clean = open.find(t => t.type === 'departure_clean' || t.type === 'deep_clean')
+    const b = behindBy[u.unit]
+    if (u.sameDayTurn) {
+      out.push({
+        key: 'turn:' + u.listingId, kind: 'turn', rank: 0, who: u.unit,
+        what: 'Guest arriving today' + (b?.arrivingAt ? ' at ' + b.arrivingAt : '') +
+          (clean ? (clean.running ? ' · clean in progress' : clean.assignees.length ? ' · clean not started (' + clean.assignees.join(', ') + ')' : ' · clean not started, nobody on it') : ' · open work remains'),
+        taskId: clean?.id, dept: clean?.dept || 'housekeeping', assignee: clean?.assignees[0] || null,
+      }); continue
+    }
+    if (u.late) {
+      const t = open.find(x => x.late) || clean
+      out.push({
+        key: 'late:' + u.listingId, kind: 'late', rank: 1, who: u.unit,
+        what: (b?.checkOutTime ? 'Out ' + b.checkOutTime + ' · ' : '') + (t ? t.name : 'departure clean') +
+          (t && t.assignees.length ? ' · ' + t.assignees.join(', ') + ' assigned, not started' : ' · unassigned'),
+        taskId: t?.id, dept: t?.dept || 'housekeeping', assignee: t?.assignees[0] || null,
+      }); continue
+    }
+    if (u.unassigned) {
+      const t = open.find(x => x.assignees.length === 0)
+      out.push({
+        key: 'un:' + u.listingId, kind: 'unassigned', rank: 3, who: u.unit,
+        what: (t ? t.name : 'open work') + (u.guestOut ? ' · guest leaves ' + u.guestOut : ''),
+        taskId: t?.id, dept: t?.dept || 'housekeeping',
+      })
+    }
+  }
+  for (const g of glitches) {
+    out.push({
+      key: 'gl:' + g.id, kind: 'guest', rank: g.unassigned ? 2 : 4, who: g.unit,
+      what: '“' + g.issue + '”' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '') +
+        (g.unassigned ? ' · unassigned' : (g.assignees && g.assignees.length ? ' · ' + g.assignees.join(', ') + (g.running ? ' on it' : '') : '')),
+      taskId: g.id, dept: 'maintenance', assignee: (g.assignees || [])[0] || null,
+    })
+  }
+  for (const n of (staff?.summary?.idleNames || [])) {
+    out.push({ key: 'idle:' + n, kind: 'idle', rank: 3, who: n, what: 'Clocked in, nothing assigned in Breezeway' })
+  }
+  return out.sort((a, b) => a.rank - b.rank || a.who.localeCompare(b.who))
+}
+
+/**
+ * NEEDS A HUMAN, on Mission Control (Jon, 2026-08-14). The same list the ops board leads with —
+ * same fetches (shared 30s cache, so bouncing between the two pages costs one request), same rows,
+ * same inline Assign. Renders NOTHING when the day is clean: Mission Control is a priority feed,
+ * and an empty all-clear box would just push real work down the page.
+ */
+export function NeedsHumanPanel() {
+  const { data, refresh } = useCachedFetch<OpsData>('/api/ops-today')
+  const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
+  const { data: staff } = useCachedFetch<Staffing>('/api/ops-today/staffing')
+  const [roster, setRoster] = useState<Roster[]>([])
+  const [assignFor, setAssignFor] = useState('')
+  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+
+  const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
+  const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
+  const excs = useMemo(() => buildExcs(data, units, glitches, staff), [data, units, glitches, staff])
+  if (!excs.length) return null
+
+  const shown = excs.slice(0, 8)
+  return (
+    <div className="rounded-2xl border border-rose-200 bg-white overflow-hidden">
+      <div className="px-4 py-2.5 bg-rose-50/70 border-b border-rose-200 flex items-center gap-2">
+        <AlertTriangle size={14} className="text-rose-700" />
+        <span className="text-[13px] font-bold text-rose-800">Needs a human — {excs.length}</span>
+        <Link href="/plan" className="ml-auto text-[12px] font-semibold text-rose-700 hover:underline">Open the board →</Link>
+      </div>
+      <div className="divide-y divide-line">
+        {shown.map(e => (
+          <div key={e.key} className="px-4 py-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className={'text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[70px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
+              <span className="text-[13px] font-bold text-ink shrink-0">{e.who}</span>
+              <span className="text-[12.5px] text-ink/70 flex-1 min-w-[160px]">{e.what}</span>
+              {e.kind === 'idle' ? (
+                <Link href="/plan" className="text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg bg-ink text-white shrink-0">Give work</Link>
+              ) : e.taskId && !e.assignee ? (
+                <button onClick={() => setAssignFor(assignFor === e.key ? '' : e.key)}
+                  className={'text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 ' + (assignFor === e.key ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>Assign</button>
+              ) : e.taskId ? (
+                <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer"
+                  className="text-[11.5px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app shrink-0">{e.assignee ? e.assignee.split(' ')[0] : 'Open'}</a>
+              ) : null}
+            </div>
+            {assignFor === e.key && e.taskId && (
+              <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster} onDone={() => { setAssignFor(''); refresh() }} />
+            )}
+          </div>
+        ))}
+        {excs.length > shown.length && (
+          <Link href="/plan" className="block px-4 py-2 text-[12px] font-semibold text-muted hover:text-ink">+ {excs.length - shown.length} more on the board</Link>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function OpsV2() {
   // The three fetches the summary needs. Cached (30s) so tab flips are instant, and so the full
   // board opening underneath does not mean the page paid for the data twice in a row.
@@ -91,58 +199,10 @@ export function OpsV2() {
 
   // ── THE EXCEPTIONS, MERGED AND RANKED ─────────────────────────────────────────────────────────
   // Five mechanisms used to answer "what needs a human" in five idioms (behind band, glitch panel,
-  // needs-attention group, signal chips, staffing block). One list now, worst first. Dedupe: a unit
-  // that is late AND unassigned is one row that says both, not two rows.
-  const excs: Exc[] = useMemo(() => {
-    const out: Exc[] = []
-    const seen = new Set<string>()
-    const behindBy: Record<string, BehindRow> = {}
-    for (const b of (data?.behind?.units || [])) behindBy[b.unit] = b
-
-    for (const u of units) {
-      if (u.allDone) continue
-      const open = u.tasks.filter(t => !t.done && !t.guestyOnly)
-      const clean = open.find(t => t.type === 'departure_clean' || t.type === 'deep_clean')
-      const b = behindBy[u.unit]
-      if (u.sameDayTurn) {
-        out.push({
-          key: 'turn:' + u.listingId, kind: 'turn', rank: 0, who: u.unit,
-          what: 'Guest arriving today' + (b?.arrivingAt ? ' at ' + b.arrivingAt : '') +
-            (clean ? (clean.running ? ' · clean in progress' : clean.assignees.length ? ' · clean not started (' + clean.assignees.join(', ') + ')' : ' · clean not started, nobody on it') : ' · open work remains'),
-          taskId: clean?.id, dept: clean?.dept || 'housekeeping', assignee: clean?.assignees[0] || null,
-        }); seen.add(u.listingId); continue
-      }
-      if (u.late) {
-        const t = open.find(x => x.late) || clean
-        out.push({
-          key: 'late:' + u.listingId, kind: 'late', rank: 1, who: u.unit,
-          what: (b?.checkOutTime ? 'Out ' + b.checkOutTime + ' · ' : '') + (t ? t.name : 'departure clean') +
-            (t && t.assignees.length ? ' · ' + t.assignees.join(', ') + ' assigned, not started' : ' · unassigned'),
-          taskId: t?.id, dept: t?.dept || 'housekeeping', assignee: t?.assignees[0] || null,
-        }); seen.add(u.listingId); continue
-      }
-      if (u.unassigned) {
-        const t = open.find(x => x.assignees.length === 0)
-        out.push({
-          key: 'un:' + u.listingId, kind: 'unassigned', rank: 3, who: u.unit,
-          what: (t ? t.name : 'open work') + (u.guestOut ? ' · guest leaves ' + u.guestOut : ''),
-          taskId: t?.id, dept: t?.dept || 'housekeeping',
-        }); seen.add(u.listingId)
-      }
-    }
-    for (const g of glitches) {
-      out.push({
-        key: 'gl:' + g.id, kind: 'guest', rank: g.unassigned ? 2 : 4, who: g.unit,
-        what: '“' + g.issue + '”' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '') +
-          (g.unassigned ? ' · unassigned' : (g.assignees && g.assignees.length ? ' · ' + g.assignees.join(', ') + (g.running ? ' on it' : '') : '')),
-        taskId: g.id, dept: 'maintenance', assignee: (g.assignees || [])[0] || null,
-      })
-    }
-    for (const n of (staff?.summary?.idleNames || [])) {
-      out.push({ key: 'idle:' + n, kind: 'idle', rank: 3, who: n, what: 'Clocked in, nothing assigned in Breezeway' })
-    }
-    return out.sort((a, b) => a.rank - b.rank || a.who.localeCompare(b.who))
-  }, [units, glitches, staff, data])
+  // needs-attention group, signal chips, staffing block). One list now, worst first. Extracted to
+  // buildExcs so Command Center renders the SAME list (Jon, 2026-08-14: "Command center should
+  // show... needs a human section") — one definition of urgent, two doors to it.
+  const excs: Exc[] = useMemo(() => buildExcs(data, units, glitches, staff), [units, glitches, staff, data])
 
   const onTrack = units.filter(u => !u.allDone).length - new Set(excs.filter(e => e.kind !== 'idle' && e.kind !== 'guest').map(e => e.who)).size
   const finished = units.filter(u => u.allDone).length
