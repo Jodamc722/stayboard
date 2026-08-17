@@ -105,7 +105,24 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   const [editing, setEditing] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [openDraft, setOpenDraft] = useState<string | null>(null)
+  // "Add to drafts" — one click puts this email into support@'s Gmail Drafts (Jon, 2026-08-17).
+  const [draftBusy, setDraftBusy] = useState<string | null>(null)
+  const [drafted, setDrafted] = useState<Record<string, boolean>>({})
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
+
+  async function addToDrafts(id: string, d: { to: string; cc: string; subject: string; body: string }) {
+    setDraftBusy(id); setErr(null)
+    try {
+      const r = await fetch('/api/reservation-notices/draft', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: d.to, cc: d.cc, subject: d.subject, body: d.body }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not create the draft.')
+      setDrafted(x => ({ ...x, [id]: true }))
+      setMsg(`Draft created in ${j.from} — attach the form there and send.`)
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setDraftBusy(null) }
+  }
   const [pulling, setPulling] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
@@ -603,7 +620,15 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                     <pre className="px-3 py-2 text-[12px] whitespace-pre-wrap font-sans text-ink">{body}</pre>
                     <div className="px-3 py-2 border-t border-line flex items-center gap-2 flex-wrap">
                       {!sentCopy && r.draft && (
-                        <a href={r.draft.mailto} className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg ' + (r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted pointer-events-none opacity-50')}>
+                        <button onClick={() => addToDrafts(r.id, { to, cc, subject, body })} disabled={!r.hasRecipient || draftBusy === r.id}
+                          title="Creates a ready-to-send draft in support@stay-hospitality.com's Gmail"
+                          className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg ' + (drafted[r.id] ? 'border border-emerald-300 text-emerald-700 bg-emerald-50' : r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted opacity-50 cursor-not-allowed')}>
+                          {draftBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : drafted[r.id] ? <Check size={13} /> : <Mail size={13} />}
+                          {drafted[r.id] ? 'In support@ drafts' : 'Add to drafts'}
+                        </button>
+                      )}
+                      {!sentCopy && r.draft && (
+                        <a href={r.draft.mailto} className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line ' + (r.hasRecipient ? 'text-muted hover:text-ink' : 'text-muted pointer-events-none opacity-50')}>
                           <Mail size={13} /> Open in mail app
                         </a>
                       )}
