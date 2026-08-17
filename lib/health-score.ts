@@ -161,7 +161,9 @@ function recencyWeight(created_at?: string | null): number {
 }
 
 /* ----------------------------- recurring issues --------------------------- */
-const THEMES: Record<string, string[]> = {
+// Exported so the daily brief names faults exactly the way the Health score penalises them — one
+// dictionary, so "A/C & climate" means the same thing in an email and on the board.
+export const REVIEW_THEMES: Record<string, string[]> = {
   Cleanliness: ['dirty', 'not clean', "wasn't clean", 'unclean', 'filthy', 'stain', 'dusty', 'smell', 'odor', 'mold', 'mildew', 'trash'],
   'A/C & climate': ['a/c', 'ac was', 'air condition', 'too hot', 'no cold', 'hvac', 'heat not', "didn't cool", 'broken ac'],
   WiFi: ['wifi', 'wi-fi', 'internet', 'no signal', 'no service', 'connection'],
@@ -249,7 +251,7 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
     if (!text || !neg) return
     const mo = monthsSince(r.created_at)
     if (mo != null && mo > 12) return
-    for (const [theme, kws] of Object.entries(THEMES)) if (kws.some(k => text.includes(k))) themeHits[theme] = (themeHits[theme] || 0) + 1
+    for (const [theme, kws] of Object.entries(REVIEW_THEMES)) if (kws.some(k => text.includes(k))) themeHits[theme] = (themeHits[theme] || 0) + 1
   })
   let penalty = 0
   const recurring: string[] = []
