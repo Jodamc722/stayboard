@@ -617,8 +617,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
     margin: number; marginPct: number | null; people: number
   }
+  // 'vendor-inhouse' is OUR crew cleaning inside a vendor-managed building — our hours, our cost,
+  // and revenue that belongs in housekeeping (Jon: "if HK gets rev for outside cleaning it should be
+  // added to the rev"). 'vendor' is the opposite: the vendor's own cleaners, so it carries revenue
+  // and a clean count but never a cost per clean. Spelled out because "Vendor-inhouse" read as noise.
+  const BUCKET_LABEL: Record<string, string> = {
+    'vendor-inhouse': 'Vendor bldgs · our crew',
+    vendor: 'Vendor-cleaned',
+    unassigned: 'Unassigned unit',
+  }
   const mkBucket = (key: string, inHouse: boolean): Bucket => ({
-    key, label: key.charAt(0).toUpperCase() + key.slice(1), inHouse,
+    key, label: BUCKET_LABEL[key] || (key.charAt(0).toUpperCase() + key.slice(1)), inHouse,
     cleans: 0, cleaningRevenue: 0, payroll: 0, hours: 0,
     laborCostPerClean: null, hoursPerClean: null, feePerClean: null,
     margin: 0, marginPct: null, people: 0,
@@ -865,6 +874,31 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       taskBillables: maintAudit.taskBillables,
       billedOutsideCrew: maintAudit.billedOutsideCrew,
       outsideDetail: maintAudit.outsideDetail,
+    },
+    // ── LAYER 2: HOUSEKEEPING WITH SUPERVISION LOADED ON ──────────────────
+    // Jon, 2026-08-17: "cost per clean is # of cleans and payroll to get cost per DEPARTURE clean.
+    // We can then take payroll and rev to get profit margins for HK, then supervisor added in, and
+    // then keep maintenance separate."
+    //
+    // Layer 1 (housekeeping above) is what the cleaners themselves cost and earned. Layer 2 is the
+    // same revenue carrying the supervisors too — the FULLY LOADED cost of turning a unit, because
+    // you cannot run the cleaners without the people who inspect and dispatch them. Both are true;
+    // they answer different questions. Layer 1 says whether the cleaning line works. Layer 2 says
+    // whether the housekeeping OPERATION works.
+    // Maintenance is deliberately in neither — it has its own revenue, its own crew and its own
+    // margin, and blending it into a housekeeping ratio hides both.
+    housekeepingLoaded: {
+      cleans: hkCleansInHouse,
+      revenue: hkAllRevenue,
+      payroll: round2(hkPayrollInHouse + sup.payroll),
+      hours: round2(hkHoursInHouse + sup.hours),
+      supervisorPayroll: sup.payroll,
+      margin: round2(hkAllRevenue - hkPayrollInHouse - sup.payroll),
+      marginPct: pct(hkAllRevenue - hkPayrollInHouse - sup.payroll, hkAllRevenue),
+      laborPct: pct(hkPayrollInHouse + sup.payroll, hkAllRevenue),
+      // The fully loaded cost of a departure clean: cleaners + supervision over the same turnovers.
+      costPerClean: hkCleansInHouse > 0 ? round2((hkPayrollInHouse + sup.payroll) / hkCleansInHouse) : null,
+      basis: 'housekeeping + supervision vs housekeeping revenue — the loaded cost of a turnover',
     },
     // Everyone whose pay should move with the work. Supervisors excluded on purpose.
     staff: {
