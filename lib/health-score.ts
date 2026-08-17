@@ -43,7 +43,7 @@ export type ListingHealth = {
   unrated: boolean
   optimizeScore: number
   breakdown: { rating: number; volume: number; response: number; penalty: number; ops: number; setup: number }
-  review: { avgStars: number | null; recencyQuality: number | null; count: number; ratedCount: number; lowConfidence: boolean; responseRate: number | null; recurring: string[]; topIssue: string | null }
+  review: { avgStars: number | null; weightedStars: number | null; recencyQuality: number | null; count: number; ratedCount: number; lowConfidence: boolean; responseRate: number | null; recurring: string[]; topIssue: string | null }
   channels: ChannelHealth[]
   issues: Issue[]
 }
@@ -86,6 +86,46 @@ function channelKey(c?: string | null): ChannelKey {
   return 'other'
 }
 const CHANNEL_LABEL: Record<ChannelKey, string> = { airbnb: 'Airbnb', vrbo: 'Vrbo', bookingcom: 'Booking.com', expedia: 'Expedia', other: 'Other' }
+
+/* --------------------- channel weighting by booking volume ------------------ */
+// Jon 2026-08-17: "for health score, airbnb should rate much higher in scoring — most of our volume
+// of booking is airbnb so our health score on that channel is most important. If airbnb is at 100,
+// bad booking or vrbo scores should not impact the score all that much."
+//
+// So a review is no longer worth the same everywhere. Each review's weight is multiplied by its
+// channel's share of ACTUAL BOOKING VOLUME, normalized so the biggest channel = 1.0 and floored at
+// CHANNEL_FLOOR so a small channel still registers rather than being silently deleted. With a
+// ~85/8/5 Airbnb/Booking/Vrbo mix that makes one Booking review worth ~0.15 of an Airbnb review:
+// visible, but unable to drag a perfect Airbnb listing out of the Elite band.
+//
+// Two places this is applied and one where it deliberately is NOT:
+//   applied  → the recency-weighted rating-quality component (A1), the biggest single input
+//   applied  → the sub-4.0 "OTA removal risk" gate, which otherwise let 3 bad Booking reviews cap
+//              an Airbnb-perfect unit at 55
+//   NOT applied → the recurring-complaint penalty. A guest reporting roaches or a dead A/C is an ops
+//              fact regardless of which site they booked on; those stay worth full value.
+// Per-OTA channel scores are of course unaffected — each channel is still scored on its own reviews.
+export type ChannelMix = Partial<Record<ChannelKey, number>>
+// Fallback mix (bookings per channel) when a caller doesn't supply live volume. Approximates the
+// Stay Hospitality book of business; callers that can measure it should pass the real numbers.
+export const DEFAULT_CHANNEL_MIX: Record<ChannelKey, number> = { airbnb: 85, bookingcom: 7, vrbo: 4, expedia: 2, other: 2 }
+const CHANNEL_FLOOR = 0.15
+// Map a Guesty reservation `source` to the same ChannelKey the reviews use, so a booking mix built
+// from reservations lines up with the channels reviews arrive on.
+export function channelKeyOfSource(source?: string | null): ChannelKey { return channelKey(source) }
+export function channelWeights(mix?: ChannelMix | null): Record<ChannelKey, number> {
+  const keys: ChannelKey[] = ['airbnb', 'vrbo', 'bookingcom', 'expedia', 'other']
+  const vals: Record<ChannelKey, number> = { airbnb: 0, vrbo: 0, bookingcom: 0, expedia: 0, other: 0 }
+  let total = 0
+  keys.forEach(k => { const n = Math.max(0, Number((mix && mix[k]) ?? 0)); vals[k] = n; total += n })
+  if (total <= 0) keys.forEach(k => { vals[k] = DEFAULT_CHANNEL_MIX[k] })
+  let max = 0
+  keys.forEach(k => { if (vals[k] > max) max = vals[k] })
+  const out: Record<ChannelKey, number> = { airbnb: 1, vrbo: 1, bookingcom: 1, expedia: 1, other: 1 }
+  keys.forEach(k => { out[k] = max > 0 ? Math.max(CHANNEL_FLOOR, Math.min(1, vals[k] / max)) : 1 })
+  return out
+}
+
 // badge line (=80) and viability floor (=40) on a 0-5 star scale, per platform.
 const ANCHOR: Record<ChannelKey, { badge: number; floor: number; badgeName: string }> = {
   airbnb: { badge: 4.8, floor: 4.0, badgeName: 'Superhost 4.8' },
@@ -150,8 +190,11 @@ function rgiToScore(rgi: number): number {
 }
 
 /* ------------------------------ main entry -------------------------------- */
-export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null; revparIndex?: number | null; revpar?: number | null; priorMean?: number; priorC?: number }): ListingHealth {
+export function computeListingHealth(listing: any, reviews: HealthReview[], opts?: { openWork?: number; occIndex?: number | null; occPct?: number | null; revparIndex?: number | null; revpar?: number | null; priorMean?: number; priorC?: number; channelMix?: ChannelMix | null }): ListingHealth {
   const openWork = opts?.openWork ?? 0
+  // Channel weights from real booking volume (see ChannelMix above). Airbnb carries the book of
+  // business, so an Airbnb review moves the score far more than a Booking/Vrbo one.
+  const chW = channelWeights(opts?.channelMix)
   const optimizeScore = computeScore(listing, { isBeach: /beach/i.test(String(listing?.address_city || '')) }).overall
 
   const rated = reviews.filter(r => toStars(r.rating) != null)
@@ -161,15 +204,22 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
 
   // A1 recency-weighted normalized quality (cross-channel), then BAYESIAN-SHRUNK toward a prior.
   // Recency weighting mirrors how the OTAs rank (recent reviews dominate; Superhost uses a 12-mo window).
-  let wSum = 0, wqSum = 0, starSum = 0
+  let wSum = 0, wqSum = 0, starSum = 0, sWsum = 0, sWstar = 0
   rated.forEach(r => {
     const stars = toStars(r.rating)!
-    const q = normQuality(stars, channelKey(r.channel))
-    const w = recencyWeight(r.created_at)
+    const ck = channelKey(r.channel)
+    const q = normQuality(stars, ck)
+    // recency × channel booking-volume weight
+    const w = recencyWeight(r.created_at) * chW[ck]
     wSum += w; wqSum += w * q; starSum += stars
+    sWsum += chW[ck]; sWstar += chW[ck] * stars
   })
   const rawQuality = wSum > 0 ? wqSum / wSum : null
+  // Displayed average stays the plain arithmetic average — it is what a human means by "our rating".
   const avgStars = ratedCount ? Math.round((starSum / ratedCount) * 100) / 100 : null
+  // Volume-weighted average — used ONLY for the removal-risk gate below, so a handful of angry
+  // Booking reviews on a channel that supplies ~7% of bookings can't cap an Airbnb-strong unit.
+  const weightedStars = sWsum > 0 ? Math.round((sWstar / sWsum) * 100) / 100 : null
   // Bayesian shrinkage (IMDb/Algolia weighted-average): pull a listing's quality toward the portfolio
   // prior in proportion to how FEW reviews back it, so a 5.0 from 2 reviews doesn't outrank a 4.9 from
   // 200. shrunk = (q*n + priorMean*C) / (n + C). Prior defaults to ~4.7-star-equivalent quality (the
@@ -256,7 +306,10 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   const rawScore = Math.round(parts.reduce((s, p) => s + p.v * p.w, 0) / (pWSum || 1))
   // Removal-risk gate: a sub-4.0 average is the documented OTA suppression/removal zone — no amount of
   // listing optimization or occupancy should let such a unit read "healthy". Cap it into the risk band.
-  const score = (!unrated && avgStars != null && avgStars < 4.0) ? Math.min(rawScore, 55) : rawScore
+  // (Jon 2026-08-17) The gate now reads the BOOKING-VOLUME-WEIGHTED average, not the flat one: the
+  // removal risk it models is real on the channel that actually books the unit.
+  const gateStars = weightedStars ?? avgStars
+  const score = (!unrated && gateStars != null && gateStars < 4.0) ? Math.min(rawScore, 55) : rawScore
   const band = healthBand(score, false)
   const opsBand = healthBand(pillarOps ?? 0, unrated)
   const listingBand = healthBand(pillarListing, false)
@@ -320,7 +373,7 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
     },
     unrated, optimizeScore,
     breakdown: { rating: Math.round(A1), volume: Math.round(A2), response: Math.round(A3), penalty: Math.round(A4), ops: Math.round(A5), setup: Math.round(B) },
-    review: { avgStars, recencyQuality: recencyQuality != null ? Math.round(recencyQuality) : null, count, ratedCount, lowConfidence, responseRate: responseRate != null ? Math.round(responseRate * 100) : null, recurring, topIssue },
+    review: { avgStars, weightedStars, recencyQuality: recencyQuality != null ? Math.round(recencyQuality) : null, count, ratedCount, lowConfidence, responseRate: responseRate != null ? Math.round(responseRate * 100) : null, recurring, topIssue },
     channels, issues,
   }
 }
