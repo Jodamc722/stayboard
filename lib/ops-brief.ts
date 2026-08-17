@@ -916,6 +916,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Cost per clean counts DEPARTURE cleans only, against the guest cleaning fee ' +
         '<b>net of the channel&rsquo;s commission</b> — what we actually keep, not what the guest was charged' +
         (ec.channelCut > 0 ? ' (the channels took ' + usd(ec.channelCut) + ' off ' + usd(ec.cleaningRevenueGross) + ' of cleaning fees)' : '') + '. ' +
+        // The Expedia repair is an estimate, so it is stated rather than folded in quietly.
+        (ec.bundledFeeBackfill && ec.bundledFeeBackfill.checkouts > 0
+          ? '<b>' + ec.bundledFeeBackfill.checkouts + ' Expedia checkout' + (ec.bundledFeeBackfill.checkouts === 1 ? '' : 's') + '</b> arrived with the cleaning fee bundled into the room rate; ' +
+            usd(ec.bundledFeeBackfill.amount) + ' was split back out using each unit&rsquo;s usual fee, so those cleans count. '
+          : '') +
         'Other paid cleaning work is listed on its own row. Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
         'Supervisors are a fixed cost and are never divided into revenue.</p>', '#0891b2', `Yesterday · ${niceDay(yd)}`)
     }
