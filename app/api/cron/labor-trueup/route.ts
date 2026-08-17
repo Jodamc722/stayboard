@@ -144,6 +144,32 @@ export async function GET(req: NextRequest) {
           : '')
       : 'every matched clean sat on the checkout day or the morning after'
 
+    // ── THE THREE METRICS, FIRST (Jon, 2026-08-17): ────────────────────────
+    //   1. cost per clean — payroll ÷ departure cleans, with hours ÷ cleans beside it
+    //   2. housekeeping revenue ÷ labor — margin as a dollar figure AND a percentage.
+    //      Housekeeping revenue includes its billable work ("if housekeeping does billable work,
+    //      that should count as the revenue"): departure fees + charged cleaning tasks + our
+    //      cleans in vendor buildings.
+    //   3. the same revenue with supervisors loaded on — the housekeeping OPERATION.
+    //   Maintenance sits apart, its own department, never blended in.
+    const HL = K.housekeepingLoaded || null
+    const tile = (big: string, label: string, sub: string, color?: string) =>
+      '<td style="padding:10px 8px;text-align:center;vertical-align:top">' +
+      '<div style="font-size:22px;font-weight:800;color:' + (color || '#111827') + '">' + big + '</div>' +
+      '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:700;margin-top:2px">' + label + '</div>' +
+      (sub ? '<div style="font-size:11px;color:#9ca3af;margin-top:1px">' + sub + '</div>' : '') + '</td>'
+    const mTone = (n: number) => (n < 0 ? '#dc2626' : '#047857')
+    const headline =
+      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin:12px 0">' +
+      '<p style="margin:2px 4px 4px;font-size:13px;font-weight:700">The numbers that matter &middot; trailing 30 days</p>' +
+      '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
+      tile(money(K.housekeeping.costPerClean), 'Cost / clean', r1(K.housekeeping.hoursPerClean || 0) + 'h each &middot; ' + K.housekeeping.cleans + ' departure cleans') +
+      tile(money(K.housekeeping.margin), 'HK margin', money(K.housekeeping.revenue) + ' rev vs ' + money(K.housekeeping.payroll) + ' labor', mTone(K.housekeeping.margin)) +
+      tile(pctTxt(K.housekeeping.marginPct), 'HK margin %', 'incl. billable cleaning work', mTone(K.housekeeping.margin)) +
+      (HL ? tile(pctTxt(HL.marginPct), '+ Supervisors', money(HL.margin) + ' on ' + money(HL.payroll) + ' loaded labor &middot; ' + money(HL.costPerClean) + '/clean', mTone(HL.margin)) : '') +
+      tile(pctTxt(K.maintenance.marginPct), 'Maintenance', money(K.maintenance.revenue) + ' billed vs ' + money(K.maintenance.payroll) + ' &middot; separate dept', mTone(K.maintenance.margin)) +
+      '</tr></table></div>'
+
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">' +
       '<div style="max-width:720px;margin:0 auto;padding:18px">' +
       '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
@@ -151,6 +177,7 @@ export async function GET(req: NextRequest) {
       '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Labor true-up &mdash; last 30 days</p>' +
       '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + from + ' to ' + to +
       (prev ? ' &middot; compared with the run on ' + String(prev.takenAt).slice(0, 10) : ' &middot; first run, nothing to compare yet') + '</p></div>' +
+      headline +
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0">' +
       '<p style="margin:0 0 8px;font-size:13px;font-weight:700">What settled since the last true-up</p>' +
       '<table width="100%" cellspacing="0" cellpadding="0">' +
@@ -177,7 +204,14 @@ export async function GET(req: NextRequest) {
       '<td style="' + td + ';text-align:right">' + money(K.housekeeping.payroll) + '</td>' +
       '<td style="' + td + ';text-align:right">' + money(K.housekeeping.margin) + '</td>' +
       '<td style="' + td + ';text-align:right">' + pctTxt(K.housekeeping.marginPct) + '</td></tr>' +
-      '<tr><td style="' + td + '"><b>Maintenance</b><br><span style="color:#6b7280;font-size:11.5px">' + K.maintenance.tasksBilled +
+      (HL
+        ? '<tr><td style="' + td + '"><b>+ Supervisors</b><br><span style="color:#6b7280;font-size:11.5px">same revenue, supervision loaded on &middot; ' + money(HL.costPerClean) + ' loaded / clean</span></td>' +
+          '<td style="' + td + ';text-align:right">' + money(HL.revenue) + '</td>' +
+          '<td style="' + td + ';text-align:right">' + money(HL.payroll) + '</td>' +
+          '<td style="' + td + ';text-align:right">' + money(HL.margin) + '</td>' +
+          '<td style="' + td + ';text-align:right">' + pctTxt(HL.marginPct) + '</td></tr>'
+        : '') +
+      '<tr><td style="' + td + ';border-top:2px solid #111827"><b>Maintenance</b> <span style="color:#6b7280;font-size:11.5px">separate department</span><br><span style="color:#6b7280;font-size:11.5px">' + K.maintenance.tasksBilled +
         ' billed &middot; ' + K.maintenance.tasksNoCharge + ' with no charge entered</span></td>' +
       '<td style="' + td + ';text-align:right">' + money(K.maintenance.revenue) + '</td>' +
       '<td style="' + td + ';text-align:right">' + money(K.maintenance.payroll) + '</td>' +
