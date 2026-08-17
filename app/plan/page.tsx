@@ -1,176 +1,49 @@
 'use client'
-// Today in Ops — ONE page, no tabs. The live field board (with active guest glitches on it)
-// is the page; the 3-day improvement plan folds away underneath for when it's needed.
-import { useState } from 'react'
+// Today in Ops — v2 (Jon, 2026-08-14: "complete revamp", then "feels a bit busy, love the push
+// section" on the first draft).
+//
+// The page is now three tabs behind one sentence: BOARD (exceptions only, full board one tap
+// away), PEOPLE (the person axis — lanes, load, tap-to-push), PUSH (the suggestion queue,
+// promoted from a collapsed section to a destination). The heavy lifting lives in OpsV2;
+// TodayInOps is unchanged and mounts inside Board's "Show all".
+//
+// What left this page and where it went:
+//   • The 3-day improvement plan section — its engine now feeds the Push tab, which is the same
+//     content with the evidence attached and one-tap filing. The /api/ops-plan/daily endpoint is
+//     untouched, so nothing downstream moves.
+//   • LaborStrip — cost numbers are a report, not a landing-page instrument; it sits quietly at
+//     the bottom now rather than above the day's work.
+//   • AuditFollowUps stays: it renders nothing when there is nothing outstanding, and when it
+//     does render it IS an exception in the by-exception sense.
 import Link from 'next/link'
 import { Shell } from '@/components/Shell'
-import { useCachedFetch } from '@/lib/swr'
-import { OpsTaskPush } from '@/components/OpsTaskPush'
-import { TodayInOps } from '@/components/TodayInOps'
+import { OpsV2 } from '@/components/OpsV2'
 import { LaborStrip } from '@/components/LaborStrip'
 import { AuditFollowUps } from '@/components/AuditFollowUps'
-import { ClipboardList, Crown, MapPin, ChevronDown, AlertTriangle, Calendar, RefreshCw, Headset, Square } from 'lucide-react'
-
-type Push = { status: string; scheduledDate?: string | null; reportUrl?: string | null; actionTakenAt?: string | null; taskId?: string | null } | null
-type Evidence = { quote: string; channel: string; date: string; stars: number | null }
-type Task = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: Push; metric?: string | null; checklist?: string[]; evidence?: Evidence[] }
-type Unit = { listingId: string; listing: string; internalName?: string | null; building: string | null; market: string; tier: string; lux: boolean; score: number | null; band: string; topIssue: string | null; guest: string | null; nights: number | null; taskCount: number; tasks: Task[] }
-type Day = { date: string; label: string; unitCount: number; taskCount: number; units: Unit[] }
-type Data = { ok: boolean; generatedAt: string; days: Day[]; error?: string }
-
-const SEV: Record<string, string> = { critical: 'bg-rose-50 text-rose-700 border-rose-200', high: 'bg-orange-50 text-orange-700 border-orange-200', medium: 'bg-amber-50 text-amber-700 border-amber-200', low: 'bg-app text-muted border-line' }
-const CAT: Record<string, string> = {
-  'Guest feedback': 'bg-rose-50 text-rose-700', Cleanliness: 'bg-sky-50 text-sky-700', Maintenance: 'bg-amber-50 text-amber-700',
-  Inspection: 'bg-violet-50 text-violet-700', PM: 'bg-emerald-50 text-emerald-700', Access: 'bg-indigo-50 text-indigo-700',
-  'Guest experience': 'bg-fuchsia-50 text-fuchsia-700', Listing: 'bg-slate-100 text-slate-700', Ops: 'bg-app text-muted',
-}
-const catC = (c: string) => CAT[c] || 'bg-app text-muted'
+import { ClipboardList } from 'lucide-react'
 
 export default function OpsPlanPage() {
-  const [showPlan, setShowPlan] = useState(false)
   return (
     <Shell>
-      <header className="mb-5">
+      <header className="mb-4">
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
         <div className="flex items-center gap-3 flex-wrap mt-1">
           <h1 className="text-3xl font-bold text-ink tracking-tight">Today in Ops</h1>
           {/* Paper copy of the day for whoever is running the field. */}
-          <Link href="/plan/print" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5 text-muted hover:text-ink" title="Printable day sheet: arrivals, departures, owner stays, work orders, open issues and vacant units">Day sheet &rarr;</Link>
+          <Link href="/plan/print" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5 text-muted hover:text-ink"
+            title="Printable day sheet: arrivals, departures, owner stays, work orders, open issues and vacant units">
+            Day sheet &rarr;
+          </Link>
         </div>
-        <p className="text-sm text-muted mt-1">Live field board &mdash; cleans, maintenance, inspections and active guest glitches by market. Assign, reschedule, and see what needs attention.</p>
       </header>
 
-      <LaborStrip />
+      <OpsV2 />
 
-      <TodayInOps />
+      {/* Cleanliness follow-ups from audits — renders nothing when none are outstanding. */}
+      <div className="mt-6"><AuditFollowUps /></div>
 
-      {/* CLEANLINESS FROM AUDITS — renders nothing when there is none outstanding */}
-      <AuditFollowUps />
-
-      {/* 3-DAY IMPROVEMENT PLAN — folded away; loads only when opened */}
-      <section className="mt-8">
-        <button onClick={() => setShowPlan(!showPlan)} className="w-full rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-2 text-left hover:bg-app/50">
-          <Calendar size={15} className="text-muted" />
-          <span className="font-semibold text-ink text-sm">3-day improvement plan</span>
-          <span className="text-xs text-muted">per-unit prep from guest feedback, audits and PM &mdash; by checkout day</span>
-          <ChevronDown size={16} className={'ml-auto text-muted transition-transform ' + (showPlan ? 'rotate-180' : '')} />
-        </button>
-        {showPlan && <div className="mt-4"><ThreeDayPlan /></div>}
-      </section>
+      {/* Labor cost vs plan — reference material, below the fold on purpose. */}
+      <div className="mt-4"><LaborStrip /></div>
     </Shell>
-  )
-}
-
-function ThreeDayPlan() {
-  const { data, loading, error, refresh } = useCachedFetch<Data>('/api/ops-plan/daily')
-  const [open, setOpen] = useState<string | null>(null)
-  const [market, setMarket] = useState<'all' | 'Miami' | 'Broward' | 'North'>('all')
-  const [ccs, setCcs] = useState(false)  // include CCS (desk) work?
-  return (
-    <>
-
-
-      {data?.days && (
-        <div className="flex items-center gap-2 flex-wrap mb-4">
-          {(['all', 'Miami', 'Broward', 'North'] as const).map(m => (
-            <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m}</button>
-          ))}
-          <span className="mx-1 h-5 w-px bg-line" />
-          <button onClick={() => setCcs(c => !c)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border inline-flex items-center gap-1.5 ${ccs ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-muted border-line hover:text-ink'}`}><Headset size={13} /> CCS work {ccs ? 'on' : 'off'}</button>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Building the daily plan…</div>
-      ) : !data?.days ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-10 text-center">
-          <p className="text-sm text-rose-700">{data?.error || error || 'Could not load the plan. The data may still be syncing.'}</p>
-          <button onClick={() => refresh()} className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-rose-300 text-rose-700 bg-white hover:bg-rose-50"><RefreshCw size={12} /> Retry</button>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {data.days.map(day => {
-            const dayUnits = day.units
-              .filter(u => market === 'all' || u.market === market)
-              .map(u => ({ ...u, tasks: ccs ? u.tasks : u.tasks.filter(t => t.pushable) }))
-              .filter(u => u.tasks.length > 0)
-            const tCount = dayUnits.reduce((s, u) => s + u.tasks.length, 0)
-            return (
-            <section key={day.date}>
-              <div className="flex items-center gap-2 mb-2">
-                <h2 className="text-lg font-bold text-ink inline-flex items-center gap-1.5"><Calendar size={16} className="text-brand-600" /> {day.label}</h2>
-                <span className="text-[12px] text-muted">{day.date} · {dayUnits.length} units · {tCount} tasks</span>
-              </div>
-              {dayUnits.length === 0 ? (
-                <div className="rounded-2xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted">{market === 'all' ? 'No checkouts this day.' : `No ${market} checkouts this day.`}</div>
-              ) : (
-                <div className="space-y-2">
-                  {dayUnits.map(u => {
-                    const id = day.date + u.listingId
-                    const isOpen = open === id
-                    return (
-                      <div key={id} className={`rounded-2xl border bg-white overflow-hidden ${u.lux ? 'border-amber-200' : 'border-line'}`}>
-                        <button onClick={() => setOpen(isOpen ? null : id)} className="w-full text-left px-4 py-3 hover:bg-app/50 flex items-center gap-3">
-                          {u.score != null && <span className={`text-sm font-bold tabular-nums px-2 py-1 rounded-lg ${u.score >= 80 ? 'bg-emerald-50 text-emerald-700' : u.score >= 70 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{u.score}</span>}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-ink truncate flex items-center gap-1.5">{u.internalName && <span className="text-[10px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded shrink-0">{u.internalName}</span>}{u.listing}{u.lux && <span className="text-[10px] text-amber-700 bg-amber-50 px-1 rounded inline-flex items-center gap-0.5"><Crown size={9} className="text-amber-500" />Lux</span>}</div>
-                            <div className="text-[11px] text-muted flex flex-wrap gap-x-2.5 gap-y-0.5 mt-0.5">
-                              <span className="inline-flex items-center gap-1"><MapPin size={10} />{u.market}</span>
-                              {u.guest && <span>out: {u.guest}{u.nights ? ` · ${u.nights}n` : ''}</span>}
-                              {u.topIssue && <span className="text-rose-600 font-medium inline-flex items-center gap-1"><AlertTriangle size={10} />{u.topIssue}</span>}
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 px-1.5 py-1 rounded shrink-0">{u.tasks.length} tasks</span>
-                          <ChevronDown size={16} className={`text-muted shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                        </button>
-                        {isOpen && (
-                          <div className="px-4 pb-3 border-t border-line bg-app/30">
-                            <div className="space-y-1.5 pt-3">
-                              {u.tasks.map((t, k) => (
-                                <div key={k} className="relative bg-white border border-line rounded-lg px-3 py-2">
-                                  <div className="flex items-start gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${catC(t.category)}`}>{t.category}</span>
-                                        <span className="text-[13px] font-semibold text-ink">{t.title}</span>
-                                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[t.severity] || SEV.low}`}>{t.severity}</span>
-                                      </div>
-                                      {t.detail && <div className="text-[12px] text-muted mt-1">{t.detail}</div>}
-                                      {t.metric && <div className="text-[11px] font-semibold text-brand-700 bg-brand-50 inline-block px-1.5 py-0.5 rounded mt-1">{t.metric}</div>}
-                                      {!!(t.checklist && t.checklist.length) && (
-                                        <ul className="mt-1.5 space-y-0.5">
-                                          {t.checklist!.map((c, ci) => (
-                                            <li key={ci} className="text-[11px] text-ink/80 flex items-start gap-1.5"><Square size={11} className="mt-0.5 text-muted shrink-0" />{c}</li>
-                                          ))}
-                                        </ul>
-                                      )}
-                                      {!!(t.evidence && t.evidence.length) && (
-                                        <div className="mt-1.5 space-y-1">
-                                          <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">What guests said</div>
-                                          {t.evidence!.map((e, ei) => (
-                                            <div key={ei} className="text-[11px] text-muted border-l-2 border-rose-200 pl-2">&ldquo;{e.quote}&rdquo; <span className="text-[10px] text-muted/70">— {e.channel}{e.stars != null ? ` · ${e.stars}★` : ''}{e.date ? ` · ${e.date}` : ''}</span></div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <OpsTaskPush listingId={u.listingId} unitName={u.internalName || u.listing} task={t} />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            <Link href={`/listings/${u.listingId}`} className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:text-brand-800">Open unit</Link>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
-            )
-          })}
-        </div>
-      )}
-    </>
   )
 }
