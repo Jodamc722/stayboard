@@ -49,12 +49,31 @@ const TZ = 'America/New_York'
 const dISO = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 864e5)
 
-async function pageAll(q: (a: number, b: number) => any, pages = 8): Promise<any[]> {
+// PAGED READ — AND EVERY CALLER MUST ORDER.
+//
+// Jon, 2026-08-17: "I just want this to be so accurate." This function is where the accuracy was
+// leaking. Postgres LIMIT/OFFSET without ORDER BY has NO guaranteed row order: the planner may hand
+// back page 2 in a different arrangement than it implied on page 1, so rows get DUPLICATED across
+// pages or SKIPPED entirely. Every read here is >1000 rows, so it pages, so it was exposed.
+//
+// The symptom was running the same 30-day true-up three times inside an hour and getting three
+// different answers — 491, then 473, then 459 departure cleans over an IDENTICAL window, with the
+// Miami/Broward split swinging by 40+ cleans. That was never the operation changing. It was this.
+//
+// Every call site now orders by a unique key (id), which makes the page boundaries stable and the
+// whole computation reproducible: same window in, same number out, every time.
+async function pageAll(q: (a: number, b: number) => any, pages = 30): Promise<any[]> {
   const out: any[] = []
+  const seen: Record<string, boolean> = {}
   for (let p = 0; p < pages; p++) {
     const { data } = await q(p * 1000, p * 1000 + 999)
     if (!data?.length) break
-    out.push(...data)
+    // Belt and braces: even ordered, never let the same row land twice.
+    for (const row of data) {
+      const k = row && row.id != null ? String(row.id) : null
+      if (k) { if (seen[k]) continue; seen[k] = true }
+      out.push(row)
+    }
     if (data.length < 1000) break
   }
   return out
@@ -225,7 +244,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const [presets, crew, listingRows, timecards] = await Promise.all([
     getOpsPresets(),
     getCrew(),
-    pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city').range(a, b)),
+    pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city').order('id', { ascending: true }).range(a, b)),
     getTimecards(from, to).catch(() => [] as Timecard[]),
   ])
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
@@ -240,7 +259,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // ── the window's work + the money entered on it ───────────────────────────
   const taskRowsAll = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
     .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,total_minutes,rate_paid')
-    .gte('finished_at', from).lte('finished_at', to + 'T23:59:59').range(a, b))
+    .gte('finished_at', from).lte('finished_at', to + 'T23:59:59').order('id', { ascending: true }).range(a, b))
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
 
   // THE CLEAN A FEE BELONGS TO MAY SIT OUTSIDE THIS WINDOW (Jon, 2026-08-14: "sometimes you'll see
@@ -259,9 +278,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 7))
   const poolCols = 'id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,scheduled_date,status,total_minutes'
   const poolByFinish = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').range(a, b))
+    .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').order('id', { ascending: true }).range(a, b))
   const poolBySched = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select(poolCols).gte('scheduled_date', padFrom).lte('scheduled_date', padTo).range(a, b))
+    .select(poolCols).gte('scheduled_date', padFrom).lte('scheduled_date', padTo).order('id', { ascending: true }).range(a, b))
   const poolSeen: Record<string, boolean> = {}
   const cleanPool: any[] = []
   for (const t of poolByFinish.concat(poolBySched)) {
@@ -358,7 +377,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const resRowsAll = await pageAll((a, b) => sb.from('guesty_reservations')
     .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
     .gte('check_out', from).lte('check_out', to)
-    .not('status', 'in', '("canceled","cancelled","declined")').range(a, b))
+    .not('status', 'in', '("canceled","cancelled","declined")').order('id', { ascending: true }).range(a, b))
 
   // ── EXPEDIA CLEANING BACK-FILL ───────────────────────────────────────────
   // Expedia-family channels bundle the cleaning fee INTO the accommodation fare, so the reservation
@@ -493,12 +512,22 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       b.fees = round2(b.fees + p.fee); b.checkouts++
     }
   }
+  // ORDER OF CLAIMING IS PART OF THE ANSWER, SO IT IS FIXED, NOT INCIDENTAL.
+  // Each clean task can be claimed once. If checkouts are processed in whatever order the database
+  // happened to return them, then WHICH checkout gets a contested clean changes between runs — and
+  // with it the market a clean lands in. Sorting by unit then checkout date makes the outcome a
+  // property of the data instead of a property of the query plan.
+  pending.sort((x, y) => x.listingId.localeCompare(y.listingId) || x.co.localeCompare(y.co) || x.fee - y.fee)
+  const taskKey = (t: any) => String(t.id)
   const unclaimed: typeof pending = []
   for (const p of pending) {
-    const hit = cleanPool.filter(t => !usedTask[String(t.id)] &&
+    // Same-day first, then next morning — and among equals the lowest task id, so ties never
+    // resolve by accident.
+    const hits = cleanPool.filter(t => !usedTask[taskKey(t)] &&
       String(t.reference_property_id) === p.listingId &&
-      (cleanDay(t) === p.co || cleanDay(t) === p.coNext))[0]
-    if (hit) claim(p, hit); else unclaimed.push(p)
+      (cleanDay(t) === p.co || cleanDay(t) === p.coNext))
+      .sort((t1, t2) => (cleanDay(t1) === p.co ? 0 : 1) - (cleanDay(t2) === p.co ? 0 : 1) || taskKey(t1).localeCompare(taskKey(t2)))
+    if (hits[0]) claim(p, hits[0]); else unclaimed.push(p)
   }
   for (const p of unclaimed) {
     const day0 = new Date(p.co + 'T12:00:00Z').getTime()
@@ -510,7 +539,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       if (!d) continue
       const off = Math.round((new Date(d + 'T12:00:00Z').getTime() - day0) / 864e5)
       if (off < -2 || off > 7) continue
-      if (!best || Math.abs(off) < Math.abs(best.off)) best = { off, t }
+      // Nearest day wins; a tie goes to the day AFTER the checkout (a clean follows a departure,
+      // it does not precede it), and then to the lowest task id. Deterministic all the way down.
+      if (!best
+        || Math.abs(off) < Math.abs(best.off)
+        || (Math.abs(off) === Math.abs(best.off) && off > best.off)
+        || (off === best.off && String(t.id).localeCompare(String(best.t.id)) < 0)) best = { off, t }
     }
     if (!best) {
       if (p.inMk) {
