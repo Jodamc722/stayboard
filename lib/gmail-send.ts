@@ -194,7 +194,7 @@ export async function createGmailDraft(opts: {
   subject: string
   html: string
   attachments?: GmailAttachment[]
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; id?: string; error?: string }> {
   const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
   const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
   if (!to.length && !cc.length) return { ok: false, error: 'no recipients' }
@@ -208,7 +208,12 @@ export async function createGmailDraft(opts: {
       body: JSON.stringify({ message: { raw: rawToB64url(raw) } }),
       cache: 'no-store',
     })
-    if (r.ok) return { ok: true }
+    if (r.ok) {
+      // The draft id is how we later notice it was SENT: a sent draft disappears from Drafts, and
+      // drafts.get starts returning 404. The caller stores this id and polls (see lib/support-drafts).
+      const dj: any = await r.json().catch(() => ({}))
+      return { ok: true, id: dj && dj.id ? String(dj.id) : undefined }
+    }
     const body = await r.text().catch(() => '')
     if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
       return { ok: false, error: `${opts.fromEmail}'s Google connection can send but not create drafts — reconnect it and approve the "Manage drafts and send email" permission.` }
@@ -218,4 +223,21 @@ export async function createGmailDraft(opts: {
     }
     return { ok: false, error: `Gmail draft failed (${r.status}): ${body.slice(0, 300)}` }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+}
+
+
+// IS THE DRAFT STILL IN DRAFTS? 'gone' means it left the folder — in practice, it was sent (or
+// deliberately deleted, which the desk treats the same way: the notice is handled). 'unknown'
+// means we could not tell (token trouble, network) and the caller must NOT act on it.
+export async function checkGmailDraftExists(fromEmail: string, draftId: string): Promise<'exists' | 'gone' | 'unknown'> {
+  const { token } = await accessTokenFor(fromEmail)
+  if (!token) return 'unknown'
+  try {
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(draftId) + '?format=minimal', {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+    if (r.status === 404) return 'gone'
+    if (r.ok) return 'exists'
+    return 'unknown'
+  } catch { return 'unknown' }
 }
