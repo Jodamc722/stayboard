@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/stay-window",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/billing-detail",
+      "schedule": "0 9 * * *"
     }
   ]
 }
