@@ -734,7 +734,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const m = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
         thirty = `<p style="margin:8px 0 0;padding-top:8px;border-top:1px solid #e5e7eb;font-size:12.5px;color:#374151">` +
           `<b>Last 30 days</b> <span style="color:#9ca3af">${snap.from} to ${snap.to}${snap.takenAt ? ' · trued up ' + String(snap.takenAt).slice(0, 10) : ''}</span><br>` +
-          `${snap.cleans} departure cleans · ${m(snap.costPerClean || 0)} labor / clean · ${m(snap.cleaningRevenue || 0)} net cleaning revenue vs ${m(snap.payroll || 0)} payroll` +
+          // Cost per clean is HOUSEKEEPERS ONLY, so the payroll beside it must be the same base.
+          // Supervisors and maintenance are shown on their own line underneath, never divided into
+          // a per-clean figure (Jon, 2026-08-17: "not with supervisors").
+          `${snap.cleans} departure cleans · <b>${m(snap.costPerClean || 0)} labor / clean</b> — ${m(snap.cleaningRevenue || 0)} net cleaning revenue vs ${m(snap.hkPayroll != null ? snap.hkPayroll : 0)} housekeeping payroll` +
+          (snap.payroll ? `<br><span style="color:#9ca3af">All-in labor incl. supervisors + maintenance: ${m(snap.payroll)} — carried, never divided into a per-clean number.</span>` : '') +
           // The settled market comparison. One day of Miami vs Broward is mostly noise — 30 days is
           // the number to manage on, so it sits right under the 30-day headline.
           (Array.isArray(snap.markets) && snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null).length
