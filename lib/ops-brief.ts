@@ -853,7 +853,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         const vendorRow = !b2.inHouse
         return '<tr>' +
           '<td style="' + S.td + '"><b>' + esc(String(b2.label)) + '</b>' +
-          (vendorRow ? ' <span style="color:#6b7280;font-size:11.5px">vendor-cleaned</span>' : '') + '</td>' +
+          (vendorRow && !/vendor/i.test(String(b2.label)) ? ' <span style="color:#6b7280;font-size:11.5px">vendor-cleaned</span>' : '') + '</td>' +
           '<td style="' + S.td + ';text-align:right">' + b2.cleans + '</td>' +
           '<td style="' + S.td + ';text-align:right">' + usd(b2.cleaningRevenue) + '</td>' +
           '<td style="' + S.td + ';text-align:right">' + (vendorRow ? '<span style="color:#9ca3af">n/a</span>' : usd(b2.payroll)) + '</td>' +
