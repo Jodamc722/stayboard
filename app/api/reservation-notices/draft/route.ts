@@ -4,8 +4,9 @@
 // showing RIGHT NOW (to/cc/subject/body), so what you previewed is exactly what lands in Drafts.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
-import { createGmailDraft } from '@/lib/gmail-send'
+import { createGmailDraft, type GmailAttachment } from '@/lib/gmail-send'
 import { watchSupportDraft, checkSupportDrafts } from '@/lib/support-drafts'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,15 +27,40 @@ export async function POST(req: NextRequest) {
   // The notice body is plain text; Gmail drafts carry HTML. Escape, then keep the line breaks.
   const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const html = '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.55;white-space:pre-wrap">' + esc(body) + '</div>'
-  const r = await createGmailDraft({ fromEmail: SUPPORT_FROM, to, cc, subject, html })
+  // ATTACH THE FILED REGISTRATION FORM (Jon, 2026-08-17: "draft worked but did not attach the pdf
+  // form"). If the notice has a form filed in the private reservation-docs bucket, it rides inside
+  // the draft — so the desk sends from Gmail without hunting for the file. No form filed yet →
+  // the draft is still created, and the response says the form is missing so the button can warn
+  // "hit Build form first" instead of silently sending a bare email.
+  const noticeId = String(b?.noticeId || '').trim()
+  const attachments: GmailAttachment[] = []
+  let attachedName = ''
+  let formMissing = false
+  if (noticeId) {
+    try {
+      const db = supabaseAdmin()
+      const { data: notice } = await db.from('reservation_notices')
+        .select('doc_path, doc_name, attach').eq('id', noticeId).is('deleted_at', null).maybeSingle()
+      const wantsForm = !!(notice && (notice as any).attach)
+      const path = notice && (notice as any).doc_path ? String((notice as any).doc_path) : ''
+      if (path) {
+        const dl = await db.storage.from('reservation-docs').download(path)
+        if (dl.data) {
+          const buf = Buffer.from(await dl.data.arrayBuffer())
+          attachedName = String((notice as any).doc_name || 'registration-form.pdf')
+          attachments.push({ filename: attachedName, content: buf, contentType: 'application/pdf' })
+        } else if (wantsForm) formMissing = true
+      } else if (wantsForm) formMissing = true
+    } catch { formMissing = true }
+  }
+  const r = await createGmailDraft({ fromEmail: SUPPORT_FROM, to, cc, subject, html, attachments: attachments.length ? attachments : undefined })
   if (!r.ok) return NextResponse.json({ error: r.error || 'Could not create the draft.' }, { status: 502 })
   // Remember the draft so the board can notice it being SENT from Gmail and mark the notice sent
   // automatically (Jon, 2026-08-17: "if the email is sent it should mark sent in app").
-  const noticeId = String(b?.noticeId || '').trim()
   if (noticeId && r.id) {
     await watchSupportDraft({ nid: noticeId, draftId: r.id, at: new Date().toISOString(), to: to.join(', '), cc: cc.join(', '), subject, body }).catch(() => null)
   }
-  return NextResponse.json({ ok: true, from: SUPPORT_FROM, watching: !!(noticeId && r.id) })
+  return NextResponse.json({ ok: true, from: SUPPORT_FROM, watching: !!(noticeId && r.id), attached: attachedName || null, formMissing })
 }
 
 // GET ?check=1 — sweep the watched drafts. The board calls this on load, so opening the page is
