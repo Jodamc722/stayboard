@@ -36,7 +36,9 @@ type Task = { id: string; listingId: string; unit: string; market: string; dept:
 type Unit = { listingId: string; unit: string; market: string; market2?: string | null; guestOut: string | null; sameDayTurn: boolean; tasks: Task[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean }
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; late: number; atRisk: number }
 type BehindRow = { taskId: string; unit: string; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }
-type OpsData = { ok: boolean; today: string; deadline: Deadline; behind?: { notStarted: number; units: BehindRow[] } | null; units: Unit[]; error?: string }
+type VacantU = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
+type OpsData = { ok: boolean; today: string; deadline: Deadline; behind?: { notStarted: number; units: BehindRow[] } | null; units: Unit[]; vacants?: VacantU[]; error?: string }
+type CareItem = { key: string; label: string; short: string; template: string; monthsAgo: number | null; every: number; neverSeen: boolean; due: boolean }
 type Glitch = { id: string; unit: string; issue: string; ageDays?: number; running?: boolean; unassigned?: boolean; assignees?: string[] }
 type StaffPerson = { name: string; role: string | null; clockedIn: boolean; shift: string | null; bzAlias: string | null; tasks: number; cleans: number }
 type Staffing = { ok: boolean; people: StaffPerson[]; summary: { clockedIn: number; nothingAssigned: number; idleNames: string[] } }
@@ -59,6 +61,19 @@ type Exc = {
   taskId?: string       // when there is a Breezeway task to act on
   dept?: string
   assignee?: string | null
+  // Which activity this belongs to, so the Cleans / Maintenance / Inspections switch can scope the
+  // list (Jon, 2026-08-14: the segmented control from the approved mockup — "super important").
+  // 'any' = rows that should survive every filter (an idle cleaner matters whichever lens is on).
+  act: 'cleans' | 'maintenance' | 'inspections' | 'any'
+  market?: string
+  market2?: string | null
+}
+/** Which activity a Breezeway task belongs to — same buckets the full board's chips use. */
+function actOf(t: Task | undefined | null): Exc['act'] {
+  if (!t) return 'cleans'
+  if (t.type === 'departure_clean' || t.type === 'deep_clean' || t.type === 'strip' || t.dept === 'housekeeping') return 'cleans'
+  if (t.type === 'inspection' || t.type === 'audit' || t.dept === 'inspection') return 'inspections'
+  return 'maintenance'
 }
 const KIND_LABEL: Record<Exc['kind'], string> = { turn: 'Same-day', late: 'Late', guest: 'Guest issue', unassigned: 'Unassigned', idle: 'Idle' }
 const KIND_CLS: Record<Exc['kind'], string> = {
@@ -83,6 +98,7 @@ function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[],
         what: 'Guest arriving today' + (b?.arrivingAt ? ' at ' + b.arrivingAt : '') +
           (clean ? (clean.running ? ' · clean in progress' : clean.assignees.length ? ' · clean not started (' + clean.assignees.join(', ') + ')' : ' · clean not started, nobody on it') : ' · open work remains'),
         taskId: clean?.id, dept: clean?.dept || 'housekeeping', assignee: clean?.assignees[0] || null,
+        act: actOf(clean), market: u.market, market2: u.market2,
       }); continue
     }
     if (u.late) {
@@ -92,6 +108,7 @@ function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[],
         what: (b?.checkOutTime ? 'Out ' + b.checkOutTime + ' · ' : '') + (t ? t.name : 'departure clean') +
           (t && t.assignees.length ? ' · ' + t.assignees.join(', ') + ' assigned, not started' : ' · unassigned'),
         taskId: t?.id, dept: t?.dept || 'housekeeping', assignee: t?.assignees[0] || null,
+        act: actOf(t), market: u.market, market2: u.market2,
       }); continue
     }
     if (u.unassigned) {
@@ -100,6 +117,7 @@ function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[],
         key: 'un:' + u.listingId, kind: 'unassigned', rank: 3, who: u.unit,
         what: (t ? t.name : 'open work') + (u.guestOut ? ' · guest leaves ' + u.guestOut : ''),
         taskId: t?.id, dept: t?.dept || 'housekeeping',
+        act: actOf(t), market: u.market, market2: u.market2,
       })
     }
   }
@@ -109,10 +127,11 @@ function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[],
       what: '“' + g.issue + '”' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '') +
         (g.unassigned ? ' · unassigned' : (g.assignees && g.assignees.length ? ' · ' + g.assignees.join(', ') + (g.running ? ' on it' : '') : '')),
       taskId: g.id, dept: 'maintenance', assignee: (g.assignees || [])[0] || null,
+      act: 'maintenance', market: (g as any).market, market2: (g as any).market2,
     })
   }
   for (const n of (staff?.summary?.idleNames || [])) {
-    out.push({ key: 'idle:' + n, kind: 'idle', rank: 3, who: n, what: 'Clocked in, nothing assigned in Breezeway' })
+    out.push({ key: 'idle:' + n, kind: 'idle', rank: 3, who: n, what: 'Clocked in, nothing assigned in Breezeway', act: 'any' })
   }
   return out.sort((a, b) => a.rank - b.rank || a.who.localeCompare(b.who))
 }
@@ -256,7 +275,7 @@ export function OpsV2() {
       </div>
 
       {tab === 'board' && (
-        <BoardTab excs={excs} onTrack={Math.max(0, onTrack)} finished={finished} roster={roster}
+        <BoardTab excs={excs} units={units} onTrack={Math.max(0, onTrack)} finished={finished} roster={roster}
           showAll={showAll || !!q} onShowAll={() => setShowAll(s => !s)} onRefresh={refresh} onPeople={() => pick('people')} />
       )}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
@@ -280,14 +299,81 @@ function PushCount() {
   return <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-violet-100 text-violet-700">{n}</span>
 }
 
-// ── BOARD: exceptions first, the full board one tap behind ─────────────────────────────────────
-function BoardTab({ excs, onTrack, finished, roster, showAll, onShowAll, onRefresh, onPeople }: {
-  excs: Exc[]; onTrack: number; finished: number; roster: Roster[]
+// ── BOARD: the overview on top, then EVERY task — one page, no hiding ──────────────────────────
+//
+// Jon, 2026-08-14, three corrections in one afternoon: the mockup's activity switch was "super
+// important" and had been dropped; "should also show in progress, not started, done"; and finally
+// "we need to see all tasks... an overview highlighting priority tasks and running late tasks".
+// So the Board is now: the filter row, the Needs-a-human overview (always), and the complete task
+// list (always — filtered by activity / status / market, worst first, done sinking to the bottom).
+// The old per-unit card board stays one tap behind "Show the full board" for the deep day.
+const ACTS = [['all', 'All'], ['cleans', 'Cleans'], ['maintenance', 'Maintenance'], ['inspections', 'Inspections']] as const
+const STATS = [['any', 'Any status'], ['notstarted', 'Not started'], ['running', 'In progress'], ['done', 'Done']] as const
+
+function BoardTab({ excs, units, onTrack, finished, roster, showAll, onShowAll, onRefresh, onPeople }: {
+  excs: Exc[]; units: Unit[]; onTrack: number; finished: number; roster: Roster[]
   showAll: boolean; onShowAll: () => void; onRefresh: () => void; onPeople: () => void
 }) {
   const [assignFor, setAssignFor] = useState('')
+  const [act, setAct] = useState<'all' | 'cleans' | 'maintenance' | 'inspections'>('all')
+  const [stat, setStat] = useState<'any' | 'notstarted' | 'running' | 'done'>('any')
+  const [mkt, setMkt] = useState('all')
+  const filtering = act !== 'all' || stat !== 'any' || mkt !== 'all'
+
+  const markets = useMemo(() => Array.from(new Set(units.flatMap(u => [u.market, u.market2 || ''].filter(Boolean)))).sort(), [units])
+
+  // ALL of today's tasks, always — worst first, done last, capped only for render weight.
+  const rows = useMemo(() => {
+    const all = units.flatMap(u => u.tasks.map(t => ({ t, u })))
+    return all
+      .filter(({ t, u }) =>
+        (act === 'all' || actOf(t) === act) &&
+        (mkt === 'all' || u.market === mkt || u.market2 === mkt) &&
+        (stat === 'any' ? true
+          : t.guestyOnly ? false
+            : stat === 'done' ? t.done
+              : stat === 'running' ? (t.running && !t.done)
+                : (!t.done && !t.running)))
+      .sort((a, b) =>
+        ((a.t.late ? 0 : a.t.atRisk ? 1 : a.t.running ? 2 : a.t.done ? 4 : 3)
+          - (b.t.late ? 0 : b.t.atRisk ? 1 : b.t.running ? 2 : b.t.done ? 4 : 3))
+        || a.u.unit.localeCompare(b.u.unit, undefined, { numeric: true }))
+  }, [units, act, stat, mkt])
+
+  const filterRow = (
+    <div className="flex items-center gap-2 flex-wrap mb-3">
+      <span className="inline-flex bg-app rounded-xl p-0.5">
+        {ACTS.map(([k, label]) => (
+          <button key={k} onClick={() => setAct(k as any)}
+            className={'text-[12.5px] font-bold px-3 py-1.5 rounded-lg ' + (act === k ? 'bg-white text-ink shadow-sm' : 'text-muted hover:text-ink')}>
+            {label}
+          </button>
+        ))}
+      </span>
+      <span className="inline-flex bg-app rounded-xl p-0.5">
+        {STATS.map(([k, label]) => (
+          <button key={k} onClick={() => setStat(k as any)}
+            className={'text-[12.5px] font-semibold px-2.5 py-1.5 rounded-lg ' + (stat === k ? 'bg-white text-ink shadow-sm' : 'text-muted hover:text-ink')}>
+            {label}
+          </button>
+        ))}
+      </span>
+      <select value={mkt} onChange={e => setMkt(e.target.value)}
+        className="ml-auto text-[12.5px] font-semibold border border-line rounded-xl px-2.5 py-1.5 bg-white text-muted">
+        <option value="all">All markets</option>
+        {markets.map(m => <option key={m} value={m}>{m}</option>)}
+      </select>
+      {filtering && (
+        <button onClick={() => { setAct('all'); setStat('any'); setMkt('all') }}
+          className="text-[12px] font-semibold text-muted hover:text-ink underline">Clear</button>
+      )}
+    </div>
+  )
+
   return (
     <div>
+      {filterRow}
+      {/* ── THE OVERVIEW: what needs a human, always on top ── */}
       {excs.length > 0 ? (
         <>
           <div className="flex items-center gap-2 mb-2">
@@ -325,14 +411,51 @@ function BoardTab({ excs, onTrack, finished, roster, showAll, onShowAll, onRefre
         </div>
       )}
 
-      <div className="flex items-center gap-2 text-[12.5px] text-muted px-1 mb-2">
-        <Check size={13} className="text-emerald-600" />
-        {onTrack} unit{onTrack === 1 ? '' : 's'} on track · {finished} finished
+      {/* ── ALL TASKS (Jon: "we need to see all tasks") — filtered, worst first, done last ── */}
+      <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-muted mb-2 mt-1">
+        {rows.length} task{rows.length === 1 ? '' : 's'}
+        <span className="font-semibold normal-case tracking-normal">
+          — {ACTS.find(a => a[0] === act)![1]}{stat !== 'any' ? ' · ' + STATS.find(s => s[0] === stat)![1] : ''}{mkt !== 'all' ? ' · ' + mkt : ''}
+        </span>
+        <span className="ml-auto font-semibold normal-case tracking-normal flex items-center gap-1">
+          <Check size={12} className="text-emerald-600" /> {onTrack} on track · {finished} finished
+        </span>
       </div>
+      {rows.length === 0 ? (
+        <div className="rounded-xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted mb-3">Nothing matches these filters.</div>
+      ) : (
+        <div className="space-y-1 mb-3">
+          {rows.slice(0, 100).map(({ t, u }) => (
+            <div key={t.id} className={'rounded-xl border bg-white px-3.5 py-2 ' + (t.late ? 'border-l-[3px] border-l-rose-500 border-rose-200' : t.atRisk ? 'border-l-[3px] border-l-amber-400 border-line' : t.done ? 'border-line opacity-60' : 'border-line')}>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="text-[13px] font-bold text-ink shrink-0">{u.unit}</span>
+                <span className="text-[12.5px] text-ink/70 flex-1 min-w-[140px] truncate">{t.name}</span>
+                <span className={'text-[11.5px] shrink-0 ' + (t.guestyOnly ? 'text-muted' : t.assignees.length ? 'text-muted' : 'text-amber-700 font-bold')}>
+                  {t.guestyOnly ? 'Vendor' : t.assignees.length ? t.assignees.join(', ') : 'Unassigned'}
+                </span>
+                <span className={'text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ' + (
+                  t.done ? 'bg-emerald-50 text-emerald-700' : t.late ? 'bg-rose-600 text-white'
+                    : t.running ? 'bg-sky-50 text-sky-700' : t.atRisk ? 'bg-amber-100 text-amber-800' : 'bg-app text-muted')}>
+                  {t.done ? 'Done' : t.late ? 'LATE' : t.running ? 'In progress' : t.atRisk ? 'At risk' : 'Not started'}
+                </span>
+                {!t.guestyOnly && !t.done && t.assignees.length === 0 ? (
+                  <button onClick={() => setAssignFor(assignFor === t.id ? '' : t.id)}
+                    className={'text-[11.5px] font-bold px-2.5 py-1 rounded-lg shrink-0 ' + (assignFor === t.id ? 'border border-ink text-ink bg-white' : 'bg-ink text-white')}>Assign</button>
+                ) : !t.guestyOnly ? (
+                  <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer"
+                    className="text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line bg-white hover:bg-app shrink-0">Open</a>
+                ) : null}
+              </div>
+              {assignFor === t.id && <InlineAssign taskId={t.id} dept={t.dept} roster={roster} onDone={() => { setAssignFor(''); onRefresh() }} />}
+            </div>
+          ))}
+          {rows.length > 100 && <p className="text-[12px] text-muted px-1">+ {rows.length - 100} more — narrow the filters or open the full board below.</p>}
+        </div>
+      )}
 
       <button onClick={onShowAll}
         className="w-full rounded-xl border-2 border-dashed border-line py-2.5 text-[13px] font-bold text-muted hover:text-ink hover:border-ink/30 mb-3 inline-flex items-center justify-center gap-1.5">
-        {showAll ? 'Hide the full board' : 'Show all units'} <ChevronDown size={14} className={showAll ? 'rotate-180 transition-transform' : 'transition-transform'} />
+        {showAll ? 'Hide the full board' : 'Show the full board — unit cards, comments, reschedule'} <ChevronDown size={14} className={showAll ? 'rotate-180 transition-transform' : 'transition-transform'} />
       </button>
 
       {/* THE COMPLETE BOARD, unchanged — every filter, card and action it always had. */}
@@ -486,6 +609,52 @@ function PushTab({ roster }: { roster: Roster[] }) {
   const [filed, setFiled] = useState<Record<string, boolean>>({})
   const [who, setWho] = useState<Record<string, number | 0>>({})
 
+  // ── THE AM PUSH (Jon, 2026-08-14: "push activities in the AM based on vacant room and guest
+  // feedback or inspection needed, pm needed, batteries needed... or open tasks in unit"). ──
+  // A vacant unit is a free work slot. This crosses today's vacants with (a) open tasks already in
+  // the unit and (b) recurring care that has aged out — batteries, A/C filter, PM, audit, deep
+  // clean, inspection — and files the catch-up work TODAY, while nobody is in the way.
+  const { data: ops } = useCachedFetch<OpsData>('/api/ops-today')
+  const [sig, setSig] = useState<Record<string, { care?: CareItem[]; pending?: any[] }>>({})
+  const vacants = useMemo(() => (ops?.vacants || []).slice(0, 40), [ops])
+  useEffect(() => {
+    const ids = vacants.map(v => v.listingId)
+    if (!ids.length) { setSig({}); return }
+    let alive = true
+    fetch('/api/ops-today/signals?ids=' + encodeURIComponent(ids.join(',')), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { if (alive && j && j.ok) setSig(j.signals || {}) }).catch(() => {})
+    return () => { alive = false }
+  }, [vacants.map(v => v.listingId).join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const vacantRows = useMemo(() => vacants.map(v => {
+    const s = sig[v.listingId] || {}
+    const due = (s.care || []).filter(c => c.due)
+    const pending = (s.pending || []).length
+    return { v, due, pending }
+  }).filter(r => r.due.length > 0 || r.pending > 0 || r.v.openTasks > 0), [vacants, sig])
+
+  const fileCare = async (v: VacantU, c: CareItem) => {
+    const t = SHEET_TEMPLATES.find(x => x.key === c.template)
+    const key = 'care:' + v.listingId + ':' + c.key
+    setBusy(key)
+    try {
+      const r = await fetch('/api/ops-today/add-task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: v.listingId, title: t ? t.title : c.label,
+          department: t ? t.department : 'maintenance', priority: t ? t.priority : 'normal',
+          description: (t ? t.base + '\n\n' : '') + 'Pushed from Today in Ops: unit is vacant today and this is ' +
+            (c.neverSeen ? 'not on record as ever done.' : String(c.monthsAgo) + ' months old (cadence: every ' + c.every + ').'),
+          date: ops?.today,
+        }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'could not file')
+      setFiled(f => ({ ...f, [key]: true }))
+    } catch (e: any) { alert(String(e?.message || e)) }
+    setBusy('')
+  }
+
   const groups = useMemo(() => {
     const g: Record<string, { unit: PlanUnit; task: PlanTask; day: string }[]> = {}
     for (const day of data?.days || []) for (const u of day.units) for (const t of u.tasks) {
@@ -515,18 +684,60 @@ function PushTab({ roster }: { roster: Roster[] }) {
   }
 
   if (loading && !data) return <div className="text-sm text-muted py-8 text-center">Reading the suggestion engine…</div>
-  if (!groups.length) return (
+  if (!groups.length && !vacantRows.length) return (
     <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">
-      Nothing to suggest right now — feedback, PM and audit cadences are all clear.
+      Nothing to suggest right now — no vacant catch-up work, and feedback, PM and audit cadences are all clear.
       <button onClick={() => refresh()} className="block mx-auto mt-2 text-[12px] font-bold text-brand-700 underline">Check again</button>
     </div>
   )
   return (
     <div className="space-y-3">
       <p className="text-[12.5px] text-muted px-1">
-        Work the system recommends before anyone asks for it — from guest feedback, PM age and audit cadence.
-        Pushing files it in Breezeway on the unit&apos;s next vacant day; pick a person to assign it in the same tap.
+        Work the system recommends before anyone asks for it — vacant units to catch up in, guest feedback,
+        PM age and audit cadence. Pushing files it in Breezeway; pick a person to assign it in the same tap.
       </p>
+
+      {/* ── VACANT TODAY: the AM push ── */}
+      {vacantRows.length > 0 && (
+        <div className="rounded-2xl border border-emerald-200 bg-white overflow-hidden">
+          <div className="px-4 py-2.5 bg-emerald-50/70 border-b border-emerald-200 flex items-center gap-2">
+            <span className="text-[13px] font-bold text-emerald-900">Vacant today — catch-up day</span>
+            <span className="text-[11.5px] text-emerald-800/70">empty units with open work or care that has aged out</span>
+          </div>
+          <div className="divide-y divide-line">
+            {vacantRows.map(({ v, due, pending }) => (
+              <div key={v.listingId} className="px-4 py-2.5">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="text-[13px] font-bold text-ink shrink-0">{v.unit}</span>
+                  <span className="text-[11.5px] text-muted shrink-0">
+                    {v.market}{v.nextArrival ? ' · next guest ' + v.nextArrival.slice(5) : ' · no upcoming booking'}
+                  </span>
+                  {v.openTasks > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{v.openTasks} task{v.openTasks === 1 ? '' : 's'} today</span>}
+                  {pending > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">{pending} overdue in unit</span>}
+                </div>
+                {due.length > 0 && (
+                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                    {due.map(c => {
+                      const key = 'care:' + v.listingId + ':' + c.key
+                      return filed[key] ? (
+                        <span key={c.key} className="text-[11.5px] font-bold text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {c.short} filed</span>
+                      ) : (
+                        <button key={c.key} onClick={() => fileCare(v, c)} disabled={busy === key}
+                          title={c.neverSeen ? 'Never on record' : c.monthsAgo + ' months since last (every ' + c.every + ')'}
+                          className="text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
+                          {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                          {c.short}{c.neverSeen ? ' · never' : ' · ' + Math.round(c.monthsAgo || 0) + 'mo'}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {groups.map(([cat, rows]) => (
         <div key={cat} className="rounded-2xl border border-line bg-white overflow-hidden">
           <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center gap-2">

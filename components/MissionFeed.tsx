@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ratingDisplay } from '@/lib/review-scale'
 import {
   Star, MessageSquare, ClipboardCheck, AlertTriangle, LogIn, PhoneCall,
-  Send, Sparkles, Check, X, ArrowUpRight, CheckCircle2, Frown, ChevronRight, XCircle,
+  Send, Sparkles, Check, X, ArrowUpRight, CheckCircle2, Frown, ChevronRight, ChevronDown, XCircle,
 } from 'lucide-react'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; guest: string; listing_name: string; created_at?: string }
@@ -52,6 +52,11 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
   const [dismissedIds, setDismissedIds] = useState<Record<string, boolean>>({})
   const [decided, setDecided] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string | null>(null)
+  // Reviews arrive COLLAPSED (Jon, 2026-08-14: "needs review should show better in own section as
+  // a notification and collapsed"). Replying to reviews is a sit-down job, not a glance job — the
+  // closed bar keeps the count visible like a notification without five open textareas pushing the
+  // operational feed below the fold.
+  const [revOpen, setRevOpen] = useState(false)
 
   const liveReviews = reviews.filter(r => !postedIds[r.id] && !dismissedIds[r.id])
   const liveApprovals = approvals.filter(a => !decided[a.id])
@@ -172,9 +177,22 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
         </Section>
       )}
 
-      {/* 3. Reviews to reply — inline AI draft + post */}
+      {/* 3. Reviews to reply — a NOTIFICATION until opened, the full inline draft-and-post
+          workbench once it is. */}
       {liveReviews.length > 0 && (
-        <Section icon={Star} title="Reviews to reply" count={liveReviews.length} accent="bg-amber-100 text-amber-700">
+        <section className="rounded-2xl border border-amber-200 bg-white overflow-hidden">
+          <button onClick={() => setRevOpen(o => !o)} className="w-full px-4 py-3 flex items-center gap-2.5 text-left bg-amber-50/70 hover:bg-amber-50 transition-colors">
+            <span className="w-6 h-6 rounded-lg flex items-center justify-center bg-amber-100 text-amber-700"><Star size={14} /></span>
+            <span className="text-sm font-bold text-ink">Reviews to reply</span>
+            <span className="text-[11px] font-bold text-white bg-amber-500 rounded-full px-2 py-0.5">{liveReviews.length}</span>
+            {!revOpen && (
+              <span className="text-[12px] text-muted truncate hidden sm:inline">
+                latest: {liveReviews[0].listing_name}{liveReviews[0].rating != null ? ' · ' + fmtRating(liveReviews[0].rating, liveReviews[0].channel) : ''}
+              </span>
+            )}
+            <ChevronDown size={15} className={'ml-auto text-muted transition-transform shrink-0 ' + (revOpen ? 'rotate-180' : '')} />
+          </button>
+          {revOpen && (<div className="border-t border-amber-200">
           <ul className="divide-y divide-line/70">
             {liveReviews.slice(0, 5).map(r => (
               <li key={r.id} className="px-4 py-3">
@@ -201,7 +219,8 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
             ))}
           </ul>
           {liveReviews.length > 5 && <FooterLink href="/reviews" label={`View all ${liveReviews.length} reviews`} />}
-        </Section>
+          </div>)}
+        </section>
       )}
 
       {/* 4. Unread guest messages */}
