@@ -40,11 +40,32 @@ export async function GET(req: NextRequest) {
   })
   const d: any = await r.json().catch(() => ({}))
   if (!r.ok || !d?.refresh_token) return page('Google connection failed — try again.')
+  // STORE UNDER THE GOOGLE ACCOUNT THAT ACTUALLY AUTHORIZED, not the app login. The old code keyed
+  // the token to whoever was signed into Lighthouse — which made connecting a shared mailbox like
+  // support@ impossible, and could silently file support@'s token under jon@. The id_token carries
+  // the authorized account's email (we ask for the openid+email scopes); decode it, key on that.
+  // Fallback to the app login only when the id_token is absent (older consent screens).
+  let googleEmail = ''
+  try {
+    const idt = String(d.id_token || '')
+    const payload = idt.split('.')[1]
+    if (payload) {
+      const claims = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'))
+      if (claims && typeof claims.email === 'string') googleEmail = claims.email.trim().toLowerCase()
+    }
+  } catch { /* fall through to app login */ }
+  const storeAs = googleEmail || String(user.email).toLowerCase()
+  const wanted = String(sp.get('state') || '').trim().toLowerCase()
   const { error } = await supabaseAdmin().from('google_tokens').upsert({
-    user_email: user.email,
+    user_email: storeAs,
     refresh_token: d.refresh_token,
     updated_at: new Date().toISOString(),
   })
   if (error) return page('Could not save the Google connection (run migration 012_google_tokens.sql?).')
-  return page('Google Drive connected ✓')
+  // If they meant to connect support@ but authorized a personal account, say so — the drafts
+  // button would keep failing and nothing on screen would explain why.
+  if (wanted && googleEmail && wanted !== googleEmail) {
+    return page('Connected ' + googleEmail + ' — but you meant to connect ' + wanted + '. Sign into Google as ' + wanted + ' and connect again.')
+  }
+  return page('Google connected for ' + storeAs + ' ✓')
 }
