@@ -88,13 +88,24 @@ async function todayStatus(db: any, ids: string[]): Promise<Record<string, strin
   return out
 }
 
-/** Progress per unit, from the answers table. */
+/**
+ * Progress per unit.
+ *
+ * PROGRESS IS NOW ROOMS, NOT ITEMS (Jon, 2026-08-14). The old number — "7/64 answered" — measured
+ * how much of a survey had been filled in, which stopped meaning anything the moment the form became
+ * an exception log. A unit with nothing wrong is finished at zero findings. What a person actually
+ * wants to know is how much of the unit somebody has stood in, so the headline is rooms checked.
+ *
+ * `answered` stays alongside it, because the count of FINDINGS is still worth showing — it is just
+ * no longer the progress bar.
+ */
 async function progress(db: any, ids: string[]) {
   const answered: Record<string, number> = {}
   const toOrder: Record<string, number> = {}
   const done: Record<string, string | null> = {}
+  const roomsChecked: Record<string, number> = {}
   let setupRequired = false
-  if (!ids.length) return { answered, toOrder, done, setupRequired }
+  if (!ids.length) return { answered, toOrder, done, roomsChecked, setupRequired }
   try {
     const { data, error } = await db.from('ffe_answers').select('listing_id,answer').in('listing_id', ids).limit(20000)
     if (error && isMissingTable(error.message)) setupRequired = true
@@ -108,7 +119,16 @@ async function progress(db: any, ids: string[]) {
     const { data } = await db.from('ffe_unit_status').select('listing_id,completed_at').in('listing_id', ids).limit(3000)
     for (const s of ((data || []) as any[])) done[String(s.listing_id)] = s.completed_at || null
   } catch { /* optional */ }
-  return { answered, toOrder, done, setupRequired }
+  // Absent before migration 040 — every unit then reads zero rooms checked, which is true.
+  try {
+    const { data } = await db.from('ffe_room_status')
+      .select('listing_id,checked_at').in('listing_id', ids).not('checked_at', 'is', null).limit(20000)
+    for (const s of ((data || []) as any[])) {
+      const id = String(s.listing_id)
+      roomsChecked[id] = (roomsChecked[id] || 0) + 1
+    }
+  } catch { /* not migrated yet */ }
+  return { answered, toOrder, done, roomsChecked, setupRequired }
 }
 
 const unitCard = (l: Lst, p: any, st: Record<string, string>, ov: FfeOverride[] = []) => ({
@@ -118,6 +138,9 @@ const unitCard = (l: Lst, p: any, st: Record<string, string>, ov: FfeOverride[] 
   total: totalItems(l.bedrooms, ov),
   answered: p.answered[l.id] || 0,
   toOrder: p.toOrder[l.id] || 0,
+  // What the progress bar reads from now.
+  roomsTotal: mergeChecklist(l.bedrooms, ov).length,
+  roomsChecked: p.roomsChecked[l.id] || 0,
   completedAt: p.done[l.id] || null,
   today: st[l.id] || 'vacant',
 })
@@ -251,6 +274,15 @@ export async function GET(req: NextRequest) {
       unitNotes = (data || [])[0]?.notes ?? null
     } catch { /* the notes column arrives with migration 036 */ }
 
+    // Which rooms somebody has already stood in. Empty before migration 040, which reads correctly
+    // as "none checked yet" rather than breaking the form.
+    let roomsChecked: string[] = []
+    try {
+      const { data } = await db.from('ffe_room_status')
+        .select('room,checked_at').eq('listing_id', l.id).not('checked_at', 'is', null).limit(50)
+      roomsChecked = ((data || []) as any[]).map(r => str(r.room))
+    } catch { /* not migrated yet */ }
+
     return NextResponse.json({
       ok: true,
       unit: {
@@ -267,6 +299,7 @@ export async function GET(req: NextRequest) {
       checklist: withCustom,
       total: withCustom.reduce((a, r) => a + r.items.length, 0),
       answers,
+      roomsChecked,
       unitNotes,
       // The sheet's own standing instructions, so the two that happen inside the unit are on the
       // screen where they happen rather than in a PDF nobody opens on a phone.
@@ -349,6 +382,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, itemKey: key, title })
     }
 
+    // ---- "I'VE CHECKED THIS ROOM" (Jon, 2026-08-14) ----
+    //
+    // The one tap that makes an exception log trustworthy. Without it an empty room means either
+    // "I looked and it is fine" or "I never went in", and those are not the same answer to give an
+    // owner. Toggleable, because a walker who taps it and then spots the cracked mirror needs to be
+    // able to take it back, add the finding and check it again.
+    if (String(body.action || '') === 'roomChecked') {
+      const room1 = str(body.room).slice(0, 40)
+      if (!room1) return NextResponse.json({ error: 'room required' }, { status: 400 })
+      const on = body.done !== false
+      const row = {
+        listing_id: listingId, room: room1,
+        checked_at: on ? new Date().toISOString() : null,
+        checked_by: str(body.by).slice(0, 80) || null,
+        updated_at: new Date().toISOString(),
+      }
+      const { data: ex } = await db.from('ffe_room_status')
+        .select('listing_id').eq('listing_id', listingId).eq('room', room1).limit(1)
+      const r = ex && ex[0]
+        ? await db.from('ffe_room_status').update(row).eq('listing_id', listingId).eq('room', room1)
+        : await db.from('ffe_room_status').insert(row)
+      if (r.error) return dbFail(r.error.message)
+      return NextResponse.json({ ok: true, room: room1, checkedAt: row.checked_at })
+    }
+
     // ---- TAKE IT BACK (Jon, 2026-08-14: "can you create a delete option") ----
     //
     // Until now every tap on this form was permanent in one direction: you could change Replace to
@@ -395,7 +453,24 @@ export async function POST(req: NextRequest) {
     }
 
     const room = str(body.room).slice(0, 40)
-    const itemKey = str(body.itemKey).slice(0, 40)
+    // ---- A TYPED FINDING NEEDS NO KEY (Jon, 2026-08-14: "you can say Replace TV or Fix Baseboards") ----
+    //
+    // Picking a suggestion chip sends the checklist's own key, so "nightstands" is the same thing in
+    // every unit and groups on the order. Typing something the list never heard of sends only the
+    // words, and the key is derived here. The x_ prefix keeps a typed item from ever colliding with
+    // a built-in, and the numeric suffix lets one room hold two different findings that happen to
+    // slug the same.
+    let itemKey = str(body.itemKey).slice(0, 40)
+    if (!itemKey && str(body.title).trim() && room) {
+      const slug = str(body.title).trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || 'item'
+      const base = 'x_' + slug
+      const { data: taken } = await db.from('ffe_answers')
+        .select('item_key').eq('listing_id', listingId).eq('room', room).like('item_key', base + '%').limit(50)
+      const used = new Set(((taken || []) as any[]).map(r => str(r.item_key)))
+      itemKey = base
+      for (let n = 2; used.has(itemKey) && n < 50; n++) itemKey = base + '_' + n
+    }
     if (!room || !itemKey) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
     const answer = str(body.answer)
     // FIX joined the list on 2026-08-12. It saves like any other answer and then routes itself to
@@ -455,7 +530,9 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* the fixes table may not exist yet — the answer itself is already saved */ }
 
-    return NextResponse.json({ ok: true })
+    // The key matters to the caller now: a typed finding was given one here, and the form needs it
+    // to address the row it just created for edits, photos and undo.
+    return NextResponse.json({ ok: true, itemKey, title: row.title })
   } catch (e: any) {
     return dbFail(e?.message || e)
   }
