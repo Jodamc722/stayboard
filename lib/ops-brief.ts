@@ -518,10 +518,15 @@ const numBadge = (n: number, hot: boolean) =>
 
 export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const d = await gather(variant)
-  // BLOCKED UNITS LIVE ON THE GM BRIEF ONLY (Jon, 2026-08-12: "the blocked unit should only go in
-  // the GM brief"). A block is a revenue decision — who took the unit off the calendar and why —
-  // and it is not something a market crew can act on at 7am, so it was pulling attention away
-  // from the work they can actually do. buildGmBrief() still carries the full card.
+  // BLOCKED UNITS: GM BRIEF + FULL BRIEF, NEVER THE MARKET CREWS. Jon 2026-08-12 pulled them off
+  // every ops brief ("only go in the GM brief"); 2026-08-17 added them back to the FULL brief —
+  // the ops manager reading it decides what comes back on the calendar, so it is actionable there.
+  // A Miami/Broward crew still cannot act on a block at 7am, so their briefs stay clean.
+  let fullBlocked: BlockedRun[] = []
+  let fullBlockedLinked = 0
+  if (variant === 'full') {
+    try { const rep = await blockedUnits(30); fullBlocked = rep.runs; fullBlockedLinked = rep.linkedCount } catch { /* brief still sends */ }
+  }
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
@@ -562,7 +567,14 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     `<span style="${tone === 'red' ? S.red : S.amber}">●</span>&nbsp; <b>${esc(unit)}</b> <span style="color:#374151">— ${what}</span>` +
     (how ? `<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${esc(how).slice(0, 96)}</span>` : '') + `</td></tr>`
   const priorities: string[] = []
-  for (const c of sameDay) priorities.push(prio('red', c.unit, `same-day turn, clean ${c.state === 'running' ? 'in progress' : '<b>not started</b>'}`))
+  // SAME-DAY TURNS: ONE LINE, NOT ONE ALARM PER DOOR (Jon, 2026-08-17: "don't need priorities for
+  // all departure cleans... it has not started at 7am as no cleans start that early"). This lands
+  // at 7am — flagging every turn "not started" was noise dressed as urgency and it buried the
+  // things that ARE urgent. The turns are named once, in one line; the door list below carries
+  // per-unit detail.
+  if (sameDay.length)
+    priorities.push(prio('red', `${sameDay.length} same-day turn${sameDay.length === 1 ? '' : 's'} today`,
+      `guest lands the same day — these doors first: ${sameDay.slice(0, 8).map(c => esc(c.unit)).join(', ')}${sameDay.length > 8 ? ` +${sameDay.length - 8} more` : ''}`))
   for (const c of unassigned) priorities.push(prio('red', c.unit, 'clean has <b>no one assigned</b>'))
   for (const a of walkIns.slice(0, 4)) priorities.push(prio('amber', str(a.unit), `walk-in arriving today (${esc(str(a.guest).split(' ')[0])})`, 'Booked last minute — confirm the unit is guest-ready.'))
   for (const e of highExceptions) priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
@@ -591,7 +603,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const cleansRows = d.cleans.map(c => `
     <tr><td style="${S.td}">${esc(c.unit)}${c.sameDayArrival ? ` <span style="${S.red}">← arrival today</span>` : ''}</td>
     <td style="${S.td}${/UNASSIGNED/.test(c.assignee) ? ';color:#b91c1c;font-weight:600' : ''}">${esc(c.assignee)}</td>
-    <td style="${S.td}">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">not started</span>`}</td></tr>`).join('')
+    <td style="${S.td}">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">scheduled</span>`}</td></tr>`).join('')
 
   // Colour carries the urgency: 3 and under is a problem to answer today, 4 and under is a watch.
   const revTone = (n: number) => n <= 3 ? S.red : n < 4.5 ? S.amber : S.green
@@ -1011,6 +1023,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
         : `Last checked ${niceDay(d.today)}`) : ''}
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
+  ${variant === 'full' ? blockedCard(fullBlocked, { showMarket: true, limit: 10, linked: fullBlockedLinked }) : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
   ${card('Reputation — last 30 days', w30.lowTotal || null,
