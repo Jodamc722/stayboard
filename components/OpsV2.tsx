@@ -208,9 +208,7 @@ export function OpsV2() {
   useEffect(() => { try { const t = localStorage.getItem('opsv2_tab'); if (t === 'people' || t === 'push') setTab(t) } catch {} }, [])
   const pick = (t: 'board' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab', t) } catch {} }
 
-  const [showAll, setShowAll] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
-  const [q, setQ] = useState('')
 
   const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
   const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
@@ -223,43 +221,12 @@ export function OpsV2() {
   // show... needs a human section") — one definition of urgent, two doors to it.
   const excs: Exc[] = useMemo(() => buildExcs(data, units, glitches, staff), [units, glitches, staff, data])
 
-  const onTrack = units.filter(u => !u.allDone).length - new Set(excs.filter(e => e.kind !== 'idle' && e.kind !== 'guest').map(e => e.who)).size
-  const finished = units.filter(u => u.allDone).length
-  const unassignedN = units.filter(u => u.unassigned && !u.allDone).length
-  const idleN = staff?.summary?.nothingAssigned || 0
-
   return (
     <div>
-      {/* ── ONE LINE OF CHROME ──────────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 flex-wrap mb-1">
-        <span className="relative">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-          <input value={q} onChange={e => { setQ(e.target.value); if (e.target.value) setShowAll(true) }} placeholder="Unit, person, task…"
-            className="text-[13px] pl-7 pr-3 py-2 rounded-xl border border-line bg-white w-56 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-        </span>
-        <span className="flex-1" />
-        <button onClick={() => setAddOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-bold hover:opacity-90">
-          <Plus size={14} /> Add task
-        </button>
-      </div>
-
-      {/* ── THE SENTENCE. The only always-on summary — a sentence, not a wall of stat boxes. ── */}
-      <p className="text-[13.5px] text-ink/80 mb-3 leading-relaxed">
-        {loading && !data ? 'Reading the day…' : d ? (<>
-          <b className="text-ink">{d.done}/{d.cleans}</b> cleans done
-          <span className="text-muted"> · due {d.dueBy} · {d.passed ? fmtLeft(d.minsLeft) + ' past' : fmtLeft(d.minsLeft) + ' left'}</span>
-          {d.late > 0 && <> · <b className="text-rose-700">{d.late} late</b></>}
-          {d.atRisk > 0 && <> · <b className="text-amber-700">{d.atRisk} at risk</b></>}
-          {unassignedN > 0 && <> · <b className="text-amber-700">{unassignedN} unassigned</b></>}
-          {glitches.length > 0 && <> · <b className="text-rose-700">{glitches.length} guest issue{glitches.length === 1 ? '' : 's'}</b></>}
-          {idleN > 0 && <> · <b className="text-violet-700">{idleN} idle</b></>}
-          {excs.length === 0 && <span className="text-emerald-700 font-semibold"> — nothing needs a human right now.</span>}
-          {excs.length > 0 && <span className="text-muted"> — everything else is on track.</span>}
-        </>) : 'Could not read the day.'}
-      </p>
-
-      {/* ── TABS ─────────────────────────────────────────────────────────────────────────────── */}
+      {/* ── ONE row of chrome: the tabs and Add task. Everything else belongs to the board
+          itself — Jon, 2026-08-17, on the stacked v2+v1 screen: "the Board tab is a mess. The
+          Today in Ops board that we had was much better." So the board IS the board again; this
+          layer only adds the tabs, the triage and the Add button. ── */}
       <div className="flex items-center gap-6 border-b border-line mb-4">
         {([['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
            ['people', 'People', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
@@ -272,11 +239,14 @@ export function OpsV2() {
             {k === 'push' && <PushCount />}
           </button>
         ))}
+        <button onClick={() => setAddOpen(true)}
+          className="ml-auto mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
+          <Plus size={14} /> Add task
+        </button>
       </div>
 
       {tab === 'board' && (
-        <BoardTab excs={excs} units={units} onTrack={Math.max(0, onTrack)} finished={finished} roster={roster}
-          showAll={showAll || !!q} onShowAll={() => setShowAll(s => !s)} onRefresh={refresh} onPeople={() => pick('people')} />
+        <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />
       )}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
       {tab === 'push' && <PushTab roster={roster} />}
@@ -299,167 +269,67 @@ function PushCount() {
   return <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-violet-100 text-violet-700">{n}</span>
 }
 
-// ── BOARD: the overview on top, then EVERY task — one page, no hiding ──────────────────────────
+// ── BOARD: the triage, then THE board ──────────────────────────────────────────────────────────
 //
-// Jon, 2026-08-14, three corrections in one afternoon: the mockup's activity switch was "super
-// important" and had been dropped; "should also show in progress, not started, done"; and finally
-// "we need to see all tasks... an overview highlighting priority tasks and running late tasks".
-// So the Board is now: the filter row, the Needs-a-human overview (always), and the complete task
-// list (always — filtered by activity / status / market, worst first, done sinking to the bottom).
-// The old per-unit card board stays one tap behind "Show the full board" for the deep day.
-const ACTS = [['all', 'All'], ['cleans', 'Cleans'], ['maintenance', 'Maintenance'], ['inspections', 'Inspections']] as const
-const STATS = [['any', 'Any status'], ['notstarted', 'Not started'], ['running', 'In progress'], ['done', 'Done']] as const
-
-function BoardTab({ excs, units, onTrack, finished, roster, showAll, onShowAll, onRefresh, onPeople }: {
-  excs: Exc[]; units: Unit[]; onTrack: number; finished: number; roster: Roster[]
-  showAll: boolean; onShowAll: () => void; onRefresh: () => void; onPeople: () => void
+// v2 history, honestly: the first cut hid the board behind "Show all" (too hidden), the second
+// stacked a flat task list on top of the old board (Jon, 2026-08-17: "a mess... The Today in Ops
+// board that we had was much better"). This is the landing that survived contact: the simplified
+// Needs-a-human list, then the full original board — its own market tabs, chips, status strip,
+// date picker and unit cards, untouched. The board's internal not-started band and staffing check
+// are suppressed here because the triage above already says both.
+function BoardTab({ excs, roster, onRefresh, onPeople }: {
+  excs: Exc[]; roster: Roster[]; onRefresh: () => void; onPeople: () => void
 }) {
   const [assignFor, setAssignFor] = useState('')
-  const [act, setAct] = useState<'all' | 'cleans' | 'maintenance' | 'inspections'>('all')
-  const [stat, setStat] = useState<'any' | 'notstarted' | 'running' | 'done'>('any')
-  const [mkt, setMkt] = useState('all')
-  const filtering = act !== 'all' || stat !== 'any' || mkt !== 'all'
-
-  const markets = useMemo(() => Array.from(new Set(units.flatMap(u => [u.market, u.market2 || ''].filter(Boolean)))).sort(), [units])
-
-  // ALL of today's tasks, always — worst first, done last, capped only for render weight.
-  const rows = useMemo(() => {
-    const all = units.flatMap(u => u.tasks.map(t => ({ t, u })))
-    return all
-      .filter(({ t, u }) =>
-        (act === 'all' || actOf(t) === act) &&
-        (mkt === 'all' || u.market === mkt || u.market2 === mkt) &&
-        (stat === 'any' ? true
-          : t.guestyOnly ? false
-            : stat === 'done' ? t.done
-              : stat === 'running' ? (t.running && !t.done)
-                : (!t.done && !t.running)))
-      .sort((a, b) =>
-        ((a.t.late ? 0 : a.t.atRisk ? 1 : a.t.running ? 2 : a.t.done ? 4 : 3)
-          - (b.t.late ? 0 : b.t.atRisk ? 1 : b.t.running ? 2 : b.t.done ? 4 : 3))
-        || a.u.unit.localeCompare(b.u.unit, undefined, { numeric: true }))
-  }, [units, act, stat, mkt])
-
-  const filterRow = (
-    <div className="flex items-center gap-2 flex-wrap mb-3">
-      <span className="inline-flex bg-app rounded-xl p-0.5">
-        {ACTS.map(([k, label]) => (
-          <button key={k} onClick={() => setAct(k as any)}
-            className={'text-[12.5px] font-bold px-3 py-1.5 rounded-lg ' + (act === k ? 'bg-white text-ink shadow-sm' : 'text-muted hover:text-ink')}>
-            {label}
-          </button>
-        ))}
-      </span>
-      <span className="inline-flex bg-app rounded-xl p-0.5">
-        {STATS.map(([k, label]) => (
-          <button key={k} onClick={() => setStat(k as any)}
-            className={'text-[12.5px] font-semibold px-2.5 py-1.5 rounded-lg ' + (stat === k ? 'bg-white text-ink shadow-sm' : 'text-muted hover:text-ink')}>
-            {label}
-          </button>
-        ))}
-      </span>
-      <select value={mkt} onChange={e => setMkt(e.target.value)}
-        className="ml-auto text-[12.5px] font-semibold border border-line rounded-xl px-2.5 py-1.5 bg-white text-muted">
-        <option value="all">All markets</option>
-        {markets.map(m => <option key={m} value={m}>{m}</option>)}
-      </select>
-      {filtering && (
-        <button onClick={() => { setAct('all'); setStat('any'); setMkt('all') }}
-          className="text-[12px] font-semibold text-muted hover:text-ink underline">Clear</button>
-      )}
-    </div>
-  )
+  const [folded, setFolded] = useState(false)
+  const [showRest, setShowRest] = useState(false)
+  const shown = showRest ? excs : excs.slice(0, 6)
 
   return (
     <div>
-      {filterRow}
-      {/* ── THE OVERVIEW: what needs a human, always on top ── */}
-      {excs.length > 0 ? (
-        <>
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle size={13} className="text-rose-600" />
-            <span className="text-[12px] font-bold uppercase tracking-wide text-rose-700">Needs a human — {excs.length}</span>
-          </div>
-          <div className="space-y-1.5 mb-3">
-            {excs.map(e => (
-              <div key={e.key} className={'rounded-xl border bg-white px-3.5 py-2.5 ' + (e.rank <= 1 ? 'border-rose-200 border-l-[3px] border-l-rose-500' : 'border-line border-l-[3px] border-l-amber-400')}>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[74px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
-                  <span className="text-[13.5px] font-bold text-ink shrink-0">{e.who}</span>
-                  <span className="text-[13px] text-ink/70 flex-1 min-w-[180px]">{e.what}</span>
-                  {e.kind === 'idle' ? (
-                    <button onClick={onPeople} className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-ink text-white shrink-0">Give work</button>
-                  ) : e.taskId ? (
-                    e.assignee
-                      ? <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer"
-                          className="text-[12px] font-bold px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app shrink-0 inline-flex items-center gap-1"><Phone size={11} /> {e.assignee.split(' ')[0]}</a>
-                      : <button onClick={() => setAssignFor(assignFor === e.key ? '' : e.key)}
-                          className={'text-[12px] font-bold px-3 py-1.5 rounded-lg shrink-0 ' + (assignFor === e.key ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>Assign</button>
-                  ) : null}
+      {excs.length > 0 && (
+        <div className="rounded-2xl border border-rose-200 bg-white overflow-hidden mb-3">
+          <button onClick={() => setFolded(f => !f)} className="w-full px-4 py-2.5 bg-rose-50/70 flex items-center gap-2 text-left">
+            <AlertTriangle size={14} className="text-rose-700 shrink-0" />
+            <span className="text-[13px] font-bold text-rose-800">Needs a human</span>
+            <span className="text-[11px] font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{excs.length}</span>
+            <ChevronDown size={14} className={'ml-auto text-rose-700/60 transition-transform shrink-0 ' + (folded ? '' : 'rotate-180')} />
+          </button>
+          {!folded && (
+            <div className="divide-y divide-line border-t border-rose-200">
+              {shown.map(e => (
+                <div key={e.key} className="px-4 py-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className={'text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[66px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
+                    <span className="text-[13px] font-bold text-ink shrink-0">{e.who}</span>
+                    <span className="text-[12.5px] text-ink/60 flex-1 min-w-0 truncate">{e.what}</span>
+                    {e.kind === 'idle' ? (
+                      <button onClick={onPeople} className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg bg-ink text-white shrink-0">Give work</button>
+                    ) : e.taskId && !e.assignee ? (
+                      <button onClick={() => setAssignFor(assignFor === e.key ? '' : e.key)}
+                        className={'text-[11.5px] font-bold px-2.5 py-1 rounded-lg shrink-0 ' + (assignFor === e.key ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>Assign</button>
+                    ) : e.taskId ? (
+                      <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer"
+                        className="text-[11.5px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:bg-app shrink-0">{e.assignee ? e.assignee.split(' ')[0] : 'Open'}</a>
+                    ) : null}
+                  </div>
+                  {assignFor === e.key && e.taskId && (
+                    <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster} onDone={() => { setAssignFor(''); onRefresh() }} />
+                  )}
                 </div>
-                {assignFor === e.key && e.taskId && (
-                  <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster}
-                    onDone={() => { setAssignFor(''); onRefresh() }} />
-                )}
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-4 mb-3 text-[13.5px] text-emerald-800">
-          <b>Nothing needs a human right now.</b> Cleans are moving, everything is assigned, no open guest issues.
-        </div>
-      )}
-
-      {/* ── ALL TASKS (Jon: "we need to see all tasks") — filtered, worst first, done last ── */}
-      <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-muted mb-2 mt-1">
-        {rows.length} task{rows.length === 1 ? '' : 's'}
-        <span className="font-semibold normal-case tracking-normal">
-          — {ACTS.find(a => a[0] === act)![1]}{stat !== 'any' ? ' · ' + STATS.find(s => s[0] === stat)![1] : ''}{mkt !== 'all' ? ' · ' + mkt : ''}
-        </span>
-        <span className="ml-auto font-semibold normal-case tracking-normal flex items-center gap-1">
-          <Check size={12} className="text-emerald-600" /> {onTrack} on track · {finished} finished
-        </span>
-      </div>
-      {rows.length === 0 ? (
-        <div className="rounded-xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted mb-3">Nothing matches these filters.</div>
-      ) : (
-        <div className="space-y-1 mb-3">
-          {rows.slice(0, 100).map(({ t, u }) => (
-            <div key={t.id} className={'rounded-xl border bg-white px-3.5 py-2 ' + (t.late ? 'border-l-[3px] border-l-rose-500 border-rose-200' : t.atRisk ? 'border-l-[3px] border-l-amber-400 border-line' : t.done ? 'border-line opacity-60' : 'border-line')}>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="text-[13px] font-bold text-ink shrink-0">{u.unit}</span>
-                <span className="text-[12.5px] text-ink/70 flex-1 min-w-[140px] truncate">{t.name}</span>
-                <span className={'text-[11.5px] shrink-0 ' + (t.guestyOnly ? 'text-muted' : t.assignees.length ? 'text-muted' : 'text-amber-700 font-bold')}>
-                  {t.guestyOnly ? 'Vendor' : t.assignees.length ? t.assignees.join(', ') : 'Unassigned'}
-                </span>
-                <span className={'text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ' + (
-                  t.done ? 'bg-emerald-50 text-emerald-700' : t.late ? 'bg-rose-600 text-white'
-                    : t.running ? 'bg-sky-50 text-sky-700' : t.atRisk ? 'bg-amber-100 text-amber-800' : 'bg-app text-muted')}>
-                  {t.done ? 'Done' : t.late ? 'LATE' : t.running ? 'In progress' : t.atRisk ? 'At risk' : 'Not started'}
-                </span>
-                {!t.guestyOnly && !t.done && t.assignees.length === 0 ? (
-                  <button onClick={() => setAssignFor(assignFor === t.id ? '' : t.id)}
-                    className={'text-[11.5px] font-bold px-2.5 py-1 rounded-lg shrink-0 ' + (assignFor === t.id ? 'border border-ink text-ink bg-white' : 'bg-ink text-white')}>Assign</button>
-                ) : !t.guestyOnly ? (
-                  <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer"
-                    className="text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line bg-white hover:bg-app shrink-0">Open</a>
-                ) : null}
-              </div>
-              {assignFor === t.id && <InlineAssign taskId={t.id} dept={t.dept} roster={roster} onDone={() => { setAssignFor(''); onRefresh() }} />}
+              ))}
+              {excs.length > 6 && !showRest && (
+                <button onClick={() => setShowRest(true)} className="w-full px-4 py-2 text-left text-[12px] font-semibold text-muted hover:text-ink">
+                  + {excs.length - 6} more
+                </button>
+              )}
             </div>
-          ))}
-          {rows.length > 100 && <p className="text-[12px] text-muted px-1">+ {rows.length - 100} more — narrow the filters or open the full board below.</p>}
+          )}
         </div>
       )}
 
-      <button onClick={onShowAll}
-        className="w-full rounded-xl border-2 border-dashed border-line py-2.5 text-[13px] font-bold text-muted hover:text-ink hover:border-ink/30 mb-3 inline-flex items-center justify-center gap-1.5">
-        {showAll ? 'Hide the full board' : 'Show the full board — unit cards, comments, reschedule'} <ChevronDown size={14} className={showAll ? 'rotate-180 transition-transform' : 'transition-transform'} />
-      </button>
-
-      {/* THE COMPLETE BOARD, unchanged — every filter, card and action it always had. */}
-      {showAll && <TodayInOps />}
+      {/* THE BOARD — the original, full-strength. One set of controls, its own. */}
+      <TodayInOps hideBands />
     </div>
   )
 }

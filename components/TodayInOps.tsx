@@ -91,7 +91,10 @@ function statusText(t: Task) {
 // Order units by LOCATION: group by city (Pompano vs Fort Lauderdale), and within each city put
 // the properties closest to each other next to each other (nearest-neighbour chain on lat/lng).
 function dist2(a: Unit, b: Unit) { const dx = Number(a.lat) - Number(b.lat); const dy = Number(a.lng) - Number(b.lng); return dx * dx + dy * dy }
-export function TodayInOps() {
+// hideBands: when this board renders under the v2 "Needs a human" triage (2026-08-17), the
+// not-started band and the staffing check would say the same thing twice on one screen — the
+// triage list above already carries both. Standalone use keeps them.
+export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -666,7 +669,7 @@ export function TodayInOps() {
       {/* NOT STARTED — the band Jon asked for. Only appears when it is a real problem: the guest has
           checked out (plus grace) and nobody has started. Reads PROBLEM then ACTION, like the
           exceptions do, and one press puts the board on exactly those cleans. */}
-      {bh && bh.notStarted > 0 && (
+      {!hideBands && bh && bh.notStarted > 0 && (
         <div className={'rounded-2xl border mb-3 overflow-hidden ' + (bh.level === 'urgent' ? 'border-rose-300 bg-rose-50/70' : 'border-amber-300 bg-amber-50/60')}>
           <div className="px-4 py-3">
             <div className="flex items-center gap-2 flex-wrap">
@@ -702,7 +705,7 @@ export function TodayInOps() {
 
       {/* STAFFING CHECK — clocked in (Homebase) vs assigned (Breezeway). Catches the person who
           showed up to work and got nothing, before they have to tell us. */}
-      <StaffingCheck date={dateSel || undefined} />
+      {!hideBands && <StaffingCheck date={dateSel || undefined} />}
 
 
       {units.length === 0 && (
