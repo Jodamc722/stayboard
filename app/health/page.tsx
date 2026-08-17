@@ -384,6 +384,16 @@ export default function HealthPage() {
             </div>
           )}
 
+          {/* Why the score leans on Airbnb: reviews are weighted by each channel's real share of
+              booking volume, so the channel that actually fills the calendar drives the score. */}
+          {s.channelWeighting && s.channelWeighting.total > 0 && (
+            <div className="mt-4 text-[11px] text-muted inline-flex items-start gap-1.5"><Info size={13} className="mt-0.5 shrink-0" />
+              <span>Reviews are weighted by booking volume ({s.channelWeighting.window}):{' '}
+                {s.channelWeighting.channels.filter((c: any) => c.bookings > 0).map((c: any) => `${c.channel === 'bookingcom' ? 'Booking.com' : c.channel === 'airbnb' ? 'Airbnb' : c.channel === 'vrbo' ? 'Vrbo' : c.channel === 'expedia' ? 'Expedia' : 'Other'} ${c.sharePct}% → ×${c.reviewWeight}`).join(' · ')}.
+                A review on the channel that books the most moves the score the most.</span>
+            </div>
+          )}
+
           <div className="mt-4 text-[11px] text-muted inline-flex items-start gap-1.5"><Info size={13} className="mt-0.5 shrink-0" /> Not yet scored (added as data connects): {data!.dataPending.join(' · ')}. {s.reviewsAnalyzed} reviews analyzed.</div>
         </>
       )}
