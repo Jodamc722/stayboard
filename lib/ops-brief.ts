@@ -12,7 +12,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { marketOf, type Market } from './segments'
 import { rollupBuilding, ratingToStars, ratingAsGuestSaw } from './optimize-score'
 import { THEMES, looksNegative, sentenceAbout } from './review-themes'
-import { getOpsPresets } from './app-settings'
+import { getOpsPresets, getSetting } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
 import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
@@ -121,14 +121,22 @@ async function gather(variant: BriefVariant) {
 
   // NEW reviews since yesterday — the score everyone should hear about at standup.
   const allRevs = ((revRes.data || []) as any[]).filter(r => inVariant(String(r.listing_id)) && Number.isFinite(Number(r.rating)))
+  // MOST RECENT REVIEWS, NOT JUST THE LAST 26 HOURS (Jon, 2026-08-14: "reviews don't seem to be
+  // fully populating"). Measured live: 3 reviews arrived in the past day against 8 in the past
+  // week — so a strict since-yesterday filter left the card empty most mornings and the team
+  // stopped looking at it. Show the latest ten whenever they landed, newest first, and count the
+  // genuinely new ones separately. Low scores still sort to the top of attention by colour.
+  const newSinceYesterday = allRevs.filter(r => str(r.created_at) >= dayAgo).length
   const newReviews = allRevs
-    .filter(r => str(r.created_at) >= dayAgo)
-    .sort((a, b) => Number(a.rating) - Number(b.rating))
+    .slice()
+    .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
     .slice(0, 10)
     .map(r => ({
       unit: meta[String(r.listing_id)]?.name ?? 'Unit', rating: Number(r.rating),
       guest: str(r.guest_name).split(' ')[0] || null, channel: str(r.channel),
       snippet: str(r.content).replace(/\s+/g, ' ').slice(0, 110),
+      at: str(r.created_at).slice(0, 10),
+      isNew: str(r.created_at) >= dayAgo,
     }))
 
   // Inspect-worthy: open urgent feedback actions.
@@ -218,7 +226,7 @@ async function gather(variant: BriefVariant) {
   })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
 
   return {
-    today, sheet, cleans, newReviews, inspect, bigArrivals, bigTodayIds,
+    today, sheet, cleans, newReviews, newSinceYesterday, inspect, bigArrivals, bigTodayIds,
     rep: { n: allRevs.length, avg, five, owed },
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
@@ -272,13 +280,23 @@ function tileRow(tiles: Tile[]): string {
 }
 
 // A section card: thin accent bar on the header, count de-emphasised next to the title.
-function card(title: string, count: number | null, inner: string, accent = '#6366f1'): string {
+// EVERY CARD SAYS WHAT WINDOW IT COVERS (Jon, 2026-08-14: "label when the data is from — labor by
+// day, last 30 days, etc"). A number with no date on it is a number somebody has to ask about.
+function card(title: string, count: number | null, inner: string, accent = '#6366f1', when?: string): string {
   return `<div style="${S.card}">
     <div style="${S.cardHead};border-left:3px solid ${accent}">
       <p style="${S.h2}">${title}${count != null ? ` <span style="${S.h2n}">· ${count}</span>` : ''}</p>
+      ${when ? `<p style="margin:2px 0 0;font-size:11px;color:#9ca3af;letter-spacing:.02em">${when}</p>` : ''}
     </div>
     <div style="${S.cardBody}">${inner}</div>
   </div>`
+}
+/** "Thu, Aug 14" — the human form of a YYYY-MM-DD, for card datelines. */
+function niceDay(ymd: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' })
+      .format(new Date(ymd + 'T12:00:00Z'))
+  } catch { return ymd }
 }
 const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:8px 0 2px">${t}</p>`
 
@@ -526,9 +544,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <td style="${S.td}${/UNASSIGNED/.test(c.assignee) ? ';color:#b91c1c;font-weight:600' : ''}">${esc(c.assignee)}</td>
     <td style="${S.td}">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">not started</span>`}</td></tr>`).join('')
 
+  // Colour carries the urgency: 3 and under is a problem to answer today, 4 and under is a watch.
+  const revTone = (n: number) => n <= 3 ? S.red : n < 4.5 ? S.amber : S.green
   const newRevRows = d.newReviews.map(r => `
-    <tr><td style="${S.td}"><b>${esc(r.unit)}</b><br><span style="color:#6b7280">${esc(r.channel)}${r.guest ? ' · ' + esc(r.guest) : ''}</span></td>
-    <td style="${S.td}"><span style="${r.rating <= 3 ? S.red : S.green}">${stars(r.rating)} ${esc(ratingAsGuestSaw(r.rating, r.channel) || String(r.rating))}</span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
+    <tr${r.rating <= 3 ? ' style="background:#fef2f2"' : ''}><td style="${S.td}"><b>${esc(r.unit)}</b>${r.isNew ? ' <span style="font-size:10px;color:#4338ca;font-weight:700">NEW</span>' : ''}<br><span style="color:#6b7280">${esc(r.channel)}${r.guest ? ' · ' + esc(r.guest) : ''} · ${esc(niceDay(r.at))}</span></td>
+    <td style="${S.td}"><span style="${revTone(r.rating)}">${stars(r.rating)} <b>${esc(ratingAsGuestSaw(r.rating, r.channel) || String(r.rating))}</b></span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
 
   const bigRows = d.bigArrivals.map(b => `
     <tr><td style="${S.td}"><b>${esc(b.unit)}</b>${b.today ? ' ' + pillRed('TODAY') : ''} <span style="${S.muted};font-size:12px">· ${esc(b.guest)} · ${b.when}${b.nights ? ` · ${b.nights}n` : ''}</span></td>
@@ -768,7 +788,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
 
   ${eyebrow('Good to know')}
   ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
-  ${d.newReviews.length ? card('New reviews since yesterday', d.newReviews.length, table(['Unit', 'Score'], newRevRows), lowNew.length ? '#dc2626' : '#059669') : ''}
+  ${d.newReviews.length ? card('Most recent reviews', d.newReviews.length,
+      (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
+      table(['Unit', 'Score'], newRevRows),
+      lowNew.length ? '#dc2626' : '#059669',
+      `${d.newSinceYesterday} new since yesterday · newest ${d.newReviews[0] ? niceDay(d.newReviews[0].at) : ''}`) : ''}
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
