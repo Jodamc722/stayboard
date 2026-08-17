@@ -120,7 +120,11 @@ export function isOpenPath(path: string): boolean {
 }
 // Login-required pages that deliberately have NO per-role setting:
 // /users gates itself (admin console).
-export const UNGATED_PAGES = ['/users']
+// /stay-window gates itself too (2026-08-17): every mutation on it goes through
+// requireLevel('revenue','full'), so a non-revenue user who finds the URL sees the screen and can
+// do nothing with it. Kept out of FEATURES so it adds no nav entry without Jon's say-so — promote
+// it to a Money tab whenever he wants it visible.
+export const UNGATED_PAGES = ['/users', '/stay-window']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)

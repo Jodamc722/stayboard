@@ -139,3 +139,160 @@ export function summarize(days: MinNightsDay[]): { total: number; distinct: Arra
   distinct.sort((a, b) => b.count - a.count)
   return { total: days.length, distinct }
 }
+
+// ================================================================================================
+// THE SCHEDULE
+// ================================================================================================
+// Jon, 2026-08-17: "We just need to be able to turn this off and on at the time specified."
+//
+// Config lives in `app_settings` rather than its own table ON PURPOSE — a migration has to be run
+// by hand in Supabase before the feature works, and this feature should work the moment it deploys.
+// app_settings.value is TEXT, so lib/app-settings.ts does the JSON round-trip.
+import { getSetting, setSetting } from './app-settings'
+
+export const STAY_WINDOW_KEY = 'stay_window'
+
+export type WindowListing = {
+  id: string
+  label: string
+  // Cleared for stays under 30 nights in its own city. 7071 SW is in Plantation FL, which requires a
+  // short-term vacation rental certificate for anything under 30 days — until someone ticks this,
+  // the schedule reads the listing and leaves it alone rather than opening it up.
+  cleared: boolean
+}
+
+export type RunLogEntry = {
+  at: string
+  direction: 'open' | 'close'
+  listingId: string
+  label: string
+  minNights: number
+  ok: boolean
+  verified: boolean | null
+  note: string
+}
+
+export type StayWindowConfig = {
+  enabled: boolean
+  days: number
+  openHour: number      // ET hour the SHORT window opens (18 = 6pm)
+  closeHour: number     // ET hour it closes and the long minimum returns (7 = 7am)
+  shortMin: number      // 3
+  longMin: number       // 30
+  listings: WindowListing[]
+  ranOn: Record<string, { open?: string; close?: string }>   // listingId -> last ET date per direction
+  log: RunLogEntry[]
+}
+
+export const DEFAULT_CONFIG: StayWindowConfig = {
+  enabled: false, days: 60, openHour: 18, closeHour: 7, shortMin: 3, longMin: 30,
+  listings: [], ranOn: {}, log: [],
+}
+
+function clampInt(v: any, lo: number, hi: number, dflt: number): number {
+  const n = Math.round(Number(v))
+  if (!Number.isFinite(n)) return dflt
+  return Math.min(Math.max(n, lo), hi)
+}
+
+export function normalizeConfig(raw: any): StayWindowConfig {
+  const r = (raw && typeof raw === 'object') ? raw : {}
+  const listings: WindowListing[] = Array.isArray(r.listings)
+    ? r.listings
+        .filter((x: any) => x && typeof x === 'object' && str(x.id))
+        .map((x: any) => ({ id: str(x.id), label: str(x.label) || str(x.id), cleared: x.cleared === true }))
+        .slice(0, 50)
+    : []
+  const log: RunLogEntry[] = Array.isArray(r.log) ? r.log.slice(0, 40) : []
+  return {
+    enabled: r.enabled === true,
+    days: clampInt(r.days, 1, 365, 60),
+    openHour: clampInt(r.openHour, 0, 23, 18),
+    closeHour: clampInt(r.closeHour, 0, 23, 7),
+    shortMin: clampInt(r.shortMin, 1, 365, 3),
+    longMin: clampInt(r.longMin, 1, 365, 30),
+    listings,
+    ranOn: (r.ranOn && typeof r.ranOn === 'object') ? r.ranOn : {},
+    log,
+  }
+}
+
+export async function readConfig(): Promise<StayWindowConfig> {
+  const raw = await getSetting<any>(STAY_WINDOW_KEY, null)
+  return normalizeConfig(raw)
+}
+
+export async function writeConfig(cfg: StayWindowConfig, by?: string | null) {
+  return setSetting(STAY_WINDOW_KEY, normalizeConfig(cfg), by || null)
+}
+
+/** The current hour on the property's clock, 0-23. The cron fires on UTC; the calendar is Eastern. */
+export function hourET(): number {
+  const s = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date())
+  const n = Number(s)
+  return Number.isFinite(n) ? (n === 24 ? 0 : n) : -1
+}
+
+/**
+ * Apply one direction to every configured listing.
+ *
+ * 'open'  -> shortMin across today..today+days   (the 6pm flip)
+ * 'close' -> longMin across the same range       (the 7am flip back)
+ *
+ * Idempotent per ET day unless `force` is set, so an hourly cron that fires twice in the same hour,
+ * or a retry after a timeout, cannot write the same range twice.
+ */
+export async function runDirection(
+  cfg: StayWindowConfig, direction: 'open' | 'close', force = false
+): Promise<{ config: StayWindowConfig; results: RunLogEntry[] }> {
+  const today = todayET()
+  const start = today
+  const end = addDays(today, cfg.days)
+  const target = direction === 'open' ? cfg.shortMin : cfg.longMin
+  const results: RunLogEntry[] = []
+
+  for (const l of cfg.listings) {
+    const already = (cfg.ranOn[l.id] || {})[direction]
+    if (!force && already === today) continue
+
+    const entry: RunLogEntry = {
+      at: new Date().toISOString(), direction, listingId: l.id, label: l.label,
+      minNights: target, ok: false, verified: null, note: '',
+    }
+
+    // The short direction is the only one that can do harm, and it is gated on the listing being
+    // cleared for under-30-night stays in its own city.
+    if (direction === 'open' && target < 30 && !l.cleared) {
+      entry.note = 'Skipped — not marked cleared for short stays. Confirm the city registration first.'
+      results.push(entry)
+      continue
+    }
+
+    try {
+      const terms = await readTerms(l.id)
+      const clash = conflictsWithMax(target, terms.maxNights)
+      if (clash) { entry.note = clash; results.push(entry); continue }
+
+      const res = await writeMinNights(l.id, start, end, target)
+      entry.ok = res.status >= 200 && res.status < 300
+      if (!entry.ok) {
+        entry.note = `Guesty ${res.status}: ${res.body.slice(0, 160)}`
+      } else {
+        try {
+          const rows = await readMinNights(l.id, start, end)
+          entry.verified = rows.length > 0 && rows.every(x => x.minNights === target)
+          entry.note = entry.verified
+            ? `${rows.length} days now read ${target} nights.`
+            : `Write accepted but the calendar does not read ${target} on every day — check it.`
+        } catch { entry.note = 'Write accepted; read-back failed.' }
+        cfg.ranOn[l.id] = { ...(cfg.ranOn[l.id] || {}), [direction]: today }
+      }
+    } catch (e: any) {
+      entry.note = str(e?.message).slice(0, 200)
+    }
+    results.push(entry)
+  }
+
+  cfg.log = results.concat(cfg.log).slice(0, 40)
+  return { config: cfg, results }
+}
