@@ -43,6 +43,11 @@ type Snap = {
   cleans: number; cleaningRevenue: number; hkRevenue?: number; credited: number
   billable: number; payroll: number; margin: number
   costPerClean: number | null
+  // Per-market housekeeping economics, so the morning brief can show a SETTLED Miami-vs-Broward
+  // comparison instead of one noisy day (Jon, 2026-08-17: "need to see how Miami is performing
+  // and Broward"). Payroll is already split across markets in proportion to each housekeeper's
+  // cleans there, so someone working both markets is never counted twice.
+  markets?: { key: string; label: string; inHouse: boolean; cleans: number; revenue: number; payroll: number; costPerClean: number | null; hoursPerClean: number | null; margin: number; marginPct: number | null }[]
 }
 
 const td = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:left'
@@ -86,6 +91,12 @@ export async function GET(req: NextRequest) {
       payroll: K.allIn.payroll,
       margin: K.allIn.margin,
       costPerClean: K.housekeeping.costPerClean,
+      markets: (ec.buckets || []).filter((b: any) => b.cleans > 0 || b.payroll > 0).map((b: any) => ({
+        key: String(b.key), label: String(b.label), inHouse: !!b.inHouse,
+        cleans: b.cleans, revenue: b.cleaningRevenue, payroll: b.payroll,
+        costPerClean: b.laborCostPerClean, hoursPerClean: b.hoursPerClean,
+        margin: b.margin, marginPct: b.marginPct,
+      })),
     }
 
     // ── what settled since last time ───────────────────────────────────────
