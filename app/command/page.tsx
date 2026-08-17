@@ -10,9 +10,10 @@ import { ConnectTools } from '@/components/ConnectTools'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { MissionFeed } from '@/components/MissionFeed'
 import { GeneratePlanButton } from '@/components/OpsPlanUI'
+import { NeedsHumanPanel } from '@/components/OpsV2'
 import {
   Sparkles, Star, MessageSquare, AlertTriangle, LogIn, ClipboardCheck,
-  ArrowUpRight, ListChecks,
+  ArrowUpRight, ListChecks, Crown, Wrench,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -62,6 +63,7 @@ export default async function CommandCenterPage() {
     listingsRes,
     bzOverdueRes,
     glitchOverdueRes,
+    bzTodayRes,
   ] = await Promise.all([
     sb.from('guesty_reviews').select('id, listing_id, rating, content, channel, guest_name, created_at')
       .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', sixtyAgo)
@@ -74,7 +76,7 @@ export default async function CommandCenterPage() {
       .eq('approval_required', true).order('created_at', { ascending: false }).limit(40),
     sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, nights, money_total')
       .eq('check_in', todayStr).neq('status', 'canceled').limit(60),
-    sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, custom_fields, status, money_total')
+    sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, nights, custom_fields, status, money_total')
       .gte('check_in', todayStr).lte('check_in', in2).order('check_in').limit(120),
     sb.from('guesty_conversation_sentiment').select('conversation_id, guest_name, listing_id, channel, band, dissatisfied, awaiting_reply, top_issue, guest_excerpt, last_message_at, status')
       .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
@@ -101,6 +103,14 @@ export default async function CommandCenterPage() {
     // ...plus open glitches whose due date has passed.
     sb.from('glitches').select('id', { count: 'exact', head: true })
       .not('status', 'in', '("done","resolved","closed")').lt('due_date', todayStr),
+    // TODAY'S MAINTENANCE (Jon, 2026-08-14: "Command center should show... Maintenance tasks").
+    // The overdue count linked to the board; the actual work was invisible from here.
+    sb.from('breezeway_tasks_sync')
+      .select('id, reference_property_id, name, status, assignees, raw')
+      .eq('scheduled_date', todayStr).ilike('type_department', '%maint%')
+      .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
+      .not('status', 'ilike', '%close%').not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+      .limit(60),
   ])
 
   const meta: Record<string, { name: string; building: string; status: string }> = {}
@@ -181,6 +191,37 @@ export default async function CommandCenterPage() {
     return !m || !noBz.test(m.building + ' ' + m.name)
   }).length
 
+  // BIG RESERVATIONS (Jon, 2026-08-14: "Command center should show... big reservation"). The next
+  // three days' arrivals that deserve a manager's eye before the guest is in the building: high
+  // dollar value or a long stay. The bar is deliberately simple — top of the money list, floor of
+  // $1,500 or 7+ nights — because "big" here means "worth a personal look", not a revenue report.
+  const bigArrivals = (welcomeRes.data ?? [])
+    .filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed')
+    .map((r: any) => ({
+      id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '',
+      unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10),
+      nights: Number(r.nights) || 0, value: Number(r.money_total) || 0,
+      today: String(r.check_in).slice(0, 10) === todayStr,
+    }))
+    .filter((r: any) => r.value >= 1500 || r.nights >= 7)
+    .sort((a: any, b: any) => b.value - a.value)
+    .slice(0, 6)
+
+  // Today's open maintenance, urgent first. Priority lives only in the raw Breezeway payload on
+  // the mirror; missing = normal, never a crash.
+  const prioOf = (raw: any): string => { try { return String(raw?.type_priority || raw?.priority || 'normal').toLowerCase() } catch { return 'normal' } }
+  const prioRank: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 }
+  const maintToday = ((bzTodayRes.data ?? []) as any[])
+    .filter((t: any) => liveListing(String(t.reference_property_id)))
+    .map((t: any) => ({
+      id: String(t.id), name: String(t.name || 'Maintenance'),
+      unit: meta[String(t.reference_property_id)]?.name || '',
+      prio: prioOf(t.raw),
+      who: (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => a?.name).filter(Boolean).join(', '),
+    }))
+    .sort((a: any, b: any) => (prioRank[a.prio] ?? 2) - (prioRank[b.prio] ?? 2) || a.unit.localeCompare(b.unit))
+  const maintShown = maintToday.slice(0, 6)
+
   const counts = {
     reviews: reviewItems.length,
     messages: messages.length,
@@ -220,6 +261,65 @@ export default async function CommandCenterPage() {
       <div className="mb-5">
         <AvailabilityAlert />
       </div>
+
+      {/* NEEDS A HUMAN — the ops board's exception list, rendered here too (one definition of
+          urgent, two doors). Client component; renders nothing when the field day is clean. */}
+      <div className="mb-5">
+        <NeedsHumanPanel />
+      </div>
+
+      {/* BIG ARRIVALS + TODAY'S MAINTENANCE — the two lists Jon asked to SEE here, not count. */}
+      {(bigArrivals.length > 0 || maintShown.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+          {bigArrivals.length > 0 && (
+            <div className="rounded-2xl border border-line bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center gap-2">
+                <Crown size={14} className="text-amber-500" />
+                <span className="text-[13px] font-bold text-ink">Big arrivals — next 3 days</span>
+                <span className="text-[11px] text-muted">$1,500+ or 7+ nights</span>
+              </div>
+              <div className="divide-y divide-line">
+                {bigArrivals.map((r: any) => (
+                  <div key={r.id} className="px-4 py-2.5 flex items-center gap-2.5 text-[13px] flex-wrap">
+                    <span className="font-bold text-ink shrink-0">{r.guest}</span>
+                    <span className="text-ink/70 truncate flex-1 min-w-[120px]">{r.listing_name}</span>
+                    {r.today
+                      ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-600 text-white shrink-0">Today</span>
+                      : <span className="text-[11px] text-muted shrink-0">{r.check_in.slice(5)}</span>}
+                    <span className="text-[11.5px] text-muted shrink-0">{r.nights} nt</span>
+                    <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">${Math.round(r.value).toLocaleString('en-US')}</span>
+                  </div>
+                ))}
+              </div>
+              <Link href="/welcome-calls" className="block px-4 py-2 text-[12px] font-semibold text-brand-700 hover:underline border-t border-line">Welcome calls →</Link>
+            </div>
+          )}
+          {maintShown.length > 0 && (
+            <div className="rounded-2xl border border-line bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center gap-2">
+                <Wrench size={14} className="text-amber-600" />
+                <span className="text-[13px] font-bold text-ink">Maintenance today — {maintToday.length}</span>
+              </div>
+              <div className="divide-y divide-line">
+                {maintShown.map((t: any) => (
+                  <a key={t.id} href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer"
+                    className="px-4 py-2.5 flex items-center gap-2.5 text-[13px] flex-wrap hover:bg-app/40">
+                    <span className="font-bold text-ink shrink-0">{t.unit}</span>
+                    <span className="text-ink/70 truncate flex-1 min-w-[120px]">{t.name}</span>
+                    {(t.prio === 'urgent' || t.prio === 'high') && (
+                      <span className={'text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ' + (t.prio === 'urgent' ? 'bg-rose-600 text-white' : 'bg-amber-100 text-amber-800')}>{t.prio}</span>
+                    )}
+                    <span className={'text-[11.5px] shrink-0 ' + (t.who ? 'text-muted' : 'text-amber-700 font-bold')}>{t.who || 'Unassigned'}</span>
+                  </a>
+                ))}
+              </div>
+              {maintToday.length > maintShown.length && (
+                <Link href="/plan" className="block px-4 py-2 text-[12px] font-semibold text-brand-700 hover:underline border-t border-line">+ {maintToday.length - maintShown.length} more on the board →</Link>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
         <div className="lg:col-span-2 order-2 lg:order-1">
