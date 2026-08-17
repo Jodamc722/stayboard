@@ -126,8 +126,15 @@ async function gather(variant: BriefVariant) {
   // week — so a strict since-yesterday filter left the card empty most mornings and the team
   // stopped looking at it. Show the latest ten whenever they landed, newest first, and count the
   // genuinely new ones separately. Low scores still sort to the top of attention by colour.
-  const newSinceYesterday = allRevs.filter(r => str(r.created_at) >= dayAgo).length
-  const newReviews = allRevs
+  // SINCE THE LAST BRIEF, NOT SINCE AN ARBITRARY CLOCK (Jon, 2026-08-17: "should be from the last
+  // pull — we should not see the same reviews over and over"). The cron stamps a watermark after
+  // each successful send; everything newer than that is what this brief has to say. When nothing
+  // new has landed the card shrinks to one line instead of repeating yesterday's list.
+  const seenMark = str(await getSetting<string>('ops_brief_reviews_seen', '').catch(() => ''))
+  const sinceMark = seenMark || dayAgo
+  const fresh = allRevs.filter(r => str(r.created_at) > sinceMark)
+  const newSinceYesterday = fresh.length
+  const newReviews = (fresh.length ? fresh : allRevs.slice(0, 1))
     .slice()
     .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
     .slice(0, 10)
@@ -226,7 +233,7 @@ async function gather(variant: BriefVariant) {
   })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
 
   return {
-    today, sheet, cleans, newReviews, newSinceYesterday, inspect, bigArrivals, bigTodayIds,
+    today, sheet, cleans, newReviews, newSinceYesterday, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
     rep: { n: allRevs.length, avg, five, owed },
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
@@ -646,7 +653,20 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       : ''
     const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
-    laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
+    // The 30-day figure comes from the daily true-up snapshot, not a second full computation:
+    // it is already settled, already stored, and says when it was taken.
+    let thirty = ''
+    try {
+      const snap = await getSetting<any>('labor_trueup_snapshot', null)
+      if (snap && snap.from) {
+        const m = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
+        thirty = `<p style="margin:8px 0 0;padding-top:8px;border-top:1px solid #e5e7eb;font-size:12.5px;color:#374151">` +
+          `<b>Last 30 days</b> <span style="color:#9ca3af">${snap.from} to ${snap.to}${snap.takenAt ? ' · trued up ' + String(snap.takenAt).slice(0, 10) : ''}</span><br>` +
+          `${snap.cleans} revenue cleans · ${m(snap.costPerClean || 0)} labor / clean · ${m(snap.cleaningRevenue || 0)} in-house cleaning revenue vs ${m(snap.payroll || 0)} payroll</p>`
+      }
+    } catch { /* the 30-day line is a bonus, never a blocker */ }
+    laborCard = card(`Labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>` + thirty,
+      status.band === 'over' ? '#dc2626' : '#6366f1', `Yesterday · ${niceDay(yd)}`)
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
     // ---- Team economics yesterday (FULL brief only - carries dollars) --------
     //
@@ -737,13 +757,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         b2.label + ' ' + b2.cleans + (b2.laborCostPerClean != null ? ' @ ' + usd(b2.laborCostPerClean) : '') +
         (b2.hoursPerClean != null ? ' / ' + b2.hoursPerClean + 'h' : '')).join(' · ')
 
-      crewCard = card('Yesterday by the numbers — revenue vs payroll', null,
+      crewCard = card('By the numbers — revenue vs payroll', null,
         kpiTable +
         (mkLine ? '<p style="margin:10px 0 0;font-size:12.5px;color:#374151"><b>Cleans by market</b> ' + esc(mkLine) + '</p>' : '') +
         actionBlock +
         '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Revenue cleans = departure cleans that earned a guest fee, plus cleaning tasks with a charge entered. ' +
         'Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
-        'Supervisors are a fixed cost and are never divided into revenue.</p>', '#0891b2')
+        'Supervisors are a fixed cost and are never divided into revenue.</p>', '#0891b2', `Yesterday · ${niceDay(yd)}`)
     }
   } catch { /* Homebase down — the brief still sends */ }
 
@@ -788,11 +808,14 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
 
   ${eyebrow('Good to know')}
   ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
-  ${d.newReviews.length ? card('Most recent reviews', d.newReviews.length,
+  ${d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
       (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
+      (d.newSinceYesterday ? '' : `<p style="margin:0 0 8px;font-size:12.5px;color:#6b7280">Nothing since the last brief. The most recent one, for context:</p>`) +
       table(['Unit', 'Score'], newRevRows),
       lowNew.length ? '#dc2626' : '#059669',
-      `${d.newSinceYesterday} new since yesterday · newest ${d.newReviews[0] ? niceDay(d.newReviews[0].at) : ''}`) : ''}
+      d.newSinceYesterday
+        ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
+        : `Last checked ${niceDay(d.today)}`) : ''}
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
