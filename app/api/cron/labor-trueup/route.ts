@@ -43,6 +43,11 @@ type Snap = {
   cleans: number; cleaningRevenue: number; hkRevenue?: number; credited: number
   billable: number; payroll: number; margin: number
   costPerClean: number | null
+  // HOUSEKEEPING payroll on its own. Cost per clean is housekeepers only (Jon, 2026-08-17: "not
+  // with supervisors"), so the payroll printed beside it has to be the SAME base — otherwise the
+  // line invites the reader to divide all-in payroll by cleans and get a number that contradicts
+  // the one next to it. All-in stays available as `payroll`, on its own line, clearly labelled.
+  hkPayroll?: number
   // Per-market housekeeping economics, so the morning brief can show a SETTLED Miami-vs-Broward
   // comparison instead of one noisy day (Jon, 2026-08-17: "need to see how Miami is performing
   // and Broward"). Payroll is already split across markets in proportion to each housekeeper's
@@ -91,6 +96,7 @@ export async function GET(req: NextRequest) {
       payroll: K.allIn.payroll,
       margin: K.allIn.margin,
       costPerClean: K.housekeeping.costPerClean,
+      hkPayroll: K.housekeeping.payroll,
       markets: (ec.buckets || []).filter((b: any) => b.cleans > 0 || b.payroll > 0).map((b: any) => ({
         key: String(b.key), label: String(b.label), inHouse: !!b.inHouse,
         cleans: b.cleans, revenue: b.cleaningRevenue, payroll: b.payroll,
