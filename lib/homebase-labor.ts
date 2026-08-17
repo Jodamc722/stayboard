@@ -58,7 +58,23 @@ export type Timecard = {
 // So the range is fetched a week at a time and merged. One punch can only appear once (same
 // person, same day, same clock-in), so overlapping edges are harmless.
 const WEEK_MS = 7 * 864e5
-export async function getTimecards(startDate: string, endDate: string): Promise<Timecard[]> {
+
+// A FAILED WEEK MUST BE LOUD, NOT EMPTY.
+//
+// The old code fetched all weeks in parallel and swallowed every failure into an empty array.
+// Under Homebase rate-limiting (429s are routine here) that meant two-thirds of payroll could
+// silently vanish and cost per clean printed $24 against a true $75 — a number that was 3x wrong
+// and LOOKED completely normal. Jon, 2026-08-17: "I just want this to be so accurate."
+//
+// So now: weeks fetch SEQUENTIALLY (parallel bursts are what tripped the limiter), each week
+// retries 3x with backoff, and a week that still fails is RECORDED in failedWeeks. Callers get
+// the audit alongside the cards and must refuse to print payroll-derived numbers when any week
+// is missing. A visible gap beats a quiet lie.
+export type TimecardAudit = { cards: Timecard[]; weeks: number; failedWeeks: string[]; complete: boolean }
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+export async function getTimecardsAudited(startDate: string, endDate: string): Promise<TimecardAudit> {
   const loc = await getLocationUuid()
   const spans: Array<[string, string]> = []
   const s0 = new Date(startDate + 'T12:00:00Z').getTime()
@@ -69,9 +85,33 @@ export async function getTimecards(startDate: string, endDate: string): Promise<
     spans.push([iso(a), iso(b)])
   }
   if (!spans.length) spans.push([startDate, endDate])
-  const pages = await Promise.all(spans.map(async ([a, b]) => {
-    try { return arr(await hb(`/locations/${loc}/timecards?start_date=${a}&end_date=${b}`)) } catch { return [] as Json[] }
-  }))
+  const pages: Json[][] = []
+  const failedWeeks: string[] = []
+  for (const [a, b] of spans) {
+    let got: Json[] | null = null
+    for (let attempt = 0; attempt < 3 && got == null; attempt++) {
+      try {
+        got = arr(await hb(`/locations/${loc}/timecards?start_date=${a}&end_date=${b}`))
+      } catch {
+        // Back off harder each attempt — 429 means "slow down", so we do.
+        await sleep(800 * (attempt + 1) * (attempt + 1))
+      }
+    }
+    if (got == null) { failedWeeks.push(`${a}..${b}`); pages.push([]) }
+    else pages.push(got)
+    await sleep(150)   // breathe between weeks; sequential + spaced is what keeps 429s away
+  }
+  const cards = mergeTimecards(pages)
+  return { cards, weeks: spans.length, failedWeeks, complete: failedWeeks.length === 0 }
+}
+
+// Back-compat: everything that only wants the cards. New code should use getTimecardsAudited and
+// honour `complete`.
+export async function getTimecards(startDate: string, endDate: string): Promise<Timecard[]> {
+  return (await getTimecardsAudited(startDate, endDate)).cards
+}
+
+function mergeTimecards(pages: Json[][]): Timecard[] {
   const seen: Record<string, boolean> = {}
   const raw: Json[] = []
   for (const page of pages) {
