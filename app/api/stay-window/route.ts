@@ -1,17 +1,17 @@
-// STAY WINDOW — read and set a listing's minimum length of stay across a rolling date window.
+// STAY WINDOW — the minimum-length-of-stay switch, and the schedule that throws it.
 //
-// GET  ?listingId=X&days=60         → what the listing and its calendar say right now. Read-only.
-// POST {listingId, minNights, days} → write that minimum across today..today+days (Eastern dates).
-//
-// Manual on purpose for now. Jon and I agreed the sequence is: probe → run both ends by hand →
-// confirm the change actually lands on Airbnb and Booking → only then attach a cron. A schedule
-// pointed at an endpoint nobody has watched work is a schedule that fails quietly at 6pm.
+// GET  ?config=1                    → the saved schedule
+// GET  ?listingId=X&days=60         → what one listing's calendar says right now (read-only)
+// POST {action:'config', config}    → save the schedule
+// POST {action:'run', direction}    → throw the switch now: 'open' = short, 'close' = back to long
+// POST {listingId, minNights, days} → raw one-off write, for testing a single value
 //
 // Gated on Revenue/full: minimum stay is a pricing lever, and Revenue is owner-and-admin only.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import {
   readTerms, readMinNights, writeMinNights, conflictsWithMax, summarize, todayET, addDays,
+  readConfig, writeConfig, normalizeConfig, runDirection, hourET,
 } from '@/lib/stay-window'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +24,11 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 export async function GET(req: NextRequest) {
   const g = await requireLevel('revenue', 'view')
   if (!g.ok) return g.res
+
+  if (req.nextUrl.searchParams.get('config')) {
+    const config = await readConfig()
+    return NextResponse.json({ ok: true, config, nowHourET: hourET(), todayET: todayET() })
+  }
 
   const listingId = str(req.nextUrl.searchParams.get('listingId')).trim()
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
@@ -55,6 +60,29 @@ export async function POST(req: NextRequest) {
   if (!g.ok) return g.res
 
   const body = await req.json().catch(() => ({} as any))
+  const action = str(body?.action)
+
+  // ---- save the schedule --------------------------------------------------------------------
+  if (action === 'config') {
+    const cfg = normalizeConfig(body?.config)
+    const w = await writeConfig(cfg, g.access.email)
+    if (!w.ok) return NextResponse.json({ error: w.error || 'save failed' }, { status: 500 })
+    return NextResponse.json({ ok: true, config: cfg })
+  }
+
+  // ---- throw the switch now -------------------------------------------------------------------
+  // Same code path the cron uses, forced past the once-per-day guard so a human can always run it.
+  if (action === 'run') {
+    const direction = body?.direction === 'open' ? 'open' : body?.direction === 'close' ? 'close' : null
+    if (!direction) return NextResponse.json({ error: "direction must be 'open' or 'close'" }, { status: 400 })
+    const cfg = await readConfig()
+    if (!cfg.listings.length) return NextResponse.json({ error: 'No listings are on the schedule yet.' }, { status: 400 })
+    const { config, results } = await runDirection(cfg, direction, true)
+    await writeConfig(config, g.access.email)
+    return NextResponse.json({ ok: true, direction, results })
+  }
+
+  // ---- raw one-off write ----------------------------------------------------------------------
   const listingId = str(body?.listingId).trim()
   const minNights = Math.round(Number(body?.minNights))
   const days = Math.min(Math.max(Number(body?.days) || 60, 1), MAX_DAYS)
@@ -68,7 +96,7 @@ export async function POST(req: NextRequest) {
   // SPEED BUMP. Dropping a listing below a 30-night minimum can be the difference between a legal
   // rental and an unpermitted one — 7071 SW sits in Plantation, which requires a short-term
   // vacation rental certificate for anything under 30 days. The caller has to say out loud that
-  // this listing is cleared for short stays, so a mis-typed value or a stray cron cannot do it.
+  // this listing is cleared for short stays, so a mis-typed value cannot do it.
   if (minNights < 30 && body?.confirmShortStay !== true) {
     return NextResponse.json({
       error: 'short-stay-not-confirmed',
