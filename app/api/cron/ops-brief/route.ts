@@ -9,6 +9,7 @@
 // SAFE BY DEFAULT: until recipients are configured, nothing sends to anyone but the tester.
 // Auth mirrors the other crons: CRON_SECRET bearer when set; a plain cron send may run without it.
 import { NextRequest, NextResponse } from 'next/server'
+import { setSetting } from '@/lib/app-settings'
 import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'
 import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
@@ -107,6 +108,11 @@ export async function GET(req: NextRequest) {
     const b = await buildVendorBrief(g.key)
     const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
     out.push({ variant: 'vendor:' + g.key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+  }
+  // THE REVIEW WATERMARK. Stamped only after a real send, so tomorrow's brief starts where this
+  // one stopped and nobody reads the same review twice. Previews and tests never move it.
+  if (out.some(o => o.sent)) {
+    await setSetting('ops_brief_reviews_seen', new Date().toISOString(), 'cron').catch(() => null)
   }
   return NextResponse.json({ ok: out.every(o => o.sent || o.skipped), from: fromEmail, results: out })
 }
