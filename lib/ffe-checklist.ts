@@ -336,6 +336,37 @@ export const FFE_UI = {
   // it back, so a mis-tap returns the item to unanswered instead of leaving a claim behind.
   clear: { en: 'Tap again to undo', es: 'Toque otra vez para deshacer' },
   cleared: { en: 'Cleared', es: 'Borrado' },
+
+  // ── THE EXCEPTION-LOG WALK (Jon, 2026-08-14) ─────────────────────────────────────────────────
+  // "You can click into the living room and you can click Add... you're giving the auditor the
+  // ability to just determine what needs to be checked off."
+  addSomething: { en: 'Add something', es: 'Agregar algo' },
+  addTo: { en: 'Add to', es: 'Agregar a' },
+  whatIsIt: { en: 'What is it? Tap one, or type anything.', es: '¿Qué es? Toque uno, o escriba lo que sea.' },
+  orType: { en: 'Or type it — baseboards, art above the sofa…', es: 'O escríbalo — zócalos, cuadro sobre el sofá…' },
+  whatDoesItNeed: { en: 'What does it need?', es: '¿Qué necesita?' },
+  nothingHere: {
+    en: 'Nothing logged in here yet.',
+    es: 'Nada anotado aquí todavía.',
+  },
+  nothingHereSub: {
+    en: 'Add anything that needs replacing, adding or fixing. If it is all fine, just check the room.',
+    es: 'Agregue lo que haya que reemplazar, agregar o reparar. Si todo está bien, solo marque la habitación.',
+  },
+  checkRoom: { en: "I've checked this room", es: 'Ya revisé esta habitación' },
+  roomChecked: { en: 'checked', es: 'revisada' },
+  roomsProgress: { en: 'rooms checked', es: 'habitaciones revisadas' },
+  allGood: { en: 'all good', es: 'todo bien' },
+  toOrder: { en: 'to order', es: 'para pedir' },
+  nothingYet: { en: 'Nothing logged yet.', es: 'Nada anotado todavía.' },
+  openARoom: { en: 'Open a room and add what needs doing.', es: 'Abra una habitación y agregue lo que haga falta.' },
+  itemsToOrder: { en: 'to order', es: 'para pedir' },
+  cancel: { en: 'Cancel', es: 'Cancelar' },
+  remove: { en: 'Remove', es: 'Quitar' },
+  intro2: {
+    en: 'Rooms start empty. Add only what needs replacing, adding or fixing — then check the room off. Anything you mark Fix goes to the team, not onto the owner’s order.',
+    es: 'Las habitaciones empiezan vacías. Agregue solo lo que haya que reemplazar, agregar o reparar — luego marque la habitación. Lo que marque Reparar va al equipo, no al pedido del dueño.',
+  },
   fixWhat: { en: 'What needs fixing?', es: '¿Qué hay que reparar?' },
   fixGoesTo: { en: 'This goes to the team as a fix, not onto the order.', es: 'Esto va al equipo como reparación, no al pedido.' },
   note: { en: 'Note (optional)', es: 'Nota (opcional)' },
