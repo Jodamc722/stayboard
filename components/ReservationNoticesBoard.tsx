@@ -119,7 +119,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     try {
       const r = await fetch('/api/reservation-notices/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: d.to, cc: d.cc, subject: d.subject, body: d.body }),
+        body: JSON.stringify({ noticeId: id, to: d.to, cc: d.cc, subject: d.subject, body: d.body }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not create the draft.')
@@ -140,6 +140,10 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   }, [openDraft])
 
   const load = useCallback(async () => {
+    // Reconcile Gmail first: any support@ draft that was SENT since the last visit marks its
+    // notice sent before the list below renders (Jon, 2026-08-17). Best-effort and quick — a
+    // failure here never blocks the board.
+    try { await fetch('/api/reservation-notices/draft?check=1', { cache: 'no-store' }) } catch { /* board loads regardless */ }
     setLoading(true); setErr(null)
     try {
       const r = await fetch('/api/reservation-notices', { cache: 'no-store' })
