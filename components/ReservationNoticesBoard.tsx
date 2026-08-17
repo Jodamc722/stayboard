@@ -114,12 +114,12 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   const [draftErr, setDraftErr] = useState<Record<string, string>>({})
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
 
-  async function addToDrafts(id: string, d: { to: string; cc: string; subject: string; body: string }) {
+  async function addToDrafts(id: string, d: { to: string; cc: string; subject: string; body: string; wantsForm?: boolean }) {
     setDraftBusy(id); setDraftErr(x => ({ ...x, [id]: '' }))
     try {
       const r = await fetch('/api/reservation-notices/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ noticeId: id, to: d.to, cc: d.cc, subject: d.subject, body: d.body }),
+        body: JSON.stringify({ noticeId: id, wantsForm: d.wantsForm === true, to: d.to, cc: d.cc, subject: d.subject, body: d.body }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not create the draft.')
@@ -634,7 +634,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                     <pre className="px-3 py-2 text-[12px] whitespace-pre-wrap font-sans text-ink">{body}</pre>
                     <div className="px-3 py-2 border-t border-line flex items-center gap-2 flex-wrap">
                       {!sentCopy && r.draft && (
-                        <button onClick={() => addToDrafts(r.id, { to, cc, subject, body })} disabled={!r.hasRecipient || draftBusy === r.id}
+                        <button onClick={() => addToDrafts(r.id, { to, cc, subject, body, wantsForm: !!r.attach })} disabled={!r.hasRecipient || draftBusy === r.id}
                           title="Creates a ready-to-send draft in support@stay-hospitality.com's Gmail"
                           className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg ' + (drafted[r.id] ? 'border border-emerald-300 text-emerald-700 bg-emerald-50' : r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted opacity-50 cursor-not-allowed')}>
                           {draftBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : drafted[r.id] ? <Check size={13} /> : <Mail size={13} />}
