@@ -34,7 +34,7 @@
 // but it is never mixed into a cleaner's or a tech's margin.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { getTimecards, type Timecard } from './homebase-labor'
+import { getTimecardsAudited, type Timecard, type TimecardAudit } from './homebase-labor'
 import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex, type VendorBuilding } from './ops-presets'
@@ -173,6 +173,8 @@ export type LaborEcon = {
   channelCut: number
   /** Expedia-bundled cleaning fees rebuilt from the unit's own modal fee. An estimate — shown. */
   bundledFeeBackfill: { checkouts: number; amount: number; basis: string }
+  /** Timecard completeness. complete=false → payroll-derived numbers are understated; warn, don't print. */
+  payrollAudit: { weeks: number; failedWeeks: string[]; complete: boolean }
   /** Of that, the part tied to a named person via their departure clean. */
   cleaningRevenueAttributed: number
   /** The rest: a checkout whose clean we could not match to anybody. Shown, never hidden —
@@ -241,12 +243,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const market = String(opts.market || 'all').toLowerCase()
   const sb = supabaseAdmin()
 
-  const [presets, crew, listingRows, timecards] = await Promise.all([
+  const [presets, crew, listingRows, tcAudit] = await Promise.all([
     getOpsPresets(),
     getCrew(),
     pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city').order('id', { ascending: true }).range(a, b)),
-    getTimecards(from, to).catch(() => [] as Timecard[]),
+    // Audited: a week Homebase failed to return is RECORDED, never silently empty. If any week is
+    // missing, every payroll-derived number below is suspect and payrollAudit.complete says so.
+    getTimecardsAudited(from, to).catch((): TimecardAudit => ({ cards: [] as Timecard[], weeks: 0, failedWeeks: ['all'], complete: false })),
   ])
+  const timecards = tcAudit.cards
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
   const lmap: Record<string, { market: string; name: string; vendor: boolean }> = {}
   for (const l of listingRows) {
@@ -477,7 +482,6 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const fee = payoutBase > 0 && chFee > 0
       ? round2(Math.max(0, feeGross - chFee * (feeGross / payoutBase)))
       : feeGross
-    cleaningGrossAll = round2(cleaningGrossAll + (inMarketListing(r.listing_id) ? feeGross : 0))
     // Totals stay scoped to the tab; the fee-to-clean matching below does not.
     const inMk = inMarketListing(r.listing_id)
     if (inMk) managementFee += num(r.commission) ?? 0
@@ -488,7 +492,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       if (inMk) { cleaningVendor += fee; if (fee > 0) vendorCleans++ }
       continue
     }
-    if (inMk) cleaningInhouse += fee
+    // Gross accumulates on the SAME base as net (in-house, non-vendor) — comparing gross across all
+    // units to net across in-house ones inflated the "channel cut" to 29%, which is impossible for
+    // an Airbnb-heavy book. Same rows in, same rows out; the difference is now only the OTA cut.
+    if (inMk) { cleaningInhouse += fee; cleaningGrossAll = round2(cleaningGrossAll + feeGross) }
     pending.push({ listingId: String(r.listing_id), co, coNext, fee, inMk, source: srcOf(r.source), unit: (li && li.name) || String(r.listing_id) })
   }
 
@@ -1150,6 +1157,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     materials,
     managementFee: round2(managementFee),
     payroll,
+    // Which timecard weeks Homebase actually returned. When complete=false, payroll and every
+    // number derived from it (cost per clean, margins, labor %) are UNDERSTATED — display layers
+    // must show the warning instead of the numbers.
+    payrollAudit: { weeks: tcAudit.weeks, failedWeeks: tcAudit.failedWeeks, complete: tcAudit.complete },
     costPerClean,
     hoursPerClean,
     costPerCleanByMarket,
