@@ -179,3 +179,43 @@ export async function sendGmail(opts: {
     return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 300)}` }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
+
+
+// CREATE A DRAFT INSTEAD OF SENDING — the front-desk notices flow (Jon, 2026-08-17: "add the
+// support drafts when you click add to drafts... it should be sent from support@stay-hospitality.com").
+// The draft lands in that mailbox's Drafts folder with To/CC/subject/body filled in; a human
+// attaches the registration form and hits send from Gmail itself. Requires the gmail.compose (or
+// gmail.modify) scope on the mailbox's Google connection — gmail.send alone cannot create drafts,
+// and the error says exactly that instead of a generic 403.
+export async function createGmailDraft(opts: {
+  fromEmail: string
+  to: string[]
+  cc?: string[]
+  subject: string
+  html: string
+  attachments?: GmailAttachment[]
+}): Promise<{ ok: boolean; error?: string }> {
+  const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
+  const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
+  if (!to.length && !cc.length) return { ok: false, error: 'no recipients' }
+  const { token, error } = await accessTokenFor(opts.fromEmail)
+  if (!token) return { ok: false, error }
+  const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments })
+  try {
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: { raw: rawToB64url(raw) } }),
+      cache: 'no-store',
+    })
+    if (r.ok) return { ok: true }
+    const body = await r.text().catch(() => '')
+    if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
+      return { ok: false, error: `${opts.fromEmail}'s Google connection can send but not create drafts — reconnect it and approve the "Manage drafts and send email" permission.` }
+    }
+    if (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(body)) {
+      return { ok: false, error: 'The Gmail API is not enabled on the Google Cloud project — enable it, wait a minute, then retry.' }
+    }
+    return { ok: false, error: `Gmail draft failed (${r.status}): ${body.slice(0, 300)}` }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+}
