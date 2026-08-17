@@ -33,15 +33,21 @@ export async function POST(req: NextRequest) {
   // the draft is still created, and the response says the form is missing so the button can warn
   // "hit Build form first" instead of silently sending a bare email.
   const noticeId = String(b?.noticeId || '').trim()
+  // Whether this building's notice is SUPPOSED to carry a form comes from the client (the board
+  // computes it from the building config) — `attach` is NOT a column on the notices table, and
+  // selecting it made the whole lookup silently return nothing, which is exactly the bug the
+  // first version shipped with: draft created, form never attached, no warning. Tested, caught,
+  // and the select now names only real columns.
+  const wantsForm = b?.wantsForm === true
   const attachments: GmailAttachment[] = []
   let attachedName = ''
   let formMissing = false
   if (noticeId) {
     try {
       const db = supabaseAdmin()
-      const { data: notice } = await db.from('reservation_notices')
-        .select('doc_path, doc_name, attach').eq('id', noticeId).is('deleted_at', null).maybeSingle()
-      const wantsForm = !!(notice && (notice as any).attach)
+      const { data: notice, error: nErr } = await db.from('reservation_notices')
+        .select('doc_path, doc_name').eq('id', noticeId).is('deleted_at', null).maybeSingle()
+      if (nErr) throw nErr
       const path = notice && (notice as any).doc_path ? String((notice as any).doc_path) : ''
       if (path) {
         const dl = await db.storage.from('reservation-docs').download(path)
@@ -51,7 +57,7 @@ export async function POST(req: NextRequest) {
           attachments.push({ filename: attachedName, content: buf, contentType: 'application/pdf' })
         } else if (wantsForm) formMissing = true
       } else if (wantsForm) formMissing = true
-    } catch { formMissing = true }
+    } catch { if (wantsForm) formMissing = true }
   }
   const r = await createGmailDraft({ fromEmail: SUPPORT_FROM, to, cc, subject, html, attachments: attachments.length ? attachments : undefined })
   if (!r.ok) return NextResponse.json({ error: r.error || 'Could not create the draft.' }, { status: 502 })
