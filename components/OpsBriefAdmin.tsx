@@ -6,7 +6,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] } }
+type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest }
+
+// The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
+// on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
+const DIGESTS: { key: 'trueup' | 'salato'; label: string; blurb: string }[] = [
+  { key: 'trueup', label: 'Labor true-up · daily 9am ET', blurb: '30-day labor economics, what settled since yesterday. Skips the day rather than send on partial payroll.' },
+  { key: 'salato', label: 'Salato front desk · daily 7am ET', blurb: 'Reservations only: arriving, departing, in-house, upcoming — hotel-related flags highlighted.' },
+]
 
 // Four audiences, deliberately different documents (2026-08-07). The blurb is the promise each
 // one makes — if a brief stops matching its blurb, one of the two is wrong.
@@ -30,6 +38,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
   const rawFromCfg = (c: Cfg): Record<string, string> => ({
     miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
+    d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '),
   })
   const load = useCallback(async () => {
     try {
@@ -37,13 +46,13 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok) {
         const c = j.config || {}
-        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true }))
+        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true }))
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
   useEffect(() => { load() }, [load])
 
-  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true }) !== saved
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
@@ -53,11 +62,13 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         ...cfg,
         miami: parse(raw.miami || ''), broward: parse(raw.broward || ''), full: parse(raw.full || ''), gm: parse(raw.gm || ''),
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
+        trueup: { ...(cfg.trueup || {}), to: parse(raw.d_trueup || '') },
+        salato: { ...(cfg.salato || {}), to: parse(raw.d_salato || '') },
       }
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
-      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true }))
+      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true }))
       const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
@@ -116,6 +127,26 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
             </div>
           ))}
         </div>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          {DIGESTS.map(dg => (
+            <div key={dg.key} className="rounded-xl border border-line p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-bold text-ink">{dg.label}</span>
+                <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
+                  <input type="checkbox" disabled={!isOwner} checked={(cfg as any)[dg.key]?.enabled === true}
+                    onChange={e => setCfg(x => ({ ...x, [dg.key]: { ...((x as any)[dg.key] || {}), enabled: e.target.checked } }))} />
+                  sending
+                </label>
+              </div>
+              <div className="text-[11px] text-muted mb-1.5">{dg.blurb}</div>
+              <textarea rows={2} disabled={!isOwner} value={raw['d_' + dg.key] ?? ''} onChange={e => setRaw(x => ({ ...x, ['d_' + dg.key]: e.target.value }))}
+                placeholder="emails, comma separated"
+                className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+            </div>
+          ))}
+        </div>
+
 
         <div>
           <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Vendor briefs — external cleaning companies (their buildings only: checkouts, arrivals, tomorrow. No internal data.)</div>
