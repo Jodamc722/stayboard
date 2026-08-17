@@ -57,6 +57,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/salato-daily",
+      "schedule": "0 11 * * *"
+    },
+    {
       "path": "/api/cron/labor-trueup",
       "schedule": "0 13 * * *"
     },
