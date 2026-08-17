@@ -780,20 +780,36 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         '<td style="' + S.td + ';color:#6b7280;font-size:11.5px">' + extra + '</td></tr>'
 
       let kpiRows = ''
-      // Jon, 2026-08-17: "just departure" + "based on what we actually net". So the turnover row is
-      // departure cleans against the cleaning fee NET of the channel's cut, and any other paid
-      // cleaning work (mid-stay, linen refresh, re-clean) gets its own row instead of being averaged
-      // into a cost per clean that would then describe nothing.
+      // THREE LAYERS, IN THE ORDER JON ASKED FOR THEM (2026-08-17): "cost per clean is # of cleans
+      // and payroll to get cost per DEPARTURE clean. We can then take payroll and rev to get profit
+      // margins for HK, then supervisor added in, and then keep maintenance separate."
+      //   1. HOUSEKEEPING      the cleaners: all the cleaning revenue they earn vs their own wages.
+      //                        Cost per clean uses DEPARTURE cleans only as the denominator.
+      //   2. + SUPERVISORS     the same revenue carrying supervision too — the loaded cost of a turn.
+      //   3. MAINTENANCE       on its own, below a divider, never blended into either.
+      // "If HK gets rev for outside cleaning it should be added to the rev" (Jon, same day): so the
+      // housekeeping revenue here is ALL of it — departure fees, charged cleaning tasks, and the
+      // cleans our crew does inside vendor-managed buildings. Only the DENOMINATOR is departure-only.
+      const hkRev = K.housekeepingLoaded ? K.housekeepingLoaded.revenue : K.housekeeping.revenue
+      const hkMargin = round2b(hkRev - K.housekeeping.payroll)
       kpiRows += kpiRow('Housekeeping', K.housekeeping.cleans + ' departure cleans · ' + hoursTxt(K.housekeeping.hours),
-        K.housekeeping.revenue, K.housekeeping.payroll, round2b(K.housekeeping.revenue - K.housekeeping.payroll),
-        K.housekeeping.revenue > 0 ? Math.round(((K.housekeeping.revenue - K.housekeeping.payroll) / K.housekeeping.revenue) * 100) : null,
-        (K.housekeeping.costPerClean != null ? usd(K.housekeeping.costPerClean) + ' cost / clean' : 'no cleans') +
+        hkRev, K.housekeeping.payroll, hkMargin,
+        hkRev > 0 ? Math.round((hkMargin / hkRev) * 100) : null,
+        (K.housekeeping.costPerClean != null ? '<b>' + usd(K.housekeeping.costPerClean) + ' cost / departure clean</b>' : 'no cleans') +
         (K.housekeeping.revPerClean != null ? ' · ' + usd(K.housekeeping.revPerClean) + ' net / clean' : '') +
-        (K.housekeeping.hoursPerClean != null ? ' · ' + K.housekeeping.hoursPerClean + 'h each' : ''))
-      if (K.housekeeping.chargedCleans > 0)
-        kpiRows += kpiRow('Other paid cleaning', (K.housekeeping.chargedCleanCount || 0) + ' charged task' + ((K.housekeeping.chargedCleanCount || 0) === 1 ? '' : 's') + ' · not turnovers',
-          K.housekeeping.chargedCleans, 0, K.housekeeping.chargedCleans, 100,
-          'mid-stays, linen refreshes, re-cleans — kept out of cost per clean')
+        (K.housekeeping.hoursPerClean != null ? ' · ' + K.housekeeping.hoursPerClean + 'h each' : '') +
+        (K.housekeeping.chargedCleans > 0
+          ? '<br>incl. ' + usd(K.housekeeping.chargedCleans) + ' from ' + (K.housekeeping.chargedCleanCount || 0) +
+            ' other paid clean' + ((K.housekeeping.chargedCleanCount || 0) === 1 ? '' : 's') + ' (not turnovers — revenue only, never in the denominator)'
+          : ''))
+      // Layer 2: supervision loaded onto the same revenue.
+      if (K.housekeepingLoaded)
+        kpiRows += kpiRow('+ Supervisors', 'loaded cost of running housekeeping · ' + hoursTxt(K.housekeepingLoaded.hours),
+          K.housekeepingLoaded.revenue, K.housekeepingLoaded.payroll, K.housekeepingLoaded.margin, K.housekeepingLoaded.marginPct,
+          (K.housekeepingLoaded.costPerClean != null ? '<b>' + usd(K.housekeepingLoaded.costPerClean) + ' loaded / departure clean</b>' : '') +
+          ' · adds ' + usd(K.housekeepingLoaded.supervisorPayroll) + ' of supervision')
+      // Layer 3: maintenance, on its own side of a divider.
+      kpiRows += '<tr><td colspan="6" style="padding:6px 8px 2px;border-top:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Maintenance — tracked separately</td></tr>'
       kpiRows += kpiRow('Maintenance', K.maintenance.tasksBilled + ' tasks billed · ' + hoursTxt(K.maintenance.hours),
         K.maintenance.revenue, K.maintenance.payroll, K.maintenance.margin, K.maintenance.marginPct,
         K.maintenance.tasksNoCharge > 0
