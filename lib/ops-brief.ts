@@ -724,14 +724,26 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
     // The 30-day figure comes from the daily true-up snapshot, not a second full computation:
     // it is already settled, already stored, and says when it was taken.
+    // FULL BRIEF ONLY. It carries dollar amounts, and the Miami/Broward briefs that go to the
+    // teams show the portfolio-wide labor-% band and nothing priced — Jon's standing rule. This
+    // used to render on every variant, which quietly put payroll and revenue in front of the crews.
     let thirty = ''
     try {
-      const snap = await getSetting<any>('labor_trueup_snapshot', null)
+      const snap = variant === 'full' ? await getSetting<any>('labor_trueup_snapshot', null) : null
       if (snap && snap.from) {
         const m = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
         thirty = `<p style="margin:8px 0 0;padding-top:8px;border-top:1px solid #e5e7eb;font-size:12.5px;color:#374151">` +
           `<b>Last 30 days</b> <span style="color:#9ca3af">${snap.from} to ${snap.to}${snap.takenAt ? ' · trued up ' + String(snap.takenAt).slice(0, 10) : ''}</span><br>` +
-          `${snap.cleans} revenue cleans · ${m(snap.costPerClean || 0)} labor / clean · ${m(snap.cleaningRevenue || 0)} in-house cleaning revenue vs ${m(snap.payroll || 0)} payroll</p>`
+          `${snap.cleans} revenue cleans · ${m(snap.costPerClean || 0)} labor / clean · ${m(snap.cleaningRevenue || 0)} in-house cleaning revenue vs ${m(snap.payroll || 0)} payroll` +
+          // The settled market comparison. One day of Miami vs Broward is mostly noise — 30 days is
+          // the number to manage on, so it sits right under the 30-day headline.
+          (Array.isArray(snap.markets) && snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null).length
+            ? `<br><span style="color:#6b7280">By market: </span>` +
+              snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null)
+                .map((k: any) => `<b>${esc(String(k.label))}</b> ${k.cleans} cleans @ ${m(k.costPerClean)}${k.hoursPerClean != null ? ' / ' + k.hoursPerClean + 'h' : ''}`)
+                .join(' &middot; ')
+            : '') +
+          `</p>`
       }
     } catch { /* the 30-day line is a bonus, never a blocker */ }
     laborCard = card(`Labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>` + thirty,
@@ -828,14 +840,52 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
           acts.map(a2 => '<li style="margin:2px 0">' + a2 + '</li>').join('') + '</ul>'
         : ''
 
-      // Per-market cost per clean, one line.
-      const mkLine = (ec.buckets || []).filter((b2: any) => b2.cleans > 0).map((b2: any) =>
-        b2.label + ' ' + b2.cleans + (b2.laborCostPerClean != null ? ' @ ' + usd(b2.laborCostPerClean) : '') +
-        (b2.hoursPerClean != null ? ' / ' + b2.hoursPerClean + 'h' : '')).join(' · ')
+      // ---- MIAMI vs BROWARD, SIDE BY SIDE (Jon, 2026-08-17: "want to see cost separated by market
+      // in the full brief for labor — need to see how Miami is performing and Broward").
+      // One row per market off the same buckets the labor board uses: what its cleans earned, what
+      // its housekeepers cost, and the two numbers that actually compare across markets — labor
+      // dollars per clean and hours per clean. Payroll is split across markets in proportion to
+      // each housekeeper's cleans there, so a cleaner who works both is not billed twice.
+      // FULL BRIEF ONLY — this block never renders on the Miami/Broward team briefs, which show
+      // the labor-% band and no dollar figures.
+      const mkBuckets = (ec.buckets || []).filter((b2: any) => b2.cleans > 0 || b2.payroll > 0)
+      const mkRow = (b2: any) => {
+        const vendorRow = !b2.inHouse
+        return '<tr>' +
+          '<td style="' + S.td + '"><b>' + esc(String(b2.label)) + '</b>' +
+          (vendorRow ? ' <span style="color:#6b7280;font-size:11.5px">vendor-cleaned</span>' : '') + '</td>' +
+          '<td style="' + S.td + ';text-align:right">' + b2.cleans + '</td>' +
+          '<td style="' + S.td + ';text-align:right">' + usd(b2.cleaningRevenue) + '</td>' +
+          '<td style="' + S.td + ';text-align:right">' + (vendorRow ? '<span style="color:#9ca3af">n/a</span>' : usd(b2.payroll)) + '</td>' +
+          '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + (vendorRow ? '#6b7280' : tone(b2.margin)) + '">' +
+            (vendorRow ? '<span style="color:#9ca3af">—</span>' : usd(b2.margin)) + '</td>' +
+          '<td style="' + S.td + ';text-align:right">' + (b2.laborCostPerClean != null ? '<b>' + usd(b2.laborCostPerClean) + '</b>' : '<span style="color:#9ca3af">—</span>') + '</td>' +
+          '<td style="' + S.td + ';text-align:right">' + (b2.hoursPerClean != null ? b2.hoursPerClean + 'h' : '<span style="color:#9ca3af">—</span>') + '</td></tr>'
+      }
+      const mkTable = mkBuckets.length
+        ? '<p style="margin:12px 0 4px;font-size:12.5px;color:#374151"><b>By market</b> <span style="color:#9ca3af">— housekeeping, yesterday</span></p>' +
+          '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">' +
+          '<tr><th style="' + S.th + '">Market</th><th style="' + S.th + ';text-align:right">Cleans</th>' +
+          '<th style="' + S.th + ';text-align:right">Revenue</th><th style="' + S.th + ';text-align:right">Payroll</th>' +
+          '<th style="' + S.th + ';text-align:right">Margin</th><th style="' + S.th + ';text-align:right">$ / clean</th>' +
+          '<th style="' + S.th + ';text-align:right">h / clean</th></tr>' +
+          mkBuckets.map(mkRow).join('') + '</table>'
+        : ''
+      // Name the gap out loud rather than making someone read two rows and subtract.
+      const inH: { label: string; cpc: number }[] = mkBuckets
+        .filter((b2: any) => b2.inHouse && b2.laborCostPerClean != null)
+        .map((b2: any) => ({ label: String(b2.label), cpc: Number(b2.laborCostPerClean) }))
+      const cheapest = inH.slice().sort((x, y) => x.cpc - y.cpc)[0]
+      const dearest = inH.slice().sort((x, y) => y.cpc - x.cpc)[0]
+      const mkRead = inH.length > 1 && cheapest && dearest && dearest.cpc > cheapest.cpc
+        ? '<p style="margin:4px 0 0;font-size:12px;color:#6b7280">' + esc(dearest.label) + ' is costing ' +
+          usd(dearest.cpc - cheapest.cpc) + ' more per clean than ' + esc(cheapest.label) +
+          ' (' + usd(dearest.cpc) + ' vs ' + usd(cheapest.cpc) + ').</p>'
+        : ''
 
       crewCard = card('By the numbers — revenue vs payroll', null,
         kpiTable +
-        (mkLine ? '<p style="margin:10px 0 0;font-size:12.5px;color:#374151"><b>Cleans by market</b> ' + esc(mkLine) + '</p>' : '') +
+        mkTable + mkRead +
         actionBlock +
         '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Revenue cleans = departure cleans that earned a guest fee, plus cleaning tasks with a charge entered. ' +
         'Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
