@@ -83,6 +83,15 @@ export async function GET(req: NextRequest) {
     const to = dISO(addDays(now, -1))               // yesterday: today is still moving
     const from = dISO(addDays(now, -30))
     const ec = await laborEconomics({ from, to, market: 'all' })
+    // NEVER TRUE-UP ON PARTIAL PAYROLL. A snapshot taken while Homebase was rate-limiting would
+    // store understated payroll as "settled truth" and poison the brief's 30-day line until the
+    // next clean run. Better to skip a day than to remember a wrong number.
+    if (ec.payrollAudit && !ec.payrollAudit.complete) {
+      return NextResponse.json({
+        ok: false, sent: false, snapshotStored: false,
+        reason: 'payroll incomplete — Homebase did not return timecards for: ' + ec.payrollAudit.failedWeeks.join(', '),
+      }, { status: 503 })
+    }
     const K = ec.kpi
 
     const prev = await getSetting<Snap | null>('labor_trueup_snapshot', null).catch(() => null)
