@@ -32,6 +32,16 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
   // Parsing to clean address lists happens once, at Save.
   const [raw, setRaw] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState('')
+  // Which sender mailboxes hold a Google connection — and a Connect button for the ones that
+  // don't. This is how support@ gets connected for the front-desk drafts (Jon, 2026-08-17).
+  const [mailboxes, setMailboxes] = useState<{ email: string; usedFor: string; connected: boolean }[]>([])
+  const loadMailboxes = useCallback(async () => {
+    try {
+      const r = await fetch('/api/settings/mailboxes', { cache: 'no-store' })
+      const j = await r.json()
+      if (r.ok && Array.isArray(j.mailboxes)) setMailboxes(j.mailboxes)
+    } catch { /* section simply stays empty */ }
+  }, [])
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
@@ -50,7 +60,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); loadMailboxes() }, [load, loadMailboxes])
 
   const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
@@ -147,6 +157,26 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
         </div>
 
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Mailbox connections — every account the app sends or drafts as needs its own Google connection. Connect opens Google; sign in AS that mailbox and approve.</div>
+          <div className="rounded-xl border border-line divide-y divide-line">
+            {mailboxes.map(m => (
+              <div key={m.email} className="flex items-center gap-2 px-3 py-2">
+                <span className={'inline-block w-2 h-2 rounded-full ' + (m.connected ? 'bg-emerald-500' : 'bg-rose-400')} />
+                <span className="text-[12px] font-semibold text-ink">{m.email}</span>
+                <span className="text-[11px] text-muted">· {m.usedFor}</span>
+                <span className={'ml-auto text-[11px] font-semibold ' + (m.connected ? 'text-emerald-700' : 'text-rose-600')}>{m.connected ? 'connected' : 'not connected'}</span>
+                <a href={'/api/google/auth?mailbox=' + encodeURIComponent(m.email)} target="_blank" rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50">
+                  {m.connected ? 'Reconnect' : 'Connect'}
+                </a>
+              </div>
+            ))}
+            {!mailboxes.length && <div className="px-3 py-2 text-[12px] text-muted">Loading…</div>}
+          </div>
+          <button onClick={loadMailboxes} className="mt-1.5 text-[11px] font-semibold text-brand-700 hover:underline">Refresh status after connecting</button>
+        </div>
 
         <div>
           <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Vendor briefs — external cleaning companies (their buildings only: checkouts, arrivals, tomorrow. No internal data.)</div>
