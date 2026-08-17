@@ -11,6 +11,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf, type Market } from './segments'
 import { rollupBuilding, ratingToStars, ratingAsGuestSaw } from './optimize-score'
+import { REVIEW_THEMES } from './health-score'
 import { THEMES, looksNegative, sentenceAbout } from './review-themes'
 import { getOpsPresets, getSetting } from './app-settings'
 import { vendorRegex } from './ops-presets'
@@ -232,9 +233,50 @@ async function gather(variant: BriefVariant) {
     avg: byMarket[m].n ? Math.round((byMarket[m].sum / byMarket[m].n) * 100) / 100 : null,
   })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
 
+  // ---- LAST 30 DAYS OF FEEDBACK — the standing watch-list (Jon, 2026-08-17: "it should still show
+  // highlights to look for or check on for the last 30 days of feedback"). The New-reviews card is
+  // the NEWS — only what landed since the last send, so nothing repeats. This is the WATCH-LIST: every
+  // low score still inside the 30-day window, the units it keeps happening to, and the themes guests
+  // keep naming. A unit does not stop needing attention just because its bad review is a week old.
+  // Ratings run through ratingToStars() so a Booking 6/10 is judged as 3.0★, not "6 stars".
+  const lowRevs = allRevs
+    .filter(r => { const st = ratingToStars(Number(r.rating)); return st != null && st <= 3 })
+    .slice()
+    .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
+  const low30 = lowRevs.slice(0, 8).map(r => ({
+    unit: meta[String(r.listing_id)]?.name ?? 'Unit',
+    stars: ratingToStars(Number(r.rating)) as number,
+    channel: str(r.channel),
+    at: str(r.created_at).slice(0, 10),
+    replied: !!r.has_reply,
+    snippet: str(r.content).replace(/\s+/g, ' ').slice(0, 110),
+  }))
+  // Units with MORE THAN ONE low score in the window — a pattern, not a bad night. These are the
+  // ones to physically walk before the next arrival.
+  const lowByUnit: Record<string, number> = {}
+  for (const r of lowRevs) { const u = meta[String(r.listing_id)]?.name ?? 'Unit'; lowByUnit[u] = (lowByUnit[u] || 0) + 1 }
+  const repeatUnits = Object.keys(lowByUnit).filter(u => lowByUnit[u] >= 2)
+    .map(u => ({ unit: u, n: lowByUnit[u] })).sort((a, b) => b.n - a.n).slice(0, 6)
+  // What guests actually complained about, counted across every negative review in the window. Same
+  // theme dictionary the Health score penalises on, so the brief and the board name faults alike.
+  const themeHits: Record<string, number> = {}
+  for (const r of allRevs) {
+    const st = ratingToStars(Number(r.rating))
+    if (st == null || st > 3.5) continue
+    const text = str(r.content).toLowerCase()
+    if (!text) continue
+    const names = Object.keys(REVIEW_THEMES)
+    for (let i = 0; i < names.length; i++) {
+      if (REVIEW_THEMES[names[i]].some(k => text.indexOf(k) >= 0)) themeHits[names[i]] = (themeHits[names[i]] || 0) + 1
+    }
+  }
+  const themes = Object.keys(themeHits).filter(t => themeHits[t] >= 2)
+    .map(t => ({ theme: t, n: themeHits[t] })).sort((a, b) => b.n - a.n).slice(0, 5)
+  const watch30 = { low: low30, lowTotal: lowRevs.length, repeatUnits, themes, unanswered: owed, since: monthAgo.slice(0, 10) }
+
   return {
     today, sheet, cleans, newReviews, newSinceYesterday, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
-    rep: { n: allRevs.length, avg, five, owed },
+    rep: { n: allRevs.length, avg, five, owed }, watch30,
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
   }
@@ -589,6 +631,33 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       (rep.owed ? ` · <span style="${S.red}">${rep.owed} awaiting a reply</span>` : ' · all replied')
     : 'No reviews in the last 30 days.'
 
+  // ---- Last 30 days of feedback: the watch-list, not the news ----------------
+  const w30 = d.watch30
+  const low30Rows = w30.low.map(r =>
+    '<tr style="background:#fef2f2"><td style="' + S.td + '"><b>' + esc(r.unit) + '</b>' +
+    (r.replied ? '' : ' ' + pillRed('NO REPLY')) +
+    '<br><span style="color:#6b7280">' + esc(r.channel) + ' · ' + esc(niceDay(r.at)) + '</span></td>' +
+    '<td style="' + S.td + '"><span style="' + S.red + '">' + stars(r.stars) + ' <b>' + esc(ratingAsGuestSaw(r.stars, r.channel) || r.stars.toFixed(1) + '\u2605') + '</b></span>' +
+    (r.snippet ? '<br><span style="color:#6b7280">' + esc(r.snippet) + '\u2026</span>' : '') +
+    '</td></tr>').join('')
+  const repeatLine = w30.repeatUnits.length
+    ? '<p style="margin:10px 0 0;font-size:12.5px"><b>Walk these first</b> \u2014 more than one low score in 30 days: ' +
+      w30.repeatUnits.map((u: any) => esc(u.unit) + ' <span style="' + S.red + '">(' + u.n + ')</span>').join(' \u00b7 ') + '</p>'
+    : ''
+  const themeLine = w30.themes.length
+    ? '<p style="margin:6px 0 0;font-size:12.5px"><b>What guests keep naming:</b> ' +
+      w30.themes.map((t: any) => esc(t.theme) + ' <span style="color:#6b7280">\u00d7' + t.n + '</span>').join(' \u00b7 ') + '</p>'
+    : ''
+  const moreLow = w30.lowTotal > w30.low.length
+    ? '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">+' + (w30.lowTotal - w30.low.length) + ' more low score' + (w30.lowTotal - w30.low.length === 1 ? '' : 's') + ' in the window \u2014 full list on the Reviews board.</p>'
+    : ''
+  const repHeadline = '<p style="font-size:13px;margin:8px 0 2px">' + repLine + '</p>' +
+    (w30.lowTotal
+      ? '<p style="margin:8px 0 6px;font-size:12.5px"><span style="' + S.red + '"><b>' + w30.lowTotal + ' at 3\u2605 or below</b></span> in the last 30 days' +
+        (w30.unanswered ? ' \u00b7 <span style="' + S.amber + '">' + w30.unanswered + ' still awaiting a reply</span>' : '') + ' \u2014 these are the ones to check on.</p>'
+      : '<p style="margin:8px 0 0;font-size:12.5px"><span style="' + S.green + '">No review at 3\u2605 or below in the last 30 days.</span></p>')
+
+
   const table = (heads: string[], rows: string) =>
     `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
 
@@ -819,7 +888,10 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
-  ${card('Reputation — last 30 days', null, `<p style="font-size:13px;margin:8px 0 2px">${repLine}</p>`)}
+  ${card('Reputation — last 30 days', w30.lowTotal || null,
+      repHeadline + (low30Rows ? table(['Unit', 'What they said']  , low30Rows) : '') + moreLow + repeatLine + themeLine,
+      w30.lowTotal ? '#dc2626' : '#059669',
+      `Last 30 days · since ${niceDay(w30.since)}`)}
 
   ${closingNote(d.today)}
   <p style="${S.foot}">Sent automatically by Lighthouse every morning · the boards have the live picture.</p>
