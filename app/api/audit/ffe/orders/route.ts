@@ -366,6 +366,11 @@ export async function POST(req: NextRequest) {
         }
       }
       if ('qty' in body) patch.qty = Math.max(1, Math.min(999, Math.round(num(body.qty, 1))))
+      // The recommendation tier is a team statement — a tap here overrules whatever AI proposed.
+      if ('priority' in body) {
+        patch.priority = ['must', 'recommended', 'nice'].indexOf(str(body.priority)) >= 0 ? str(body.priority) : null
+        if ('priorityReason' in body) patch.priority_reason = clean(body.priorityReason, 200)
+      }
       if ('unitCost' in body) patch.unit_cost = priceOf(body.unitCost)
       if ('placement' in body) patch.placement = clean(body.placement, 160)
       if ('spec' in body) patch.spec = clean(body.spec, 120)
