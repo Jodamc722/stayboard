@@ -95,8 +95,11 @@ export async function getCalibration(): Promise<Calibration> {
       }
     }
     if (matchedPay > 0) overheadShare = round2(unmatchedPay / matchedPay)
-    // Settled HK margin over the window: net revenue vs housekeeping payroll.
-    const rev = Number(snap.cleaningRevenue) || 0
+    // Settled HK margin over the window: HOUSEKEEPING's credited net revenue vs housekeeping
+    // payroll — the same bases every margin in the briefs uses. (snap.cleaningRevenue is ALL
+    // in-house fees including ones never credited to a clean; using it overstated the settled
+    // margin and derived an unreachable target.)
+    const rev = Number(snap.hkRevenue != null ? snap.hkRevenue : snap.cleaningRevenue) || 0
     const hkPay = Number(snap.hkPayroll) || 0
     if (rev > 0 && hkPay > 0) settledMarginPct = Math.round(((rev - hkPay) / rev) * 100)
   }
