@@ -26,6 +26,7 @@ import { createClient } from '@/lib/supabase-server'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { laborEconomics } from '@/lib/labor-econ'
 import { sendGmail } from '@/lib/gmail-send'
+import { storeForwardSnapshot } from '@/lib/labor-plan'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -255,12 +256,15 @@ export async function GET(req: NextRequest) {
     }
     // Store AFTER a successful build so a failed run never poisons the next comparison.
     await setSetting('labor_trueup_snapshot', snap, 'cron').catch(() => null)
+    // Staffing planner learning: record today's forward bookings (next 14 days) so the planner
+    // can learn how much last-minute pickup to expect at each lead time. Cheap, once a day.
+    const forward = await storeForwardSnapshot().catch(() => null)
     const to2 = (cfg?.to || []).filter(Boolean)
     if (!cfg?.enabled || !fromEmail || !to2.length) {
-      return NextResponse.json({ ok: true, sent: false, reason: 'not configured', snapshotStored: true, subject })
+      return NextResponse.json({ ok: true, sent: false, reason: 'not configured', snapshotStored: true, forward, subject })
     }
     const r = await sendGmail({ fromEmail, to: to2, subject, html })
-    return NextResponse.json({ ok: r.ok, sent: r.ok, to: to2.length, subject, error: r.error })
+    return NextResponse.json({ ok: r.ok, sent: r.ok, to: to2.length, subject, forward, error: r.error })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
