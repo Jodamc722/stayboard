@@ -27,6 +27,10 @@ type Line = {
   url: string | null; vendor: string | null; vendor_sku: string | null
   qty: number; unit_cost: number | null; placement: string | null; spec: string | null; stage: string
   po_number: string | null; vendor_ref: string | null; note: string | null; received_at: string | null
+  // From the walk, joined live by the API (Jon, 2026-08-17: "need to see the photo from the audit
+  // and notes, if any, in the order form").
+  walkPhoto?: string | null; walkReplacementPhoto?: string | null; walkUrl?: string | null
+  walkNote?: string | null; walkSpec?: string | null
 }
 type Order = {
   id: string; order_no: string; title: string | null; owner_name: string | null; owner_id: string
@@ -62,7 +66,16 @@ export function FfeOrderDetail({ id }: { id: string }) {
   //   By item  — every nightstand in the order at once. This is the BUYER's view, and it is where
   //              the decision actually gets made: you pick one nightstand and it lands on all
   //              twelve units, instead of choosing the same product twelve times.
-  const [view, setView] = useState<'unit' | 'item'>('item')
+  //
+  // DEFAULT IS THE FULL LIST (Jon, 2026-08-17: opened Rock Soffer's 200-line order and "don't see
+  // the long list of items" — the grouped view had collapsed it to 32 rows and read as missing
+  // data). Grouping is a tool you reach for, never the thing that hides the order. The last choice
+  // is remembered per person.
+  const [view, setViewRaw] = useState<'unit' | 'item'>('unit')
+  useEffect(() => { try { const v = localStorage.getItem('ffe_order_view'); if (v === 'item' || v === 'unit') setViewRaw(v) } catch {} }, [])
+  const setView = (v: 'unit' | 'item') => { setViewRaw(v); try { localStorage.setItem('ffe_order_view', v) } catch {} }
+  // Which By-item groups are expanded to show their underlying lines.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   // Jon, 2026-08-13: "make it default to have the same item, but... select one style for bedroom 3
   // and bedroom 1." So bedroom items arrive MERGED — one nightstand decision covering every
@@ -404,10 +417,42 @@ export function FfeOrderDetail({ id }: { id: string }) {
                   <AlertTriangle className="w-3 h-3" /> {prod.label} on these lines — choosing one above replaces them all
                 </span>
               ) : null}
+              {/* EVERY LINE IS ONE TAP AWAY (Jon, 2026-08-17: a 200-line order read as "I don't
+                  see the long list" — a group must open into its items, never just summarise). */}
+              <button onClick={() => setOpenGroups(o => ({ ...o, [g.key]: !o[g.key] }))}
+                className="text-[11.5px] font-semibold text-brand-700 inline-flex items-center gap-1">
+                {openGroups[g.key] ? 'Hide the lines' : `Show all ${g.lines.length} lines`}
+              </button>
               <span className="text-[11px] text-muted truncate">
                 {units.slice(0, 8).join(', ')}{units.length > 8 ? ` +${units.length - 8} more` : ''}
               </span>
             </div>
+            {openGroups[g.key] ? (
+              <div className="border-t border-line divide-y divide-line bg-app/30">
+                {g.lines.map(l => (
+                  <div key={l.id} className="px-4 py-2 flex items-center gap-2.5 flex-wrap text-[12px]">
+                    {l.walkPhoto ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <a href={l.walkPhoto} target="_blank" rel="noreferrer" title="From the walk — the piece being replaced">
+                        <img src={l.walkPhoto} alt="" className="w-8 h-8 rounded-md object-cover border border-amber-300" />
+                      </a>
+                    ) : <span className="w-8 h-8 rounded-md bg-app border border-line grid place-items-center"><Package className="w-3.5 h-3.5 text-muted" /></span>}
+                    <span className="font-bold text-ink shrink-0">{l.unit_name}</span>
+                    <span className="text-muted shrink-0">{l.roomLabel}</span>
+                    <span className="text-muted shrink-0 tabular-nums">×{l.qty}</span>
+                    {(l.spec || l.walkSpec) && <span className="font-semibold text-ink shrink-0">{l.spec || l.walkSpec}</span>}
+                    {(l.note || l.walkNote) && (
+                      <span className="text-ink/70 italic flex-1 min-w-[140px] truncate" title={(l.note || '') + ' ' + (l.walkNote || '')}>
+                        <MessageSquare className="w-3 h-3 inline mr-1 text-muted" />{l.note || l.walkNote}
+                      </span>
+                    )}
+                    <span className="ml-auto tabular-nums font-semibold text-ink shrink-0">
+                      {l.unit_cost == null ? '—' : money(Number(l.unit_cost) * l.qty)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         )
       }) : null}
@@ -436,10 +481,21 @@ export function FfeOrderDetail({ id }: { id: string }) {
               {us.map(l => (
                 <div key={l.id} className={'px-4 py-2.5 flex items-center gap-3 flex-wrap ' + (l.stage === 'declined' ? 'opacity-50' : '')}>
                   <input type="checkbox" checked={!!sel[l.id]} onChange={e => setSel(s => ({ ...s, [l.id]: e.target.checked }))} />
-                  {l.image_url
-                    // eslint-disable-next-line @next/next/no-img-element
-                    ? <img src={l.image_url} alt="" className="w-9 h-9 rounded-lg object-cover border border-line shrink-0" />
-                    : <div className="w-9 h-9 rounded-lg bg-app border border-line shrink-0 grid place-items-center"><Package className="w-4 h-4 text-muted" /></div>}
+                  {/* Two pictures when both exist: what we're BUYING, and — from the walk — what's
+                      being replaced (Jon, 2026-08-17: "need to see the photo from the audit"). */}
+                  <span className="flex items-center gap-1 shrink-0">
+                    {l.image_url
+                      // eslint-disable-next-line @next/next/no-img-element
+                      ? <a href={l.image_url} target="_blank" rel="noreferrer" title="The replacement"><img src={l.image_url} alt="" className="w-9 h-9 rounded-lg object-cover border border-line" /></a>
+                      : <span className="w-9 h-9 rounded-lg bg-app border border-line grid place-items-center"><Package className="w-4 h-4 text-muted" /></span>}
+                    {l.walkPhoto ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <a href={l.walkPhoto} target="_blank" rel="noreferrer" title="From the walk — the piece being replaced" className="relative">
+                        <img src={l.walkPhoto} alt="" className="w-9 h-9 rounded-lg object-cover border border-amber-300" />
+                        <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[7px] font-bold uppercase px-1 rounded bg-amber-500 text-white leading-[10px]">was</span>
+                      </a>
+                    ) : null}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       {l.code ? <span className="text-[11px] font-mono font-bold text-brand-700">{l.code}</span> : null}
@@ -448,13 +504,22 @@ export function FfeOrderDetail({ id }: { id: string }) {
                         {STAGE_LABEL[l.stage] || l.stage}
                       </span>
                       {l.url ? <a href={l.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
+                      {!l.url && l.walkUrl ? <a href={l.walkUrl} target="_blank" rel="noreferrer" title="Link the walker suggested" className="text-amber-600 hover:text-amber-700"><ExternalLink className="w-3 h-3" /></a> : null}
                     </div>
                     <div className="text-[11px] text-muted truncate">
                       {l.roomLabel}{l.placement && l.placement !== l.roomLabel ? ' — ' + l.placement : ''} · {l.itemLabel}
                       {l.received_at ? <span className="text-emerald-600 font-semibold"> · received</span> : null}
                       {l.spec ? ' · ' : ''}{l.spec ? <span className="font-semibold text-ink">{l.spec}</span> : null}
+                      {!l.spec && l.walkSpec ? <> · <span className="font-semibold text-ink">{l.walkSpec}</span></> : null}
                       {l.vendor ? ' · ' + l.vendor : <span className="text-amber-700 font-semibold"> · no supplier yet</span>}{l.po_number ? ' · PO ' + l.po_number : ''}
                     </div>
+                    {/* Anything a human wrote — on the line, or standing in the room. */}
+                    {(l.note || l.walkNote) ? (
+                      <div className="text-[11px] text-ink/70 italic mt-0.5">
+                        <MessageSquare className="w-3 h-3 inline mr-1 text-muted" />
+                        {l.note || ''}{l.note && l.walkNote && l.walkNote !== l.note ? ' · ' : ''}{l.walkNote && l.walkNote !== l.note ? l.walkNote : ''}
+                      </div>
+                    ) : null}
                   </div>
                   <select value={l.catalog_id || ''} onChange={e => post({ action: 'setLine', lineId: l.id, catalogId: e.target.value })}
                     className="rounded-lg border border-line bg-white px-2 py-1 text-[11.5px] max-w-[200px]">
