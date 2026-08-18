@@ -104,6 +104,10 @@ export async function GET(req: NextRequest) {
         stage: str(l.stage),
         locked: LOCKED.indexOf(str(l.stage)) >= 0,
         ownerChoice: l.owner_choice || null,
+        // Our recommendation, in the owner's language (Jon, 2026-08-18): how strongly are we
+        // telling you to buy this one, and why.
+        priority: ['must', 'recommended', 'nice'].indexOf(str(l.priority)) >= 0 ? str(l.priority) : null,
+        priorityReason: l.priority_reason || null,
       })
     }
 
@@ -117,6 +121,7 @@ export async function GET(req: NextRequest) {
         orderNo: order.order_no, title: order.title, ownerName: order.owner_name,
         status: order.status, note: order.note, ownerNote: order.owner_note,
         decidedAt: order.decided_at, decidedBy: order.decided_by, sentAt: order.sent_at,
+        aiBrief: order.ai_brief || null,
       },
       units: unitList,
       totals: {
