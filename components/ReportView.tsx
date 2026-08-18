@@ -76,6 +76,55 @@ const THEMES: Record<string, Any> = {
     trackBg: '#15181d', footA: '#6e6a61', footB: '#4f4b43', barA: '#4a5160', barB: '#C9A227',
     edBg: 'rgba(255,255,255,0.08)', edBorder: '#C9A227',
   },
+  // ── 2026-08-17 additions (Jon: "more options on visual customizations"). Each new theme's
+  // pace-strip triple (barA / barB / good) was run through the dataviz palette validator against
+  // its own background: Ocean worst-pair ΔE 19.1, Porcelain 15.3 — clean passes; Sage's plum sits
+  // at ΔE 7.5 (deutan), legal because every pace bar carries a direct chip label. That validation
+  // is WHY Ocean's accent is azure rather than teal (teal vs the 'good' green was ΔE 8.8 even for
+  // normal vision) and why Sage's accent is plum rather than clay (clay vs green: protan 4.2).
+  ocean: {
+    label: 'Ocean', bg: '#F7FAFC', ink: '#0B2B3A', body: '#3A5568', sub: '#64798A', muted: '#8FA3B2',
+    card: '#ffffff', cardBorder: '#E3EBF1', chip: '#F2F7FA', accent: '#1774C6', gold: '#9C7A3C', band: '#0B2B3A',
+    statusHotBg: '#E8F1FB', statusHotInk: '#1774C6', statusColdBg: '#EDF2F6', statusColdInk: '#5A7186',
+    good: '#1a7f4f', downGray: '#A2B1BD', rule: '#E3EBF1', toolbarBg: 'rgba(247,250,252,0.92)', toolbarBorder: '#D3DEE7',
+    trackBg: '#FBFDFE', footA: '#93A5B3', footB: '#C0CDD8', barA: '#0B2B3A', barB: '#1774C6',
+    edBg: 'rgba(255,255,255,0.7)', edBorder: '#1774C6',
+  },
+  sage: {
+    label: 'Sage', bg: '#F7F6F1', ink: '#24352A', body: '#46564B', sub: '#6C7A70', muted: '#96A19A',
+    card: '#ffffff', cardBorder: '#E7E5DA', chip: '#F4F3EC', accent: '#8A4F7D', gold: '#A98E4A', band: '#24352A',
+    statusHotBg: '#F4EAF1', statusHotInk: '#8A4F7D', statusColdBg: '#EDF0EC', statusColdInk: '#6C7A70',
+    good: '#1a7f4f', downGray: '#A7B0AA', rule: '#E7E5DA', toolbarBg: 'rgba(247,246,241,0.92)', toolbarBorder: '#D8D5C6',
+    trackBg: '#FCFBF7', footA: '#9A9B8C', footB: '#C4C4B4', barA: '#24352A', barB: '#8A4F7D',
+    edBg: 'rgba(255,255,255,0.7)', edBorder: '#A98E4A',
+  },
+  porcelain: {
+    label: 'Porcelain', bg: '#F5F6F8', ink: '#1F2430', body: '#434B5C', sub: '#6A7385', muted: '#949CAC',
+    card: '#ffffff', cardBorder: '#E5E8EE', chip: '#F1F3F6', accent: '#5B6CB2', gold: '#7B84A8', band: '#1F2430',
+    statusHotBg: '#EDF0FA', statusHotInk: '#5B6CB2', statusColdBg: '#EEF0F3', statusColdInk: '#6A7385',
+    good: '#1a7f4f', downGray: '#A6ADBB', rule: '#E5E8EE', toolbarBg: 'rgba(245,246,248,0.92)', toolbarBorder: '#D5D9E1',
+    trackBg: '#FAFBFC', footA: '#9AA1B0', footB: '#C4C9D4', barA: '#1F2430', barB: '#5B6CB2',
+    edBg: 'rgba(255,255,255,0.7)', edBorder: '#5B6CB2',
+  },
+}
+
+// ── FONT PAIRINGS (2026-08-17) ──────────────────────────────────────────────────────────────────
+// The single biggest "make it more beautiful" lever a document has. Headings only: body copy and
+// every number stay in the system sans (numbers in a display serif drift out of column alignment).
+// Loaded from Google Fonts only when a non-default pairing is picked, so the default report ships
+// exactly the bytes it shipped yesterday.
+const FONT_PAIRS: Record<string, { label: string; display: string; href: string }> = {
+  modern: { label: 'Modern', display: '', href: '' },
+  editorial: {
+    label: 'Editorial',
+    display: "'Fraunces', Georgia, 'Times New Roman', serif",
+    href: 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700;9..144,900&display=swap',
+  },
+  classic: {
+    label: 'Classic',
+    display: "'Playfair Display', Georgia, 'Times New Roman', serif",
+    href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&display=swap',
+  },
 }
 
 // ---------- on-the-books pacing chips (P14) ----------
@@ -579,10 +628,26 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [savedFlash, setSavedFlash] = useState(false)
   const [copied, setCopied] = useState(false)
   const [themeKey, setThemeKey] = useState<string>(THEMES[initial.theme] ? initial.theme : 'capri')
-  const t = THEMES[themeKey]
+  // ── style overrides (content.style): custom accent + font pairing (2026-08-17) ──
+  // The accent override is merged into the theme object itself, so every downstream consumer —
+  // pace chips, bars, buttons, the PPTX export — inherits it with no further plumbing.
+  const styleCfg: Any = (c && c.style) || {}
+  const accentOv: string = /^#[0-9a-fA-F]{6}$/.test(String(styleCfg.accent || '')) ? String(styleCfg.accent) : ''
+  const fontKey: string = FONT_PAIRS[styleCfg.font] ? styleCfg.font : 'modern'
+  const fontPair = FONT_PAIRS[fontKey]
+  const t = {
+    ...THEMES[themeKey],
+    ...(accentOv ? { accent: accentOv, statusHotInk: accentOv, statusHotBg: hexA(accentOv, 0.13), barB: accentOv, edBorder: accentOv } : {}),
+  }
   function switchTheme(k: string) {
     setThemeKey(k)
     fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: initial.id, theme: k }) }).catch(() => {})
+  }
+  /** Persist a style override the same way switchTheme persists: apply live, save quietly. */
+  function setStyle(patchObj: Any) {
+    const next = { ...c, style: { ...(c.style || {}), ...patchObj } }
+    setC(next)
+    fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: initial.id, content: next }) }).catch(() => {})
   }
   const [busy, setBusy] = useState('')
   const [attachMsg, setAttachMsg] = useState('')
@@ -1092,14 +1157,40 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     <div className="min-h-screen" style={{ background: t.bg, color: t.ink, '--ed-bg': t.edBg, '--ed-border': t.edBorder, '--t-card': t.card, '--t-border': t.toolbarBorder, '--t-ink': t.ink, '--t-accent': t.accent } as Any}>
       {/* toolbar (edit only appears for logged-in team) */}
       {canEdit && (
-        <div className="sticky top-0 z-20 flex items-center justify-end gap-2 px-4 py-2.5 flex-wrap" style={{ background: t.toolbarBg, backdropFilter: 'blur(6px)', borderBottom: '1px solid ' + t.rule }}>
-          <div className="mr-auto inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-            {Object.keys(THEMES).map(k => (
-              <button key={k} onClick={() => switchTheme(k)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                style={themeKey === k ? { background: t.ink, color: t.bg } : { color: t.sub }}>
-                {THEMES[k].label}
-              </button>
-            ))}
+        <div className="sb-noprint sticky top-0 z-20 flex items-center justify-end gap-2 px-4 py-2.5 flex-wrap" style={{ background: t.toolbarBg, backdropFilter: 'blur(6px)', borderBottom: '1px solid ' + t.rule }}>
+          <div className="mr-auto flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              {Object.keys(THEMES).map(k => (
+                <button key={k} onClick={() => switchTheme(k)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  style={themeKey === k ? { background: t.ink, color: t.bg } : { color: t.sub }}>
+                  {THEMES[k].label}
+                </button>
+              ))}
+            </span>
+            {/* Font pairing — headings only, body stays system for number alignment. */}
+            <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              {Object.keys(FONT_PAIRS).map(k => (
+                <button key={k} onClick={() => setStyle({ font: k })} title={'Heading typeface: ' + FONT_PAIRS[k].label}
+                  className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  style={fontKey === k ? { background: t.ink, color: t.bg } : { color: t.sub, fontFamily: FONT_PAIRS[k].display || undefined }}>
+                  {FONT_PAIRS[k].label}
+                </button>
+              ))}
+            </span>
+            {/* Custom accent — one dot of brand colour, everywhere at once. */}
+            <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-1" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              <label className="relative inline-flex items-center cursor-pointer" title="Custom accent colour — flows into chips, bars, buttons and the PPTX export">
+                <span className="w-4 h-4 rounded-full border" style={{ background: t.accent, borderColor: t.toolbarBorder }} />
+                <input type="color" value={accentOv || t.accent} onChange={e => setStyle({ accent: e.target.value })}
+                  className="absolute inset-0 opacity-0 w-4 h-4 cursor-pointer" />
+              </label>
+              <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: t.sub }}>Accent</span>
+              {accentOv && (
+                <button onClick={() => setStyle({ accent: null })} title="Back to the theme's own accent" style={{ color: t.muted }}>
+                  <X size={11} />
+                </button>
+              )}
+            </span>
           </div>
           {attachMsg && <span className="text-[11px] font-semibold" style={{ color: t.accent }}>{attachMsg}</span>}
           {edit && (
@@ -1207,11 +1298,27 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         </div>
       )}
 
+      {/* Display typeface for the chosen pairing — loaded only when a serif pairing is active. */}
+      {fontPair.href ? <link rel="stylesheet" href={fontPair.href} /> : null}
+
       {/* elevated look: smoother rhythm + hairline dividers between sections */}
       <style>{`
         html { scroll-behavior: smooth; }
-        .sb-report > section { margin-top: 2.25rem; border-top: 1px solid ${t.rule}; }
+        .sb-report > section { margin-top: 2.5rem; border-top: 1px solid ${t.rule}; }
         .sb-report > section:first-of-type { border-top: 0; margin-top: 0; }
+        /* Headings wear the display face; body and numbers stay system so columns line up. */
+        ${fontPair.display ? `
+        .sb-report h1, .sb-report h2, .sb-report h3, .sb-present h1, .sb-present h2, .sb-present h3 {
+          font-family: ${fontPair.display}; letter-spacing: -0.01em; font-weight: 700;
+        }
+        .sb-report h1, .sb-present h1 { font-weight: 900; }` : ''}
+        /* Numbers align down a column everywhere — tables, stat rows, statements. */
+        .sb-report, .sb-present { font-variant-numeric: tabular-nums; }
+        /* A printed / PDF'd share page gets the report, not the chrome. */
+        @media print {
+          .sb-noprint { display: none !important; }
+          .sb-report > section { break-inside: avoid; }
+        }
         .sb-present { position: fixed; inset: 0; height: 100vh; width: 100vw; overflow-y: scroll; scroll-snap-type: y mandatory; z-index: 40; background: ${t.bg}; -ms-overflow-style: none; scrollbar-width: none; }
         .sb-present::-webkit-scrollbar { display: none; }
         .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; padding: 5vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
@@ -1225,7 +1332,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
       {/* Present + unlock-editing buttons for viewers (no edit toolbar) */}
       {!canEdit && !present && (
-        <div className="fixed top-4 right-4 z-30 flex items-center gap-2">
+        <div className="sb-noprint fixed top-4 right-4 z-30 flex items-center gap-2">
           <button onClick={() => openPw('unlock')} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
             <Lock size={12} /> Team edit
           </button>
@@ -1304,7 +1411,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           </p>
           {hero.heroImage && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={hero.heroImage} alt="" className="mt-8 w-full rounded-2xl shadow-md object-cover" style={{ maxHeight: 420 }} />
+            <img src={hero.heroImage} alt="" className="mt-8 w-full rounded-2xl object-cover" style={{ maxHeight: 420, border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 48px -28px rgba(0,0,0,0.35)' }} />
           )}
           <p className="mt-8 text-[12px] uppercase tracking-[0.18em] font-semibold" style={{ color: t.footA }}>
             <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />  ·  STAY HOSPITALITY
