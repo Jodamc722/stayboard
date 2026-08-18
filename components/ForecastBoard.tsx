@@ -43,6 +43,112 @@ function money(n: number) {
   return '$' + Math.round(n || 0).toLocaleString()
 }
 
+// ---------------------------------------------------------------------------
+// HOURS PLAN — MARGIN-FIRST (Jon, 2026-08-18: "come up with the amount of payroll hours we
+// should use, based more on margins than cost per clean"). Reads /api/labor/plan: settled
+// 30-day rates (fee/clean, hours/clean, wage, overhead) x confirmed forward checkouts ->
+// per day, the hours the work needs (floor), the most hours the target margin allows
+// (budget), and what Homebase actually has scheduled. Dollars are server-gated: users
+// without money access get hours, counts and margin % only.
+// ---------------------------------------------------------------------------
+function HoursPlanCard({ weekStart, nonce }: { weekStart: string; nonce: number }) {
+  const [p, setP] = useState<any>(null)
+  const [er, setEr] = useState('')
+  useEffect(() => {
+    if (!weekStart) return
+    let dead = false
+    setEr('')
+    fetch('/api/labor/plan?weekStart=' + weekStart, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!dead) { if (j && j.ok) setP(j); else setEr((j && j.error) || 'Could not load the hours plan') } })
+      .catch(() => { if (!dead) setEr('Could not load the hours plan') })
+    return () => { dead = true }
+  }, [weekStart, nonce])
+  if (er) return <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">Hours plan: {er}</div>
+  if (!p) return <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3 text-[12px] text-neutral-400">Working out the hours plan…</div>
+  const money$ = (n: number | null | undefined) => (n == null ? '—' : '$' + Math.round(n).toLocaleString())
+  const h = (n: number | null | undefined) => (n == null ? '—' : Math.round(n * 10) / 10 + 'h')
+  const chip = (v: string) => {
+    if (v === 'on_budget') return <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">on budget</span>
+    if (v === 'over_budget') return <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold">over budget</span>
+    if (v === 'under_floor') return <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">under-staffed</span>
+    return <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-100 text-neutral-400">—</span>
+  }
+  const cal = p.calibration || {}
+  const calBits: string[] = []
+  for (const k of Object.keys(cal.markets || {})) {
+    const m = cal.markets[k]
+    calBits.push(m.label + ' ' + m.hoursPerClean + 'h/clean' + (m.feePerClean != null ? ' · ' + money$(m.feePerClean) + '/clean' : '') + (m.wage != null ? ' · ' + money$(m.wage) + '/h' : ''))
+  }
+  const days = p.days || []
+  const t = p.totals || {}
+  const rowTd = 'px-2 py-1.5 text-center'
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white overflow-x-auto">
+      <div className="flex items-baseline gap-2 px-3 pt-3 flex-wrap">
+        <p className="text-[10px] uppercase tracking-wide text-neutral-500 font-bold">Hours plan · margin-first</p>
+        <span className="text-[11px] text-neutral-400">target {p.targetMarginPct}% kept{p.targetSource === 'derived' ? ' (settled margin + 3)' : ''} · housekeeper hours only</span>
+      </div>
+      <table className="w-full text-[12px] mt-2">
+        <thead>
+          <tr className="text-neutral-400">
+            <th className="text-left font-medium px-3 py-1 min-w-[130px]"></th>
+            {days.map((d: any) => (
+              <th key={d.date} className={'px-2 py-1 font-medium text-center ' + (d.isPast ? 'text-neutral-300' : '')}>{d.day} {dayNum(d.date)}</th>
+            ))}
+            <th className="px-2 py-1 font-semibold text-center text-neutral-600">Week left</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-t border-neutral-100">
+            <td className="px-3 py-1.5 text-neutral-500">Cleans expected</td>
+            {days.map((d: any) => <td key={d.date} className={rowTd + (d.isPast ? ' text-neutral-300' : ' text-neutral-800 font-medium')}>{d.projectedCleans || '—'}{d.projectedCleans !== d.bookedCleans && !d.isPast ? <span className="text-[9px] text-neutral-400"> ({d.bookedCleans} bk)</span> : null}</td>)}
+            <td className={rowTd + ' font-semibold'}>{t.cleans}</td>
+          </tr>
+          {!p.moneyHidden && (
+            <tr className="border-t border-neutral-100">
+              <td className="px-3 py-1.5 text-neutral-500">Net cleaning revenue</td>
+              {days.map((d: any) => <td key={d.date} className={rowTd + (d.isPast ? ' text-neutral-300' : '')}>{d.revenue ? money$(d.revenue) : '—'}</td>)}
+              <td className={rowTd + ' font-semibold'}>{money$(t.revenue)}</td>
+            </tr>
+          )}
+          <tr className="border-t border-neutral-100">
+            <td className="px-3 py-1.5 text-neutral-500">Hours the work needs</td>
+            {days.map((d: any) => <td key={d.date} className={rowTd + (d.isPast ? ' text-neutral-300' : ' text-neutral-800')}>{d.floorHours ? h(d.floorHours) : '—'}</td>)}
+            <td className={rowTd + ' font-semibold'}>{h(t.floorHours)}</td>
+          </tr>
+          <tr className="border-t border-neutral-100">
+            <td className="px-3 py-1.5 text-neutral-500">Hours budget <span className="text-[10px] text-neutral-400">at {p.targetMarginPct}%</span></td>
+            {days.map((d: any) => <td key={d.date} className={rowTd + (d.isPast ? ' text-neutral-300' : ' text-neutral-800 font-medium')}>{d.budgetHours ? h(d.budgetHours) : '—'}</td>)}
+            <td className={rowTd + ' font-semibold'}>{h(t.budgetHours)}</td>
+          </tr>
+          <tr className="border-t border-neutral-100">
+            <td className="px-3 py-1.5 text-neutral-500">Homebase scheduled</td>
+            {days.map((d: any) => <td key={d.date} className={rowTd}>{d.scheduledHours != null ? h(d.scheduledHours) : '—'}</td>)}
+            <td className={rowTd + ' font-semibold'}>{h(t.scheduledHours)}</td>
+          </tr>
+          <tr className="border-t border-neutral-100">
+            <td className="px-3 py-1.5 text-neutral-500">Margin at scheduled</td>
+            {days.map((d: any) => <td key={d.date} className={rowTd + ' ' + (d.marginAtScheduledPct != null && d.marginAtScheduledPct < p.targetMarginPct ? 'text-rose-600 font-semibold' : 'text-emerald-700')}>{d.marginAtScheduledPct != null ? d.marginAtScheduledPct + '%' : '—'}</td>)}
+            <td className={rowTd + ' font-semibold ' + (t.marginAtScheduledPct != null && t.marginAtScheduledPct < p.targetMarginPct ? 'text-rose-600' : 'text-emerald-700')}>{t.marginAtScheduledPct != null ? t.marginAtScheduledPct + '%' : '—'}</td>
+          </tr>
+          <tr className="border-t border-neutral-100">
+            <td className="px-3 py-1.5 text-neutral-500">Read</td>
+            {days.map((d: any) => <td key={d.date} className={rowTd}>{d.isPast ? <span className="text-[10px] text-neutral-300">past</span> : chip(d.verdict)}</td>)}
+            <td className={rowTd}></td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="px-3 py-2 text-[10.5px] text-neutral-400 leading-relaxed">
+        Learned from the settled 30 days ({cal.snapshotFrom || '—'} → {cal.snapshotTo || '—'}): {calBits.join(' · ') || 'no snapshot yet — using portfolio defaults'}
+        {cal.overheadShare > 0 ? ' · +' + Math.round(cal.overheadShare * 100) + '% for HK hours that never match a clean' : ''}.
+        {' '}Budget = revenue × (1 − {p.targetMarginPct}%) ÷ wage; never below the hours the work needs.
+        {p.pickup && p.pickup.learning ? ' Booking-pickup learning is warming up — projections use confirmed bookings only for now, so revenue can only surprise upward.' : ' Projections include the learned last-minute booking pickup.'}
+      </p>
+    </div>
+  )
+}
+
 export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
   // Roster, staffing ratio and the vendor-cleaning rule are operator-editable (/users -> Ops presets).
   const presets = useOpsPresets()
@@ -437,6 +543,10 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
       </div>
 
       {err && <div className="text-sm text-rose-600">{err}</div>}
+
+      {view === 'week' && !vendorMode && data && (
+        <HoursPlanCard weekStart={weekStart || data.weekStart} nonce={nonce} />
+      )}
 
       {view === 'week' ? (
         <div className="overflow-x-auto rounded-xl border border-neutral-200">
