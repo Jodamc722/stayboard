@@ -28,7 +28,7 @@ import { laborEconomics } from '@/lib/labor-econ'
 import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 const TZ = 'America/New_York'
 const dISO = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
@@ -40,6 +40,8 @@ const r1 = (n: number) => Math.round(n * 10) / 10
 
 type Snap = {
   from: string; to: string; takenAt: string
+  // Maintenance is measured over its own, longer window (charges land late).
+  maintFrom?: string
   cleans: number; cleaningRevenue: number; hkRevenue?: number; credited: number
   billable: number; payroll: number; margin: number
   costPerClean: number | null
@@ -82,26 +84,37 @@ export async function GET(req: NextRequest) {
     const now = new Date()
     const to = dISO(addDays(now, -1))               // yesterday: today is still moving
     const from = dISO(addDays(now, -30))
+    // MAINTENANCE RUNS ON A LONGER WINDOW (Jon, 2026-08-18): maintenance revenue lands late —
+    // charges get typed into Breezeway days or weeks after the work — so a 30-day maintenance
+    // margin is chronically understated. HK settles fast (fees are earned at checkout), so HK
+    // stays on 30 days and maintenance gets 45. Two engine runs, run SEQUENTIALLY on purpose:
+    // parallel runs would double up on Homebase and trip its rate limiting.
+    const maintFrom = dISO(addDays(now, -45))
     const ec = await laborEconomics({ from, to, market: 'all' })
+    const ecM = await laborEconomics({ from: maintFrom, to, market: 'all' })
     // NEVER TRUE-UP ON PARTIAL PAYROLL. A snapshot taken while Homebase was rate-limiting would
     // store understated payroll as "settled truth" and poison the brief's 30-day line until the
     // next clean run. Better to skip a day than to remember a wrong number.
-    if (ec.payrollAudit && !ec.payrollAudit.complete) {
+    const badAudit = [ec.payrollAudit, ecM.payrollAudit].find(a => a && !a.complete)
+    if (badAudit) {
       return NextResponse.json({
         ok: false, sent: false, snapshotStored: false,
-        reason: 'payroll incomplete — Homebase did not return timecards for: ' + ec.payrollAudit.failedWeeks.join(', '),
+        reason: 'payroll incomplete — Homebase did not return timecards for: ' + badAudit.failedWeeks.join(', '),
       }, { status: 503 })
     }
     const K = ec.kpi
+    // Maintenance figures come from the 45-day run everywhere below.
+    const M = ecM.kpi.maintenance
 
     const prev = await getSetting<Snap | null>('labor_trueup_snapshot', null).catch(() => null)
     const snap: Snap = {
       from, to, takenAt: new Date().toISOString(),
+      maintFrom,
       cleans: K.housekeeping.cleans,
       cleaningRevenue: ec.cleaningRevenue,        // in-house, all crews — the same base 'credited' is drawn from
       hkRevenue: K.housekeeping.revenue,
       credited: ec.feeAudit ? ec.feeAudit.credited : 0,
-      billable: K.maintenance.billable,
+      billable: M.billable,
       payroll: K.allIn.payroll,
       margin: K.allIn.margin,
       costPerClean: K.housekeeping.costPerClean,
@@ -120,7 +133,7 @@ export async function GET(req: NextRequest) {
       deltaRow('In-house cleaning revenue', prev ? prev.cleaningRevenue : null, snap.cleaningRevenue, money) +
       deltaRow('Housekeeping share of it', prev && prev.hkRevenue != null ? prev.hkRevenue : null, K.housekeeping.revenue, money) +
       deltaRow('Fees credited to a person', prev ? prev.credited : null, snap.credited, money) +
-      deltaRow('Maintenance billable', prev ? prev.billable : null, snap.billable, money) +
+      deltaRow('Maintenance billable (45d)', prev ? prev.billable : null, snap.billable, money) +
       deltaRow('Payroll (all in)', prev ? prev.payroll : null, snap.payroll, money) +
       deltaRow('Margin (all in)', prev ? prev.margin : null, snap.margin, money) +
       deltaRow('Cost per clean', prev ? prev.costPerClean : null, snap.costPerClean ?? 0, money)
@@ -161,21 +174,21 @@ export async function GET(req: NextRequest) {
     const mTone = (n: number) => (n < 0 ? '#dc2626' : '#047857')
     const headline =
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin:12px 0">' +
-      '<p style="margin:2px 4px 4px;font-size:13px;font-weight:700">The numbers that matter &middot; trailing 30 days</p>' +
+      '<p style="margin:2px 4px 4px;font-size:13px;font-weight:700">The numbers that matter &middot; HK trailing 30 days &middot; maintenance trailing 45</p>' +
       '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
       tile(money(K.housekeeping.costPerClean), 'Cost / clean', r1(K.housekeeping.hoursPerClean || 0) + 'h each &middot; ' + K.housekeeping.cleans + ' departure cleans') +
       tile(money(K.housekeeping.margin), 'HK margin', money(K.housekeeping.revenue) + ' rev vs ' + money(K.housekeeping.payroll) + ' labor', mTone(K.housekeeping.margin)) +
       tile(pctTxt(K.housekeeping.marginPct), 'HK margin %', 'incl. billable cleaning work', mTone(K.housekeeping.margin)) +
       (HL ? tile(pctTxt(HL.marginPct), '+ Supervisors', money(HL.margin) + ' on ' + money(HL.payroll) + ' loaded labor &middot; ' + money(HL.costPerClean) + '/clean', mTone(HL.margin)) : '') +
-      tile(pctTxt(K.maintenance.marginPct), 'Maintenance', money(K.maintenance.revenue) + ' billed vs ' + money(K.maintenance.payroll) + ' &middot; separate dept', mTone(K.maintenance.margin)) +
+      tile(pctTxt(M.marginPct), 'Maintenance &middot; 45d', money(M.revenue) + ' billed vs ' + money(M.payroll) + ' &middot; separate dept', mTone(M.margin)) +
       '</tr></table></div>'
 
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">' +
       '<div style="max-width:720px;margin:0 auto;padding:18px">' +
       '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
       '<p style="margin:0;color:#9ca3af;font-size:11px;letter-spacing:.16em">S T A Y &nbsp; H O S P I T A L I T Y</p>' +
-      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Labor true-up &mdash; last 30 days</p>' +
-      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + from + ' to ' + to +
+      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Labor true-up &mdash; HK last 30 days &middot; maintenance last 45</p>' +
+      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">HK ' + from + ' to ' + to + ' &middot; maintenance since ' + maintFrom +
       (prev ? ' &middot; compared with the run on ' + String(prev.takenAt).slice(0, 10) : ' &middot; first run, nothing to compare yet') + '</p></div>' +
       headline +
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0">' +
@@ -193,7 +206,7 @@ export async function GET(req: NextRequest) {
       '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">' + movedTxt + '.</p>' +
       '</div>' +
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0">' +
-      '<p style="margin:0 0 8px;font-size:13px;font-weight:700">The 30-day picture</p>' +
+      '<p style="margin:0 0 8px;font-size:13px;font-weight:700">The settled picture</p>' +
       '<table width="100%" cellspacing="0" cellpadding="0">' +
       '<tr><th style="' + th + '">Crew</th><th style="' + th + ';text-align:right">Revenue</th>' +
       '<th style="' + th + ';text-align:right">Payroll</th><th style="' + th + ';text-align:right">Margin</th>' +
@@ -211,24 +224,19 @@ export async function GET(req: NextRequest) {
           '<td style="' + td + ';text-align:right">' + money(HL.margin) + '</td>' +
           '<td style="' + td + ';text-align:right">' + pctTxt(HL.marginPct) + '</td></tr>'
         : '') +
-      '<tr><td style="' + td + ';border-top:2px solid #111827"><b>Maintenance</b> <span style="color:#6b7280;font-size:11.5px">separate department</span><br><span style="color:#6b7280;font-size:11.5px">' + K.maintenance.tasksBilled +
-        ' billed &middot; ' + K.maintenance.tasksNoCharge + ' with no charge entered</span></td>' +
-      '<td style="' + td + ';text-align:right">' + money(K.maintenance.revenue) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + money(K.maintenance.payroll) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + money(K.maintenance.margin) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + pctTxt(K.maintenance.marginPct) + '</td></tr>' +
-      '<tr><td style="' + td + ';border-top:2px solid #111827"><b>Staff total</b></td>' +
-      '<td style="' + td + ';border-top:2px solid #111827;text-align:right"><b>' + money(K.staff.revenue) + '</b></td>' +
-      '<td style="' + td + ';border-top:2px solid #111827;text-align:right"><b>' + money(K.staff.payroll) + '</b></td>' +
-      '<td style="' + td + ';border-top:2px solid #111827;text-align:right"><b>' + money(K.staff.margin) + '</b></td>' +
-      '<td style="' + td + ';border-top:2px solid #111827;text-align:right"><b>' + pctTxt(K.staff.marginPct) + '</b></td></tr>' +
+      '<tr><td style="' + td + ';border-top:2px solid #111827"><b>Maintenance</b> <span style="color:#6b7280;font-size:11.5px">separate department &middot; trailing 45 days</span><br><span style="color:#6b7280;font-size:11.5px">' + M.tasksBilled +
+        ' billed &middot; ' + M.tasksNoCharge + ' with no charge entered</span></td>' +
+      '<td style="' + td + ';text-align:right">' + money(M.revenue) + '</td>' +
+      '<td style="' + td + ';text-align:right">' + money(M.payroll) + '</td>' +
+      '<td style="' + td + ';text-align:right">' + money(M.margin) + '</td>' +
+      '<td style="' + td + ';text-align:right">' + pctTxt(M.marginPct) + '</td></tr>' +
       '<tr><td style="' + td + ';background:#fafaf9">Supervisors <span style="color:#6b7280;font-size:11.5px">fixed</span></td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">n/a</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right">' + money(K.supervisors.payroll) + '</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td></tr>' +
       '</table></div>' +
-      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Runs every day over the trailing 30, and only writes when something settles. Full detail on the Labor board.</p>' +
+      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Runs every day &mdash; HK over the trailing 30 days, maintenance over the trailing 45 (charges land late) &mdash; and only writes when something settles. Full detail on the Labor board.</p>' +
       '</div></body></html>'
 
     if (preview) return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
