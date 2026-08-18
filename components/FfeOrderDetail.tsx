@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, ArrowLeft, Copy, Check, Send, FileSpreadsheet, FileText, Trash2, Package,
   ExternalLink, Truck, Wrench, ShoppingBag, MessageSquare, ClipboardList, Store,
-  Building2, Layers, Split, Link2, AlertTriangle, Sparkles,
+  Building2, Layers, Split, Link2, AlertTriangle, Sparkles, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { money, ORDER_STATUS_LABEL, STAGE_LABEL } from '@/lib/ffe-catalog'
 import { BEDROOM_NO, ROOM_ORDER, stripVariant } from '@/lib/ffe-checklist'
@@ -62,6 +62,10 @@ const STAGE_CLS: Record<string, string> = {
   delivered: 'bg-violet-100 text-violet-700',
   installed: 'bg-emerald-600 text-white',
 }
+
+// The forward journey, in the order the strip reads. Declined sits apart — it is an owner's answer,
+// not a step on the way.
+const PIPE = ['draft', 'sent', 'approved', 'ordered', 'delivered', 'installed'] as const
 
 export function FfeOrderDetail({ id }: { id: string }) {
   const [order, setOrder] = useState<Order | null>(null)
@@ -155,11 +159,38 @@ export function FfeOrderDetail({ id }: { id: string }) {
   const live = useMemo(() => lines.filter(l => l.stage !== 'declined'), [lines])
   const total = live.reduce((a, l) => a + (l.unit_cost == null ? 0 : Number(l.unit_cost) * l.qty), 0)
   const unpriced = live.filter(l => l.unit_cost == null).length
-  const byUnit = useMemo(() => {
-    const m: Record<string, Line[]> = {}
-    for (const l of lines) (m[l.unit_name || l.listing_id] = m[l.unit_name || l.listing_id] || []).push(l)
+  const unitCount = useMemo(() => new Set(lines.map(l => l.unit_name || l.listing_id)).size, [lines])
+
+  // ── FOCUS, NEVER CONCEALMENT ────────────────────────────────────────────────────────────────
+  // The pipeline strip and the tier chips are FILTERS the person can see and undo: while one is on,
+  // a banner keeps "showing X of Y lines" in view. A filtered list that looks complete is how a
+  // 200-line order reads as missing data (Jon, 2026-08-17) — so the narrowing is always announced.
+  const [stageFilter, setStageFilter] = useState('')
+  const [tierFilter, setTierFilter] = useState('')
+  const [exportOpen, setExportOpen] = useState(false)
+  const visLines = useMemo(() => lines.filter(l =>
+    (!stageFilter || l.stage === stageFilter) &&
+    (!tierFilter || (tierFilter === 'none' ? !l.priority : l.priority === tierFilter))
+  ), [lines, stageFilter, tierFilter])
+  const stageRoll = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const l of lines) m[l.stage] = (m[l.stage] || 0) + 1
     return m
   }, [lines])
+  const tierRoll = useMemo(() => {
+    const r: Record<string, { n: number; v: number }> = { must: { n: 0, v: 0 }, recommended: { n: 0, v: 0 }, nice: { n: 0, v: 0 }, none: { n: 0, v: 0 } }
+    for (const l of live) {
+      const k = l.priority && r[l.priority] ? l.priority : 'none'
+      r[k].n += 1; r[k].v += l.unit_cost == null ? 0 : Number(l.unit_cost) * l.qty
+    }
+    return r
+  }, [live])
+
+  const byUnit = useMemo(() => {
+    const m: Record<string, Line[]> = {}
+    for (const l of visLines) (m[l.unit_name || l.listing_id] = m[l.unit_name || l.listing_id] || []).push(l)
+    return m
+  }, [visLines])
 
   // ── ONE DECISION PER ROW ────────────────────────────────────────────────────────────────────
   // A group is one buying decision: "the nightstands", not "the nightstand in 1101". Bedroom items
@@ -179,7 +210,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
       if (bn) (slotsPerItem[l.item_key] = slotsPerItem[l.item_key] || new Set()).add(bn)
     }
 
-    for (const l of lines) {
+    for (const l of visLines) {
       const bn = BEDROOM_NO[l.room]
       const spans = bn ? (slotsPerItem[l.item_key]?.size || 1) : 0
       const merged = !!bn && spans > 1 && !split[l.item_key]
@@ -213,7 +244,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
       g.lines.sort((a, b) => (a.unit_name || '').localeCompare(b.unit_name || '', undefined, { numeric: true }))
     }
     return out.sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label))
-  }, [lines, split])
+  }, [lines, visLines, split])
 
   /** What a group currently points at: one product, several, or nothing yet. */
   const productOf = (g: Group) => {
@@ -248,6 +279,22 @@ export function FfeOrderDetail({ id }: { id: string }) {
 
   const undecided = groups.filter(g => !productOf(g).one).length
 
+  // WHAT TO DO NEXT — one sentence, computed from where the lines actually are. A world-class order
+  // page answers "so what do I do now?" without the person reconstructing the lifecycle in their head.
+  const hint = useMemo(() => {
+    if (!lines.length) return 'No lines on this order yet.'
+    if (order?.status === 'changes') return 'The owner asked for changes — read their note below, adjust the lines, and send again.'
+    if (order?.status === 'draft') return undecided
+      ? `${undecided} buying decision${undecided === 1 ? '' : 's'} still open — pick products in By item, run AI organize, then send to the owner.`
+      : 'Ready to go — AI organize writes the brief and the recommendation tiers, then send it to the owner.'
+    if ((stageRoll.approved || 0) > 0) return `${stageRoll.approved} approved and waiting to be bought — Export → Buy list, then select lines and mark them ordered as you place them.`
+    if (order?.status === 'sent') return 'With the owner. Copy the link to nudge them, or keep editing and send again.'
+    if ((stageRoll.ordered || 0) > 0) return `${stageRoll.ordered} with vendors — select lines and mark them delivered as they arrive.`
+    if ((stageRoll.delivered || 0) > 0) return `${stageRoll.delivered} delivered — mark them installed once they are in the room.`
+    if (live.length && (stageRoll.installed || 0) === live.length) return 'Everything is installed. This one is done.'
+    return ''
+  }, [lines.length, order?.status, undecided, stageRoll, live.length])
+
   const shareUrl = shareCode ? (typeof window !== 'undefined' ? window.location.origin : '') + '/audit/ffe/order/' + shareCode : ''
   const copy = async () => {
     try { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { /* blocked */ }
@@ -268,20 +315,149 @@ export function FfeOrderDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <a href="/ffe" className="text-[12.5px] font-semibold text-muted inline-flex items-center gap-1">
-          <ArrowLeft className="w-3.5 h-3.5" /> FF&amp;E
-        </a>
-        <h2 className="text-xl font-bold text-ink">{order.order_no}</h2>
-        <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' +
-          (order.status === 'approved' ? 'bg-emerald-100 text-emerald-700'
-            : order.status === 'changes' ? 'bg-rose-100 text-rose-700'
-              : order.status === 'sent' ? 'bg-amber-100 text-amber-800' : 'bg-neutral-200 text-neutral-700')}>
-          {ORDER_STATUS_LABEL[order.status] || order.status}
-        </span>
-        <span className="text-[12.5px] text-muted">{order.title || order.owner_name}</span>
-        <div className="flex-1" />
-        <span className="text-lg font-bold text-ink tabular-nums">{money(total)}</span>
+      {/* ── THE ORDER, IN ONE CARD (Jon, 2026-08-18: "consolidate the order experience") ────────
+          Name and money on top; the journey as a strip you can tap; the recommendation mix with
+          dollars; one contextual next step; and every action in one bar — Export is a single menu
+          instead of five loose buttons. The strip and the chips focus the list below, and the
+          banner further down keeps the full count on screen the whole time a filter is narrowing. */}
+      <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+        <div className="px-4 pt-3 flex items-center gap-3 flex-wrap">
+          <a href="/ffe#orders" className="text-[12.5px] font-semibold text-muted inline-flex items-center gap-1">
+            <ArrowLeft className="w-3.5 h-3.5" /> Orders
+          </a>
+          <h2 className="text-xl font-bold text-ink">{order.order_no}</h2>
+          <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' +
+            (order.status === 'approved' ? 'bg-emerald-100 text-emerald-700'
+              : order.status === 'changes' ? 'bg-rose-100 text-rose-700'
+                : order.status === 'sent' ? 'bg-amber-100 text-amber-800' : 'bg-neutral-200 text-neutral-700')}>
+            {ORDER_STATUS_LABEL[order.status] || order.status}
+          </span>
+          <span className="text-[12.5px] text-muted truncate max-w-[320px]">{order.title || order.owner_name}</span>
+          <div className="flex-1" />
+          <div className="text-right">
+            <div className="text-xl font-bold text-ink tabular-nums leading-tight">{money(total)}</div>
+            <div className="text-[11px] text-muted">
+              {live.length} line{live.length === 1 ? '' : 's'} · {unitCount} unit{unitCount === 1 ? '' : 's'}
+              {unpriced ? <span className="text-amber-700 font-semibold"> · {unpriced} unpriced</span> : null}
+            </div>
+          </div>
+        </div>
+
+        {/* the journey — tap a stage to see exactly those lines */}
+        <div className="px-4 pt-3">
+          <div className="flex gap-1 items-stretch">
+            {PIPE.map(s => {
+              const n = stageRoll[s] || 0
+              const on = stageFilter === s
+              return (
+                <button key={s} onClick={() => setStageFilter(on ? '' : s)}
+                  title={n ? `${STAGE_LABEL[s]} — ${n} line${n === 1 ? '' : 's'}. Tap to see only these.` : `No lines ${STAGE_LABEL[s].toLowerCase()} yet.`}
+                  className={'flex-1 min-w-0 rounded-lg px-1 py-1.5 text-center border transition ' +
+                    (on ? 'border-ink ring-1 ring-ink ' : 'border-transparent ') +
+                    (n ? STAGE_CLS[s] : 'bg-app text-muted/50')}>
+                  <div className="text-[13px] font-bold tabular-nums leading-none">{n}</div>
+                  <div className="text-[8.5px] font-bold uppercase tracking-wide mt-0.5 truncate">{STAGE_LABEL[s]}</div>
+                </button>
+              )
+            })}
+            {stageRoll.declined ? (
+              <button onClick={() => setStageFilter(stageFilter === 'declined' ? '' : 'declined')}
+                title="Lines the owner said no to. Tap to see only these."
+                className={'shrink-0 rounded-lg px-2 py-1.5 text-center border transition ' +
+                  (stageFilter === 'declined' ? 'border-ink ring-1 ring-ink ' : 'border-transparent ') + STAGE_CLS.declined}>
+                <div className="text-[13px] font-bold tabular-nums leading-none">{stageRoll.declined}</div>
+                <div className="text-[8.5px] font-bold uppercase tracking-wide mt-0.5">Not taken</div>
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* the recommendation mix, with dollars — and the view, one control, in one place */}
+        <div className="px-4 py-2.5 flex flex-wrap items-center gap-1.5">
+          {TIERS.map(k => tierRoll[k].n ? (
+            <button key={k} onClick={() => setTierFilter(tierFilter === k ? '' : k)}
+              title="Tap to see only these lines."
+              className={'text-[10.5px] font-bold px-2 py-1 rounded-lg border ' + TIER_CLS[k] + (tierFilter === k ? ' ring-1 ring-ink' : '')}>
+              {TIER_LABEL[k]} {tierRoll[k].n}{tierRoll[k].v ? ' · ' + money(tierRoll[k].v) : ''}
+            </button>
+          ) : null)}
+          {tierRoll.none.n && (tierRoll.must.n || tierRoll.recommended.n || tierRoll.nice.n) ? (
+            <button onClick={() => setTierFilter(tierFilter === 'none' ? '' : 'none')}
+              className={'text-[10.5px] font-bold px-2 py-1 rounded-lg border border-dashed border-neutral-300 text-neutral-500 bg-white' + (tierFilter === 'none' ? ' ring-1 ring-ink' : '')}>
+              No tier yet {tierRoll.none.n}
+            </button>
+          ) : null}
+          {undecided ? (
+            <span className="text-[10.5px] font-bold px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+              {undecided} product decision{undecided === 1 ? '' : 's'} open
+            </span>
+          ) : null}
+          <div className="flex-1" />
+          <div className="inline-flex rounded-lg border border-line bg-white p-0.5">
+            <button onClick={() => setView('item')}
+              className={'rounded-md px-2.5 py-1 text-[11.5px] font-semibold inline-flex items-center gap-1 ' +
+                (view === 'item' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+              <Layers className="w-3 h-3" /> By item
+            </button>
+            <button onClick={() => setView('unit')}
+              className={'rounded-md px-2.5 py-1 text-[11.5px] font-semibold inline-flex items-center gap-1 ' +
+                (view === 'unit' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+              <Building2 className="w-3 h-3" /> By unit
+            </button>
+          </div>
+        </div>
+
+        {/* every action, one bar */}
+        <div className="px-3 py-2.5 border-t border-line bg-app/40 flex flex-wrap items-center gap-2">
+          <button onClick={send} disabled={busy || !lines.length}
+            className="rounded-xl bg-ink text-white px-3 py-2 text-[12px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5">
+            <Send className="w-3.5 h-3.5" /> {order.status === 'draft' ? 'Send to owner' : 'Send again'}
+          </button>
+          {order.status !== 'draft' ? (
+            <button onClick={copy} className="rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
+              {copied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Owner link</>}
+            </button>
+          ) : null}
+          <button onClick={aiOrganize} disabled={aiBusy || !lines.length}
+            className="rounded-xl bg-violet-600 text-white px-3 py-2 text-[12px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5 hover:bg-violet-700">
+            {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI organize
+          </button>
+          <div className="relative">
+            <button onClick={() => setExportOpen(o => !o)}
+              className="rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" /> Export <ChevronDown className="w-3 h-3" />
+            </button>
+            {exportOpen ? (
+              <div className="absolute left-0 top-full mt-1 z-20 w-60 rounded-xl border border-line bg-white shadow-lg overflow-hidden"
+                onClick={() => setExportOpen(false)}>
+                {/* Two sheets, two jobs, on top: the buy list for whoever places the orders, the
+                    work orders for whoever puts the furniture in. The paperwork under them. */}
+                <a href={'/api/audit/ffe/orders/export?fmt=buylist&id=' + id} className="flex items-center gap-2 px-3 py-2 text-[12px] font-bold text-ink hover:bg-app">
+                  <Store className="w-3.5 h-3.5 text-muted" /> Buy list — by supplier
+                </a>
+                <a href={'/api/audit/ffe/orders/export?fmt=workorder&id=' + id} className="flex items-center gap-2 px-3 py-2 text-[12px] font-bold text-ink hover:bg-app border-b border-line">
+                  <ClipboardList className="w-3.5 h-3.5 text-muted" /> Work orders — by unit
+                </a>
+                <a href={'/api/audit/ffe/orders/export?fmt=pdf&id=' + id} className="flex items-center gap-2 px-3 py-2 text-[12px] font-semibold text-ink/80 hover:bg-app">
+                  <FileText className="w-3.5 h-3.5 text-muted" /> PDF quote
+                </a>
+                <a href={'/api/audit/ffe/orders/export?fmt=xlsx&id=' + id} className="flex items-center gap-2 px-3 py-2 text-[12px] font-semibold text-ink/80 hover:bg-app">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-muted" /> Excel
+                </a>
+                <a href={'/api/audit/ffe/orders/export?fmt=csv&id=' + id} className="flex items-center gap-2 px-3 py-2 text-[12px] font-semibold text-ink/80 hover:bg-app">
+                  <span className="w-3.5" /> CSV
+                </a>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex-1" />
+        </div>
+        {hint ? (
+          <div className="px-4 py-2 border-t border-line flex items-start gap-1.5 text-[11.5px] text-muted">
+            <ChevronRight className="w-3.5 h-3.5 shrink-0 mt-[1px] text-brand-700" />
+            <span><span className="font-bold text-ink">Next:</span> {hint}</span>
+          </div>
+        ) : null}
       </div>
 
       {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div> : null}
@@ -307,49 +483,6 @@ export function FfeOrderDetail({ id }: { id: string }) {
           <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap leading-relaxed">{order.ai_brief}</p>
         </div>
       ) : null}
-
-      {/* actions */}
-      <div className="rounded-2xl border border-line bg-white p-3 shadow-soft flex flex-wrap items-center gap-2">
-        <button onClick={send} disabled={busy || !lines.length}
-          className="rounded-xl bg-ink text-white px-3 py-2 text-[12px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5">
-          <Send className="w-3.5 h-3.5" /> {order.status === 'draft' ? 'Send to owner' : 'Send again'}
-        </button>
-        {order.status !== 'draft' ? (
-          <button onClick={copy} className="rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
-            {copied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Owner link</>}
-          </button>
-        ) : null}
-        <button onClick={aiOrganize} disabled={aiBusy || !lines.length}
-          className="rounded-xl bg-violet-600 text-white px-3 py-2 text-[12px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5 hover:bg-violet-700">
-          {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI organize
-        </button>
-        <a href={'/api/audit/ffe/orders/export?fmt=pdf&id=' + id}
-          className="rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
-          <FileText className="w-3.5 h-3.5" /> PDF quote
-        </a>
-        <a href={'/api/audit/ffe/orders/export?fmt=xlsx&id=' + id}
-          className="rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
-          <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
-        </a>
-        <a href={'/api/audit/ffe/orders/export?fmt=csv&id=' + id}
-          className="rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted">CSV</a>
-        {/* TWO SHEETS, TWO JOBS. The buy list is organised by supplier, for whoever places the
-            orders; the work order by unit, for whoever puts the furniture in. */}
-        <a href={'/api/audit/ffe/orders/export?fmt=buylist&id=' + id}
-          className="rounded-xl border-2 border-ink px-3 py-2 text-[12px] font-bold text-ink inline-flex items-center gap-1.5">
-          <Store className="w-3.5 h-3.5" /> Buy list
-        </a>
-        <a href={'/api/audit/ffe/orders/export?fmt=workorder&id=' + id}
-          className="rounded-xl border-2 border-ink px-3 py-2 text-[12px] font-bold text-ink inline-flex items-center gap-1.5">
-          <ClipboardList className="w-3.5 h-3.5" /> Work orders
-        </a>
-        <div className="flex-1" />
-        <span className="text-[11.5px] text-muted">
-          {live.length} line{live.length === 1 ? '' : 's'}
-          {unpriced ? ' · ' + unpriced + ' unpriced' : ''}
-          {lines.length - live.length ? ' · ' + (lines.length - live.length) + ' not taken' : ''}
-        </span>
-      </div>
 
       {/* bulk bar */}
       {selected.length ? (
@@ -398,26 +531,32 @@ export function FfeOrderDetail({ id }: { id: string }) {
         </div>
       ) : null}
 
-      {/* WHICH VIEW. Buying and installing are different jobs and they want opposite shapes. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          <button onClick={() => setView('item')}
-            className={'rounded-lg px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1.5 ' +
-              (view === 'item' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-            <Layers className="w-3.5 h-3.5" /> By item
-          </button>
-          <button onClick={() => setView('unit')}
-            className={'rounded-lg px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1.5 ' +
-              (view === 'unit' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-            <Building2 className="w-3.5 h-3.5" /> By unit
-          </button>
+      {/* THE FILTER IS NEVER SILENT. While the strip or a tier chip narrows the list, the full
+          count stays on screen with a one-tap way back to everything. */}
+      {(stageFilter || tierFilter) ? (
+        <div className="rounded-xl border border-ink/20 bg-white px-3 py-2 text-[12px] text-ink flex items-center gap-2 flex-wrap shadow-soft">
+          <span className="font-bold">Showing {visLines.length} of {lines.length} lines</span>
+          {stageFilter ? (
+            <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (STAGE_CLS[stageFilter] || '')}>
+              {stageFilter === 'declined' ? 'Not taken' : STAGE_LABEL[stageFilter]}
+            </span>
+          ) : null}
+          {tierFilter ? (
+            <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' +
+              (tierFilter === 'none' ? 'bg-white text-neutral-500 border-dashed border-neutral-300' : TIER_CLS[tierFilter])}>
+              {tierFilter === 'none' ? 'No tier yet' : TIER_LABEL[tierFilter]}
+            </span>
+          ) : null}
+          <button onClick={() => { setStageFilter(''); setTierFilter('') }}
+            className="ml-auto text-[12px] font-bold text-brand-700">Show everything</button>
         </div>
-        <p className="text-[11.5px] text-muted flex-1 min-w-[240px]">
+      ) : (
+        <p className="text-[11.5px] text-muted px-1">
           {view === 'item'
             ? <>Pick the product once and it lands on every unit. Bedrooms share one choice unless you split them.{undecided ? <span className="text-amber-700 font-semibold"> {undecided} still to decide.</span> : null}</>
             : <>What goes into each unit — the shape of the work order the install crew carries.</>}
         </p>
-      </div>
+      )}
 
       {/* ── BY ITEM: one row per buying decision ─────────────────────────────────────────────── */}
       {view === 'item' ? groups.map(g => {
@@ -441,6 +580,14 @@ export function FfeOrderDetail({ id }: { id: string }) {
                 </div>
                 <div className="text-[11.5px] text-muted">
                   {g.where} · {units.length} unit{units.length === 1 ? '' : 's'} · {pieces} piece{pieces === 1 ? '' : 's'}
+                  {(() => {
+                    // The recommendation mix of this buying decision, so the buyer sees "9 needs
+                    // replacing" without opening the lines.
+                    const t: Record<string, number> = {}
+                    for (const l of liveL) if (l.priority) t[l.priority] = (t[l.priority] || 0) + 1
+                    const parts = TIERS.filter(k => t[k]).map(k => `${t[k]} ${TIER_LABEL[k].toLowerCase()}`)
+                    return parts.length ? ' · ' + parts.join(' · ') : ''
+                  })()}
                 </div>
               </div>
               <div className="flex-1" />

@@ -75,6 +75,9 @@ export function FfeOwnerOrder({ code }: { code: string }) {
   const [sent, setSent] = useState(false)
   const [pending, setPending] = useState(0)          // taps not yet acknowledged by the server
   const [offline, setOffline] = useState(false)
+  // Focus on one recommendation tier. The total bar below always counts EVERY line regardless of
+  // focus, so narrowing the reading never quietly changes the money.
+  const [tierView, setTierView] = useState<'' | 'must' | 'recommended' | 'nice'>('')
 
   const load = useCallback(async () => {
     try {
@@ -147,6 +150,18 @@ export function FfeOwnerOrder({ code }: { code: string }) {
   }, [code])
 
   const t = <K extends { en: string; es: string }>(x: K) => x[lang]
+
+  // How many lines carry each tier, and what they add up to — the first thing an owner wants to
+  // know about a long order is "how much of this is actually urgent?".
+  const tierRoll = useMemo(() => {
+    const r: Record<string, { n: number; v: number }> = { must: { n: 0, v: 0 }, recommended: { n: 0, v: 0 }, nice: { n: 0, v: 0 } }
+    for (const u of data?.units || []) for (const rm of u.rooms) for (const l of rm.lines) {
+      if (l.priority && r[l.priority]) { r[l.priority].n += 1; if (l.lineTotal != null) r[l.priority].v += l.lineTotal }
+    }
+    return r
+  }, [data])
+  const hasTiers = tierRoll.must.n + tierRoll.recommended.n + tierRoll.nice.n > 0
+  const inView = (l: Line) => !tierView || l.priority === tierView
 
   const { total, yes, no } = useMemo(() => {
     let total = 0, yes = 0, no = 0
@@ -223,6 +238,24 @@ export function FfeOwnerOrder({ code }: { code: string }) {
         </p>
       </div>
 
+      {/* The order at a glance: how strongly we recommend what, and what each bucket costs. A tap
+          focuses the list on one tier; "Show all" is always one tap away. */}
+      {hasTiers ? (
+        <div className="mx-3 mt-3 flex flex-wrap gap-1.5">
+          {(['must', 'recommended', 'nice'] as const).map(k => tierRoll[k].n ? (
+            <button key={k} onClick={() => setTierView(v => v === k ? '' : k)}
+              className={'text-[11px] font-bold px-2.5 py-1.5 rounded-xl ' + TIER_T[k].cls + (tierView === k ? ' ring-2 ring-neutral-800' : '')}>
+              {TIER_T[k][lang]} · {tierRoll[k].n}{tierRoll[k].v ? ' · ' + usd(tierRoll[k].v) : ''}
+            </button>
+          ) : null)}
+          {tierView ? (
+            <button onClick={() => setTierView('')} className="text-[11px] font-bold px-2.5 py-1.5 rounded-xl bg-neutral-800 text-white">
+              {lang === 'en' ? 'Show all' : 'Ver todo'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {data.order.aiBrief ? (
         <div className="mx-3 mt-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
           <p className="text-[10px] uppercase tracking-[0.16em] font-bold text-neutral-400">{t(T.brief)}</p>
@@ -244,19 +277,19 @@ export function FfeOwnerOrder({ code }: { code: string }) {
       {err ? <div className="mx-3 mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[12.5px] text-rose-700">{err}</div> : null}
 
       <div className="px-3 pt-3 space-y-3">
-        {data.units.map(u => (
+        {data.units.filter(u => u.rooms.some(rm => rm.lines.some(inView))).map(u => (
           <div key={u.listingId} className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
             <div className="px-4 py-2.5 bg-neutral-50 border-b border-neutral-200">
               <p className="text-[14px] font-bold text-neutral-900">{u.unitName}</p>
               <p className="text-[11px] text-neutral-500">{u.building}</p>
             </div>
-            {u.rooms.map(rm => (
+            {u.rooms.filter(rm => rm.lines.some(inView)).map(rm => (
               <div key={rm.room}>
                 <p className="px-4 pt-2.5 pb-1 text-[10.5px] uppercase tracking-wider font-bold text-neutral-400">
                   {lang === 'en' ? rm.en : rm.es}
                 </p>
                 <div className="divide-y divide-neutral-100">
-                  {rm.lines.map(l => {
+                  {rm.lines.filter(inView).map(l => {
                     const off = picks[l.id] === 'no' && !l.locked
                     return (
                       <div key={l.id} className={'px-4 py-2.5 flex items-center gap-3 ' + (off ? 'opacity-45' : '')}>

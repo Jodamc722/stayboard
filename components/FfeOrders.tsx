@@ -42,6 +42,13 @@ const STATUS_CLS: Record<string, string> = {
   changes: 'bg-rose-100 text-rose-700',
   closed: 'bg-neutral-100 text-neutral-500',
 }
+// One segment per line stage, in journey order — the same colour story as the strip on the order
+// page, so the board and the workspace read as one system.
+const SEG: [string, string][] = [
+  ['draft', 'bg-neutral-300'], ['sent', 'bg-amber-400'], ['approved', 'bg-emerald-500'],
+  ['ordered', 'bg-blue-500'], ['delivered', 'bg-violet-500'], ['installed', 'bg-emerald-700'],
+  ['declined', 'bg-rose-300'],
+]
 const key = (listingId: string, room: string, itemKey: string) => listingId + '|' + room + '|' + itemKey
 
 export function FfeOrders() {
@@ -51,6 +58,9 @@ export function FfeOrders() {
   const [setup, setSetup] = useState('')
   const [building, setBuilding] = useState<string>('')   // ownerId being built, '' = board
   const [copied, setCopied] = useState('')
+  // Board filter by order status. Filtering never hides the fact of filtering: the chip stays lit
+  // and the "All" chip carries the real total.
+  const [statusFilter, setStatusFilter] = useState('')
 
   const load = useCallback(async () => {
     setErr('')
@@ -124,19 +134,38 @@ export function FfeOrders() {
 
       {/* the board */}
       <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
-        <div className="px-4 py-3 border-b border-line flex items-center">
-          <p className="text-sm font-bold text-ink flex-1">Orders</p>
-          <span className="text-[11px] text-muted tabular-nums">{orders.length}</span>
+        <div className="px-4 py-3 border-b border-line flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-bold text-ink">Orders</p>
+          <div className="flex-1" />
+          {(() => {
+            const counts: Record<string, number> = {}
+            for (const o of orders) counts[o.status] = (counts[o.status] || 0) + 1
+            const present = Object.keys(ORDER_STATUS_LABEL).filter(s => counts[s])
+            if (orders.length < 2 || present.length < 2) return <span className="text-[11px] text-muted tabular-nums">{orders.length}</span>
+            return (
+              <div className="flex items-center gap-1 flex-wrap">
+                <button onClick={() => setStatusFilter('')}
+                  className={'text-[10.5px] font-bold px-2 py-1 rounded-lg border ' +
+                    (!statusFilter ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>
+                  All {orders.length}
+                </button>
+                {present.map(s => (
+                  <button key={s} onClick={() => setStatusFilter(statusFilter === s ? '' : s)}
+                    className={'text-[10.5px] font-bold px-2 py-1 rounded-lg border ' +
+                      (statusFilter === s ? 'border-ink ring-1 ring-ink ' : 'border-transparent ') + STATUS_CLS[s]}>
+                    {ORDER_STATUS_LABEL[s]} {counts[s]}
+                  </button>
+                ))}
+              </div>
+            )
+          })()}
         </div>
         {!orders.length ? (
           <p className="px-4 py-8 text-center text-[12.5px] text-muted">No orders yet.</p>
         ) : (
           <div className="divide-y divide-line">
-            {orders.map(o => {
+            {orders.filter(o => !statusFilter || o.status === statusFilter).map(o => {
               const st = o.roll.byStage || {}
-              const done = (st.installed || 0)
-              const moving = (st.ordered || 0) + (st.delivered || 0)
-              const pct = o.roll.lines ? Math.round(((done + moving * 0.5) / o.roll.lines) * 100) : 0
               return (
                 <div key={o.id} className="px-4 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -151,12 +180,19 @@ export function FfeOrders() {
                     <span className="text-[13px] font-bold text-ink tabular-nums">{money(o.roll.value)}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
-                    <div className="h-1.5 flex-1 max-w-[200px] rounded-full bg-neutral-100 overflow-hidden">
-                      <div className="h-full bg-emerald-500" style={{ width: pct + '%' }} />
+                    {/* The whole journey in one bar — same colours as the strip on the order page. */}
+                    <div className="h-1.5 flex-1 max-w-[220px] rounded-full bg-neutral-100 overflow-hidden flex">
+                      {SEG.map(([s, cls]) => {
+                        const n = st[s] || 0
+                        return n ? (
+                          <div key={s} className={'h-full ' + cls} style={{ width: (n / o.roll.lines) * 100 + '%' }}
+                            title={(STAGE_LABEL[s] || s) + ' ' + n} />
+                        ) : null
+                      })}
                     </div>
                     <span className="text-[11px] text-muted tabular-nums">
                       {o.roll.lines} line{o.roll.lines === 1 ? '' : 's'}
-                      {st.declined ? ' · ' + st.declined + ' not taken' : ''}
+                      {SEG.filter(([s]) => st[s]).map(([s]) => ' · ' + st[s] + ' ' + (s === 'declined' ? 'not taken' : (STAGE_LABEL[s] || s).toLowerCase())).join('')}
                       {o.roll.priced < o.roll.lines ? ' · ' + (o.roll.lines - o.roll.priced) + ' unpriced' : ''}
                     </span>
                     <div className="flex-1" />
@@ -169,15 +205,6 @@ export function FfeOrders() {
                       Open <ChevronRight className="w-3 h-3" />
                     </a>
                   </div>
-                  {Object.keys(st).length ? (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {Object.keys(st).map(s => (
-                        <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-app text-muted">
-                          {STAGE_LABEL[s] || s} {st[s]}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
               )
             })}
