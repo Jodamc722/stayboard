@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
 type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null } }
 
 // The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
 // on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
@@ -49,6 +49,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
     d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '),
+    lp_target: c.laborPlan?.targetMarginPct != null ? String(c.laborPlan.targetMarginPct) : '',
   })
   const load = useCallback(async () => {
     try {
@@ -74,6 +75,11 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
         trueup: { ...(cfg.trueup || {}), to: parse(raw.d_trueup || '') },
         salato: { ...(cfg.salato || {}), to: parse(raw.d_salato || '') },
+        laborPlan: (() => {
+          const t = (raw.lp_target || '').trim()
+          const n = Number(t)
+          return { targetMarginPct: t && Number.isFinite(n) ? n : null }
+        })(),
       }
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
@@ -157,6 +163,24 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
         </div>
 
+
+        {/* STAFFING PLANNER TARGET (Jon, 2026-08-18): the margin the Weekly planner's hours
+            budget protects. Blank = automatic — the settled 30-day HK margin plus 3 points. */}
+        <div className="rounded-xl border border-line p-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12px] font-bold text-ink">Staffing planner · target margin</span>
+            <input type="number" min={20} max={80} disabled={!isOwner} value={raw.lp_target ?? ''}
+              onChange={e => setRaw(x => ({ ...x, lp_target: e.target.value }))}
+              placeholder="auto"
+              className="w-20 text-[12px] bg-app border border-line rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+            <span className="text-[12px] text-muted">% of cleaning revenue kept after housekeeper wages</span>
+          </div>
+          <div className="text-[11px] text-muted mt-1">
+            Drives the &ldquo;Hours budget&rdquo; on the Weekly planner and the Hours plan line in the full morning brief.
+            Blank = automatic: whatever housekeeping actually kept over the settled last 30 days, plus 3 points.
+            The planner never recommends fewer hours than the booked cleans physically need, whatever the target.
+          </div>
+        </div>
 
         <div>
           <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Mailbox connections — every account the app sends or drafts as needs its own Google connection. Connect opens Google; sign in AS that mailbox and approve.</div>
