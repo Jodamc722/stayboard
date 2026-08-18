@@ -138,7 +138,7 @@ export function LaborPanel() {
               <Stat label="vs scheduled" value={loading ? '…' : pct(tdy.vsScheduledPct)} sub="100% = on plan" />
             </> : <>
               <Stat label="Payroll so far" value={loading ? '…' : fmt$(tdy.payrollSoFar)} sub={'sched ' + fmt$(tdy.scheduledPayroll)} />
-              <Stat label="Cleaning rev today" value={loading ? '…' : fmt$(tdy.cleaningRevenueToday)} />
+              <Stat label="Cleaning rev today" value={loading ? '…' : fmt$(tdy.cleaningRevenueToday)} sub="net of channel cut" />
             </>}
             <Stat label="Tasks done" value={loading ? '…' : String(tdy.tasksDoneToday)} />
           </div>
@@ -162,7 +162,7 @@ export function LaborPanel() {
           </> : <>
             <Stat label="Payroll (actual)" value={loading ? '…' : fmt$(pay.actual)} sub="Homebase timecards" />
             <Stat label="Payroll (sched)" value={loading ? '…' : fmt$(pay.scheduled)} sub="Homebase shifts" />
-            <Stat label="In-house revenue" value={loading ? '…' : fmt$(pay.revenueInhouse ?? pay.revenue)} sub="guest fees, in-house units" />
+            <Stat label="In-house revenue" value={loading ? '…' : fmt$(pay.revenueInhouse ?? pay.revenue)} sub="net of channel cut" />
             <Stat label="Vendor revenue" value={loading ? '…' : fmt$(pay.revenueVendor ?? 0)} sub="vendor-cleaned units" />
           </>}
           <Stat label="Labor %" value={loading ? '…' : (pay.laborPct != null ? pay.laborPct + '%' : '—')}
@@ -189,7 +189,7 @@ export function LaborPanel() {
                 <Stat label="Cleans" value={loading ? '…' : String(d.departments.housekeeping.departureCleans ?? 0)} sub={(d.departments.housekeeping.otherHkTasks ?? 0) + ' other HK tasks'} />
                 <Stat label="Hours" value={loading ? '…' : d.departments.housekeeping.hours + 'h'} sub={d.departments.housekeeping.people + ' people'} />
               </> : <>
-                <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="guest fees, in-house units" />
+                <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="net, credited to housekeepers" />
                 <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' housekeepers'} />
                 <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} sub="fees − housekeeper wages" />
                 <Stat label="Labor cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} sub={(d.departments.housekeeping.departureCleans ?? 0) + ' departure cleans'} />
@@ -268,30 +268,34 @@ export function LaborPanel() {
             </thead>
             <tbody>
               <tr className="border-t border-line">
-                <td className="py-1.5 pr-3 font-medium text-ink">Housekeeping<div className="text-[11px] text-muted font-normal">{econ.kpi.housekeeping.cleans} revenue cleans · {econ.kpi.housekeeping.hours}h</div></td>
-                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeeping.revenue)}</td>
+                <td className="py-1.5 pr-3 font-medium text-ink">Housekeeping<div className="text-[11px] text-muted font-normal">{econ.kpi.housekeeping.cleans} departure cleans · {econ.kpi.housekeeping.hours}h{(econ.kpi.housekeeping.chargedCleans ?? 0) > 0 ? ' · incl. ' + fmt$(econ.kpi.housekeeping.chargedCleans) + ' charged cleaning work' : ''}</div></td>
+                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeeping.revenueWithCharged ?? econ.kpi.housekeeping.revenue)}</td>
                 <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeeping.payroll)}</td>
                 <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.housekeeping.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.housekeeping.margin)}</td>
                 <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.housekeeping.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.housekeeping.marginPct)}</td>
                 <td className="py-1 text-[11px] text-muted">{fmt$(econ.kpi.housekeeping.costPerClean)} cost · {fmt$(econ.kpi.housekeeping.revPerClean)} rev / clean</td>
               </tr>
-              <tr className="border-t border-line">
-                <td className="py-1.5 pr-3 font-medium text-ink">Maintenance<div className="text-[11px] text-muted font-normal">{econ.kpi.maintenance.tasksBilled} tasks billed · {econ.kpi.maintenance.hours}h</div></td>
+              {econ.kpi.housekeepingLoaded && (
+                <tr className="border-t border-line">
+                  <td className="py-1.5 pr-3 font-medium text-ink">+ Supervisors<div className="text-[11px] text-muted font-normal">loaded cost of running housekeeping</div></td>
+                  <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeepingLoaded.revenue)}</td>
+                  <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.housekeepingLoaded.payroll)}</td>
+                  <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.housekeepingLoaded.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.housekeepingLoaded.margin)}</td>
+                  <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.housekeepingLoaded.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.housekeepingLoaded.marginPct)}</td>
+                  <td className="py-1 text-[11px] text-muted">{fmt$(econ.kpi.housekeepingLoaded.costPerClean)} loaded / clean</td>
+                </tr>
+              )}
+              <tr className="border-t-2 border-ink">
+                <td className="py-1.5 pr-3 font-medium text-ink">Maintenance <span className="text-[11px] text-muted font-normal">separate department</span><div className="text-[11px] text-muted font-normal">{econ.kpi.maintenance.tasksBilled} tasks billed · {econ.kpi.maintenance.hours}h</div></td>
                 <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.maintenance.revenue)}</td>
                 <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.maintenance.payroll)}</td>
                 <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.maintenance.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.maintenance.margin)}</td>
                 <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.maintenance.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.maintenance.marginPct)}</td>
                 <td className="py-1 text-[11px] text-amber-700">{econ.kpi.maintenance.tasksNoCharge > 0 ? econ.kpi.maintenance.tasksNoCharge + ' finished with no charge' : ''}</td>
               </tr>
-              <tr className="border-t-2 border-ink font-medium">
-                <td className="py-1.5 pr-3">Staff total<div className="text-[11px] text-muted font-normal">pay that moves with the work</div></td>
-                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.staff.revenue)}</td>
-                <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.staff.payroll)}</td>
-                <td className={'py-1.5 pr-3 text-right ' + (econ.kpi.staff.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.staff.margin)}</td>
-                <td className={'py-1.5 pr-3 text-right ' + (econ.kpi.staff.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{pct(econ.kpi.staff.marginPct)}</td>
-                <td className="py-1 text-[11px] text-muted">{pct(econ.kpi.staff.laborPct)} of revenue to labor</td>
-              </tr>
-              <tr className="border-t border-line bg-app/40">
+              {/* No blended "Staff total" row — Jon (2026-08-18): keep tabs on HK and Maintenance,
+                  supervisors as their own line. */}
+              <tr className="border-t-2 border-ink bg-app/40">
                 <td className="py-1.5 pr-3">Supervisors <span className="text-[11px] text-muted">fixed</span><div className="text-[11px] text-muted">{(econ.kpi.supervisors.names || []).join(', ') || '—'}</div></td>
                 <td className="py-1.5 pr-3 text-right text-muted">n/a</td>
                 <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.supervisors.payroll)}</td>
@@ -300,7 +304,7 @@ export function LaborPanel() {
                 <td className="py-1 text-[11px] text-muted">{pct(econ.kpi.supervisors.pctOfManagementFee)} of {fmt$(econ.kpi.supervisors.managementFee)} mgmt fees</td>
               </tr>
               <tr className="border-t border-line">
-                <td className="py-1.5 pr-3 font-medium">All in<div className="text-[11px] text-muted font-normal">staff + supervisors</div></td>
+                <td className="py-1.5 pr-3 font-medium">All in<div className="text-[11px] text-muted font-normal">HK + maintenance + supervisors</div></td>
                 <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.allIn.revenue)}</td>
                 <td className="py-1.5 pr-3 text-right">{fmt$(econ.kpi.allIn.payroll)}</td>
                 <td className={'py-1.5 pr-3 text-right font-semibold ' + (econ.kpi.allIn.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{fmt$(econ.kpi.allIn.margin)}</td>
