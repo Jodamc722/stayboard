@@ -744,6 +744,31 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       : ''
     const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
+    // STAFFING PLAN, ONE LINE (Jon, 2026-08-18) — the margin-first hours plan from the Weekly
+    // planner, surfaced in the inbox: scheduled vs needed for the rest of this week, plus which
+    // days to fix. FULL BRIEF ONLY, and additive — if the plan cannot be built the brief goes
+    // out without it.
+    let planLine = ''
+    if (variant === 'full') {
+      try {
+        const { buildWeekPlan } = await import('./labor-plan')
+        const plan = await buildWeekPlan()
+        const r1p = (n: number) => Math.round(n * 10) / 10
+        const fut = plan.days.filter(d => !d.isPast && (d.projectedCleans > 0 || (d.scheduledHours || 0) > 0))
+        if (fut.length) {
+          const short = fut.filter(d => d.verdict === 'under_floor')
+            .map(d => `${d.day} &minus;${r1p(Math.max(0, d.floorHours - (d.scheduledHours || 0)))}h`)
+          const over = fut.filter(d => d.verdict === 'over_budget')
+            .map(d => `${d.day} +${r1p(Math.max(0, (d.scheduledHours || 0) - (d.budgetHours || d.floorHours)))}h`)
+          planLine = `<p style="margin:6px 0 0;padding-top:6px;border-top:1px dashed #e5e7eb;font-size:12.5px;color:#374151"><b>Hours plan</b> <span style="color:#9ca3af">rest of week · target ${plan.targetMarginPct}% kept</span> — ` +
+            `<b>${plan.totals.scheduledHours}h</b> scheduled vs <b>${plan.totals.floorHours}h</b> the booked cleans need` +
+            (short.length ? ` · <span style="${S.red}">short: ${short.join(', ')}</span>` : '') +
+            (over.length ? ` · <span style="${S.amber}">over budget: ${over.join(', ')}</span>` : '') +
+            ((!short.length && !over.length) ? ` · <span style="${S.green}">on plan</span>` : '') +
+            ` <a href="https://lighthouse-stay.vercel.app/schedule?tab=weekly" style="color:#2563eb">planner</a></p>`
+        }
+      } catch { /* additive only */ }
+    }
     // The 30-day figure comes from the daily true-up snapshot, not a second full computation:
     // it is already settled, already stored, and says when it was taken.
     // FULL BRIEF ONLY. It carries dollar amounts, and the Miami/Broward briefs that go to the
@@ -776,7 +801,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
           `</p>`
       }
     } catch { /* the 30-day line is a bonus, never a blocker */ }
-    laborCard = card(`Labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>` + thirty,
+    laborCard = card(`Labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>` + planLine + thirty,
       status.band === 'over' ? '#dc2626' : '#6366f1', `Yesterday · ${niceDay(yd)}`)
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
     // ---- Team economics yesterday (FULL brief only - carries dollars) --------
