@@ -693,7 +693,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const db2 = supabaseAdmin()
     const [lr2, rr2] = await Promise.all([
       db2.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
-      db2.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+      db2.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
         .gte('check_out', yd).lte('check_out', yd)
         .not('status', 'in', '("canceled","cancelled","declined")').limit(2000),
     ])
@@ -710,18 +710,28 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     // Payroll is one Homebase location and cannot be split by market, so the labor %
     // is always portfolio-wide payroll vs portfolio-wide in-house fees - comparing
     // whole payroll to one market's fees produced a nonsense 300%+ figure.
+    // NET of the channel's cut — the exact formula lib/labor-econ.ts uses, so this headline
+    // reconciles with every margin in the crew table below instead of quietly running on gross.
+    const netFee2 = (r: any): number => {
+      const feeGross = Number(r.cleaning)
+      if (!Number.isFinite(feeGross) || feeGross <= 0) return 0
+      const chFee = Math.max(0, Number(r.channelFee) || 0)
+      const payoutBase = (Number(r.grossFare) || 0) + feeGross
+      return payoutBase > 0 && chFee > 0
+        ? Math.round(Math.max(0, feeGross - chFee * (feeGross / payoutBase)) * 100) / 100
+        : feeGross
+    }
     let fees = 0
     for (const r of (rr2.data || []) as any[]) {
       const info = mk2[String(r.listing_id)]
       if (!info || info.vendor) continue
-      const f = Number((r as any).cleaning); if (Number.isFinite(f)) fees += f
+      fees += netFee2(r)
     }
     let vendorFees = 0
     for (const r of (rr2.data || []) as any[]) {
       const info = mk2[String(r.listing_id)]
       if (!info || !info.vendor) continue
-      const f = Number((r as any).cleaning)
-      if (Number.isFinite(f)) vendorFees += f
+      vendorFees += netFee2(r)
     }
     const status = laborRevenueStatus(payroll > 0 ? payroll : null, fees > 0 ? fees : null, lset)
     const flagBits: string[] = []
@@ -730,7 +740,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     if (flags.overSchedule.length) flagBits.push(`${flags.overSchedule.length} worked past schedule (${flags.overSchedule.slice(0, 4).map(x => `${esc(x.name)} +${x.overByHours}h`).join(', ')})`)
     if (flags.missedClockOuts.length) flagBits.push(`${flags.missedClockOuts.length} timecard${flags.missedClockOuts.length === 1 ? '' : 's'} left open`)
     const money = variant === 'full'
-      ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
+      ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees (net of channel cut) · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
       : ''
     const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
@@ -862,22 +872,17 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         K.maintenance.tasksNoCharge > 0
           ? '<span style="color:#b45309">' + K.maintenance.tasksNoCharge + ' finished with no charge entered</span>'
           : 'every task charged')
-      kpiRows += '<tr><td style="' + S.td + ';border-top:2px solid #111827"><b>Staff total</b><br>' +
-        '<span style="color:#6b7280;font-size:11.5px">everyone whose pay moves with the work</span></td>' +
-        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right"><b>' + usd(K.staff.revenue) + '</b></td>' +
-        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right"><b>' + usd(K.staff.payroll) + '</b></td>' +
-        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right;font-weight:700;color:' + tone(K.staff.margin) + '">' + usd(K.staff.margin) + '</td>' +
-        '<td style="' + S.td + ';border-top:2px solid #111827;text-align:right;font-weight:700;color:' + tone(K.staff.margin) + '">' + pctTxt(K.staff.marginPct) + '</td>' +
-        '<td style="' + S.td + ';border-top:2px solid #111827;color:#6b7280;font-size:11.5px">' + pctTxt(K.staff.laborPct) + ' of revenue goes to labor</td></tr>'
+      // No blended "Staff total" row — Jon (2026-08-18): keep tabs on HK and Maintenance,
+      // supervisors as their own line. Blending HK + maintenance was exactly what he said not to do.
       // Supervisors sit BELOW the line: a fixed cost, never divided into revenue.
-      kpiRows += '<tr><td style="' + S.td + ';background:#fafaf9">Supervisors <span style="color:#6b7280;font-size:11.5px">fixed</span><br>' +
+      kpiRows += '<tr><td style="' + S.td + ';border-top:2px solid #111827;background:#fafaf9">Supervisors <span style="color:#6b7280;font-size:11.5px">fixed</span><br>' +
         '<span style="color:#6b7280;font-size:11.5px">' + esc((K.supervisors.names || []).join(', ') || 'none') + '</span></td>' +
         '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">n/a</td>' +
         '<td style="' + S.td + ';background:#fafaf9;text-align:right">' + usd(K.supervisors.payroll) + '</td>' +
         '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">—</td>' +
         '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">—</td>' +
         '<td style="' + S.td + ';background:#fafaf9;color:#6b7280;font-size:11.5px">' + pctTxt(K.supervisors.pctOfManagementFee) + ' of ' + usd(K.supervisors.managementFee) + ' management fees</td></tr>'
-      kpiRows += '<tr><td style="' + S.td + '"><b>All in</b><br><span style="color:#6b7280;font-size:11.5px">staff + supervisors</span></td>' +
+      kpiRows += '<tr><td style="' + S.td + '"><b>All in</b><br><span style="color:#6b7280;font-size:11.5px">HK + maintenance + supervisors</span></td>' +
         '<td style="' + S.td + ';text-align:right">' + usd(K.allIn.revenue) + '</td>' +
         '<td style="' + S.td + ';text-align:right">' + usd(K.allIn.payroll) + '</td>' +
         '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(K.allIn.margin) + '">' + usd(K.allIn.margin) + '</td>' +
@@ -924,8 +929,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       const mkBuckets = (ec.buckets || []).filter((b2: any) => b2.cleans > 0 || b2.payroll > 0)
       const mkRow = (b2: any) => {
         const vendorRow = !b2.inHouse
+        // "Unassigned unit" is HK payroll for hours that produced no matched clean (walk time,
+        // help on someone else's unit, a clean never closed in Breezeway). It stays INSIDE the
+        // HK totals and cost per clean above — this row just shows where those dollars sat.
+        const unassignedRow = /unassigned/i.test(String(b2.label))
         return '<tr>' +
-          '<td style="' + S.td + '"><b>' + esc(String(b2.label)) + '</b>' +
+          '<td style="' + S.td + '"><b>' + (unassignedRow ? 'No clean matched' : esc(String(b2.label))) + '</b>' +
+          (unassignedRow ? '<br><span style="color:#6b7280;font-size:11.5px">HK hours with no matched clean &mdash; already counted in cost per clean</span>' : '') +
           (vendorRow && !/vendor/i.test(String(b2.label)) ? ' <span style="color:#6b7280;font-size:11.5px">vendor-cleaned</span>' : '') + '</td>' +
           '<td style="' + S.td + ';text-align:right">' + b2.cleans + '</td>' +
           '<td style="' + S.td + ';text-align:right">' + usd(b2.cleaningRevenue) + '</td>' +
