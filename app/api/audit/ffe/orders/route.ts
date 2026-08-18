@@ -136,18 +136,45 @@ export async function GET(req: NextRequest) {
       const [units, ov] = await Promise.all([ffePortfolio(db), overrides(db)])
       const labelsFor = labelIndex(ov)
       const bedroomsBy: Record<string, number | null> = Object.fromEntries(units.map(u => [u.id, u.bedrooms]))
+
+      // THE WALK'S EVIDENCE RIDES ALONG (Jon, 2026-08-17: "need to see the photo from the audit
+      // and notes, if any, in the order form"). Lines snapshot what they must never re-price, but
+      // the walker's photo of the piece being replaced and their note are CONTEXT, not price —
+      // joining them live from ffe_answers means a photo added after the order was built still
+      // shows up, and costs one query.
+      const lineRows = (lines || []) as any[]
+      const walkBy: Record<string, any> = {}
+      try {
+        const lids = Array.from(new Set(lineRows.map(l => str(l.listing_id)))).filter(Boolean)
+        if (lids.length) {
+          const { data: wa } = await db.from('ffe_answers')
+            .select('listing_id,room,item_key,photo_url,replacement_photo,replacement_url,note,spec')
+            .in('listing_id', lids).limit(20000)
+          for (const a of ((wa || []) as any[])) {
+            walkBy[str(a.listing_id) + '|' + str(a.room) + '|' + str(a.item_key)] = a
+          }
+        }
+      } catch { /* older schema without photo columns — lines render without walk context */ }
+
       return NextResponse.json({
         ok: true,
         order,
         shareCode: orderCode(str(order.id)),
-        lines: ((lines || []) as any[]).map(l => {
+        lines: lineRows.map(l => {
           const L = labelsFor(bedroomsBy[str(l.listing_id)] ?? null)
+          const w = walkBy[str(l.listing_id) + '|' + str(l.room) + '|' + str(l.item_key)] || {}
           return {
             ...l,
             roomLabel: L.rooms[str(l.room)] || str(l.room),
             // The title stored on the line is what the builder showed and what the owner was sent.
             // It wins over a recomputed label so every screen says the same words.
             itemLabel: str(l.title) || L.items[str(l.room) + '::' + str(l.item_key)] || str(l.item_key),
+            // From the walk: the piece being replaced, and anything the walker wrote.
+            walkPhoto: w.photo_url || null,
+            walkReplacementPhoto: w.replacement_photo || null,
+            walkUrl: w.replacement_url || null,
+            walkNote: w.note || null,
+            walkSpec: w.spec || null,
           }
         }),
       })
