@@ -217,11 +217,25 @@ export async function GET(req: Request) {
 
     // ---- Checkouts + cleaning fees ----------------------------------------
     const resRows = (await pageAll((a, b) => sb.from('guesty_reservations')
-      .select('id,listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+      .select('id,listing_id,check_out,status,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
       .gte('check_out', start).lte('check_out', end)
       .not('status', 'in', '("canceled","cancelled","declined")')
       .range(a, b)))
       .filter(r => marketFilter(r.listing_id))
+
+    // NET of the channel's cut — the exact formula lib/labor-econ.ts uses, so every fee this
+    // route reports (today strip, per-person revenue, attribution) sits on the same base as the
+    // engine's margins instead of quietly running on gross.
+    const netFee = (r: any): number | null => {
+      const feeGross = num(r.cleaning)
+      if (feeGross == null) return null
+      if (feeGross <= 0) return feeGross
+      const chFee = Math.max(0, num(r.channelFee) ?? 0)
+      const payoutBase = (num(r.grossFare) ?? 0) + feeGross
+      return payoutBase > 0 && chFee > 0
+        ? round2(Math.max(0, feeGross - chFee * (feeGross / payoutBase)))
+        : feeGross
+    }
 
     // ---- Attribution join --------------------------------------------------
     const usedTask = new Set<string>()
@@ -236,7 +250,7 @@ export async function GET(req: Request) {
         [co, coNext].includes(String(t.finished_at).slice(0, 10))
       )
       if (match) usedTask.add(String(match.id))
-      attributions.push({ fee: num(r.cleaning), assignee: match ? doer(match) : null, checkOut: co, vendor: !!lmap[String(r.listing_id)]?.vendor })
+      attributions.push({ fee: netFee(r), assignee: match ? doer(match) : null, checkOut: co, vendor: !!lmap[String(r.listing_id)]?.vendor })
     }
 
     const totalFees = round2(attributions.reduce((a, x) => a + (x.fee ?? 0), 0))
@@ -328,24 +342,31 @@ export async function GET(req: Request) {
     } as any)
 
     // ---- Payroll vs revenue ------------------------------------------------
+    // The revenue side comes from the SHARED ENGINE — net of channel cut, Expedia back-fill
+    // included — so this headline strip, the crew table and the Department P&L all sit on one
+    // base. The legacy attribution above still feeds the today strip and per-person tiles
+    // (now netted too), but the money the strip leads with is the engine's.
+    const econ = await laborEconomics({ from: start, to: end, market: marketParam })
     const scheduledCost = round2(dayShifts.reduce((a, s: any) => a + (s.scheduledCost ?? 0), 0))
     const payrollTotal = kpis.totalLaborCost ?? 0
-    const laborPct = inhouseFees > 0 && payrollTotal > 0 ? round2((payrollTotal / inhouseFees) * 100) : null
+    const engineInhouse = econ.cleaningRevenue ?? inhouseFees
+    const engineVendor = econ.cleaningRevenueVendor ?? vendorFees
+    const laborPct = engineInhouse > 0 && payrollTotal > 0 ? round2((payrollTotal / engineInhouse) * 100) : null
     const band = laborPct == null ? 'no_data'
       : laborPct <= Number(settings.pct_good) ? 'on_target'
       : laborPct <= Number(settings.pct_bad) ? 'watch' : 'over'
     const payroll = {
       actual: payrollTotal,
       scheduled: scheduledCost,
-      revenue: totalFees,
-      revenueInhouse: inhouseFees,
-      revenueVendor: vendorFees,
+      revenue: round2(engineInhouse + engineVendor),
+      revenueInhouse: engineInhouse,
+      revenueVendor: engineVendor,
       laborPct, band,
       // Percentage reads of the same three comparisons, for the money-hidden view.
       scheduledVsActualPct: pctOf(payrollTotal, scheduledCost),   // 100% = spent exactly what was scheduled
-      vendorMixPct: pctOf(vendorFees, totalFees),                 // share of cleaning revenue on vendor-cleaned units
+      vendorMixPct: pctOf(engineVendor, engineInhouse + engineVendor), // share of cleaning revenue on vendor-cleaned units
       goalPct: Number(settings.pct_good),
-      note: 'payroll = Homebase timecard costs; labor % measured against in-house cleaning fees (vendor-cleaned units excluded)',
+      note: 'payroll = Homebase timecard costs; labor % measured against in-house cleaning revenue, net of the channel cut (vendor-cleaned units excluded)',
     }
 
     // ---- Today (in-day decisions) -----------------------------------------
@@ -388,7 +409,6 @@ export async function GET(req: Request) {
     // housekeeping margin. Billable is the charge entered on the Breezeway task — the cost field —
     // never rate x hours. All of it lives in lib/labor-econ.ts so this board, the morning brief and
     // the Monday email cannot drift apart.
-    const econ = await laborEconomics({ from: start, to: end, market: marketParam })
     const dep = (k: string) => econ.departments.filter(d => d.key === k)[0]
     const hkD = dep('housekeeping'), supD = dep('supervision')
     const mtD = dep('maintenance'), inspD = dep('inspection'), othD = dep('other')
