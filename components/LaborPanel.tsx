@@ -340,7 +340,7 @@ export function LaborPanel() {
             <tbody>
               {econ.buckets.map((b: any) => (
                 <tr key={b.key} className="border-t border-line">
-                  <td className="py-1.5 pr-3 font-medium text-ink">{b.label}{!b.inHouse && <span className="ml-1 text-[10px] text-muted">no in-house labor</span>}</td>
+                  <td className="py-1.5 pr-3 font-medium text-ink">{/unassigned/i.test(String(b.label)) ? 'No clean matched' : b.label}{/unassigned/i.test(String(b.label)) && <div className="text-[10px] text-muted font-normal">HK hours with no matched clean — already in cost per clean</div>}{!b.inHouse && <span className="ml-1 text-[10px] text-muted">no in-house labor</span>}</td>
                   <td className="py-1.5 pr-3">{b.cleans || '—'}</td>
                   <td className="py-1.5 pr-3">{b.people || '—'}</td>
                   <td className="py-1.5 pr-3">{b.hours ? b.hours + 'h' : '—'}</td>
