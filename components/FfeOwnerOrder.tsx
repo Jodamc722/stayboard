@@ -20,12 +20,13 @@ type Line = {
   placement: string | null; spec: string | null; imageUrl: string | null; url: string | null
   qty: number; unitCost: number | null; lineTotal: number | null
   stage: string; locked: boolean; ownerChoice: string | null
+  priority?: 'must' | 'recommended' | 'nice' | null; priorityReason?: string | null
 }
 type Room = { room: string; en: string; es: string; lines: Line[] }
 type Unit = { listingId: string; unitName: string; building: string; rooms: Room[]; count: number; subtotal: number }
 type Data = {
   ok: boolean
-  order: { orderNo: string; title: string | null; ownerName: string | null; status: string; note: string | null; ownerNote: string | null; decidedAt: string | null; decidedBy: string | null }
+  order: { orderNo: string; title: string | null; ownerName: string | null; status: string; note: string | null; ownerNote: string | null; decidedAt: string | null; decidedBy: string | null; aiBrief?: string | null }
   units: Unit[]
   totals: { units: number; lines: number; priced: number; unpriced: number; total: number }
   closed: boolean
@@ -52,6 +53,15 @@ const T = {
   saved: { en: 'Answers saved', es: 'Respuestas guardadas' },
   saving: { en: 'Saving…', es: 'Guardando…' },
   saveLater: { en: 'No signal — your answers are safe and will save', es: 'Sin señal — sus respuestas están guardadas y se enviarán' },
+  brief: { en: 'The short version', es: 'En resumen' },
+}
+
+// The team's recommendation on each line — the one question an owner asks per piece is "how strongly
+// are you telling me to buy this?", so the answer sits right on the line, in their language.
+const TIER_T: Record<string, { en: string; es: string; cls: string }> = {
+  must: { en: 'Needs replacing', es: 'Necesita reemplazo', cls: 'bg-rose-100 text-rose-700' },
+  recommended: { en: 'We recommend', es: 'Lo recomendamos', cls: 'bg-sky-100 text-sky-700' },
+  nice: { en: 'Nice to have', es: 'Opcional', cls: 'bg-neutral-100 text-neutral-500' },
 }
 
 export function FfeOwnerOrder({ code }: { code: string }) {
@@ -213,6 +223,12 @@ export function FfeOwnerOrder({ code }: { code: string }) {
         </p>
       </div>
 
+      {data.order.aiBrief ? (
+        <div className="mx-3 mt-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+          <p className="text-[10px] uppercase tracking-[0.16em] font-bold text-neutral-400">{t(T.brief)}</p>
+          <p className="text-[13px] text-neutral-800 whitespace-pre-wrap mt-1">{data.order.aiBrief}</p>
+        </div>
+      ) : null}
       {data.order.note ? (
         <div className="mx-3 mt-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
           <p className="text-[13px] text-neutral-800 whitespace-pre-wrap">{data.order.note}</p>
@@ -255,6 +271,11 @@ export function FfeOwnerOrder({ code }: { code: string }) {
                             </span>
                             {l.code ? <span className="text-[10px] font-mono text-neutral-400">{l.code}</span> : null}
                             {l.url ? <a href={l.url} target="_blank" rel="noreferrer" className="text-neutral-400"><ExternalLink className="w-3 h-3" /></a> : null}
+                            {l.priority && TIER_T[l.priority] ? (
+                              <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + TIER_T[l.priority].cls}>
+                                {TIER_T[l.priority][lang]}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="text-[11.5px] text-neutral-500">
                             {lang === 'en' ? l.itemEn : l.itemEs}
@@ -262,6 +283,11 @@ export function FfeOwnerOrder({ code }: { code: string }) {
                             {l.qty > 1 ? ' × ' + l.qty : ''}
                             {l.unitCost != null && l.qty > 1 ? ' · ' + usd(l.unitCost) + ' ' + t(T.each) : ''}
                           </div>
+                          {/* Why we're saying so — the reason travels with the recommendation, so
+                              the owner never has to text us "what's wrong with the old one?" */}
+                          {l.priorityReason && l.priority !== 'nice' ? (
+                            <p className="text-[11px] text-neutral-500 italic mt-0.5">{l.priorityReason}</p>
+                          ) : null}
                           {l.locked ? (
                             <span className="inline-block mt-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
                               {t(T.ordered)}

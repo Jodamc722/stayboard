@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, ArrowLeft, Copy, Check, Send, FileSpreadsheet, FileText, Trash2, Package,
   ExternalLink, Truck, Wrench, ShoppingBag, MessageSquare, ClipboardList, Store,
-  Building2, Layers, Split, Link2, AlertTriangle,
+  Building2, Layers, Split, Link2, AlertTriangle, Sparkles,
 } from 'lucide-react'
 import { money, ORDER_STATUS_LABEL, STAGE_LABEL } from '@/lib/ffe-catalog'
 import { BEDROOM_NO, ROOM_ORDER, stripVariant } from '@/lib/ffe-checklist'
@@ -31,13 +31,27 @@ type Line = {
   // and notes, if any, in the order form").
   walkPhoto?: string | null; walkReplacementPhoto?: string | null; walkUrl?: string | null
   walkNote?: string | null; walkSpec?: string | null
+  // Our recommendation strength (Jon, 2026-08-18): must / recommended / nice, with a why.
+  priority?: string | null; priority_reason?: string | null
 }
 type Order = {
   id: string; order_no: string; title: string | null; owner_name: string | null; owner_id: string
   status: string; note: string | null; owner_note: string | null
   decided_at: string | null; decided_by: string | null; sent_at: string | null
+  ai_brief?: string | null
 }
 type Prod = { id: string; code: string; name_en: string; category: string; item_keys: string[] | null; unit_cost: number | null }
+
+// The three recommendation tiers, and the one-tap cycle a human uses to overrule the AI.
+const TIERS = ['must', 'recommended', 'nice'] as const
+const TIER_LABEL: Record<string, string> = { must: 'Needs replacing', recommended: 'We recommend', nice: 'Nice to have' }
+const TIER_CLS: Record<string, string> = {
+  must: 'bg-rose-100 text-rose-700 border-rose-200',
+  recommended: 'bg-sky-100 text-sky-700 border-sky-200',
+  nice: 'bg-neutral-100 text-neutral-600 border-neutral-200',
+}
+const nextTier = (p: string | null | undefined): string =>
+  !p ? 'must' : TIERS[(TIERS.indexOf(p as any) + 1) % TIERS.length]
 
 const STAGE_CLS: Record<string, string> = {
   draft: 'bg-neutral-100 text-neutral-600',
@@ -60,6 +74,33 @@ export function FfeOrderDetail({ id }: { id: string }) {
   const [sel, setSel] = useState<Record<string, boolean>>({})
   const [copied, setCopied] = useState(false)
   const [po, setPo] = useState<{ po: string; ref: string } | null>(null)
+  // AI: one button classifies every line into a tier and writes the owner brief; per-bedroom
+  // suggestions come back as proposals and apply only on a human tap.
+  const [aiBusy, setAiBusy] = useState(false)
+  const [sugFor, setSugFor] = useState('')
+  const [sugs, setSugs] = useState<any[] | null>(null)
+  const [sugBusy, setSugBusy] = useState('')
+  const aiOrganize = async () => {
+    setAiBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/audit/ffe/orders/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, mode: 'organize' }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'AI could not organize this order.')
+      setMsg('Organized: every line now carries a recommendation tier — tap any tier chip to overrule it.')
+      await load()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setAiBusy(false)
+  }
+  const aiBedrooms = async (itemKey: string) => {
+    setSugFor(itemKey); setSugs(null); setErr('')
+    try {
+      const r = await fetch('/api/audit/ffe/orders/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, mode: 'bedrooms', itemKey }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not suggest per-bedroom styles.')
+      setSugs(j.suggestions || [])
+    } catch (e: any) { setErr(String(e?.message || e)); setSugFor('') }
+  }
+  const setTier = (l: Line) => post({ action: 'setLine', lineId: l.id, priority: nextTier(l.priority), priorityReason: 'Set by the team.' })
 
   // TWO WAYS TO READ THE SAME ORDER, because two different people read it.
   //   By unit  — what goes in 1101. This is the install crew's view and the work order's shape.
@@ -255,6 +296,18 @@ export function FfeOrderDetail({ id }: { id: string }) {
         </div>
       ) : null}
 
+      {/* THE BRIEF — the order in plain words, organised by how strongly we recommend each group.
+          Written by AI from the actual lines; the totals are computed, never generated. The owner
+          sees this same text at the top of their link. */}
+      {order.ai_brief ? (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50/50 px-4 py-3">
+          <p className="text-[11px] uppercase tracking-wider font-bold flex items-center gap-1.5 text-violet-700">
+            <Sparkles className="w-3 h-3" /> The short version
+          </p>
+          <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap leading-relaxed">{order.ai_brief}</p>
+        </div>
+      ) : null}
+
       {/* actions */}
       <div className="rounded-2xl border border-line bg-white p-3 shadow-soft flex flex-wrap items-center gap-2">
         <button onClick={send} disabled={busy || !lines.length}
@@ -266,6 +319,10 @@ export function FfeOrderDetail({ id }: { id: string }) {
             {copied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Owner link</>}
           </button>
         ) : null}
+        <button onClick={aiOrganize} disabled={aiBusy || !lines.length}
+          className="rounded-xl bg-violet-600 text-white px-3 py-2 text-[12px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5 hover:bg-violet-700">
+          {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI organize
+        </button>
         <a href={'/api/audit/ffe/orders/export?fmt=pdf&id=' + id}
           className="rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-ink inline-flex items-center gap-1.5">
           <FileText className="w-3.5 h-3.5" /> PDF quote
@@ -412,6 +469,14 @@ export function FfeOrderDetail({ id }: { id: string }) {
                   </button>
                 )
               ) : null}
+              {/* Jon, 2026-08-18: "if we have 3 rooms it should suggest 3 different ones." The AI
+                  proposes one style per bedroom from the catalog; every pick lands only on a tap. */}
+              {g.splitable ? (
+                <button onClick={() => { if (sugFor === g.itemKey) { setSugFor(''); setSugs(null) } else aiBedrooms(g.itemKey) }}
+                  className="text-[11.5px] font-semibold text-violet-700 inline-flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> {sugFor === g.itemKey ? 'Hide suggestions' : 'Suggest a style per bedroom'}
+                </button>
+              ) : null}
               {!prod.one && prod.label ? (
                 <span className="text-[11px] text-amber-700 font-semibold inline-flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3" /> {prod.label} on these lines — choosing one above replaces them all
@@ -427,6 +492,37 @@ export function FfeOrderDetail({ id }: { id: string }) {
                 {units.slice(0, 8).join(', ')}{units.length > 8 ? ` +${units.length - 8} more` : ''}
               </span>
             </div>
+            {sugFor === g.itemKey ? (
+              <div className="border-t border-violet-200 bg-violet-50/50 px-4 py-3 space-y-2">
+                {sugs === null ? (
+                  <div className="text-[12px] font-semibold text-violet-700 inline-flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Picking a style for each bedroom…
+                  </div>
+                ) : sugs.length === 0 ? (
+                  <div className="text-[12px] text-muted">Couldn&apos;t vary this one — add a couple more products in this category first.</div>
+                ) : sugs.map((sug: any) => (
+                  <div key={sug.bedroom} className="flex items-center gap-2.5 flex-wrap text-[12px]">
+                    <span className="font-bold text-ink shrink-0 w-32">Bedroom {sug.bedroom}{sug.bedroom === 1 ? ' · primary' : ''}</span>
+                    <span className="font-semibold text-ink">{sug.product?.code} · {sug.product?.name}</span>
+                    {sug.product?.cost != null ? <span className="tabular-nums text-muted">{money(sug.product.cost)} ea</span> : null}
+                    <span className="text-ink/70 italic flex-1 min-w-[160px]">{sug.why}</span>
+                    <button disabled={busy || !!sugBusy}
+                      onClick={async () => {
+                        setSugBusy(String(sug.bedroom))
+                        await post({ action: 'applyProduct', lineIds: sug.lineIds, catalogId: sug.catalogId })
+                        setSplit(s => ({ ...s, [g.itemKey]: true }))
+                        setSugBusy('')
+                      }}
+                      className="ml-auto rounded-lg bg-violet-600 text-white px-2.5 py-1 text-[11.5px] font-bold disabled:opacity-50 inline-flex items-center gap-1">
+                      {sugBusy === String(sug.bedroom) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Use this
+                    </button>
+                  </div>
+                ))}
+                {sugs && sugs.length > 0 ? (
+                  <p className="text-[10.5px] text-violet-700/70">Suggestions come from your catalog — nothing changes until you tap “Use this”.</p>
+                ) : null}
+              </div>
+            ) : null}
             {openGroups[g.key] ? (
               <div className="border-t border-line divide-y divide-line bg-app/30">
                 {g.lines.map(l => (
@@ -503,6 +599,11 @@ export function FfeOrderDetail({ id }: { id: string }) {
                       <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (STAGE_CLS[l.stage] || STAGE_CLS.draft)}>
                         {STAGE_LABEL[l.stage] || l.stage}
                       </span>
+                      <button onClick={() => setTier(l)}
+                        title={(l.priority_reason || 'Tap to set: needs replacing → we recommend → nice to have') + ' · tap to change'}
+                        className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (l.priority ? TIER_CLS[l.priority] : 'bg-white text-neutral-400 border-dashed border-neutral-300')}>
+                        {l.priority ? TIER_LABEL[l.priority] : '+ tier'}
+                      </button>
                       {l.url ? <a href={l.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
                       {!l.url && l.walkUrl ? <a href={l.walkUrl} target="_blank" rel="noreferrer" title="Link the walker suggested" className="text-amber-600 hover:text-amber-700"><ExternalLink className="w-3 h-3" /></a> : null}
                     </div>
