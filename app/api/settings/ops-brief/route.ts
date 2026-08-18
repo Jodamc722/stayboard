@@ -32,6 +32,10 @@ export async function GET() {
   const stored = await getSetting<any>(KEY, null)
   const s = stored && typeof stored === 'object' ? stored : {}
   const [trueup, salato] = await Promise.all([digestGet('labor_weekly'), digestGet('salato_daily')])
+  // The staffing planner's target margin rides along too (Jon, 2026-08-18): a number the owner
+  // can set, or blank for automatic (settled 30-day HK margin + 3, computed by the planner).
+  const lp = await getSetting<any>('labor_plan', null).catch(() => null)
+  const lpTarget = Number(lp?.targetMarginPct)
   return NextResponse.json({
     ok: true,
     config: {
@@ -40,6 +44,7 @@ export async function GET() {
       miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm: cleanEmails(s.gm),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       trueup, salato,
+      laborPlan: { targetMarginPct: Number.isFinite(lpTarget) && lpTarget > 0 ? Math.round(lpTarget) : null },
     },
   })
 }
@@ -77,5 +82,16 @@ export async function PUT(req: NextRequest) {
   }
   const trueup = await saveDigest('labor_weekly', c.trueup)
   const salato = await saveDigest('salato_daily', c.salato)
-  return NextResponse.json({ ok: true, config: { ...config, trueup, salato } })
+  // Staffing planner target: merge-save into 'labor_plan' (its other keys — forward-booking
+  // history lives elsewhere, but stay safe). 20–80 accepted; anything else clears to automatic.
+  let laborPlan: { targetMarginPct: number | null } | null = null
+  if (c.laborPlan && typeof c.laborPlan === 'object') {
+    const n = Number(c.laborPlan.targetMarginPct)
+    const target = Number.isFinite(n) && n >= 20 && n <= 80 ? Math.round(n) : null
+    const cur = await getSetting<any>('labor_plan', null).catch(() => null)
+    const base = cur && typeof cur === 'object' ? cur : {}
+    await setSetting('labor_plan', { ...base, targetMarginPct: target }, access.email).catch(() => null)
+    laborPlan = { targetMarginPct: target }
+  }
+  return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan } })
 }
