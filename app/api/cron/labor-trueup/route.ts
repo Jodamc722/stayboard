@@ -1,23 +1,24 @@
-// LABOR TRUE-UP — every day, re-settle the last 30.
+// DAILY LABOR — ONE EMAIL (Jon, 2026-08-18: "the daily labor true up for 30 days and
+// yesterday's labor and projected today should show on one email. Make it easy and great
+// instead of 3 different emails").
 //
-// Jon, 2026-08-14: "make sure we run trueup everyday for past days loading back 30 days."
+// This route used to be the 30-day true-up alone, with yesterday living in labor-daily and the
+// week in labor-weekly. Those crons are retired; everything labor now arrives here, once a
+// morning, in reading order:
+//   1. TODAY — the staffing plan: expected cleans, the hours they need, the most hours the
+//      target margin allows, what Homebase actually has scheduled, and the days to fix.
+//   2. YESTERDAY — what happened: departure cleans, net revenue, housekeeping payroll, margin,
+//      cost per clean, plus the schedule flags (no-shows, late clock-ins, open timecards).
+//   3. SETTLED — the trailing 30 days for housekeeping and 45 for maintenance (charges land
+//      late), with what moved since the last run and where every cleaning fee landed.
+// Every number is the shared engine's (lib/labor-econ) or the planner's (lib/labor-plan) — the
+// same figures as the Labor board, the Weekly planner and the morning brief, so no two screens
+// or emails can disagree.
 //
-// WHY A TRUE-UP EXISTS AT ALL. A cleaning fee is earned the day a guest checks out, but the clean
-// that earns it is often closed later — or moved, deleted and recreated for another day. Measured
-// live: 97 of 331 departure cleans in a fortnight were never closed on the day they were booked.
-// So the number the morning brief prints is always a first draft. A week later the same window
-// looks different, and better, because the paperwork caught up.
+// NEVER ON PARTIAL PAYROLL. Any engine window that came back with missing Homebase weeks skips
+// the snapshot and the send — better a quiet morning than a wrong number remembered as truth.
 //
-// This route re-runs the labor P&L over the trailing 30 days, compares it against the snapshot it
-// stored last time, and reports what moved. Nothing here is an estimate: it is the same engine the
-// board and the briefs use, run again on a window whose data has settled.
-//
-// Because it now runs DAILY, it does not email daily. A true-up is only news when history
-// actually moved, so the mail goes out when something settled beyond a rounding error — or on
-// demand with ?force=1. The snapshot is stored every single run either way, so the trail is
-// unbroken even on the quiet days.
-//
-// GET                → run, store the snapshot, email only if something moved
+// GET                → run, store the snapshot, send
 // GET ?force=1       → run and always email
 // GET ?preview=1     → return the HTML without sending or storing (signed in)
 // GET ?test=1        → send to YOU only
@@ -26,7 +27,11 @@ import { createClient } from '@/lib/supabase-server'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { laborEconomics } from '@/lib/labor-econ'
 import { sendGmail } from '@/lib/gmail-send'
-import { storeForwardSnapshot } from '@/lib/labor-plan'
+import { storeForwardSnapshot, buildWeekPlan } from '@/lib/labor-plan'
+import { getShifts } from '@/lib/homebase'
+import { getTimecards } from '@/lib/homebase-labor'
+import { getLaborSettings } from '@/lib/labor-settings'
+import { computeYesterdayLabor } from '@/lib/labor-daily'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -38,6 +43,9 @@ const money = (n: number | null | undefined) =>
   n == null ? '&mdash;' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
 const pctTxt = (n: number | null | undefined) => (n == null ? '&mdash;' : Math.round(n) + '%')
 const r1 = (n: number) => Math.round(n * 10) / 10
+const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const niceDay = (iso: string) =>
+  new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: TZ })
 
 type Snap = {
   from: string; to: string; takenAt: string
@@ -60,6 +68,10 @@ type Snap = {
 
 const td = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:left'
 const th = 'padding:6px 8px;border-bottom:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;color:#6b7280'
+const cardStyle = 'background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0'
+const secTitle = (t: string, sub: string) =>
+  '<p style="margin:0 0 8px;font-size:13px;font-weight:700">' + t +
+  (sub ? ' <span style="color:#9ca3af;font-weight:400;font-size:12px">' + sub + '</span>' : '') + '</p>'
 
 /** A row that shows then, now, and the difference — the difference is the whole point. */
 function deltaRow(label: string, then: number | null, now: number, fmt: (n: any) => string) {
@@ -72,6 +84,16 @@ function deltaRow(label: string, then: number | null, now: number, fmt: (n: any)
     '<td style="' + td + ';text-align:right;color:' + color + ';font-weight:600">' + (d == null ? '&mdash;' : sign + fmt(d)) + '</td></tr>'
 }
 
+const tile = (big: string, label: string, sub: string, color?: string) =>
+  '<td style="padding:10px 8px;text-align:center;vertical-align:top">' +
+  '<div style="font-size:22px;font-weight:800;color:' + (color || '#111827') + '">' + big + '</div>' +
+  '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:700;margin-top:2px">' + label + '</div>' +
+  (sub ? '<div style="font-size:11px;color:#9ca3af;margin-top:1px">' + sub + '</div>' : '') + '</td>'
+const mTone = (n: number) => (n < 0 ? '#dc2626' : '#047857')
+const RED = 'color:#dc2626;font-weight:600'
+const AMBER = 'color:#b45309;font-weight:600'
+const GREEN = 'color:#047857;font-weight:600'
+
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const preview = sp.get('preview') === '1'
@@ -83,20 +105,22 @@ export async function GET(req: NextRequest) {
     if ((preview || test) && !user) return NextResponse.json({ error: 'sign in' }, { status: 401 })
 
     const now = new Date()
+    const today = dISO(now)
     const to = dISO(addDays(now, -1))               // yesterday: today is still moving
     const from = dISO(addDays(now, -30))
     // MAINTENANCE RUNS ON A LONGER WINDOW (Jon, 2026-08-18): maintenance revenue lands late —
     // charges get typed into Breezeway days or weeks after the work — so a 30-day maintenance
     // margin is chronically understated. HK settles fast (fees are earned at checkout), so HK
-    // stays on 30 days and maintenance gets 45. Two engine runs, run SEQUENTIALLY on purpose:
+    // stays on 30 days and maintenance gets 45. Engine runs are SEQUENTIAL on purpose:
     // parallel runs would double up on Homebase and trip its rate limiting.
     const maintFrom = dISO(addDays(now, -45))
-    const ec = await laborEconomics({ from, to, market: 'all' })
-    const ecM = await laborEconomics({ from: maintFrom, to, market: 'all' })
-    // NEVER TRUE-UP ON PARTIAL PAYROLL. A snapshot taken while Homebase was rate-limiting would
+    const ecY = await laborEconomics({ from: to, to, market: 'all' })     // yesterday
+    const ec = await laborEconomics({ from, to, market: 'all' })          // HK 30d
+    const ecM = await laborEconomics({ from: maintFrom, to, market: 'all' })  // maintenance 45d
+    // NEVER SEND ON PARTIAL PAYROLL. A snapshot taken while Homebase was rate-limiting would
     // store understated payroll as "settled truth" and poison the brief's 30-day line until the
     // next clean run. Better to skip a day than to remember a wrong number.
-    const badAudit = [ec.payrollAudit, ecM.payrollAudit].find(a => a && !a.complete)
+    const badAudit = [ecY.payrollAudit, ec.payrollAudit, ecM.payrollAudit].find(a => a && !a.complete)
     if (badAudit) {
       return NextResponse.json({
         ok: false, sent: false, snapshotStored: false,
@@ -104,9 +128,80 @@ export async function GET(req: NextRequest) {
       }, { status: 503 })
     }
     const K = ec.kpi
+    const KY = ecY.kpi
     // Maintenance figures come from the 45-day run everywhere below.
     const M = ecM.kpi.maintenance
 
+    // ── 1. TODAY — the staffing plan ───────────────────────────────────────
+    // Additive: a planner hiccup never blocks the labor email.
+    let todayCard = ''
+    let todayCleans: number | null = null
+    try {
+      const plan = await buildWeekPlan()
+      const d0 = plan.days.filter(d => d.date === today)[0]
+      if (d0) {
+        todayCleans = d0.projectedCleans
+        const mkBits = d0.byMarket.map(m => esc(m.label) + ' ' + m.cleans).join(' &middot; ')
+        const fut = plan.days.filter(d => !d.isPast && (d.projectedCleans > 0 || (d.scheduledHours || 0) > 0))
+        const short = fut.filter(d => d.verdict === 'under_floor')
+          .map(d => d.day + ' &minus;' + r1(Math.max(0, d.floorHours - (d.scheduledHours || 0))) + 'h')
+        const over = fut.filter(d => d.verdict === 'over_budget')
+          .map(d => d.day + ' +' + r1(Math.max(0, (d.scheduledHours || 0) - (d.budgetHours || d.floorHours))) + 'h')
+        const verdictTxt = d0.verdict === 'under_floor'
+          ? '<span style="' + AMBER + '">under-staffed for the work booked</span>'
+          : d0.verdict === 'over_budget'
+            ? '<span style="' + RED + '">over the hours budget</span>'
+            : d0.verdict === 'on_budget' ? '<span style="' + GREEN + '">on budget</span>' : ''
+        todayCard = '<div style="' + cardStyle + '">' +
+          secTitle('Today &mdash; the plan', niceDay(today) + ' &middot; target ' + plan.targetMarginPct + '% kept') +
+          '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
+          tile(String(d0.projectedCleans || 0), 'Cleans expected', mkBits || 'none booked') +
+          tile(d0.floorHours ? r1(d0.floorHours) + 'h' : '&mdash;', 'Hours the work needs', 'incl. unmatched-hours share') +
+          tile(d0.budgetHours ? r1(d0.budgetHours) + 'h' : '&mdash;', 'Hours budget', 'most the target allows') +
+          tile(d0.scheduledHours != null ? r1(d0.scheduledHours) + 'h' : '&mdash;', 'Homebase scheduled',
+            d0.marginAtScheduledPct != null ? 'keeps ' + d0.marginAtScheduledPct + '%' : '') +
+          '</tr></table>' +
+          (verdictTxt ? '<p style="margin:4px 0 0;font-size:12.5px">' + verdictTxt + '</p>' : '') +
+          ((short.length || over.length)
+            ? '<p style="margin:6px 0 0;font-size:12px;color:#374151"><b>Rest of week:</b> ' +
+              (short.length ? '<span style="' + AMBER + '">short: ' + short.join(', ') + '</span>' : '') +
+              (short.length && over.length ? ' &middot; ' : '') +
+              (over.length ? '<span style="' + RED + '">over budget: ' + over.join(', ') + '</span>' : '') + '</p>'
+            : '<p style="margin:6px 0 0;font-size:12px;color:#047857">Rest of week is on plan.</p>') +
+          '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af"><a href="https://lighthouse-stay.vercel.app/schedule?tab=weekly" style="color:#2563eb">Open the Weekly planner</a> to move hours.</p>' +
+          '</div>'
+      }
+    } catch { /* plan section is additive */ }
+
+    // ── 2. YESTERDAY — what happened ───────────────────────────────────────
+    // Money from the same 1-day engine run every screen uses; schedule flags from Homebase.
+    let flagsLine = ''
+    try {
+      const [ySh, yTc, lset] = await Promise.all([
+        getShifts(to, TZ), getTimecards(to, to), getLaborSettings('default'),
+      ])
+      const fl = computeYesterdayLabor(to, ySh, yTc, lset)
+      const bits: string[] = []
+      if (fl.noShows.length) bits.push('<span style="' + RED + '">' + fl.noShows.length + ' scheduled, never clocked in</span> (' + fl.noShows.slice(0, 3).map(x => esc(x.name)).join(', ') + (fl.noShows.length > 3 ? '…' : '') + ')')
+      if (fl.lateClockIns.length) bits.push(fl.lateClockIns.length + ' late clock-in' + (fl.lateClockIns.length === 1 ? '' : 's') + ' (' + fl.lateClockIns.slice(0, 3).map(x => esc(x.name) + ' +' + x.minutesLate + 'm').join(', ') + ')')
+      if (fl.overSchedule.length) bits.push(fl.overSchedule.length + ' worked past schedule (' + fl.overSchedule.slice(0, 3).map(x => esc(x.name) + ' +' + x.overByHours + 'h').join(', ') + ')')
+      if (fl.missedClockOuts.length) bits.push(fl.missedClockOuts.length + ' timecard' + (fl.missedClockOuts.length === 1 ? '' : 's') + ' left open')
+      flagsLine = '<p style="margin:6px 0 0;font-size:12px;color:#6b7280"><b>' + fl.totalHoursWorked + 'h</b> worked by ' + fl.headcount + ' people (' + fl.totalScheduledHours + 'h scheduled)' +
+        (bits.length ? ' &middot; ' + bits.join(' &middot; ') : ' &middot; <span style="color:#047857">no schedule flags</span>') + '</p>'
+    } catch { /* flags are additive */ }
+    const yHL = KY.housekeepingLoaded || null
+    const yesterdayCard = '<div style="' + cardStyle + '">' +
+      secTitle('Yesterday', niceDay(to) + ' &middot; net of channel cut') +
+      '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
+      tile(String(KY.housekeeping.cleans || 0), 'Departure cleans', r1(KY.housekeeping.hoursPerClean || 0) + 'h each') +
+      tile(money(KY.housekeeping.revenueWithCharged != null ? KY.housekeeping.revenueWithCharged : KY.housekeeping.revenue), 'HK revenue', 'incl. charged cleaning work') +
+      tile(money(KY.housekeeping.payroll), 'HK payroll', KY.housekeeping.costPerClean != null ? money(KY.housekeeping.costPerClean) + ' / clean' : '') +
+      tile(pctTxt(KY.housekeeping.marginPct), 'HK margin', money(KY.housekeeping.margin) + ' kept', mTone(KY.housekeeping.margin)) +
+      (yHL ? tile(pctTxt(yHL.marginPct), '+ Supervisors', money(yHL.costPerClean) + ' loaded / clean', mTone(yHL.margin)) : '') +
+      tile(money(KY.maintenance.revenue), 'Maint billed', 'vs ' + money(KY.maintenance.payroll) + ' wages &middot; separate dept', mTone(KY.maintenance.margin)) +
+      '</tr></table>' + flagsLine + '</div>'
+
+    // ── 3. SETTLED — HK 30d, maintenance 45d ──────────────────────────────
     const prev = await getSetting<Snap | null>('labor_trueup_snapshot', null).catch(() => null)
     const snap: Snap = {
       from, to, takenAt: new Date().toISOString(),
@@ -158,24 +253,10 @@ export async function GET(req: NextRequest) {
           : '')
       : 'every matched clean sat on the checkout day or the morning after'
 
-    // ── THE THREE METRICS, FIRST (Jon, 2026-08-17): ────────────────────────
-    //   1. cost per clean — payroll ÷ departure cleans, with hours ÷ cleans beside it
-    //   2. housekeeping revenue ÷ labor — margin as a dollar figure AND a percentage.
-    //      Housekeeping revenue includes its billable work ("if housekeeping does billable work,
-    //      that should count as the revenue"): departure fees + charged cleaning tasks + our
-    //      cleans in vendor buildings.
-    //   3. the same revenue with supervisors loaded on — the housekeeping OPERATION.
-    //   Maintenance sits apart, its own department, never blended in.
     const HL = K.housekeepingLoaded || null
-    const tile = (big: string, label: string, sub: string, color?: string) =>
-      '<td style="padding:10px 8px;text-align:center;vertical-align:top">' +
-      '<div style="font-size:22px;font-weight:800;color:' + (color || '#111827') + '">' + big + '</div>' +
-      '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:700;margin-top:2px">' + label + '</div>' +
-      (sub ? '<div style="font-size:11px;color:#9ca3af;margin-top:1px">' + sub + '</div>' : '') + '</td>'
-    const mTone = (n: number) => (n < 0 ? '#dc2626' : '#047857')
     const headline =
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin:12px 0">' +
-      '<p style="margin:2px 4px 4px;font-size:13px;font-weight:700">The numbers that matter &middot; HK trailing 30 days &middot; maintenance trailing 45</p>' +
+      '<p style="margin:2px 4px 4px;font-size:13px;font-weight:700">Settled &middot; HK trailing 30 days &middot; maintenance trailing 45</p>' +
       '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
       tile(money(K.housekeeping.costPerClean), 'Cost / clean', r1(K.housekeeping.hoursPerClean || 0) + 'h each &middot; ' + K.housekeeping.cleans + ' departure cleans') +
       tile(money(K.housekeeping.margin), 'HK margin', money(K.housekeeping.revenue) + ' rev vs ' + money(K.housekeeping.payroll) + ' labor', mTone(K.housekeeping.margin)) +
@@ -188,26 +269,27 @@ export async function GET(req: NextRequest) {
       '<div style="max-width:720px;margin:0 auto;padding:18px">' +
       '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
       '<p style="margin:0;color:#9ca3af;font-size:11px;letter-spacing:.16em">S T A Y &nbsp; H O S P I T A L I T Y</p>' +
-      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Labor true-up &mdash; HK last 30 days &middot; maintenance last 45</p>' +
-      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">HK ' + from + ' to ' + to + ' &middot; maintenance since ' + maintFrom +
+      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Daily Labor &mdash; today&rsquo;s plan &middot; yesterday &middot; settled</p>' +
+      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + niceDay(today) + ' &middot; HK ' + from + ' to ' + to + ' &middot; maintenance since ' + maintFrom +
       (prev ? ' &middot; compared with the run on ' + String(prev.takenAt).slice(0, 10) : ' &middot; first run, nothing to compare yet') + '</p></div>' +
+      todayCard +
+      yesterdayCard +
       headline +
-      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0">' +
-      '<p style="margin:0 0 8px;font-size:13px;font-weight:700">What settled since the last true-up</p>' +
+      '<div style="' + cardStyle + '">' +
+      secTitle('What settled since the last run', 'paperwork catching up on work already done') +
       '<table width="100%" cellspacing="0" cellpadding="0">' +
       '<tr><th style="' + th + '">Measure</th><th style="' + th + ';text-align:right">Last run</th>' +
       '<th style="' + th + ';text-align:right">Now</th><th style="' + th + ';text-align:right">Change</th></tr>' +
       rows + '</table>' +
-      '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">A rise here is not new work &mdash; it is paperwork catching up on work already done.</p>' +
       '</div>' +
-      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0">' +
-      '<p style="margin:0 0 8px;font-size:13px;font-weight:700">Where every cleaning fee landed</p>' +
+      '<div style="' + cardStyle + '">' +
+      secTitle('Where every cleaning fee landed', 'trailing 30 days') +
       '<table width="100%" cellspacing="0" cellpadding="0">' +
       '<tr><th style="' + th + '">Outcome</th><th style="' + th + ';text-align:right">Fees</th></tr>' + auditRows + '</table>' +
       '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">' + movedTxt + '.</p>' +
       '</div>' +
-      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0">' +
-      '<p style="margin:0 0 8px;font-size:13px;font-weight:700">The settled picture</p>' +
+      '<div style="' + cardStyle + '">' +
+      secTitle('The settled picture', 'HK 30 days &middot; maintenance 45') +
       '<table width="100%" cellspacing="0" cellpadding="0">' +
       '<tr><th style="' + th + '">Crew</th><th style="' + th + ';text-align:right">Revenue</th>' +
       '<th style="' + th + ';text-align:right">Payroll</th><th style="' + th + ';text-align:right">Margin</th>' +
@@ -237,30 +319,40 @@ export async function GET(req: NextRequest) {
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td></tr>' +
       '</table></div>' +
-      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Runs every day &mdash; HK over the trailing 30 days, maintenance over the trailing 45 (charges land late) &mdash; and only writes when something settles. Full detail on the Labor board.</p>' +
+      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">One email, every morning: today&rsquo;s staffing plan, yesterday&rsquo;s labor, and the settled economics &mdash; HK over the trailing 30 days, maintenance over the trailing 45 (charges land late). Full detail on the Labor board and the Weekly planner.</p>' +
       '</div></body></html>'
 
     if (preview) return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
 
-    const subject = 'Labor true-up ' + from + ' to ' + to + ': ' + money(snap.cleaningRevenue) + ' cleaning rev, ' +
-      money(snap.costPerClean) + '/clean' +
-      (prev && prev.credited != null ? ', ' + money(snap.credited - prev.credited) + ' settled since last run' : '')
+    const subject = 'Daily labor ' + today + ': ' +
+      (todayCleans != null ? todayCleans + ' cleans planned, ' : '') +
+      'yest ' + (KY.housekeeping.costPerClean != null ? money(KY.housekeeping.costPerClean) + '/clean' : KY.housekeeping.cleans + ' cleans') +
+      ', 30d margin ' + pctTxt(K.housekeeping.marginPct)
 
-    const cfg = await getSetting<{ enabled?: boolean; fromEmail?: string; to?: string[] }>('labor_weekly', {}).catch(() => ({} as any))
-    const fromEmail = cfg?.fromEmail || ''
+    // Recipients: the union of the old true-up list ('labor_weekly') and the old daily-report
+    // list ('labor_daily'), so retiring the separate emails never silently drops a reader.
+    const cfgW = await getSetting<{ enabled?: boolean; fromEmail?: string; to?: string[] }>('labor_weekly', {}).catch(() => ({} as any))
+    const cfgD = await getSetting<{ enabled?: boolean; fromEmail?: string; to?: string[] }>('labor_daily', {}).catch(() => ({} as any))
+    const fromEmail = cfgW?.fromEmail || cfgD?.fromEmail || ''
     if (test) {
-      const me = user?.email
-      if (!me || !fromEmail) return NextResponse.json({ ok: false, error: 'no sender or signed-in address' })
-      const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + subject, html })
-      return NextResponse.json({ ok: r.ok, sentTo: me, subject, error: r.error })
+      const who = user?.email
+      if (!who || !fromEmail) return NextResponse.json({ ok: false, error: 'no sender or signed-in address' })
+      const r = await sendGmail({ fromEmail, to: [who], subject: '[TEST] ' + subject, html })
+      return NextResponse.json({ ok: r.ok, sentTo: who, subject, error: r.error })
     }
     // Store AFTER a successful build so a failed run never poisons the next comparison.
     await setSetting('labor_trueup_snapshot', snap, 'cron').catch(() => null)
     // Staffing planner learning: record today's forward bookings (next 14 days) so the planner
     // can learn how much last-minute pickup to expect at each lead time. Cheap, once a day.
     const forward = await storeForwardSnapshot().catch(() => null)
-    const to2 = (cfg?.to || []).filter(Boolean)
-    if (!cfg?.enabled || !fromEmail || !to2.length) {
+    const seen = new Set<string>()
+    const to2: string[] = []
+    for (const x of ([] as string[]).concat(cfgW?.to || [], cfgD?.to || [])) {
+      const e = String(x || '').trim().toLowerCase()
+      if (e && /@/.test(e) && !seen.has(e)) { seen.add(e); to2.push(e) }
+    }
+    const enabled = cfgW?.enabled === true || cfgD?.enabled === true
+    if ((!enabled && !force) || !fromEmail || !to2.length) {
       return NextResponse.json({ ok: true, sent: false, reason: 'not configured', snapshotStored: true, forward, subject })
     }
     const r = await sendGmail({ fromEmail, to: to2, subject, html })
