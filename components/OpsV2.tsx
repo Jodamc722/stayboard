@@ -187,7 +187,10 @@ function ExcRow({ e, roster, open, onToggleAssign, onDone, onGiveWork, onAddTask
             <button onClick={onToggleAssign} title={'With ' + (e.assignee || 'someone') + ' — tap to reassign'}
               className={btn + ' border border-line bg-white text-ink hover:border-ink/40'}>{e.assignee ? e.assignee.split(' ')[0] : 'Reassign'} ↺</button>
           ) : null}
-          {!compact && e.kind !== 'idle' && onAddTask ? (
+          {/* + Task only where NO task exists yet (Jon, 2026-08-18: "if task is there, should not
+              let me create a task"). A row with a taskId already IS a task — the actions there are
+              assign and open, and offering "create" was an invitation to duplicates. */}
+          {!compact && e.kind !== 'idle' && !e.taskId && onAddTask ? (
             <button onClick={() => onAddTask(e.who)} title="File a new task on this unit"
               className={btn + ' border border-line bg-white text-ink hover:border-ink/40'}>+ Task</button>
           ) : null}
