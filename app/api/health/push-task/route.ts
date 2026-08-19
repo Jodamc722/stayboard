@@ -90,10 +90,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, preview: true, department, priority, scheduled_date: scheduled, home_id, message: `Will create a ${priority} ${department} task on ${scheduled} (next vacant day). Confirm to push.` })
   }
 
+  // A NOTE FROM THE PERSON PUSHING (Jon, 2026-08-18: "it should also allow you to add comments /
+  // descriptions"). Whatever they typed rides into the Breezeway description, clearly attributed,
+  // so the tech in the field reads the supervisor's words — not just the engine's.
+  const note = String(body?.note || '').trim().slice(0, 1000)
   const r = await createBreezewayTask({
     home_id,
     name: (unitName ? unitName + ' — ' : '') + issueTitle.slice(0, unitName ? 120 - unitName.length - 3 : 120),
-    description: (action ? action + ' ' : '') + '[Flagged by Lighthouse Action Plan]',
+    description: (action ? action + ' ' : '')
+      + (note ? '\n\nNote from the team' + (user.email ? ' (' + user.email + ')' : '') + ': ' + note + '\n\n' : ' ')
+      + '[Flagged by Lighthouse Action Plan]',
     type_department: department,
     type_priority: priority,
     scheduled_date: scheduled,
