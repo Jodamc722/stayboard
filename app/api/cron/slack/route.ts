@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   runLateCleanAlert, runGlitchAlert, runOvertimeAlert,
   runRepeatOffenderAlert, runDoorCodeAlert, runBlockedArrivalAlert,
-  runMarketBrief, runHandover,
+  runMarketBrief, runHandover, runWalkInRiskAlert,
 } from '@/lib/slack-alerts'
 import { expireStale, dispatchApproved } from '@/lib/slack-queue'
 import { botConnected } from '@/lib/slack'
@@ -41,6 +41,8 @@ async function run(req: NextRequest) {
   // keeps both to once a day. That is why there is one cron here rather than five.
   const safe = (p: Promise<any>) => p.catch((e: any) => ({ error: String((e && e.message) || e) }))
 
+  // First, every pass: anything that could put a guest on the doorstep tonight.
+  const walkIn = await safe(runWalkInRiskAlert())
   const lateCleans = await safe(runLateCleanAlert())
   const glitches = await safe(runGlitchAlert())
   const overtime = await safe(runOvertimeAlert())
@@ -53,7 +55,7 @@ async function run(req: NextRequest) {
 
   return NextResponse.json({
     ok: true, ranAt: new Date().toISOString(), expired,
-    lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals,
+    walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals,
     marketBrief, handover, dispatched,
   })
 }
