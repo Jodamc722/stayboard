@@ -27,7 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
-  CheckCircle2, ExternalLink, UserPlus,
+  CheckCircle2, ExternalLink, UserPlus, MessageSquare,
 } from 'lucide-react'
 import { TodayInOps } from '@/components/TodayInOps'
 import { useCachedFetch } from '@/lib/swr'
@@ -559,6 +559,17 @@ function PushTab({ roster }: { roster: Roster[] }) {
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, boolean>>({})
   const [who, setWho] = useState<Record<string, number | 0>>({})
+  // A pushed task can carry the pusher's own words (Jon, 2026-08-18: "allow you to add comments /
+  // descriptions"), and go to ANYONE on Breezeway — the select shows the whole roster, with the
+  // people whose department fits listed first, never instead.
+  const [note, setNote] = useState<Record<string, string>>({})
+  const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({})
+  const rosterFor = (dept?: string | null) => {
+    const d = String(dept || '').toLowerCase()
+    const fits = d ? roster.filter(p => p.departments?.some(x => x.toLowerCase().includes(d))) : []
+    const fitIds = new Set(fits.map(p => p.id))
+    return { fits, rest: roster.filter(p => !fitIds.has(p.id)) }
+  }
 
   // ── THE AM PUSH (Jon, 2026-08-14: "push activities in the AM based on vacant room and guest
   // feedback or inspection needed, pm needed, batteries needed... or open tasks in unit"). ──
@@ -587,16 +598,21 @@ function PushTab({ roster }: { roster: Roster[] }) {
   const fileCare = async (v: VacantU, c: CareItem) => {
     const t = SHEET_TEMPLATES.find(x => x.key === c.template)
     const key = 'care:' + v.listingId + ':' + c.key
+    const uKey = 'unit:' + v.listingId
     setBusy(key)
     try {
+      const extra = (note[uKey] || '').trim()
       const r = await fetch('/api/ops-today/add-task', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           listingId: v.listingId, title: t ? t.title : c.label,
           department: t ? t.department : 'maintenance', priority: t ? t.priority : 'normal',
-          description: (t ? t.base + '\n\n' : '') + 'Pushed from Today in Ops: unit is vacant today and this is ' +
+          description: (t ? t.base + '\n\n' : '')
+            + (extra ? 'Note from the team: ' + extra + '\n\n' : '')
+            + 'Pushed from Today in Ops: unit is vacant today and this is ' +
             (c.neverSeen ? 'not on record as ever done.' : String(c.monthsAgo) + ' months old (cadence: every ' + c.every + ').'),
           date: ops?.today,
+          assigneeIds: who[uKey] ? [who[uKey]] : [],
         }),
       })
       const j = await r.json()
@@ -625,6 +641,7 @@ function PushTab({ roster }: { roster: Roster[] }) {
           listingId: unit.listingId, issueKey: task.key, issueTitle: task.title,
           action: task.detail, unitName: unit.internalName || unit.listing,
           severity: task.severity, department: task.department, assigneeIds: ids, confirm: true,
+          note: (note[key] || '').trim() || undefined,
         }),
       })
       const j = await r.json()
@@ -666,23 +683,47 @@ function PushTab({ roster }: { roster: Roster[] }) {
                   {v.openTasks > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{v.openTasks} task{v.openTasks === 1 ? '' : 's'} today</span>}
                   {pending > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">{pending} overdue in unit</span>}
                 </div>
-                {due.length > 0 && (
-                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                    {due.map(c => {
-                      const key = 'care:' + v.listingId + ':' + c.key
-                      return filed[key] ? (
-                        <span key={c.key} className="text-[11.5px] font-bold text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {c.short} filed</span>
-                      ) : (
-                        <button key={c.key} onClick={() => fileCare(v, c)} disabled={busy === key}
-                          title={c.neverSeen ? 'Never on record' : c.monthsAgo + ' months since last (every ' + c.every + ')'}
-                          className="text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
-                          {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-                          {c.short}{c.neverSeen ? ' · never' : ' · ' + Math.round(c.monthsAgo || 0) + 'mo'}
+                {due.length > 0 && (() => {
+                  const uKey = 'unit:' + v.listingId
+                  const { fits, rest } = rosterFor('maintenance')
+                  return (
+                    <>
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        {due.map(c => {
+                          const key = 'care:' + v.listingId + ':' + c.key
+                          return filed[key] ? (
+                            <span key={c.key} className="text-[11.5px] font-bold text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {c.short} filed</span>
+                          ) : (
+                            <button key={c.key} onClick={() => fileCare(v, c)} disabled={busy === key}
+                              title={c.neverSeen ? 'Never on record' : c.monthsAgo + ' months since last (every ' + c.every + ')'}
+                              className="text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
+                              {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                              {c.short}{c.neverSeen ? ' · never' : ' · ' + Math.round(c.monthsAgo || 0) + 'mo'}
+                            </button>
+                          )
+                        })}
+                        {/* Anyone on Breezeway + your own words, applied to whatever gets filed
+                            from this unit's chips (Jon, 2026-08-18). */}
+                        <select value={who[uKey] || 0} onChange={e => setWho(w => ({ ...w, [uKey]: Number(e.target.value) }))}
+                          className="text-[11.5px] border border-line rounded-lg px-1.5 py-1.5 bg-white text-muted max-w-[140px]">
+                          <option value={0}>Assign to…</option>
+                          {fits.length ? <optgroup label="Fits the job">{fits.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
+                          {rest.length ? <optgroup label="Everyone">{rest.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
+                        </select>
+                        <button onClick={() => setNoteOpen(o => ({ ...o, [uKey]: !o[uKey] }))}
+                          className={'text-[11.5px] font-semibold px-2 py-1.5 rounded-lg border inline-flex items-center gap-1 ' +
+                            ((note[uKey] || '').trim() ? 'border-violet-300 text-violet-700 bg-violet-50' : 'border-line text-muted hover:text-ink')}>
+                          <MessageSquare size={11} /> {noteOpen[uKey] ? 'Hide note' : (note[uKey] || '').trim() ? 'Note added' : '+ Note'}
                         </button>
-                      )
-                    })}
-                  </div>
-                )}
+                      </div>
+                      {noteOpen[uKey] ? (
+                        <textarea value={note[uKey] || ''} onChange={e => setNote(n => ({ ...n, [uKey]: e.target.value }))} rows={2}
+                          placeholder="What the person doing this should know — goes into the Breezeway description."
+                          className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+                      ) : null}
+                    </>
+                  )
+                })()}
               </div>
             ))}
           </div>
@@ -699,35 +740,51 @@ function PushTab({ roster }: { roster: Roster[] }) {
             {rows.map(({ unit, task, day }) => {
               const key = unit.listingId + '|' + task.key
               const ev = task.evidence && task.evidence[0]
-              const ppl = roster.filter(p => !task.department || !p.departments?.length || p.departments.some(x => x.toLowerCase().includes(task.department!))).slice(0, 12)
+              // The WHOLE Breezeway roster (Jon, 2026-08-18: "assign whoever on breezeway") —
+              // department fits float to the top, everyone else stays reachable below them.
+              const { fits, rest } = rosterFor(task.department)
               return (
-                <div key={key} className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13px] font-bold text-ink">{unit.internalName || unit.listing}</span>
-                      <span className="text-[13px] text-ink/80">{task.title}</span>
-                      {task.severity === 'critical' || task.severity === 'high'
-                        ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">{task.severity}</span> : null}
-                      <span className="text-[11px] text-muted">checkout {day}</span>
+                <div key={key} className="px-4 py-2.5">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-bold text-ink">{unit.internalName || unit.listing}</span>
+                        <span className="text-[13px] text-ink/80">{task.title}</span>
+                        {task.severity === 'critical' || task.severity === 'high'
+                          ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">{task.severity}</span> : null}
+                        <span className="text-[11px] text-muted">checkout {day}</span>
+                      </div>
+                      {ev && <p className="text-[12px] text-muted mt-0.5 italic truncate">&ldquo;{ev.quote}&rdquo;{ev.stars != null ? ' · ' + ev.stars + '★' : ''}{ev.date ? ' · ' + ev.date : ''}</p>}
+                      {!ev && task.metric && <p className="text-[12px] text-muted mt-0.5">{task.metric}</p>}
                     </div>
-                    {ev && <p className="text-[12px] text-muted mt-0.5 italic truncate">&ldquo;{ev.quote}&rdquo;{ev.stars != null ? ' · ' + ev.stars + '★' : ''}{ev.date ? ' · ' + ev.date : ''}</p>}
-                    {!ev && task.metric && <p className="text-[12px] text-muted mt-0.5">{task.metric}</p>}
+                    {filed[key] ? (
+                      <span className="text-[12px] font-bold text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={13} /> Filed</span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        <select value={who[key] || 0} onChange={e => setWho(w => ({ ...w, [key]: Number(e.target.value) }))}
+                          className="text-[12px] border border-line rounded-lg px-1.5 py-1.5 bg-white text-muted max-w-[150px]">
+                          <option value={0}>Default crew</option>
+                          {fits.length ? <optgroup label="Fits the job">{fits.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
+                          {rest.length ? <optgroup label="Everyone">{rest.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
+                        </select>
+                        <button onClick={() => setNoteOpen(o => ({ ...o, [key]: !o[key] }))}
+                          title="Add your own words to the task description"
+                          className={'text-[12px] font-semibold px-2 py-1.5 rounded-lg border inline-flex items-center gap-1 ' +
+                            ((note[key] || '').trim() ? 'border-violet-300 text-violet-700 bg-violet-50' : 'border-line text-muted hover:text-ink')}>
+                          <MessageSquare size={12} /> {(note[key] || '').trim() ? 'Note' : '+ Note'}
+                        </button>
+                        <button onClick={() => push(unit, task, key)} disabled={busy === key}
+                          className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
+                          {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Push
+                        </button>
+                      </span>
+                    )}
                   </div>
-                  {filed[key] ? (
-                    <span className="text-[12px] font-bold text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={13} /> Filed</span>
-                  ) : (
-                    <span className="flex items-center gap-1.5 shrink-0">
-                      <select value={who[key] || 0} onChange={e => setWho(w => ({ ...w, [key]: Number(e.target.value) }))}
-                        className="text-[12px] border border-line rounded-lg px-1.5 py-1.5 bg-white text-muted max-w-[150px]">
-                        <option value={0}>Default crew</option>
-                        {ppl.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                      <button onClick={() => push(unit, task, key)} disabled={busy === key}
-                        className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
-                        {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Push
-                      </button>
-                    </span>
-                  )}
+                  {noteOpen[key] && !filed[key] ? (
+                    <textarea value={note[key] || ''} onChange={e => setNote(n => ({ ...n, [key]: e.target.value }))} rows={2}
+                      placeholder="What the person doing this should know — rides into the Breezeway description with your name."
+                      className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+                  ) : null}
                 </div>
               )
             })}
