@@ -70,19 +70,11 @@
     },
     {
       "path": "/api/cron/notice-drafts",
-      "schedule": "30 10 * * *"
+      "schedule": "0 11-23 * * *"
     },
     {
-      "path": "/api/cron/slack",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/cron/slack-digest",
-      "schedule": "0 11 * * *"
-    },
-    {
-      "path": "/api/cron/eve-metrics",
-      "schedule": "40 7 * * *"
+      "path": "/api/cron/notice-drafts",
+      "schedule": "0 0-4 * * *"
     }
   ]
 }
