@@ -264,24 +264,24 @@ export async function sendGmail(opts: {
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
 
-// ── Back-compat shims ──────────────────────────────────────────────────────────────────────────
-//
-// `createGmailDraft` and `checkGmailDraftExists` were renamed to `draftGmail` / `draftStatus`, but
-// two callers still import the old names — lib/support-drafts.ts and
-// app/api/reservation-notices/draft/route.ts. They were restored once already (commit 29fef08) and
-// went missing again, which turns the whole build red and blocks every deploy. Keeping them as
-// one-line aliases costs nothing; delete them only when both callers have been updated.
-
-/**
- * @deprecated use `draftGmail`
- * Both callers read `.id`, not `.draftId`, so this maps the field as well as the name.
- */
-export async function createGmailDraft(opts: Parameters<typeof draftGmail>[0]): Promise<{ ok: boolean; id?: string; error?: string }> {
+// ── COMPAT EXPORTS for the desk's "Add to drafts" button + the support-draft watch (built in a
+// parallel session, 2026-08-19, and clobbered once by an upload from this one — never again:
+// these names are part of the file's contract now). Same call as draftGmail; result carries `id`.
+export async function createGmailDraft(opts: {
+  fromEmail: string
+  to: string[]
+  cc?: string[]
+  subject: string
+  html: string
+  attachments?: GmailAttachment[]
+}): Promise<{ ok: boolean; id?: string; error?: string }> {
   const r = await draftGmail(opts)
   return { ok: r.ok, id: r.draftId, error: r.error }
 }
 
-/** @deprecated use `draftStatus` */
-export async function checkGmailDraftExists(fromEmail: string, draftId: string): Promise<'exists' | 'gone' | 'error'> {
-  return draftStatus(fromEmail, draftId)
+// 'gone' = no longer in Drafts (the sweep reads that as "a human sent it"). Anything unprovable
+// returns 'unknown' so a notice is never falsely stamped sent over a network blip.
+export async function checkGmailDraftExists(fromEmail: string, draftId: string): Promise<'present' | 'gone' | 'unknown'> {
+  const s = await draftStatus(fromEmail, String(draftId || '').trim())
+  return s === 'exists' ? 'present' : s === 'gone' ? 'gone' : 'unknown'
 }
