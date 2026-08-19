@@ -47,6 +47,9 @@ create index if not exists idx_slack_outbox_status  on slack_outbox(status, crea
 create index if not exists idx_slack_outbox_token   on slack_outbox(token) where token is not null;
 create index if not exists idx_slack_outbox_created on slack_outbox(created_at desc);
 
--- Service-role only, like every other table here: all reads and writes go through API routes
--- that call requireLevel() first.
-alter table slack_outbox disable row level security;
+-- RLS ON, with NO policies — deliberately stricter than the rest of this schema, which mostly
+-- runs with RLS disabled. The reason is the `token` column: it is the one-time secret that lets
+-- the Slack DM link approve a message without a session. If the anon key could read this table,
+-- anyone holding it could read a pending token and send a message as Lighthouse. No policies means
+-- only the service role gets in, which is all any of the API routes here ever use.
+alter table slack_outbox enable row level security;
