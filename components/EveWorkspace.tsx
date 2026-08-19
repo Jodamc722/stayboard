@@ -4,14 +4,14 @@
 // without a deploy). The thumbs on every answer are the improvement loop: a thumbs-down with a note
 // is written straight into her memory as a correction.
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Sparkles, Send, ThumbsUp, ThumbsDown, Trash2, Plus, Save, X, Brain, MessageSquare, Mic } from 'lucide-react'
+import { Sparkles, Send, ThumbsUp, ThumbsDown, Trash2, Plus, Save, X, Brain, MessageSquare, Mic, Compass, Check, TrendingUp, CloudLightning } from 'lucide-react'
 
 type Msg = { role: 'user' | 'assistant'; content: string; chatId?: string | null; meta?: any; rated?: number }
 type Memory = {
   id: string; kind: string; text: string; why: string | null; scope: string; weight: number
   source: string; use_count: number; last_used_at: string | null; created_by: string | null; created_at: string
 }
-type Tab = 'chat' | 'memory' | 'voice'
+type Tab = 'chat' | 'direction' | 'memory' | 'voice'
 
 const KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction']
 const KIND_HELP: Record<string, string> = {
@@ -38,7 +38,7 @@ export function EveWorkspace({ canEdit }: { canEdit: boolean }) {
   return (
     <div>
       <div className="flex items-center gap-1 mb-4 border-b border-line">
-        {([['chat', 'Chat', MessageSquare], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic]] as const).map(([k, label, Icon]) => (
+        {([['chat', 'Chat', MessageSquare], ['direction', 'Direction', Compass], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k as Tab)}
             className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={14} /> {label}
@@ -46,6 +46,7 @@ export function EveWorkspace({ canEdit }: { canEdit: boolean }) {
         ))}
       </div>
       {tab === 'chat' && <EveChat />}
+      {tab === 'direction' && <EveDirection canEdit={canEdit} />}
       {tab === 'memory' && <EveMemory canEdit={canEdit} />}
       {tab === 'voice' && <EveVoice canEdit={canEdit} />}
     </div>
@@ -292,6 +293,163 @@ function EveVoice({ canEdit }: { canEdit: boolean }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+type Rec = {
+  id: string; title: string; detail: string | null; scope: string; metric: string
+  expect_direction: string; expect_pct: number | null; measure_on: string; measure_window: number
+  baseline_value: number | null; baseline_days: number | null
+  status: string; decided_by: string | null; decision_note: string | null
+  outcome: string | null; outcome_note: string | null; actual_value: number | null; delta_pct: number | null
+  created_at: string
+}
+
+const OUTCOME_UI: Record<string, { label: string; cls: string }> = {
+  worked: { label: 'Worked', cls: 'bg-[#E8F6F0] text-[#0F7B52] border-[#B7E3D0]' },
+  didnt: { label: "Didn't work", cls: 'bg-[#FCECEC] text-[#A32020] border-[#F2C4C4]' },
+  inconclusive: { label: 'Inconclusive', cls: 'bg-app text-muted border-line' },
+}
+
+function EveDirection({ canEdit }: { canEdit: boolean }) {
+  const [recs, setRecs] = useState<Rec[]>([])
+  const [score, setScore] = useState<any>(null)
+  const [wx, setWx] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [r, e] = await Promise.all([
+        fetch('/api/eve/recommendations').then(x => x.json()),
+        fetch('/api/eve/events').then(x => x.json()).catch(() => null),
+      ])
+      if (r.needsMigration) setErr('Migration 046 has not been run yet — nothing can be logged or graded.')
+      else setErr('')
+      setRecs(r.recommendations || [])
+      setScore(r.scorecard || null)
+      setWx(e || null)
+    } catch (e: any) { setErr(e?.message || String(e)) } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  async function decide(id: string, status: string) {
+    setBusy(id)
+    try {
+      await fetch('/api/eve/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'decide', id, status }) })
+      await load()
+    } finally { setBusy('') }
+  }
+
+  const open = recs.filter(r => r.status === 'open')
+  const live = recs.filter(r => r.status === 'accepted' && !r.outcome)
+  const done = recs.filter(r => !!r.outcome)
+
+  return (
+    <div className="space-y-4">
+      {err && <div className="text-[13px] text-[#9A6200] bg-[#FDF3E0] border border-[#F0DAA8] rounded-xl px-3.5 py-2.5">{err}</div>}
+
+      {/* Storm banner — the single highest-value external signal, so it leads. */}
+      {wx?.weather && wx.weather.level !== 'clear' && (
+        <div className={`rounded-xl px-4 py-3 border ${wx.weather.level === 'threat' ? 'bg-[#FCECEC] border-[#F2C4C4] text-[#5C1414]' : 'bg-[#FDF3E0] border-[#F0DAA8] text-[#4A3200]'}`}>
+          <p className="text-sm font-semibold flex items-center gap-1.5"><CloudLightning size={14} /> {wx.weather.level === 'threat' ? 'Storm threat' : 'Weather watch'}</p>
+          <p className="text-[13px] mt-0.5">{wx.weather.note}</p>
+        </div>
+      )}
+
+      {/* Her track record, stated plainly — including when it is too early to mean anything. */}
+      <div className={`${card} p-4`}>
+        <p className="text-sm text-ink font-semibold mb-1 flex items-center gap-1.5"><TrendingUp size={14} className="text-brand-600" /> Track record</p>
+        {score?.available ? (
+          <>
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-muted mt-2">
+              <span><strong className="text-ink">{score.total}</strong> logged</span>
+              <span><strong className="text-ink">{score.accepted}</strong> accepted</span>
+              <span><strong className="text-ink">{score.graded}</strong> graded</span>
+              <span className="text-[#0F7B52]"><strong>{score.worked}</strong> worked</span>
+              <span className="text-[#A32020]"><strong>{score.didnt}</strong> didn&apos;t</span>
+              {score.hit_rate != null && <span><strong className="text-ink">{score.hit_rate}%</strong> hit rate</span>}
+            </div>
+            {score.note && <p className="text-[12px] text-muted mt-2">{score.note}</p>}
+          </>
+        ) : <p className="text-[13px] text-muted">{score?.note || 'Not available yet.'}</p>}
+      </div>
+
+      {loading ? <p className="text-sm text-muted">Loading…</p> : (
+        <>
+          <RecList title="Waiting on you" subtitle="Eve committed to a metric and a date. Accept it and it gets graded; reject it and it doesn't." rows={open} canEdit={canEdit} busy={busy} onDecide={decide} />
+          <RecList title="Accepted — being measured" subtitle="These are live. The nightly job grades each one on its measure date." rows={live} canEdit={false} busy={busy} onDecide={decide} />
+          <RecList title="Graded" subtitle="What actually happened. Every verdict here is written back into her memory." rows={done} canEdit={false} busy={busy} onDecide={decide} />
+          {!recs.length && !err && (
+            <div className={`${card} p-8 text-center`}>
+              <Compass size={22} className="text-muted mx-auto mb-2" />
+              <p className="text-sm text-muted max-w-md mx-auto">Nothing logged yet. Ask Eve for a recommendation on the Chat tab &mdash; when she advises a real change she records what she expects to move, and it lands here for you to accept.</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {wx?.upcoming?.events?.length ? (
+        <div className={`${card} p-4`}>
+          <p className="text-sm text-ink font-semibold mb-2">What&apos;s coming</p>
+          <div className="space-y-1.5">
+            {wx.upcoming.events.slice(0, 6).map((e: any, i: number) => (
+              <div key={i} className="flex items-baseline gap-2 text-[13px]">
+                <span className={`chip text-[10px] font-bold px-1.5 py-0.5 rounded border ${e.impact === 'high' ? 'bg-brand-50 text-brand-700 border-brand-200' : 'bg-app text-muted border-line'}`}>{e.impact}</span>
+                <span className="text-ink font-medium">{e.name}</span>
+                <span className="text-muted">{e.in_progress ? 'on now' : `in ${e.days_away}d`} · {e.markets.join(', ')}</span>
+              </div>
+            ))}
+          </div>
+          {wx.upcoming.note && <p className="text-[12px] text-muted mt-2">{wx.upcoming.note}</p>}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function RecList({ title, subtitle, rows, canEdit, busy, onDecide }: { title: string; subtitle: string; rows: Rec[]; canEdit: boolean; busy: string; onDecide: (id: string, s: string) => void }) {
+  if (!rows.length) return null
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-[0.08em] text-muted font-bold mb-1">{title}</p>
+      <p className="text-[12px] text-muted mb-2">{subtitle}</p>
+      <div className="space-y-2">
+        {rows.map(r => (
+          <div key={r.id} className={`${card} p-4`}>
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-ink">{r.title}</p>
+                {r.detail && <p className="text-[13px] text-muted mt-1 whitespace-pre-wrap">{r.detail}</p>}
+                <p className="text-[12px] text-muted mt-2">
+                  Expects <strong className="text-ink">{r.metric}</strong> to go <strong className="text-ink">{r.expect_direction}</strong>
+                  {r.expect_pct ? ` by about ${r.expect_pct}%` : ''} on <strong className="text-ink">{r.scope}</strong>, measured {r.measure_on}
+                  {r.baseline_value != null ? ` · baseline ${r.baseline_value}` : ''}
+                  {(r.baseline_days ?? 0) < 14 ? ' · ⚠ thin baseline' : ''}
+                </p>
+                {r.outcome && (
+                  <div className="mt-2">
+                    <span className={`inline-block text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-md border ${OUTCOME_UI[r.outcome]?.cls || 'bg-app text-muted border-line'}`}>{OUTCOME_UI[r.outcome]?.label || r.outcome}</span>
+                    {r.outcome_note && <p className="text-[12px] text-muted mt-1.5">{r.outcome_note}</p>}
+                  </div>
+                )}
+                {r.status === 'rejected' && <span className="inline-block mt-2 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-md border bg-app text-muted border-line">Rejected</span>}
+              </div>
+              {canEdit && r.status === 'open' && (
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <button disabled={!!busy} onClick={() => onDecide(r.id, 'accepted')}
+                    className="inline-flex items-center gap-1 text-xs font-semibold bg-brand-600 text-white rounded-lg px-2.5 py-1.5 hover:bg-brand-700 disabled:opacity-50"><Check size={12} /> Accept</button>
+                  <button disabled={!!busy} onClick={() => onDecide(r.id, 'rejected')}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink border border-line rounded-lg px-2.5 py-1.5"><X size={12} /> No</button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
