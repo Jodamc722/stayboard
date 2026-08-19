@@ -14,6 +14,10 @@ import {
   clampLimit, daysAgoISO, normStar, lc, has, DEAD_LISTING, safe, cap,
 } from './ctx'
 import { loadMemories, saveMemory, normKind, MEMORY_KINDS } from './memory'
+import { METRICS, METRIC_BY_KEY } from './metrics'
+import { computeTrend, anomalyScan } from './trends'
+import { createRecommendation, scorecard } from './recommendations'
+import { upcomingEvents, stormRisk } from './signals'
 
 const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
@@ -207,6 +211,66 @@ export const CORE_TOOLS: EveTool[] = [
       })
       if (!res.ok) return { saved: false, error: res.error, hint: `kind must be one of ${kinds}` }
       return { saved: true, id: res.id, note: 'Stored. Jon can see and delete this on /eve.' }
+    },
+  },
+
+  {
+    name: 'trend',
+    description: 'IS THIS NUMBER ACTUALLY UNUSUAL? Compares a metric over a recent window against the SAME scope\'s own history and returns a z-score, so you can say "2.1 sigma below its own 90-day norm" instead of "looks lower". Params: metric (required), scope ("portfolio" or "building:<Name>"), days (window, default 7), baselineDays (default 90). ALWAYS use this before calling something a problem or a win — a number without a baseline is not evidence. If it reports a caveat about thin history, SAY SO rather than quoting the z-score as fact.',
+    input_schema: obj({ metric: S.str, scope: S.str, days: S.num, baselineDays: S.num }, ['metric']),
+    money: true,
+    run: async (input) => {
+      const t: any = await computeTrend({ metric: String(input?.metric || ''), scope: input?.scope ? String(input.scope) : 'portfolio', days: input?.days, baselineDays: input?.baselineDays })
+      if (t?.error) return { error: t.error, available_metrics: METRICS.map((m: any) => ({ key: m.key, label: m.label, backfillable: m.backfillable })) }
+      return t
+    },
+  },
+
+  {
+    name: 'anomaly_scan',
+    description: 'Sweep EVERY metric across every building and return only what is genuinely off its own normal range. Use this for "what should I be worried about", "anything unusual", or to open a morning brief. Params: days (window, default 7), sigma (threshold, default 2), scope (optional, to scan one building). Returning nothing is a real answer — say "nothing is out of range" rather than hunting for something to report.',
+    input_schema: obj({ days: S.num, sigma: S.num, scope: S.str }),
+    money: true,
+    run: async (input) => anomalyScan({ days: input?.days, sigma: input?.sigma, scope: input?.scope ? String(input.scope) : undefined }),
+  },
+
+  {
+    name: 'recommend',
+    description: 'LOG A RECOMMENDATION so it can be graded later. This is how you get better: you must commit to which METRIC you expect to move, for which SCOPE, in which DIRECTION, roughly how much, and by when. A nightly job then measures it against the baseline captured right now and tells you whether you were right. Use this whenever you advise a real change — a pricing move, a staffing change, a maintenance push. Do NOT use it for trivia or for things nobody will act on. metric must be one of the measurable metrics (call trend with a bad metric to see the list). Jon accepts or rejects on /eve, and only ACCEPTED items get graded.',
+    input_schema: obj({
+      title: S.str, detail: S.str, scope: S.str, metric: S.str,
+      expect_direction: S.str, expect_pct: S.num, measure_in_days: S.num,
+    }, ['title', 'metric']),
+    run: async (input, ctx) => {
+      const res = await createRecommendation({
+        title: input?.title, detail: input?.detail, scope: input?.scope, metric: input?.metric,
+        expect_direction: input?.expect_direction, expect_pct: input?.expect_pct,
+        measure_in_days: input?.measure_in_days, created_by: ctx.email, source: 'chat',
+      })
+      if (!res.ok) return { logged: false, error: res.error }
+      return { logged: true, id: res.id, note: 'Logged. It shows on /eve under Direction for Jon to accept or reject, and it will be graded automatically.' }
+    },
+  },
+
+  {
+    name: 'my_track_record',
+    description: 'Your own scorecard: how many recommendations you have made, how many were accepted, and of the graded ones how many actually WORKED. Use this when asked how reliable you are, and be honest about it — including when the sample is too small to mean anything.',
+    input_schema: obj({}),
+    run: async () => scorecard(),
+  },
+
+  {
+    name: 'events_and_weather',
+    description: 'External signals: the South Florida event calendar (Art Basel, F1, Ultra, Miami Open, both boat shows, spring break) and any live tropical-storm threat from the National Hurricane Center plus NWS alerts for our three counties. Use this for demand questions, pricing windows, and — importantly — whenever a storm might be coming, because a cancellation wave is the biggest short-notice revenue event this business has.',
+    input_schema: obj({ days: S.num, weather_only: S.bool, events_only: S.bool }),
+    run: async (input) => {
+      const wantEvents = !input?.weather_only
+      const wantWx = !input?.events_only
+      const [ev, wx] = await Promise.all([
+        wantEvents ? upcomingEvents(input?.days ? Number(input.days) : 120) : Promise.resolve(null),
+        wantWx ? stormRisk() : Promise.resolve(null),
+      ])
+      return { events: ev, weather: wx }
     },
   },
 
