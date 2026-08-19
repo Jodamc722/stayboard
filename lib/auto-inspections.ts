@@ -45,7 +45,8 @@ export type TaskAutomationCfg = {
   assignAlways: string                                         // on every inspection, whatever the market
   supervisors: Record<string, string>                          // market → supervisor name
   // Arrival-day Gmail drafts for front-desk notices (Jon, 2026-08-18) — its own switch, same roof.
-  noticeDrafts: { enabled: boolean; fromEmail: string }
+  // slackChannel (Jon, 2026-08-19): "notify in customer care channel" when new drafts land.
+  noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
 }
 export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   enabled: false,
@@ -55,7 +56,9 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   daysAhead: 3,
   assignAlways: 'Roberto',
   supervisors: { Miami: 'Yoslenis', Broward: 'Guillermo', North: 'Yoslenis' },
-  noticeDrafts: { enabled: false, fromEmail: 'jon@stay-hospitality.com' },
+  // Default channel = #vr-customercareteam (verified id, 2026-08-19). The bot must be invited
+  // to the channel for the post to land — private channels need membership.
+  noticeDrafts: { enabled: false, fromEmail: 'jon@stay-hospitality.com', slackChannel: 'G01TT278P2L' },
 }
 export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
   const s = await getSetting<any>(TASK_AUTOMATION_KEY, null)
@@ -79,6 +82,7 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
       enabled: s.noticeDrafts?.enabled === true,
       fromEmail: typeof s.noticeDrafts?.fromEmail === 'string' && /@/.test(s.noticeDrafts.fromEmail)
         ? s.noticeDrafts.fromEmail.trim().toLowerCase() : d.noticeDrafts.fromEmail,
+      slackChannel: typeof s.noticeDrafts?.slackChannel === 'string' ? s.noticeDrafts.slackChannel.trim() : d.noticeDrafts.slackChannel,
     },
   }
 }

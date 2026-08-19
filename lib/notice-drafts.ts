@@ -44,6 +44,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   const props: PropertyEmail[] = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
   const pById: Record<string, PropertyEmail> = {}
   for (const p of props) pById[p.id] = p
+  const draftedList: { unit: string; guest: string; property: string; form: boolean }[] = []
 
   // The npm jsPDF, loaded once per run, only when some property actually wants a form attached.
   // (lib/elser-pdf's own loader pulls from a CDN — a browser mechanism; on the server we hand the
@@ -98,10 +99,27 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       if (!r.ok) throw new Error(r.error || 'draft failed')
       await db.from('reservation_notices').update({ draft_created_at: new Date().toISOString(), draft_id: r.draftId || null }).eq('id', n.id)
       base.drafted++
+      draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments })
     } catch (e: any) {
       base.failed++
       if (base.errors.length < 5) base.errors.push(str(n.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
     }
+  }
+
+  // TELL THE TEAM (Jon, 2026-08-19: "draft and then notify in customer care channel"). One message
+  // per run that actually drafted something — the hourly checks between 7am and midnight stay
+  // silent unless a NEW draft landed, so the channel hears news, not heartbeat.
+  if (base.drafted > 0 && cfg.noticeDrafts.slackChannel) {
+    try {
+      const { postToChannel } = await import('./slack')
+      const lines = draftedList.map(x =>
+        `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})`)
+      const msg = `📬 *Front-desk notice draft${base.drafted === 1 ? '' : 's'} ready* — ${base.drafted} new in ${cfg.noticeDrafts.fromEmail}'s Gmail Drafts for today's arrivals:\n`
+        + lines.join('\n')
+        + `\nReview and send to the building${base.drafted === 1 ? '' : 's'}.`
+      const res = await postToChannel(cfg.noticeDrafts.slackChannel, msg)
+      if (!res.ok) base.errors.push('slack notify: ' + (res.error || 'failed') + (res.error === 'not_in_channel' ? ' — invite the Lighthouse bot to the channel' : ''))
+    } catch (e: any) { base.errors.push('slack notify: ' + String(e?.message || e).slice(0, 120)) }
   }
   return base
 }
