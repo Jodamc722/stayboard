@@ -24,6 +24,13 @@ export type SlackConnection = {
   webhookUrl: string        // SECRET — never send to the browser
   connectedBy: string       // email of the teammate who connected it
   connectedAt: string       // ISO
+  // Added 2026-08-19 with the bot install. The webhook can only ever reach ONE channel; the bot
+  // token is what lets Lighthouse post per building, @-mention a cleaner and DM a supervisor.
+  // Also SECRET — publicView() must never leak it.
+  botToken?: string         // xoxb-… SECRET
+  botUserId?: string        // the bot's own user id
+  teamId?: string
+  scopes?: string           // what Slack actually granted, so the admin screen can spot a gap
 }
 
 export type Connections = { slack?: SlackConnection | null }
@@ -33,6 +40,10 @@ export type PublicConnection = {
   connected: boolean; teamName?: string; channel?: string; connectedBy?: string; connectedAt?: string
   /** true when the connection comes from the legacy env var rather than a click-to-connect install. */
   viaEnv?: boolean
+  /** true when a bot token is present — per-channel posting, mentions and DMs are available. */
+  bot?: boolean
+  /** the granted scope string, so the admin screen can say what is missing. Not a secret. */
+  scopes?: string
 }
 
 function secret(): string {
@@ -75,8 +86,17 @@ export async function setSlackConnection(conn: SlackConnection | null, actor: st
 /** Strip the secret. This is the ONLY shape that may cross the wire. */
 export function publicView(c: Connections): { slack: PublicConnection } {
   const s = c.slack
-  if (s && s.webhookUrl) {
-    return { slack: { connected: true, teamName: s.teamName, channel: s.channel, connectedBy: s.connectedBy, connectedAt: s.connectedAt } }
+  if (s && (s.webhookUrl || s.botToken)) {
+    return {
+      slack: {
+        connected: true, teamName: s.teamName, channel: s.channel,
+        connectedBy: s.connectedBy, connectedAt: s.connectedAt,
+        bot: !!s.botToken, scopes: s.scopes,
+      },
+    }
+  }
+  if (process.env.SLACK_BOT_TOKEN) {
+    return { slack: { connected: true, viaEnv: true, bot: true, channel: 'bot token set in Vercel', teamName: 'Configured by environment variable' } }
   }
   if (process.env.SLACK_WEBHOOK_URL) {
     return { slack: { connected: true, viaEnv: true, channel: 'set in Vercel', teamName: 'Configured by environment variable' } }

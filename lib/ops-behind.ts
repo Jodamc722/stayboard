@@ -18,7 +18,7 @@ import { getOpsPresets, getSetting, setSetting } from './app-settings'
 import { untrackedRegex } from './ops-presets'
 import { isLiveStay } from './stay-status'
 import { notify } from './notify'
-import { postSlack } from './integrations'
+// postSlack is gone from this file — Slack now goes through the approval outbox (lib/slack-queue).
 
 export const GRACE_MIN = 30          // minutes after checkout before "not started" means anything
 const DEFAULT_OUT_MIN = 11 * 60      // 11:00 AM
@@ -202,7 +202,10 @@ export async function runBehindAlert(): Promise<any> {
   const msg = behindMessage(b)
   const to = await opsRecipients()
   const res = await notify(to, { kind: 'ops_alert', title: msg.title, body: msg.body, link: '/plan' })
-  const slack = await postSlack('⚠️ *' + msg.title + '*\n' + msg.body)
+  // Slack deliberately does NOT happen here any more (2026-08-19). One blunt warning to one
+  // webhook has been replaced by runLateCleanAlert(), which groups by building, tags the actual
+  // cleaner and their supervisor, and waits for approval. The cron calls it right after this.
+  // Importing it here would make lib/ops-behind <-> lib/slack-alerts a cycle, so it does not.
   try { await setSetting(ALERT_KEY, { date: b.date, sent: sent.concat([b.level]) }, 'ops-behind') } catch {}
-  return { alerted: true, level: b.level, notStarted: b.notStarted, sameDay: b.sameDay, unassigned: b.unassigned, recipients: to.length, sent: res.sent, slack }
+  return { alerted: true, level: b.level, notStarted: b.notStarted, sameDay: b.sameDay, unassigned: b.unassigned, recipients: to.length, sent: res.sent }
 }
