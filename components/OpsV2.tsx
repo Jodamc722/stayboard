@@ -23,7 +23,7 @@
 // Assignment uses /api/breezeway/assign, creation /api/ops-today/add-task (which already takes
 // assigneeIds), pushes /api/health/push-task (which already picks the next vacant day). This file
 // is a new front door on machinery that already works.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
@@ -263,10 +263,7 @@ export function OpsV2() {
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, 5 * 60 * 1000); return () => clearInterval(t) }, [refresh])
 
-  // Which tab. Remembered per person — the research point about role-shaped views, cheaply.
-  const [tab, setTab] = useState<'board' | 'people' | 'push'>('board')
-  useEffect(() => { try { const t = localStorage.getItem('opsv2_tab'); if (t === 'people' || t === 'push') setTab(t) } catch {} }, [])
-  const pick = (t: 'board' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab', t) } catch {} }
+  // (Tabs retired 2026-08-19 — the page is one daily scroll of reorderable sections below.)
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
@@ -283,35 +280,91 @@ export function OpsV2() {
   // show... needs a human section") — one definition of urgent, two doors to it.
   const excs: Exc[] = useMemo(() => buildExcs(data, units, glitches, staff), [units, glitches, staff, data])
 
+  // ── ONE DAILY PAGE, NO TABS (Jon, 2026-08-19: "don't love the organization of board on tabs —
+  // let's have just a daily section, and be able to arrange without having to favorite it"). ──
+  // The day is one scroll: The day (triage + the full board), People, Push — each a collapsible
+  // section with plain ▲▼ arrows on the header. Arranging is a direct verb, no pinning, no
+  // favoriting; the order and the open/closed state are remembered per person on this device.
+  const DEFAULT_ORDER = ['board', 'people', 'push']
+  const [order, setOrder] = useState<string[]>(DEFAULT_ORDER)
+  const [openSec, setOpenSec] = useState<Record<string, boolean>>({ board: true, people: true, push: true })
+  useEffect(() => {
+    try {
+      const o = JSON.parse(localStorage.getItem('opsv2_order') || 'null')
+      if (Array.isArray(o) && o.length && o.every(k => DEFAULT_ORDER.includes(k))) setOrder(Array.from(new Set([...o, ...DEFAULT_ORDER])))
+      const op = JSON.parse(localStorage.getItem('opsv2_open') || 'null')
+      if (op && typeof op === 'object') setOpenSec(s => ({ ...s, ...op }))
+    } catch { /* fresh defaults */ }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const move = (key: string, dir: -1 | 1) => setOrder(o => {
+    const i = o.indexOf(key); const j = i + dir
+    if (i < 0 || j < 0 || j >= o.length) return o
+    const n = o.slice(); n[i] = o[j]; n[j] = o[i]
+    try { localStorage.setItem('opsv2_order', JSON.stringify(n)) } catch { /* no-op */ }
+    return n
+  })
+  const toggleSec = (key: string) => setOpenSec(s => {
+    const n = { ...s, [key]: !s[key] }
+    try { localStorage.setItem('opsv2_open', JSON.stringify(n)) } catch { /* no-op */ }
+    return n
+  })
+  const jumpToPeople = () => {
+    setOpenSec(s => (s.people ? s : { ...s, people: true }))
+    setTimeout(() => document.getElementById('ops-sec-people')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+  }
+
+  const SECTIONS: { key: string; label: string; badge: ReactNode; body: ReactNode }[] = [
+    {
+      key: 'board', label: 'The day',
+      badge: excs.length > 0 ? <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-rose-100 text-rose-700">{excs.length}</span> : null,
+      body: <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={jumpToPeople} onAddTask={u => setAddFor(u)} />,
+    },
+    {
+      key: 'people', label: 'People',
+      badge: (staff?.summary?.clockedIn || 0) > 0 ? <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-app text-muted">{staff?.summary?.clockedIn}</span> : null,
+      body: <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />,
+    },
+    { key: 'push', label: 'Push', badge: <PushCount />, body: <PushTab roster={roster} /> },
+  ]
+
   return (
     <div>
-      {/* ── ONE row of chrome: the tabs and Add task. Everything else belongs to the board
-          itself — Jon, 2026-08-17, on the stacked v2+v1 screen: "the Board tab is a mess. The
-          Today in Ops board that we had was much better." So the board IS the board again; this
-          layer only adds the tabs, the triage and the Add button. ── */}
-      <div className="flex items-center gap-6 border-b border-line mb-4">
-        {([['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
-           ['people', 'People', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
-           ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (
-          <button key={k} onClick={() => pick(k as any)}
-            className={'pb-2.5 pt-1 text-[14px] font-bold inline-flex items-center gap-2 border-b-2 -mb-px ' +
-              (tab === k ? 'text-ink border-ink' : 'text-muted border-transparent hover:text-ink')}>
-            {label}
-            {n != null && n > 0 && <span className={'text-[11px] font-bold rounded-full px-2 py-0.5 ' + cls}>{n}</span>}
-            {k === 'push' && <PushCount />}
-          </button>
-        ))}
+      <div className="flex items-center gap-3 mb-3">
+        <p className="text-[12.5px] text-muted flex-1">
+          One page, whole day. Fold a section with its header; move it with the arrows — the layout is yours and it sticks.
+        </p>
         <button onClick={() => setAddFor('')}
-          className="ml-auto mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
+          className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3.5 py-2 text-[13px] font-bold hover:opacity-90 shrink-0">
           <Plus size={14} /> Add task
         </button>
       </div>
 
-      {tab === 'board' && (
-        <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />
-      )}
-      {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
-      {tab === 'push' && <PushTab roster={roster} />}
+      <div className="space-y-3">
+        {order.map((key, idx) => {
+          const sec = SECTIONS.find(s => s.key === key)
+          if (!sec) return null
+          return (
+            <div key={key} id={'ops-sec-' + key}>
+              <div className="flex items-center gap-2 mb-2">
+                <button onClick={() => toggleSec(key)} className="flex items-center gap-2 text-left group">
+                  <ChevronDown size={15} className={'text-muted transition-transform ' + (openSec[key] ? '' : '-rotate-90')} />
+                  <span className="text-[15px] font-bold text-ink group-hover:underline">{sec.label}</span>
+                </button>
+                {sec.badge}
+                <span className="flex items-center ml-1">
+                  <button onClick={() => move(key, -1)} disabled={idx === 0} title="Move this section up"
+                    className="px-1 text-muted hover:text-ink disabled:opacity-25 text-[11px] leading-none">▲</button>
+                  <button onClick={() => move(key, 1)} disabled={idx === order.length - 1} title="Move this section down"
+                    className="px-1 text-muted hover:text-ink disabled:opacity-25 text-[11px] leading-none">▼</button>
+                </span>
+                <div className="flex-1 border-t border-line" />
+              </div>
+              {/* Closed sections don't mount, so a folded Push costs zero fetches. */}
+              {openSec[key] ? sec.body : null}
+            </div>
+          )
+        })}
+      </div>
 
       {addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
     </div>
