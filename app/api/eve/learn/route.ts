@@ -3,11 +3,12 @@
 // eve_knowledge so Eve can recall + act on them. Rate-limit aware; safe to run on a schedule.
 // Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
+import { runSweep } from '@/lib/eve/sweep'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300
 
 function rollupBuilding(raw: any): string {
   const s = String(raw || '').toLowerCase()
@@ -27,6 +28,10 @@ function parseJson(raw: string): any | null {
   return o && typeof o === 'object' ? o : null
 }
 
+// v2 (2026-08-19): the AI FAQ/complaint pass below is now only ONE PART of the nightly learning.
+// runSweep() adds seven more deterministic miners across ops, quality, guest comms, money, people,
+// portfolio shape and Eve's own failures — see lib/eve/sweep.ts for why those count records rather
+// than asking a model what is true.
 export async function POST(req: NextRequest) {
   // Auth: allow the Vercel cron (CRON_SECRET bearer) OR a logged-in user.
   const authHeader = req.headers.get('authorization') || ''
@@ -36,10 +41,19 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
-  const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return NextResponse.json({ error: 'AI not configured' }, { status: 503 })
-
   const days = Math.min(120, Math.max(7, Number(new URL(req.url).searchParams.get('days')) || 60))
+
+  // THE SWEEP RUNS FIRST, and deliberately does not need the model. It counts real records across
+  // ops, quality, guest comms, money, people, portfolio and Eve's own failures. If Anthropic is
+  // rate-limited or the key is missing, we still learn everything that matters most — only the
+  // FAQ/complaint phrasing pass below is lost.
+  let sweep: any = null
+  try { sweep = await runSweep(Math.min(days, 90)) }
+  catch (e: any) { sweep = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return NextResponse.json({ ok: true, sweep, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
   const sb = supabaseAdmin()
 
@@ -68,7 +82,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (guestMsgs.length === 0 && reviewText.length === 0) {
-    return NextResponse.json({ ok: true, note: 'No recent guest messages or reviews to learn from yet.', learned: 0 })
+    return NextResponse.json({ ok: true, sweep, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
   }
 
   const SYSTEM = `You analyze a short-term-rental manager's recent GUEST MESSAGES and REVIEWS to extract reusable operational knowledge. Return STRICT minified JSON only:
@@ -110,6 +124,6 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     if (error) return NextResponse.json({ error: `eve_knowledge upsert: ${error.message}. Run migration 008.` }, { status: 200 })
     learned = rows.length
   }
-  return NextResponse.json({ ok: true, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
+  return NextResponse.json({ ok: true, sweep, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST
