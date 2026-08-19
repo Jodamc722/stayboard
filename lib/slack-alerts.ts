@@ -355,23 +355,19 @@ export async function runDoorCodeAlert(): Promise<any> {
   const problems = await findCodeProblems(2)
   if (!problems.length) return { skipped: 'codes look fine' }
 
-  const duplicates: { code: string; units: string[] }[] = []
-  let missing: string[] = []
-  for (const p of problems) {
-    if (p.kind === 'duplicate') duplicates.push({ code: p.code, units: p.units })
-    else missing = p.units
-  }
+  const duplicates = problems.map(p => ({ code: p.code, units: p.units }))
+  if (!duplicates.length) return { skipped: 'no duplicate codes' }
 
   const today = etDate()
   const audience = audienceFor(rules, null, [])
-  const { body, summary } = codeProblemsMessage({ duplicates, missing, audience })
+  const { body, summary } = codeProblemsMessage({ duplicates, audience })
   // Codes are issued centrally by CCS, not per area — so this goes to one place, not per building.
   return draft({
     eventKey: 'door_codes',
     groupKey: 'codes:' + today,
     channelId: rules.opsChannel || rules.defaultChannel || rules.firehose,
     body, summary, audience,
-    itemCount: duplicates.length + (missing.length ? 1 : 0),
+    itemCount: duplicates.length,
   }, rules)
 }
 

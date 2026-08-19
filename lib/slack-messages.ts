@@ -448,34 +448,19 @@ export function repeatOffendersMessage(opts: {
 
 export function codeProblemsMessage(opts: {
   duplicates: { code: string; units: string[] }[]
-  missing: string[]
   audience: string[]
 }): { body: string; summary: string } {
-  const { duplicates, missing, audience } = opts
-  const lines: string[] = []
-  if (duplicates.length) {
-    lines.push('*Same code on more than one unit*')
-    for (const d of duplicates) lines.push('• `' + d.code + '` — ' + d.units.join(' and '))
-  }
-  if (missing.length) {
-    if (lines.length) lines.push('')
-    lines.push('*No code on file, guest arriving*')
-    lines.push('• ' + missing.slice(0, 12).join(', ') + (missing.length > 12 ? ' …and ' + (missing.length - 12) + ' more' : ''))
-  }
-
+  const { duplicates, audience } = opts
   const body = nl([
-    '🔑 *Door codes worth a check*',
+    '🔑 *Same door code on two units*',
+    'Both have a guest arriving — worth changing one before check-in.',
     '',
-    lines.join('\n'),
+    duplicates.map(d => '• `' + d.code + '` — ' + d.units.join(' and ')).join('\n'),
     '',
-    duplicates.length
-      ? 'Two guests holding the same code is worth fixing before check-in — easy to change, awkward to explain afterwards.'
-      : 'These just need a code set before the guest arrives, so nobody is locked out at 1am.',
+    'Easy to change now, awkward to explain once the wrong guest opens the wrong door.',
     ccLine(audience),
   ])
-  const summary = (duplicates.length ? duplicates.length + ' duplicate' : '') +
-    (duplicates.length && missing.length ? ', ' : '') +
-    (missing.length ? missing.length + ' missing' : '') + ' door code' + (duplicates.length + missing.length === 1 ? '' : 's')
+  const summary = duplicates.length + ' duplicate door code' + (duplicates.length === 1 ? '' : 's')
   return { body, summary }
 }
 

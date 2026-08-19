@@ -106,13 +106,17 @@ function codeOf(cf: any): string | null {
 
 export type CodeProblem =
   | { kind: 'duplicate'; code: string; units: string[] }
-  | { kind: 'missing'; units: string[] }
 
 /**
- * Two live units sharing one code is a real security and check-in problem, and it happened twice
- * in the month I read. A unit with a guest arriving and NO code on file is a 1am support call.
+ * DUPLICATES ONLY, deliberately.
  *
- * Only considers units that actually matter today: someone arriving in the next `lookaheadDays`.
+ * The first version also reported "no door code on file" and immediately flagged 26 units — because
+ * the Guesty listing field is simply not populated for most of the portfolio (3 of 15 arrivals had
+ * one on the day this was checked). That is an empty column, not an operational problem, and
+ * shipping it as an alert would have taught everyone to ignore the channel by lunchtime.
+ *
+ * Two live units sharing ONE code is unambiguous, and it really happened twice in the month of
+ * history I read (Arya 1705/2 and Capri 116 both got 4519). That is worth saying.
  */
 export async function findCodeProblems(lookaheadDays = 2): Promise<CodeProblem[]> {
   const db = supabaseAdmin()
@@ -135,11 +139,9 @@ export async function findCodeProblems(lookaheadDays = 2): Promise<CodeProblem[]
   }
 
   const byCode: Record<string, string[]> = {}
-  const missing: string[] = []
   for (const id of Object.keys(arriving)) {
     const l = listings[id]
-    if (!l) continue
-    if (!l.code) { missing.push(l.unit); continue }
+    if (!l || !l.code) continue
     if (!byCode[l.code]) byCode[l.code] = []
     byCode[l.code].push(l.unit)
   }
@@ -149,7 +151,6 @@ export async function findCodeProblems(lookaheadDays = 2): Promise<CodeProblem[]
     const units = byCode[code]
     if (units.length > 1) out.push({ kind: 'duplicate', code, units: units.sort() })
   }
-  if (missing.length) out.push({ kind: 'missing', units: missing.sort() })
   return out
 }
 
@@ -178,7 +179,15 @@ export async function findBlockedArrivals(lookaheadDays = 5): Promise<BlockedArr
 
   let report: Awaited<ReturnType<typeof blockedUnits>>
   try { report = await blockedUnits(Math.max(7, lookaheadDays)) } catch { return [] }
-  const runs: BlockedRun[] = Array.isArray(report.runs) ? report.runs : []
+  // An OWNER STAY block with a reservation arriving is almost always the owner's own stay — not a
+  // guest walking into a dead unit. Flagged 17WEST 407 on the first live run, which is exactly the
+  // kind of false positive that teaches people to ignore the alert. Keys 'o'/'ow' = Owner stay.
+  const OWNER_KEYS = ['o', 'ow']
+  const runs: BlockedRun[] = (Array.isArray(report.runs) ? report.runs : []).filter(r => {
+    const keys = (Array.isArray(r.keys) ? r.keys : []).map(k => String(k).toLowerCase())
+    if (keys.length && keys.every(k => OWNER_KEYS.indexOf(k) >= 0)) return false
+    return true
+  })
   if (!runs.length) return []
 
   const db = supabaseAdmin()
@@ -447,18 +456,13 @@ export async function findWalkInRisks(): Promise<WalkInRisk[]> {
     }
   }
 
-  // 3. They cannot get in: no code, or a code shared with another unit arriving today.
+  // 3. Two arriving units sharing one code — the wrong guest can open the wrong door.
+  //    NOT "no code on file": that field is unpopulated for most of the portfolio, so it would
+  //    flag two dozen units a day and mean nothing. See findCodeProblems.
   for (const c of codes) {
-    if (c.kind === 'missing') {
-      for (const unit of c.units) {
-        if (arrivingToday[unit] === undefined) continue
-        add(unit, null, 'no door code on file')
-      }
-    } else {
-      for (const unit of c.units) {
-        if (arrivingToday[unit] === undefined) continue
-        add(unit, null, 'door code `' + c.code + '` is also on ' + c.units.filter(u => u !== unit).join(', '))
-      }
+    for (const unit of c.units) {
+      if (arrivingToday[unit] === undefined) continue
+      add(unit, null, 'door code `' + c.code + '` is also on ' + c.units.filter(u => u !== unit).join(', '))
     }
   }
 
