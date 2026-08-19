@@ -48,6 +48,18 @@ const fromHhmm = (s: string): number => {
 
 const INPUT = 'rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] bg-white focus:outline-none focus:ring-2 focus:ring-brand-200'
 
+// Private channels the bot has not been invited to are invisible to conversations.list, so their
+// ids would render as raw "C04BE7CL90W". These names are read off the workspace so the admin can
+// still say WHICH room it means, and the "needs an invite" banner can name it.
+const chanName: Record<string, string> = {
+  C04BE7CL90W: 'vr-broward-housekeeping',
+  C02S24UE1EZ: 'vr-broward-maintenance',
+  C09PGAX5ARL: 'vr-miami-houskeeping-17west',
+  C0AFLUUE8BH: 'vr-parktower',
+  C08H24L05MY: 'vr-operations-mgt',
+  C04JB4FG6JD: 'vr-gm',
+}
+
 export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
   const [rules, setRules] = useState<Rules | null>(null)
   const [users, setUsers] = useState<User[]>([])
@@ -83,6 +95,22 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
     return buildings.map(b => b.label).filter(l => !claimed[l])
   }, [rules, buildings])
 
+  // Channels the rules point at that Slack will not return = the bot is not in them yet.
+  const needInvite = useMemo(() => {
+    if (!rules) return []
+    const want: string[] = []
+    for (const g of rules.groups) { if (g.housekeeping) want.push(g.housekeeping); if (g.maintenance) want.push(g.maintenance) }
+    if (rules.firehose) want.push(rules.firehose)
+    if (rules.defaultChannel) want.push(rules.defaultChannel)
+    const out: string[] = []
+    for (const id of want) {
+      if (channels.some(c => c.id === id)) continue
+      const nm = chanName[id] || id
+      if (out.indexOf(nm) < 0) out.push(nm)
+    }
+    return out
+  }, [rules, channels])
+
   const userName = useMemo(() => {
     const m: Record<string, string> = {}
     for (const u of users) m[u.id] = u.name
@@ -112,16 +140,25 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
     return <div className="flex items-center gap-2 text-[13px] text-muted py-4"><Loader2 size={14} className="animate-spin" /> Loading the rules…</div>
   }
 
-  const ChannelSelect = ({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) => (
-    <select className={INPUT} value={value || ''} onChange={e => onChange(e.target.value || null)}>
-      <option value="">— none —</option>
-      {channels.map(c => (
-        <option key={c.id} value={c.id}>
-          {'#' + c.name}{c.isPrivate ? (c.isMember ? ' 🔒' : ' 🔒 (bot not in it)') : ''}
-        </option>
-      ))}
-    </select>
-  )
+  // A channel the bot has not been invited to does NOT come back from conversations.list, so a
+  // configured private channel would render as "none" and get WIPED the moment anyone pressed
+  // Save. Keep an option for whatever is stored, whether or not Slack told us about it.
+  const ChannelSelect = ({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) => {
+    const known = value ? channels.some(c => c.id === value) : true
+    return (
+      <select className={INPUT} value={value || ''} onChange={e => onChange(e.target.value || null)}>
+        <option value="">— none —</option>
+        {!known && value ? (
+          <option value={value}>{(chanName[value] ? '#' + chanName[value] : value) + ' — invite the bot'}</option>
+        ) : null}
+        {channels.map(c => (
+          <option key={c.id} value={c.id}>
+            {'#' + c.name}{c.isPrivate ? (c.isMember ? ' 🔒' : ' 🔒 (bot not in it)') : ''}
+          </option>
+        ))}
+      </select>
+    )
+  }
 
   const PeopleSelect = ({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) => (
     <select
@@ -237,6 +274,12 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
             )
           })}
         </div>
+        {needInvite.length ? (
+          <div className="px-3 py-2 border-t border-line bg-sky-50 text-[11.5px] text-sky-900">
+            <b>The bot still needs inviting</b> to {needInvite.map(c => '#' + c).join(', ')}. Post{' '}
+            <code className="font-mono">/invite @lighthouse</code> in each &mdash; a private channel cannot be posted to otherwise.
+          </div>
+        ) : null}
         {unmapped.length ? (
           <div className="px-3 py-2 border-t border-line bg-amber-50 text-[11.5px] text-amber-800">
             <b>Not in any area:</b> {unmapped.join(', ')}. Their alerts fall through to the fallback channel until you place them.
