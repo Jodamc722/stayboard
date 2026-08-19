@@ -338,3 +338,22 @@ export async function gmailProfileEmail(fromEmail: string): Promise<string | nul
     return typeof j?.emailAddress === 'string' ? j.emailAddress.toLowerCase() : null
   } catch { return null }
 }
+
+// Full state of one draft — labels and internal date. When a draft "exists" to the API but the
+// desk swears the folder is empty, the answer is in here: a TRASH label, a 1970 date sorting it
+// to the void, or a missing DRAFT label all look identical from draftStatus's yes/no.
+export async function inspectDraft(fromEmail: string, draftId: string): Promise<{ labelIds: string[]; internalDate: string; dateHeader: string } | null> {
+  const { token } = await accessTokenFor(fromEmail)
+  if (!token) return null
+  try {
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(draftId) + '?format=metadata', {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+    if (!r.ok) return null
+    const j: any = await r.json().catch(() => null)
+    const msg = j?.message || {}
+    const headers: any[] = msg.payload?.headers || []
+    const dateHeader = String(headers.find((h: any) => /^date$/i.test(String(h?.name || '')))?.value || '')
+    return { labelIds: Array.isArray(msg.labelIds) ? msg.labelIds : [], internalDate: String(msg.internalDate || ''), dateHeader }
+  } catch { return null }
+}
