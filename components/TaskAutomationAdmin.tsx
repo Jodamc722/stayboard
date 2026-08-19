@@ -154,9 +154,10 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
             className={box + ' max-w-[180px]'} disabled={!isOwner} placeholder="channel id" />
         </div>
         <p className="text-[11px] text-muted mt-1">
-          Runs at 7am, then re-checks hourly until midnight — late bookings get drafted the same day. The
-          channel only hears from it when a NEW draft lands. Default channel: #vr-customercareteam (the
-          Lighthouse bot must be invited there).
+          Runs at 7am, then re-checks hourly until midnight — late bookings get drafted the same day. When the
+          team SENDS a draft, the next check notices and marks the reservation sent in Guesty (flag + dated
+          Reservation-Notes line), exactly like the desk&apos;s Mark-sent button. The channel only hears from it
+          when a NEW draft lands. Default: drafts in support@, notify #vr-customercareteam.
         </p>
       </div>
 
