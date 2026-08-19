@@ -11,6 +11,7 @@ import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
 import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
 import { OpsBriefAdmin } from '@/components/OpsBriefAdmin'
+import { TaskAutomationAdmin } from '@/components/TaskAutomationAdmin'
 import { StaffingAdmin } from '@/components/StaffingAdmin'
 import { ParAdmin } from '@/components/ParAdmin'
 import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
@@ -55,6 +56,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
         <div className="space-y-3">
           <Fold title="Today-in-Ops presets" defaultOpen><OpsPresetsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Morning Ops Brief" defaultOpen><OpsBriefAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Task automation" defaultOpen><TaskAutomationAdmin isOwner={isOwner} /></Fold>
           <Fold title="Staffing & agencies"><StaffingAdmin isOwner={isOwner} /></Fold>
           <Fold title="PAR levels (restock)"><ParAdmin isOwner={isOwner} /></Fold>
           <Fold title="Approval limits"><ApprovalLimitsAdmin isOwner={isOwner} /></Fold>

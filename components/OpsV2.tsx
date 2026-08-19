@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
+  CheckCircle2, ExternalLink, UserPlus,
 } from 'lucide-react'
 import { TodayInOps } from '@/components/TodayInOps'
 import { useCachedFetch } from '@/lib/swr'
@@ -136,6 +137,77 @@ function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[],
   return out.sort((a, b) => a.rank - b.rank || a.who.localeCompare(b.who))
 }
 
+// ── MARK HANDLED (Jon, 2026-08-18: "needs a human... feels hard to take action on"). ──────────
+// The cheapest real action is being able to say "dealt with it": a tap hides the row for the rest
+// of the day, on this device. Deliberately local — it clears YOUR list without closing anyone
+// else's alarm, and everything is back tomorrow. The count of handled rows stays on the header,
+// so a cleared list never silently pretends the day had nothing in it.
+const ackKey = () => 'ops_ack:' + new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+function loadAcks(): Set<string> {
+  try { return new Set<string>(JSON.parse(localStorage.getItem(ackKey()) || '[]')) } catch { return new Set() }
+}
+function saveAcks(s: Set<string>) { try { localStorage.setItem(ackKey(), JSON.stringify(Array.from(s))) } catch { /* private mode */ } }
+
+// The three groups a supervisor actually triages in order. Grouping ≠ hiding: every row is still
+// on screen, the groups just say WHY each one matters and what kind of action clears it.
+const EXC_GROUPS: { key: string; label: string; sub: string; rail: string; match: (e: Exc) => boolean }[] = [
+  { key: 'now', label: 'Act now', sub: 'a guest feels this today', rail: 'border-l-rose-500', match: e => e.kind === 'turn' || e.kind === 'late' },
+  { key: 'own', label: 'Needs an owner', sub: 'work or people with nobody attached', rail: 'border-l-amber-500', match: e => e.kind === 'unassigned' || e.kind === 'idle' },
+  { key: 'guest', label: 'Guest issues', sub: 'open complaints in-house', rail: 'border-l-pink-500', match: e => e.kind === 'guest' },
+]
+
+/**
+ * ONE exception row, everywhere — board and Command Center render the same component so an
+ * action learned on one page works on the other. Every row carries at least one direct verb:
+ * Assign / Reassign (inline roster), Give work (idle), + Task (prefilled sheet), open-in-Breezeway,
+ * and Handled. No row is ever a dead end you can only read.
+ */
+function ExcRow({ e, roster, open, onToggleAssign, onDone, onGiveWork, onAddTask, onAck, compact }: {
+  e: Exc; roster: Roster[]; open: boolean
+  onToggleAssign: () => void; onDone: () => void
+  onGiveWork: () => void; onAddTask?: (unit: string) => void; onAck?: () => void; compact?: boolean
+}) {
+  const btn = 'text-[12px] font-bold px-2.5 py-1.5 rounded-lg shrink-0'
+  return (
+    <div className={'pl-3 pr-3 ' + (compact ? 'py-2' : 'py-2.5') + ' border-l-4 ' +
+      (e.kind === 'turn' || e.kind === 'late' ? 'border-l-rose-500' : e.kind === 'guest' ? 'border-l-pink-400' : 'border-l-amber-400')}>
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[70px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
+        <span className="text-[13.5px] font-bold text-ink shrink-0">{e.who}</span>
+        {e.market ? <span className="text-[10px] font-semibold text-muted bg-app rounded px-1.5 py-0.5 shrink-0">{e.market}</span> : null}
+        <span className={'text-[13px] text-ink/75 flex-1 min-w-[180px] leading-snug' + (compact ? ' truncate' : '')}>{e.what}</span>
+        <span className="flex items-center gap-1.5 shrink-0 ml-auto">
+          {e.kind === 'idle' ? (
+            <button onClick={onGiveWork} className={btn + ' bg-ink text-white'}>Give work</button>
+          ) : e.taskId && !e.assignee ? (
+            <button onClick={onToggleAssign} className={btn + ' ' + (open ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>
+              <UserPlus size={12} className="inline mr-1 -mt-0.5" />Assign
+            </button>
+          ) : e.taskId ? (
+            <button onClick={onToggleAssign} title={'With ' + (e.assignee || 'someone') + ' — tap to reassign'}
+              className={btn + ' border border-line bg-white text-ink hover:border-ink/40'}>{e.assignee ? e.assignee.split(' ')[0] : 'Reassign'} ↺</button>
+          ) : null}
+          {!compact && e.kind !== 'idle' && onAddTask ? (
+            <button onClick={() => onAddTask(e.who)} title="File a new task on this unit"
+              className={btn + ' border border-line bg-white text-ink hover:border-ink/40'}>+ Task</button>
+          ) : null}
+          {e.taskId ? (
+            <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer" title="Open in Breezeway"
+              className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink shrink-0"><ExternalLink size={12} /></a>
+          ) : null}
+          {onAck ? (
+            <button onClick={onAck} title="Handled — hide it for today (on this device)"
+              className="p-1.5 rounded-lg text-muted hover:text-emerald-600 shrink-0"><CheckCircle2 size={15} /></button>
+          ) : null}
+        </span>
+      </div>
+      {open && e.taskId && (
+        <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster} onDone={onDone} />
+      )}
+    </div>
+  )
+}
+
 /**
  * NEEDS A HUMAN, on Mission Control (Jon, 2026-08-14). The same list the ops board leads with —
  * same fetches (shared 30s cache, so bouncing between the two pages costs one request), same rows,
@@ -165,25 +237,10 @@ export function NeedsHumanPanel() {
       </div>
       <div className="divide-y divide-line">
         {shown.map(e => (
-          <div key={e.key} className="px-4 py-2.5">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <span className={'text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[70px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
-              <span className="text-[13px] font-bold text-ink shrink-0">{e.who}</span>
-              <span className="text-[12.5px] text-ink/70 flex-1 min-w-[160px]">{e.what}</span>
-              {e.kind === 'idle' ? (
-                <Link href="/plan" className="text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg bg-ink text-white shrink-0">Give work</Link>
-              ) : e.taskId && !e.assignee ? (
-                <button onClick={() => setAssignFor(assignFor === e.key ? '' : e.key)}
-                  className={'text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 ' + (assignFor === e.key ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>Assign</button>
-              ) : e.taskId ? (
-                <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer"
-                  className="text-[11.5px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app shrink-0">{e.assignee ? e.assignee.split(' ')[0] : 'Open'}</a>
-              ) : null}
-            </div>
-            {assignFor === e.key && e.taskId && (
-              <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster} onDone={() => { setAssignFor(''); refresh() }} />
-            )}
-          </div>
+          <ExcRow key={e.key} e={e} roster={roster} open={assignFor === e.key} compact
+            onToggleAssign={() => setAssignFor(assignFor === e.key ? '' : e.key)}
+            onDone={() => { setAssignFor(''); refresh() }}
+            onGiveWork={() => { window.location.href = '/plan' }} />
         ))}
         {excs.length > shown.length && (
           <Link href="/plan" className="block px-4 py-2 text-[12px] font-semibold text-muted hover:text-ink">+ {excs.length - shown.length} more on the board</Link>
@@ -208,7 +265,9 @@ export function OpsV2() {
   useEffect(() => { try { const t = localStorage.getItem('opsv2_tab'); if (t === 'people' || t === 'push') setTab(t) } catch {} }, [])
   const pick = (t: 'board' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab', t) } catch {} }
 
-  const [addOpen, setAddOpen] = useState(false)
+  // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
+  // button on a Needs-a-human row lands you one keystroke from filing, not five).
+  const [addFor, setAddFor] = useState<string | null>(null)
 
   const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
   const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
@@ -239,19 +298,19 @@ export function OpsV2() {
             {k === 'push' && <PushCount />}
           </button>
         ))}
-        <button onClick={() => setAddOpen(true)}
+        <button onClick={() => setAddFor('')}
           className="ml-auto mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
           <Plus size={14} /> Add task
         </button>
       </div>
 
       {tab === 'board' && (
-        <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />
+        <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />
       )}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
       {tab === 'push' && <PushTab roster={roster} />}
 
-      {addOpen && <AddTaskSheet roster={roster} onClose={() => setAddOpen(false)} onDone={() => { setAddOpen(false); refresh() }} />}
+      {addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
     </div>
   )
 }
@@ -277,13 +336,22 @@ function PushCount() {
 // Needs-a-human list, then the full original board — its own market tabs, chips, status strip,
 // date picker and unit cards, untouched. The board's internal not-started band and staffing check
 // are suppressed here because the triage above already says both.
-function BoardTab({ excs, roster, onRefresh, onPeople }: {
-  excs: Exc[]; roster: Roster[]; onRefresh: () => void; onPeople: () => void
+function BoardTab({ excs, roster, onRefresh, onPeople, onAddTask }: {
+  excs: Exc[]; roster: Roster[]; onRefresh: () => void; onPeople: () => void; onAddTask: (unit: string) => void
 }) {
   const [assignFor, setAssignFor] = useState('')
   const [folded, setFolded] = useState(false)
-  const [showRest, setShowRest] = useState(false)
-  const shown = showRest ? excs : excs.slice(0, 6)
+  // Handled rows: hidden for today on this device, never silently — the header keeps the count
+  // and one tap brings them back.
+  const [acks, setAcks] = useState<Set<string>>(new Set())
+  const [showAcked, setShowAcked] = useState(false)
+  useEffect(() => { setAcks(loadAcks()) }, [])
+  const ack = (k: string) => setAcks(prev => { const n = new Set(prev); n.add(k); saveAcks(n); return n })
+  const unack = () => { setAcks(new Set()); saveAcks(new Set()) }
+
+  const liveExcs = excs.filter(e => !acks.has(e.key))
+  const ackedCount = excs.length - liveExcs.length
+  const visible = showAcked ? excs : liveExcs
 
   return (
     <div>
@@ -291,38 +359,48 @@ function BoardTab({ excs, roster, onRefresh, onPeople }: {
         <div className="rounded-2xl border border-rose-200 bg-white overflow-hidden mb-3">
           <button onClick={() => setFolded(f => !f)} className="w-full px-4 py-2.5 bg-rose-50/70 flex items-center gap-2 text-left">
             <AlertTriangle size={14} className="text-rose-700 shrink-0" />
-            <span className="text-[13px] font-bold text-rose-800">Needs a human</span>
-            <span className="text-[11px] font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{excs.length}</span>
+            <span className="text-[13.5px] font-bold text-rose-800">Needs a human</span>
+            <span className="text-[11px] font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{liveExcs.length}</span>
+            {ackedCount > 0 && (
+              <span onClick={ev => { ev.stopPropagation(); setShowAcked(s => !s) }}
+                className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 cursor-pointer">
+                {ackedCount} handled{showAcked ? ' · hide' : ''}
+              </span>
+            )}
             <ChevronDown size={14} className={'ml-auto text-rose-700/60 transition-transform shrink-0 ' + (folded ? '' : 'rotate-180')} />
           </button>
           {!folded && (
-            <div className="divide-y divide-line border-t border-rose-200">
-              {shown.map(e => (
-                <div key={e.key} className="px-4 py-2">
-                  <div className="flex items-center gap-2.5">
-                    <span className={'text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[66px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
-                    <span className="text-[13px] font-bold text-ink shrink-0">{e.who}</span>
-                    <span className="text-[12.5px] text-ink/60 flex-1 min-w-0 truncate">{e.what}</span>
-                    {e.kind === 'idle' ? (
-                      <button onClick={onPeople} className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg bg-ink text-white shrink-0">Give work</button>
-                    ) : e.taskId && !e.assignee ? (
-                      <button onClick={() => setAssignFor(assignFor === e.key ? '' : e.key)}
-                        className={'text-[11.5px] font-bold px-2.5 py-1 rounded-lg shrink-0 ' + (assignFor === e.key ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>Assign</button>
-                    ) : e.taskId ? (
-                      <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer"
-                        className="text-[11.5px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:bg-app shrink-0">{e.assignee ? e.assignee.split(' ')[0] : 'Open'}</a>
-                    ) : null}
-                  </div>
-                  {assignFor === e.key && e.taskId && (
-                    <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster} onDone={() => { setAssignFor(''); onRefresh() }} />
-                  )}
+            <div className="border-t border-rose-200">
+              {liveExcs.length === 0 && !showAcked ? (
+                <div className="px-4 py-3 text-[13px] flex items-center gap-2 flex-wrap">
+                  <CheckCircle2 size={15} className="text-emerald-600" />
+                  <span className="font-semibold text-ink">All handled.</span>
+                  <span className="text-muted">{ackedCount} item{ackedCount === 1 ? '' : 's'} marked done today on this device.</span>
+                  <button onClick={unack} className="text-[12px] font-bold text-brand-700 ml-auto">Bring them back</button>
                 </div>
-              ))}
-              {excs.length > 6 && !showRest && (
-                <button onClick={() => setShowRest(true)} className="w-full px-4 py-2 text-left text-[12px] font-semibold text-muted hover:text-ink">
-                  + {excs.length - 6} more
-                </button>
-              )}
+              ) : EXC_GROUPS.map(g => {
+                const rows = visible.filter(g.match)
+                if (!rows.length) return null
+                return (
+                  <div key={g.key}>
+                    <div className="px-4 pt-2.5 pb-1 flex items-baseline gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-ink/80">{g.label}</span>
+                      <span className="text-[11px] text-muted">· {rows.length} — {g.sub}</span>
+                    </div>
+                    <div className="divide-y divide-line">
+                      {rows.map(e => (
+                        <div key={e.key} className={acks.has(e.key) ? 'opacity-45' : ''}>
+                          <ExcRow e={e} roster={roster} open={assignFor === e.key}
+                            onToggleAssign={() => setAssignFor(assignFor === e.key ? '' : e.key)}
+                            onDone={() => { setAssignFor(''); onRefresh() }}
+                            onGiveWork={onPeople} onAddTask={onAddTask}
+                            onAck={acks.has(e.key) ? undefined : () => ack(e.key)} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -672,9 +750,9 @@ const SHEET_TEMPLATES: { key: string; label: string; hint: string; department: s
 ]
 type Intel = { lastFeedback?: { rating: number | null; date: string | null; excerpt: string | null } | null; checklist?: string[] }
 
-function AddTaskSheet({ roster, onClose, onDone }: { roster: Roster[]; onClose: () => void; onDone: () => void }) {
+function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roster[]; onClose: () => void; onDone: () => void; initialQuery?: string }) {
   const [listings, setListings] = useState<Listing[]>([])
-  const [uq, setUq] = useState('')
+  const [uq, setUq] = useState(initialQuery || '')
   const [unit, setUnit] = useState<Listing | null>(null)
   const [tpl, setTpl] = useState('custom')
   const [title, setTitle] = useState('')
