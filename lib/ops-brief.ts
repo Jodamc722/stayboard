@@ -1034,39 +1034,42 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
 
   const eyebrow = (t: string) => `<p style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#9ca3af;margin:18px 8px 8px;text-transform:uppercase">${t}</p>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
-  // PER-CLEANER HOURS TODAY (Jon, 2026-08-19: "look at each cleaner and project a number of
-  // hours each should work based on the number of cleans assigned"). Hours only — no dollars,
-  // so it is safe on the Miami/Broward team briefs (Jon's standing rule). Projected = assigned
-  // departure cleans × the settled hours-per-clean for that market, plus the unmatched-hours
-  // share; shown beside today's Homebase shift so over/under is visible BEFORE the day starts.
-  // A clean with two names on it counts half to each. Additive — never blocks the brief.
+  // PER-CLEANER, PROFIT-FIRST (Jon, 2026-08-19: "base hours on work and rev to make sure
+  // profitable"). For each cleaner: her assigned cleans, the MOST hours their revenue supports
+  // at the company target margin, and her actual shift. Inside the budget = a profitable day at
+  // target; over it, the day pays less than target however well it goes. Dollar amounts appear
+  // on the FULL brief only — the team briefs get cleans, hours and the read (standing rule).
   let cleanerCard = ''
   try {
     const { projectCleaners } = await import('./labor-plan')
     const proj = await projectCleaners(ymdET(new Date()))
+    const showRev = variant === 'full'
     const rowsC = proj.people
       .map(p => {
         const mine = (variant === 'full' || variant === 'GM') ? p.byMarket : p.byMarket.filter(b => b.market === String(variant).toLowerCase())
         const cleansN = Math.round(mine.reduce((a, b) => a + b.cleans, 0) * 10) / 10
-        const hoursN = Math.round(mine.reduce((a, b) => a + b.hours, 0) * 10) / 10
-        return { name: p.name, cleans: cleansN, hours: hoursN, sched: p.scheduledHours }
+        const revN = Math.round(mine.reduce((a, b) => a + b.revenue, 0))
+        const budN = Math.round(mine.reduce((a, b) => a + b.budgetHours, 0) * 10) / 10
+        return { name: p.name, cleans: cleansN, rev: revN, budget: budN, sched: p.scheduledHours }
       })
       .filter(r => r.cleans > 0)
-      .sort((a, b) => b.hours - a.hours)
+      .sort((a, b) => b.rev - a.rev)
     if (rowsC.length) {
-      cleanerCard = card('Cleaner hours today — from assignments', rowsC.length,
-        table(['Cleaner', 'Cleans', 'Hours needed', 'Scheduled', 'Read'], rowsC.map(r => {
+      const heads = showRev ? ['Cleaner', 'Cleans', 'Earns', `Hours it affords`, 'Shift', 'Read'] : ['Cleaner', 'Cleans', 'Hours it affords', 'Shift', 'Read']
+      cleanerCard = card(`Cleaner hours today — profitable at ${proj.targetMarginPct}%?`, rowsC.length,
+        table(heads, rowsC.map(r => {
+          const over = r.sched != null && r.sched > r.budget
           const readTxt = r.sched == null ? `<span style="${S.muted}">no shift found</span>`
-            : r.sched + 1 < r.hours ? `<span style="${S.red}">short ${Math.round((r.hours - r.sched) * 10) / 10}h — needs help or a longer shift</span>`
-            : r.sched > r.hours + 2 ? `<span style="${S.amber}">${Math.round((r.sched - r.hours) * 10) / 10}h spare — can take more</span>`
-            : `<span style="${S.green}">right-sized</span>`
+            : over ? `<span style="${S.red}">over by ${Math.round((r.sched - r.budget) * 10) / 10}h — add a clean or trim the shift</span>`
+            : `<span style="${S.green}">profitable</span>`
           return `<tr><td style="${S.td}"><b>${esc(r.name)}</b></td>
             <td style="${S.td};text-align:right">${r.cleans}</td>
-            <td style="${S.td};text-align:right"><b>~${r.hours}h</b></td>
+            ${showRev ? `<td style="${S.td};text-align:right">$${r.rev.toLocaleString()}</td>` : ''}
+            <td style="${S.td};text-align:right"><b>${r.budget}h</b></td>
             <td style="${S.td};text-align:right">${r.sched != null ? r.sched + 'h' : '—'}</td>
             <td style="${S.td}">${readTxt}</td></tr>`
         }).join('')) +
-        `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Hours needed = assigned departure cleans × the settled hours-per-clean for that market (Miami and Broward each learn their own), plus the share of the day that never matches a clean. A clean with two names counts half to each. Scheduled = today's Homebase shift.</p>`, '#0e7490')
+        `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">&ldquo;Hours it affords&rdquo; = what the cleans&rsquo; net revenue supports at the ${proj.targetMarginPct}% target — finish the day inside it and it is profitable. A clean with two names counts half to each.</p>`, '#0e7490')
     }
   } catch { /* additive */ }
 
@@ -1166,23 +1169,23 @@ function deltaPill(v: any, suffix = '%', goodIsUp = true): string {
 export async function buildGmBrief(): Promise<OpsBrief> {
   const { buildKpi } = await import('./kpi')
   const d = await gather('GM')
-  // PER-CLEANER HOURS, LEADERSHIP VIEW (Jon, 2026-08-19): the same projection the team briefs
-  // carry, compressed — who is short and who has spare hours, before the day starts.
+  // PER-CLEANER, LEADERSHIP VIEW (Jon, 2026-08-19): one line — does today's schedule keep each
+  // cleaner's day profitable at the target margin? Names only where it is not.
   let gmCleanerCard = ''
   try {
     const { projectCleaners } = await import('./labor-plan')
     const proj = await projectCleaners(ymdET(new Date()))
-    const rowsG = proj.people.filter(p => p.cleans > 0).sort((a, b) => b.projectedHours - a.projectedHours)
+    const rowsG = proj.people.filter(p => p.cleans > 0)
     if (rowsG.length) {
-      const shortG = rowsG.filter(r => r.scheduledHours != null && (r.scheduledHours as number) + 1 < r.projectedHours)
-      const spareG = rowsG.filter(r => r.scheduledHours != null && (r.scheduledHours as number) > r.projectedHours + 2)
-      const totalNeed = Math.round(rowsG.reduce((a, r) => a + r.projectedHours, 0) * 10) / 10
+      const totalRev = Math.round(rowsG.reduce((a, r) => a + r.revenue, 0))
+      const totalBudget = Math.round(rowsG.reduce((a, r) => a + r.budgetHours, 0) * 10) / 10
       const totalSched = Math.round(rowsG.reduce((a, r) => a + (r.scheduledHours || 0), 0) * 10) / 10
+      const overG = rowsG.filter(r => r.scheduledHours != null && (r.scheduledHours as number) > r.budgetHours)
       gmCleanerCard = card('Cleaner hours today', rowsG.length, `
-        <p style="margin:0;font-size:13px;line-height:1.6"><b>${totalNeed}h</b> of cleaning assigned across ${rowsG.length} cleaners · <b>${totalSched}h</b> on the Homebase schedule.` +
-        (shortG.length ? `<br><span style="${S.red}">Short: ${shortG.slice(0, 4).map(r => esc(r.name) + ' &minus;' + (Math.round((r.projectedHours - (r.scheduledHours as number)) * 10) / 10) + 'h').join(', ')}</span>` : '') +
-        (spareG.length ? `<br><span style="${S.amber}">Spare: ${spareG.slice(0, 4).map(r => esc(r.name) + ' +' + (Math.round(((r.scheduledHours as number) - r.projectedHours) * 10) / 10) + 'h').join(', ')}</span>` : '') +
-        ((!shortG.length && !spareG.length) ? `<br><span style="${S.green}">Every cleaner's shift matches their assigned work.</span>` : '') +
+        <p style="margin:0;font-size:13px;line-height:1.6">Assigned cleans earn <b>$${totalRev.toLocaleString()}</b> net — that supports <b>${totalBudget}h</b> at the ${proj.targetMarginPct}% target · <b>${totalSched}h</b> scheduled.` +
+        (overG.length
+          ? `<br><span style="${S.red}">Over budget: ${overG.slice(0, 4).map(r => esc(r.name) + ' +' + (Math.round(((r.scheduledHours as number) - r.budgetHours) * 10) / 10) + 'h').join(', ')}${overG.length > 4 ? ' +' + (overG.length - 4) + ' more' : ''}</span>`
+          : `<br><span style="${S.green}">Every scheduled shift is inside what its cleans earn.</span>`) +
         `</p>`, '#0e7490')
     }
   } catch { /* additive */ }
@@ -1229,6 +1232,15 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const shiftDays = (ymd: string, n: number) => { const dd = new Date(ymd + 'T12:00:00'); dd.setDate(dd.getDate() + n); return ymdET(dd) }
   const winFrom = shiftDays(yEcon, -6), winTo = yEcon
   const prevFrom = shiftDays(yEcon, -13), prevTo = shiftDays(yEcon, -7)
+  // THE ENGINE OWNS THE MONEY (Jon, 2026-08-19: "cost at $120 per checkout — is this based only
+  // on HK? we need HK, then HK and Supervisor, then maintenance completely separate"). The old
+  // 7-day P&L guessed who was cleaning staff from Homebase role text and a task vote, so
+  // supervisors leaked into the housekeeping payroll, and it divided by ALL checkouts — printing
+  // ~$120/checkout while every other surface said $73/clean. This run is the SAME engine as the
+  // Labor board, the Daily Labor email and the full brief: declared crews, net-of-channel
+  // revenue, matched departure cleans — HK first, supervisors loaded second, maintenance apart.
+  let ec7: Awaited<ReturnType<typeof laborEconomics>> | null = null
+  try { ec7 = await laborEconomics({ from: winFrom, to: winTo, market: 'all' }) } catch { ec7 = null }
 
   type Bucket = {
     key: string; label: string
@@ -1606,51 +1618,31 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     </tr>`
   })()
 
-  const moneyRows = `
-    <tr><td style="${S.td}">Guest cleaning fees <span style="${S.muted}">${oursTot.cleans} checkouts</span></td>
-      <td style="${S.td};text-align:right"><b>${money0(oursTot.fees)}</b></td></tr>
-    <tr><td style="${S.td}">Owner &amp; deep cleans <span style="${S.muted}">billable value in Breezeway</span></td>
-      <td style="${S.td};text-align:right">${oursTot.billableHk ? `<b>${money0(oursTot.billableHk)}</b>` : `<span style="${S.muted}">none billed this week</span>`}</td></tr>
-    <tr><td style="${S.td}"><b>Total cleaning revenue</b></td>
-      <td style="${S.td};text-align:right"><b>${money0(cleanRevWin)}</b> <span style="${S.muted}">${feePerClean != null ? money0(feePerClean) + '/clean' : ''}</span></td></tr>
-    <tr><td style="${S.td}">Housekeeping payroll <span style="${S.muted}">clocked, cleaning staff only</span></td>
-      <td style="${S.td};text-align:right">${payrollWin != null ? `<b>${money0(payrollWin)}</b> <span style="${S.muted}">${Math.round(hoursWin)} hrs</span>` : `<span style="${S.amber}">no payroll data — connect Homebase</span>`}</td></tr>
-    ${payrollAll != null && payrollWin != null && payrollAll > payrollWin ? `<tr><td style="${S.td};color:#9ca3af">All departments <span style="${S.muted}">maintenance &amp; inspection included</span></td>
-      <td style="${S.td};text-align:right;color:#9ca3af">${money0(payrollAll)} · ${Math.round(hoursAll)} hrs</td></tr>` : ''}
-    <tr><td style="${S.td}"><b>Cost per clean</b> <span style="${S.muted}">${comparableWeeks ? 'vs the week before' : 'this week'}</span></td>
-      <td style="${S.td};text-align:right">${cpcWin != null ? `<b>${money0(cpcWin)}</b> ${comparableWeeks ? deltaPill(cpcDelta, '%', false) + ` <span style="${S.muted}">was ${money0(cpcPrevWin)}</span>` : `<span style="${S.muted}">last week not comparable</span>`}` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}"><b>Housekeeping margin</b></td>
-      <td style="${S.td};text-align:right">${marginWin != null ? `<b style="${marginPctWin != null && marginPctWin < 10 ? S.red : S.green}">${money0(marginWin)}${marginPctWin != null ? ' · ' + pct1(marginPctWin) : ''}</b> ${comparableWeeks ? deltaPill(marginDelta, ' pts') : ''}` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}">Labor as a share of the fee</td>
-      <td style="${S.td};text-align:right">${laborPctOfClean != null ? `<b style="${laborPctOfClean > 90 ? S.red : laborPctOfClean > 70 ? S.amber : S.green}">${pct1(laborPctOfClean)}</b>` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}"><b>Housekeeping hours per clean</b> <span style="${S.muted}">clocked hours ÷ checkouts</span></td>
-      <td style="${S.td};text-align:right">${(hoursWin && oursTot.cleans) ? `<b>${(hoursWin / oursTot.cleans).toFixed(1)}</b> <span style="${S.muted}">hrs · ${Math.round(hoursWin)} hrs over ${oursTot.cleans} cleans</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
-    <tr><td style="${S.td}">Departure cleans closed in Breezeway <span style="${S.muted}">paperwork compliance</span></td>
-      <td style="${S.td};text-align:right">${oursTot.cleans ? `<b style="${(oursTot.bzClosed / oursTot.cleans) < 0.8 ? S.red : (oursTot.bzClosed / oursTot.cleans) < 0.95 ? S.amber : S.green}">${pct1((oursTot.bzClosed / oursTot.cleans) * 100)}</b> <span style="${S.muted}">${oursTot.bzClosed} closed of ${oursTot.cleans} checkouts</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
-    ${oursTot.cleans && oursTot.bzClosed < oursTot.cleans * 0.95 ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
-      <span style="${S.amber}">${oursTot.cleans - oursTot.bzClosed} departure cleans were done but never closed in Breezeway.</span>
-      <span style="${S.muted}">The guest checked out, so the unit was cleaned — the task just never got marked complete. That is why the Labor board's cost per clean runs higher than this page: it divides the same payroll by the ${oursTot.bzClosed} closed tasks, while this divides by all ${oursTot.cleans} turnovers that actually happened.</span></td></tr>` : ''}
-    <tr><td colspan="2" style="${S.td};background:#f8fafc"><span style="${S.muted}">
-      <b>A clean means a DEPARTURE clean.</b> Cost per clean is housekeeping payroll ÷ ${oursTot.cleans} checkouts — the turnover the guest cleaning fee actually pays for. Common-area work, pool and trash routes, office cleaning and linen refreshes are real housekeeping hours but are NOT turnovers, so they never enter the denominator. The Labor board counts it the same way.
-    </span></td></tr>
-    <tr><td style="${S.td}">Hours by department <span style="${S.muted}">Breezeway recorded</span></td>
-      <td style="${S.td};text-align:right"><b>${hrs(tot.hkMins)}</b> <span style="${S.muted}">housekeeping</span> · <b>${hrs(tot.maintMins)}</b> <span style="${S.muted}">maintenance</span> · <b>${hrs(tot.inspMins)}</b> <span style="${S.muted}">inspection</span></td></tr>
-    <tr><td style="${S.td}">Billable labor <span style="${S.muted}">maintenance &amp; inspection, billed to owners</span></td>
-      <td style="${S.td};text-align:right">${billableKnown ? `<b>${money0(tot.billable - tot.billableHk)}</b> <span style="${S.muted}">separate from cleaning</span>` : `<span style="${S.muted}">no billing detail synced</span>`}</td></tr>
-    ${cols.find(c => c.key === 'Vendors' && c.fees) ? `<tr><td style="${S.td}">Vendor buildings <span style="${S.muted}">kept out of the margin</span></td>
-      <td style="${S.td};text-align:right"><span style="${S.muted}">${money0((cols.find(c => c.key === 'Vendors') as Bucket).fees)} in fees · outside crews clean these</span></td></tr>` : ''}
-    ${trendLine ? `<tr><td colspan="2" style="${S.td}">
-      <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Cost per clean · each day this week</div>
-      <div style="line-height:1.9">${trendLine}</div></td></tr>` : ''}
-    ${!comparableWeeks && cpcPrevWin != null ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
-      <span style="${S.amber}">Week-over-week is withheld this time.</span> <span style="${S.muted}">Last week recorded ${hpcPrev != null ? hpcPrev.toFixed(1) : '—'} clocked hours per clean against ${hpcWin != null ? hpcWin.toFixed(1) : '—'} this week — that gap is timecard coverage changing, not the cost of a clean, so comparing the two would mislead.</span></td></tr>` : ''}
+  // Engine layers, exactly Jon's structure. If payroll came back partial, say so and withhold.
+  const laborRows = (() => {
+    if (!ec7) return `<tr><td colspan="2" style="${S.td}"><span style="${S.muted}">Labor engine unavailable this run — see the Daily Labor email.</span></td></tr>`
+    if (ec7.payrollAudit && !ec7.payrollAudit.complete)
+      return `<tr><td colspan="2" style="${S.td};background:#fef2f2"><span style="${S.red}">Homebase returned incomplete payroll (${esc(ec7.payrollAudit.failedWeeks.join(', '))}) — labor withheld rather than shown wrong.</span></td></tr>`
+    const K7: any = ec7.kpi
+    const H7 = K7.housekeeping, L7 = K7.housekeepingLoaded, M7 = K7.maintenance
+    return `
+    <tr><td style="${S.td}"><b>Net cleaning revenue</b> <span style="${S.muted}">${H7.cleans} departure cleans · net of the channel's cut</span></td>
+      <td style="${S.td};text-align:right"><b>${money0(H7.revenueWithCharged != null ? H7.revenueWithCharged : H7.revenue)}</b> <span style="${S.muted}">${H7.revPerClean != null ? money0(H7.revPerClean) + '/clean' : ''}</span></td></tr>
+    <tr><td style="${S.td}"><b>Housekeeping</b> <span style="${S.muted}">housekeepers only — the number to manage</span></td>
+      <td style="${S.td};text-align:right">${money0(H7.payroll)} payroll · <b>${H7.costPerClean != null ? money0(H7.costPerClean) : '—'}/clean</b> · <b style="${(H7.margin || 0) >= 0 ? S.green : S.red}">${money0(H7.margin)} kept${H7.marginPct != null ? ' (' + pct1(H7.marginPct) + ')' : ''}</b></td></tr>
+    ${L7 ? `<tr><td style="${S.td}"><b>+ Supervisors</b> <span style="${S.muted}">loaded cost of running housekeeping</span></td>
+      <td style="${S.td};text-align:right">${money0(L7.payroll)} loaded · ${L7.costPerClean != null ? money0(L7.costPerClean) : '—'}/clean · <b style="${(L7.margin || 0) >= 0 ? S.green : S.red}">${money0(L7.margin)} kept${L7.marginPct != null ? ' (' + pct1(L7.marginPct) + ')' : ''}</b></td></tr>` : ''}
+    <tr><td style="${S.td};border-top:2px solid #111827"><b>Maintenance</b> <span style="${S.muted}">separate department — never inside cost per clean</span></td>
+      <td style="${S.td};border-top:2px solid #111827;text-align:right">${money0(M7.revenue)} billed vs ${money0(M7.payroll)} wages · <b style="${(M7.margin || 0) >= 0 ? S.green : S.red}">${money0(M7.margin)}</b>${M7.tasksNoCharge ? ` <span style="${S.amber}">· ${M7.tasksNoCharge} tasks with no charge entered</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">All in <span style="${S.muted}">HK + maintenance + supervisors</span></td>
+      <td style="${S.td};text-align:right">${money0(K7.allIn.revenue)} rev vs ${money0(K7.allIn.payroll)} labor · <b style="${(K7.allIn.margin || 0) >= 0 ? S.green : S.red}">${money0(K7.allIn.margin)}${K7.allIn.marginPct != null ? ' (' + pct1(K7.allIn.marginPct) + ')' : ''}</b></td></tr>`
+  })()
+  const moneyRows = laborRows + `
+    <tr><td style="${S.td}">Departure cleans closed in Breezeway <span style="${S.muted}">paperwork drives every number above</span></td>
+      <td style="${S.td};text-align:right">${oursTot.cleans ? `<b style="${(oursTot.bzClosed / oursTot.cleans) < 0.8 ? S.red : (oursTot.bzClosed / oursTot.cleans) < 0.95 ? S.amber : S.green}">${pct1((oursTot.bzClosed / oursTot.cleans) * 100)}</b> <span style="${S.muted}">${oursTot.bzClosed} closed of ${oursTot.cleans} checkouts — an unclosed clean earns nobody credit and understates the margin</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
     ${cleanersNoTimecard.length ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
       <span style="${S.amber}">${cleanersNoTimecard.length} ${cleanersNoTimecard.length === 1 ? 'person' : 'people'} cleaned this week with no Homebase timecard.</span>
-      <span style="${S.muted}">${esc(cleanersNoTimecard.slice(0, 8).join(', '))}${cleanersNoTimecard.length > 8 ? ' and others' : ''}. Either they are a vendor or contractor (no payroll of ours, which is correct) or their name does not match between Homebase and Breezeway — in which case their hours are missing and the cost per clean above is too low. Worth a look.</span></td></tr>` : ''}
-    <tr><td colspan="2" style="${S.td};background:#f8fafc">
-      <span style="${S.muted}"><b>Why the numbers above do not depend on Breezeway.</b> Newer staff do not always close their tasks, so task counts and recorded department hours understate the real work. Every figure on this page is therefore built from sources that cannot be missed: <b>cleans are counted from checkouts</b> (a guest left, so a unit was cleaned) and <b>payroll and hours come from timecards</b>. The task count is shown only for comparison — it includes deep cleans, strips and mid-stay work, so it will not match the checkout count either way.</span></td></tr>
-    ${coverageWarn ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
-      <span style="${S.amber}">Read this margin as a ceiling.</span> <span style="${S.muted}">Homebase shows ${Math.round(hoursWin)} clocked hours this week while Breezeway recorded ${Math.round(bwHours)} hours of completed work — so some of the crew is not on a timecard, and real payroll is higher than the figure above.</span></td></tr>` : ''}
+      <span style="${S.muted}">${esc(cleanersNoTimecard.slice(0, 8).join(', '))}${cleanersNoTimecard.length > 8 ? ' and others' : ''}. Either a vendor/contractor (correct) or a name mismatch between Homebase and Breezeway — in which case their hours are missing and cost per clean reads low.</span></td></tr>` : ''}
     <tr><td style="${S.td};color:#9ca3af">Room revenue <span style="${S.muted}">Guesty · fuller numbers in your revenue app</span></td>
       <td style="${S.td};text-align:right;color:#9ca3af">${money0(rev.total)} ${deltaPill(rev.totalChange)} <span style="${S.muted}">ADR ${money0(rev.adr)}</span></td></tr>`
 
@@ -1710,12 +1702,22 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   ${gmCleanerCard}
 
-  ${card(`Housekeeping P&L · last 7 days (${winNice})`, null, tbl(moneyRows), '#047857')}
-  ${card('By market · last 7 days', null,
-    table(['Market', 'Cleans', 'Revenue', 'Rev/clean', 'Labor (est)', 'Margin (est)', 'Maint hrs', 'Billable'], marketRows) +
-    `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af;line-height:1.5">Cleans, revenue and revenue per clean are measured — a checkout belongs to exactly one market.
-     <b>Labor and margin are estimates:</b> Homebase is one location with no market on a timecard, so the real clocked payroll is divided across markets by each market's share of checkouts. Use them to compare revenue per turn, not to judge one crew against another.</p>`,
-    '#4338ca')}
+  ${card(`Labor · last 7 days (${winNice})`, null, tbl(moneyRows), '#047857')}
+  ${(() => {
+    if (!ec7 || (ec7.payrollAudit && !ec7.payrollAudit.complete)) return ''
+    const rowsM = (ec7.buckets || []).filter((b: any) => b.inHouse && b.cleans > 0).map((b: any) => `
+    <tr><td style="${S.td}"><b>${esc(String(b.label))}</b></td>
+      <td style="${S.td};text-align:right">${b.cleans}</td>
+      <td style="${S.td};text-align:right">${money0(b.cleaningRevenue)}</td>
+      <td style="${S.td};text-align:right">${money0(b.payroll)}</td>
+      <td style="${S.td};text-align:right"><b>${b.laborCostPerClean != null ? money0(b.laborCostPerClean) : '—'}</b></td>
+      <td style="${S.td};text-align:right">${b.hoursPerClean != null ? b.hoursPerClean + 'h' : '—'}</td>
+      <td style="${S.td};text-align:right;color:${(b.margin || 0) >= 0 ? '#047857' : '#b91c1c'}">${b.marginPct != null ? pct1(b.marginPct) : '—'}</td></tr>`).join('')
+    return rowsM ? card('Housekeeping by market · last 7 days', null,
+      table(['Market', 'Cleans', 'Net revenue', 'HK payroll', '$ / clean', 'h / clean', 'Margin %'], rowsM) +
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af;line-height:1.5">Housekeepers only, from the shared labor engine — a cleaner working both markets has her wages split by her share of cleans in each, so nobody is counted twice. Supervisors and maintenance are never in these rows.</p>`,
+      '#4338ca') : ''
+  })()}
   ${repRows ? card('Guest score by market · last 30 days', null, tbl(repRows), '#d97706') : ''}
   ${card('Guest health', null, tbl(guestRows), '#0891b2')}
   ${card('Where money is leaking', null, tbl(riskRows), '#dc2626')}
