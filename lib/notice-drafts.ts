@@ -309,7 +309,11 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
         + (isSafety
           ? `<p style="color:#b45309;font-weight:bold">⚠ Safety copy — this notice is marked sent but the send could not be confirmed in ${esc(cfg.noticeDrafts.fromEmail)}'s Sent folder. If the building already received it, discard this draft. (Delete this line before sending.)</p>`
           : '')
+      // Small "Lighthouse" signature at the foot of every engine-filed draft (Jon, 2026-08-19:
+      // "add a small note to bottom of email that just says Lighthouse, small font") — so the desk
+      // can tell an engine draft from a hand-written one at a glance.
       const html = reminder + '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.55;white-space:pre-wrap">' + esc(d.body) + '</div>'
+        + '<p style="font-family:Arial,sans-serif;font-size:11px;color:#9aa5b1;margin-top:18px">Lighthouse</p>'
       const r = await draftGmail({
         fromEmail: cfg.noticeDrafts.fromEmail,
         to: d.to.split(',').map(s => s.trim()).filter(Boolean),
