@@ -137,7 +137,11 @@ export async function POST(req: NextRequest) {
             owner: st ? st.owner : (fallbackOwner || '(listing not tied to any owner this month)'),
           }
           const dupKey = code + '|' + lid
-          if (!dead && money > 1 && code && !onStatement.has(code) && !seenCode.has(dupKey)) {
+          // Mid-month, a guest who has not checked out yet has legitimately posted little or
+          // nothing — counting future arrivals made August look $183k short when it was mostly
+          // stays that simply have not happened. Only a FINISHED stay owes the ledger its money.
+          const finished = String(r.check_out || '') <= new Date().toISOString().slice(0, 10)
+          if (!dead && finished && money > 1 && code && !onStatement.has(code) && !seenCode.has(dupKey)) {
             seenCode.add(dupKey); missing.push(row); missingMoney += money
           }
           const upd = String((r as any).upd || '')
