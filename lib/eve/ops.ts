@@ -1,0 +1,274 @@
+// OPS domain — Breezeway work, glitches, claims, inspections, the schedule.
+//
+// This is the domain Eve was most blind to: 65 code paths in this app read breezeway_tasks_sync and
+// Eve read none of them. Note the two DIFFERENT things called "glitch": the `glitches` TABLE (the
+// 7-lane board) and Breezeway tasks NAMED /glitch|guest reported/. They are joined by
+// glitches.breezeway_task_id but they are not the same records, so they get separate tools.
+import 'server-only'
+import { loadBehind } from '@/lib/ops-behind'
+import { isDepartureCleanName } from '@/lib/breezeway'
+import { STAGES, effectiveDue, urgencyOf, gatesFor, daysUntil, itemsTotal } from '@/lib/claims'
+import { nextCheckInMap } from '@/lib/claim-turnover'
+import type { EveTool, EveDomain } from './types'
+import { obj, S } from './types'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing } from './ctx'
+
+// Status predicates. There is no enum on the mirror — every board in the app regex-matches, and
+// finished_at OVERRIDES the status label because the field app sets it even when the string is odd.
+const IS_DONE = /complete|finish|close|approv/
+const IS_RUNNING = /progress|started/
+const IS_GONE = /delete|cancel/
+
+function taskState(t: any): 'done' | 'running' | 'gone' | 'open' {
+  const s = lc(t.status)
+  if (IS_GONE.test(s)) return 'gone'
+  if (t.finished_at || IS_DONE.test(s)) return 'done'
+  if (IS_RUNNING.test(s) || t.started_at) return 'running'
+  return 'open'
+}
+function assigneeNames(t: any): string[] {
+  const a = t.assignees
+  if (Array.isArray(a)) return a.map((x: any) => String(x?.name || '')).filter(Boolean)
+  return t.assignee_name ? [String(t.assignee_name)] : []
+}
+// SAFE column list. Rule 1: never `raw` over thousands of rows — description comes via JSON path.
+const TASK_COLS = 'id,reference_property_id,name,status,scheduled_date,assignees,assignee_name,started_at,finished_at,total_minutes,type_department,report_url,linked_reservation_id'
+
+export const OPS_TOOLS: EveTool[] = [
+  {
+    name: 'search_tasks',
+    description: 'Search Breezeway work (cleans, inspections, maintenance, safety) over a date range. Filter by from/to (scheduled_date), unit name or listing id, dept (housekeeping|inspection|maintenance|safety), state (open|running|done|all), and a name query. Set departure_cleans_only to see ONLY real turnover cleans (a deep clean or oven clean is NOT a departure clean). This is the raw work log — for "what is happening today" use ops_today instead.',
+    input_schema: obj({ from: S.str, to: S.str, name: S.str, id: S.str, dept: S.str, state: S.str, query: S.str, departure_cleans_only: S.bool, limit: S.num }),
+    run: async (input, ctx) => {
+      const lim = clampLimit(input?.limit, 40, 150)
+      const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : shiftDay(ctx.today, -7)
+      const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : ctx.today
+      let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS)
+        .gte('scheduled_date', from).lte('scheduled_date', to)
+      if (input?.dept) q = q.eq('type_department', lc(input.dept))
+      const unit = resolveListing(ctx, input)
+      if (unit) q = q.eq('reference_property_id', unit.id)
+      // Rule 2: order before limit, always.
+      const { data } = await q.order('scheduled_date', { ascending: false }).order('id').limit(lim)
+      let rows = (data || []).map((t: any) => ({
+        id: t.id, unit: ctx.nameOf(t.reference_property_id), building: ctx.buildingOf(t.reference_property_id),
+        name: t.name, dept: t.type_department, date: t.scheduled_date,
+        state: taskState(t), assignees: assigneeNames(t), minutes: t.total_minutes,
+        started_at: t.started_at, finished_at: t.finished_at,
+        is_departure_clean: isDepartureCleanName(t.name),
+      })).filter((t: any) => t.state !== 'gone')
+      const st = lc(input?.state)
+      if (st && st !== 'all') rows = rows.filter((t: any) => t.state === st)
+      if (input?.query) rows = rows.filter((t: any) => has(t.name, input.query))
+      if (input?.departure_cleans_only) rows = rows.filter((t: any) => t.is_departure_clean)
+      return {
+        window: { from, to }, count: rows.length, truncated: cap(data || [], lim).truncated,
+        scopedToUnit: unit ? unit.meta.name : null, tasks: rows,
+        note: cap(data || [], lim).truncated ? 'HIT THE ROW CAP — this is a partial list, narrow the window or the unit before drawing conclusions.' : undefined,
+      }
+    },
+  },
+
+  {
+    name: 'behind_now',
+    description: 'Which departure cleans are RUNNING BEHIND right now. A clean only counts as behind once the guest has actually left (checkout time + 30 min grace) and it still has not started — so this never cries wolf about a clean that simply is not due yet. Returns the units, who is assigned, when the next guest arrives, and an urgency level (warn = behind, urgent = someone arrives today).',
+    input_schema: obj({}),
+    run: async () => {
+      const b: any = await safe(loadBehind(), null as any)
+      if (!b) return { error: 'Could not compute the behind list right now.' }
+      return {
+        date: b.date, level: b.level || 'clear',
+        not_started: b.notStarted, same_day_arrivals: b.sameDay, earliest_arrival: b.earliestIn,
+        unassigned: b.unassigned,
+        waiting_on_guest: b.waiting,
+        units: (b.units || []).map((u: any) => ({ unit: u.unit, market: u.market, checkout: u.checkOutTime, next_arrival: u.arrivingAt, assignee: u.assignee })),
+        note: 'waiting_on_guest are NOT a problem — the guest has not checked out yet.',
+      }
+    },
+  },
+
+  {
+    name: 'unit_work_history',
+    description: 'Everything that has happened to ONE unit: open work, recent completed work, and when it last had an audit / PM / battery change / AC filter. Use this when asked why a unit keeps having problems, or before recommending any work on it.',
+    input_schema: obj({ name: S.str, id: S.str, days: S.num }),
+    run: async (input, ctx) => {
+      const unit = resolveListing(ctx, input)
+      if (!unit) return { error: 'Unit not found — give me the exact unit name or a listing id.' }
+      const days = clampDays(input?.days, 180, 420)
+      const from = shiftDay(ctx.today, -days)
+      const { data } = await ctx.db.from('breezeway_tasks_sync').select(TASK_COLS)
+        .eq('reference_property_id', unit.id).gte('scheduled_date', from)
+        .order('scheduled_date', { ascending: false }).order('id').limit(400)
+      const all = (data || []).map((t: any) => ({ ...t, state: taskState(t) })).filter((t: any) => t.state !== 'gone')
+      const open = all.filter((t: any) => t.state !== 'done')
+      const lastOf = (re: RegExp) => {
+        const hit = all.find((t: any) => t.state === 'done' && re.test(lc(t.name)))
+        return hit ? String(hit.finished_at || hit.scheduled_date).slice(0, 10) : null
+      }
+      const [glitchRes, auditRes] = await Promise.all([
+        safe(ctx.db.from('glitches').select('id,overview,status,due_date,created_at').eq('listing_id', unit.id).order('created_at', { ascending: false }).limit(25), { data: [] } as any),
+        safe(ctx.db.from('audit_items').select('id,room,kind,title,severity,status,created_at').eq('listing_id', unit.id).in('status', ['open', 'task_created']).order('created_at', { ascending: false }).limit(40), { data: [] } as any),
+      ])
+      return {
+        unit: unit.meta.name, building: unit.meta.rollup, listing_id: unit.id, window_days: days,
+        open_work: open.map((t: any) => ({ name: t.name, dept: t.type_department, date: t.scheduled_date, state: t.state, assignees: assigneeNames(t) })),
+        completed_recently: all.filter((t: any) => t.state === 'done').slice(0, 25).map((t: any) => ({ name: t.name, date: String(t.finished_at || t.scheduled_date).slice(0, 10), minutes: t.total_minutes })),
+        last: { audit: lastOf(/audit/), pm: lastOf(/\bpm\b|preventive|preventative/), battery: lastOf(/batter/), ac_filter: lastOf(/filter/), deep_clean: lastOf(/deep clean/) },
+        open_glitches: (glitchRes.data || []).filter((g: any) => !['done', 'resolved', 'closed'].includes(lc(g.status))).map((g: any) => ({ issue: g.overview, status: g.status, due: g.due_date })),
+        open_audit_findings: (auditRes.data || []).map((a: any) => ({ room: a.room, kind: a.kind, title: a.title, severity: a.severity })),
+      }
+    },
+  },
+
+  {
+    name: 'glitch_board',
+    description: 'The guest-issue board (the `glitches` table). 7 lanes: pool, ops, guest_followup, refund, manager_review, incident, closed. Filter by status, building, days (how far back), or open_only. Returns the issue, lane, due date, whether it is overdue, assignee and progress. NOTE this is the in-app board — Breezeway tasks named "Guest Reported / Glitch" are a related but separate record, joined by breezeway_task_id.',
+    input_schema: obj({ status: S.str, building: S.str, days: S.num, open_only: S.bool, limit: S.num }),
+    money: true,
+    run: async (input, ctx) => {
+      const lim = clampLimit(input?.limit, 40, 100)
+      const days = clampDays(input?.days, 60, 400)
+      // Slim select — the full row carries photos[], history jsonb and AI text (multi-MB over a board).
+      let q = ctx.db.from('glitches').select('id,status,glitch_type,category,listing_id,unit,market,guest_name,channel,incident_date,overview,due_date,assignee,progress,recovery_cost,refund_approved,created_at')
+        .gte('created_at', new Date(Date.now() - days * 86400000).toISOString())
+      if (input?.status) q = q.eq('status', lc(input.status))
+      else if (input?.open_only !== false) q = q.not('status', 'in', '("done","resolved","closed")')
+      const { data, error } = await q.order('created_at', { ascending: false }).limit(lim)
+      if (error) return { error: 'Glitch board unavailable: ' + error.message.slice(0, 120) }
+      let rows = (data || []).map((g: any) => ({
+        id: g.id, issue: g.overview, lane: g.status, type: g.glitch_type, category: g.category,
+        unit: g.unit || ctx.nameOf(g.listing_id), building: ctx.buildingOf(g.listing_id) || g.market,
+        guest: g.guest_name, channel: g.channel, opened: String(g.created_at).slice(0, 10),
+        due: g.due_date, overdue: !!g.due_date && String(g.due_date) < ctx.today && lc(g.status) !== 'closed',
+        assignee: g.assignee, progress: g.progress,
+        recovery_cost: g.recovery_cost, refund_approved: g.refund_approved,
+      }))
+      if (input?.building) rows = rows.filter((r: any) => has(r.building, input.building) || has(r.unit, input.building))
+      const byLane: Record<string, number> = {}
+      for (const r of rows) byLane[r.lane] = (byLane[r.lane] || 0) + 1
+      return { count: rows.length, truncated: cap(data || [], lim).truncated, by_lane: byLane, overdue: rows.filter((r: any) => r.overdue).length, glitches: rows }
+    },
+  },
+
+  {
+    name: 'claims_desk',
+    description: 'Damage claims. 7 stages draft -> review -> ready -> submitted -> decided -> settle -> closed. Returns each claim with the amount sought/paid, the channel, the EFFECTIVE DUE DATE (which pulls forward when the next guest arrives, because once the unit is turned the damage cannot be photographed), days left, urgency (expired|critical|soon|ok), and which evidence gates are still BLOCKING a filing. Filter by stage or urgency, or open_only.',
+    input_schema: obj({ stage: S.str, urgency: S.str, open_only: S.bool, limit: S.num }),
+    money: true,
+    run: async (input, ctx) => {
+      const lim = clampLimit(input?.limit, 50, 100)
+      const { data, error } = await ctx.db.from('claims').select('*').is('deleted_at', null).order('created_at', { ascending: false }).limit(lim)
+      if (error) return { error: 'Claims unavailable: ' + error.message.slice(0, 120) }
+      const claims: any[] = data || []
+      const ids = claims.map(c => c.id)
+      const itemsByClaim: Record<string, any[]> = {}
+      if (ids.length) {
+        const parts = chunk(ids, 100)
+        for (const part of parts) {
+          const { data: it } = await ctx.db.from('claim_items').select('claim_id,description,cost,photo_urls,receipt_url,police_report').in('claim_id', part).order('position')
+          for (const row of (it || [])) { const k = String((row as any).claim_id); (itemsByClaim[k] = itemsByClaim[k] || []).push(row) }
+        }
+      }
+      const nextIn: Record<string, string> = await safe(nextCheckInMap(ctx.db, claims) as any, {} as any)
+      let rows = claims.map((c: any) => {
+        const items = itemsByClaim[String(c.id)] || []
+        const withTurn = { ...c, next_check_in: (nextIn as any)[String(c.id)] || null }
+        const due = effectiveDue(withTurn)
+        const gates = gatesFor(withTurn, items as any)
+        return {
+          id: c.id, stage: c.stage, property: c.property || ctx.nameOf(c.listing_id), unit: c.unit_no,
+          guest: c.guest_name, channel: c.channel, check_out: c.check_out,
+          amount_sought: c.amount_sought, amount_paid: c.amount_paid, items_total: itemsTotal(items as any),
+          due_on: due.due, due_reason: due.reason, days_left: daysUntil(due.due || undefined),
+          urgency: urgencyOf(withTurn), outcome: c.outcome, waiting_on: c.waiting_on,
+          blocking_gates: gates.filter((g: any) => !g.ok).map((g: any) => g.label),
+          next_check_in: withTurn.next_check_in,
+        }
+      })
+      if (input?.stage) rows = rows.filter((r: any) => lc(r.stage) === lc(input.stage))
+      else if (input?.open_only !== false) rows = rows.filter((r: any) => !['closed'].includes(lc(r.stage)))
+      if (input?.urgency) rows = rows.filter((r: any) => lc(r.urgency) === lc(input.urgency))
+      const byStage: Record<string, number> = {}
+      for (const r of rows) byStage[r.stage] = (byStage[r.stage] || 0) + 1
+      return {
+        count: rows.length, by_stage: byStage,
+        stages: STAGES.map((s: any) => s.key),
+        expiring_soon: rows.filter((r: any) => ['critical', 'soon'].includes(r.urgency)).length,
+        expired: rows.filter((r: any) => r.urgency === 'expired').length,
+        claims: rows,
+      }
+    },
+  },
+
+  {
+    name: 'inspections',
+    description: 'The coordinator inspection log (manual walk-throughs, NOT Breezeway tasks): who inspected, which cleaner, a 1-5 rating, notes and whether a follow-up was flagged. Also returns per-cleaner averages. Optional days, cleaner, unit.',
+    input_schema: obj({ days: S.num, cleaner: S.str, unit: S.str, follow_up_only: S.bool, limit: S.num }),
+    run: async (input, ctx) => {
+      const days = clampDays(input?.days, 30, 365)
+      const lim = clampLimit(input?.limit, 60, 200)
+      const from = shiftDay(ctx.today, -days)
+      const { data, error } = await ctx.db.from('unit_inspections').select('id,unit,listing_id,inspected_on,inspector,cleaner,rating,notes,follow_up')
+        .gte('inspected_on', from).order('inspected_on', { ascending: false }).order('id').limit(lim)
+      if (error) return { error: 'Inspections table not available (migration may not have run).' }
+      let rows = (data || []).map((r: any) => ({ unit: r.unit, inspected_on: r.inspected_on, inspector: r.inspector, cleaner: r.cleaner, rating: r.rating, follow_up: !!r.follow_up, notes: String(r.notes || '').slice(0, 200) }))
+      if (input?.cleaner) rows = rows.filter((r: any) => has(r.cleaner, input.cleaner))
+      if (input?.unit) rows = rows.filter((r: any) => has(r.unit, input.unit))
+      if (input?.follow_up_only) rows = rows.filter((r: any) => r.follow_up)
+      const byCleaner: Record<string, { n: number; sum: number; rated: number; followUps: number }> = {}
+      for (const r of rows) {
+        const k = String(r.cleaner || 'unknown')
+        if (!byCleaner[k]) byCleaner[k] = { n: 0, sum: 0, rated: 0, followUps: 0 }
+        byCleaner[k].n++
+        if (Number.isFinite(Number(r.rating))) { byCleaner[k].rated++; byCleaner[k].sum += Number(r.rating) }
+        if (r.follow_up) byCleaner[k].followUps++
+      }
+      const cleaners = Object.keys(byCleaner).map(k => ({ cleaner: k, inspections: byCleaner[k].n, avg_rating: byCleaner[k].rated ? Math.round((byCleaner[k].sum / byCleaner[k].rated) * 100) / 100 : null, follow_ups: byCleaner[k].followUps })).sort((a, b) => (a.avg_rating ?? 9) - (b.avg_rating ?? 9))
+      return { window_days: days, count: rows.length, truncated: cap(data || [], lim).truncated, cleaners, inspections: rows.slice(0, 80) }
+    },
+  },
+
+  {
+    name: 'schedule_week',
+    description: 'The turnover schedule for a date range: which units need a departure clean each day, who is assigned in Breezeway, and any staged (not yet pushed) assignments. Use for "what does next week look like" or "who is covering Saturday".',
+    input_schema: obj({ from: S.str, to: S.str, market: S.str }),
+    run: async (input, ctx) => {
+      const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : ctx.today
+      const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : shiftDay(from, 7)
+      const [tasksRes, stagedRes, resvRes] = await Promise.all([
+        safe(ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).eq('type_department', 'housekeeping').gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date').order('id').limit(2000), { data: [] } as any),
+        safe(ctx.db.from('schedule_staged').select('listing_id,date,cleaner_name').gte('date', from).lte('date', to).order('date'), { data: [] } as any),
+        safe(ctx.db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', from).lte('check_out', to).order('check_out').limit(2000), { data: [] } as any),
+      ])
+      const cleans = (tasksRes.data || []).filter((t: any) => isDepartureCleanName(t.name) && taskState(t) !== 'gone')
+      const byDay: Record<string, any> = {}
+      const ensure = (d: string) => (byDay[d] = byDay[d] || { date: d, checkouts: 0, cleans: 0, assigned: 0, done: 0, staged: 0, units: [] })
+      for (const r of (resvRes.data || [])) {
+        if (/cancel|declin|inquir|expire/i.test(lc((r as any).status))) continue
+        ensure(String((r as any).check_out).slice(0, 10)).checkouts++
+      }
+      for (const t of cleans) {
+        const d = ensure(String(t.scheduled_date).slice(0, 10))
+        d.cleans++
+        const who = assigneeNames(t)
+        if (who.length) d.assigned++
+        if (taskState(t) === 'done') d.done++
+        d.units.push({ unit: ctx.nameOf(t.reference_property_id), building: ctx.buildingOf(t.reference_property_id), assignees: who, state: taskState(t) })
+      }
+      for (const s of (stagedRes.data || [])) ensure(String((s as any).date).slice(0, 10)).staged++
+      const days = Object.keys(byDay).sort().map(k => {
+        const d = byDay[k]
+        if (input?.market) d.units = d.units.filter((u: any) => has(u.building, input.market))
+        return { ...d, units: d.units.slice(0, 40), unassigned: d.cleans - d.assigned }
+      })
+      return { from, to, days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover.' }
+    },
+  },
+]
+
+export const OPS_DOMAIN: EveDomain = {
+  key: 'ops',
+  label: 'Operations',
+  blurb: 'Breezeway work, cleans running behind, per-unit work history, the glitch board, the claims desk, inspections and the turnover schedule.',
+  tools: OPS_TOOLS,
+}
