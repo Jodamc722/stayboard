@@ -15,6 +15,7 @@ import { TaskAutomationAdmin } from '@/components/TaskAutomationAdmin'
 import { StaffingAdmin } from '@/components/StaffingAdmin'
 import { ParAdmin } from '@/components/ParAdmin'
 import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
+import { SlackRulesAdmin } from '@/components/SlackRulesAdmin'
 import { ReviewVoiceAdmin } from '@/components/ReviewVoiceAdmin'
 import { ReservationEmailsAdmin } from '@/components/ReservationEmailsAdmin'
 import { ShareLinksCard } from '@/components/ShareLinksCard'
@@ -59,6 +60,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
           <Fold title="Task automation" defaultOpen><TaskAutomationAdmin isOwner={isOwner} /></Fold>
           <Fold title="Staffing & agencies"><StaffingAdmin isOwner={isOwner} /></Fold>
           <Fold title="PAR levels (restock)"><ParAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Slack alerts &amp; rules" defaultOpen><SlackRulesAdmin isOwner={isOwner} /></Fold>
           <Fold title="Approval limits"><ApprovalLimitsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Review-reply AI voice"><ReviewVoiceAdmin /></Fold>
           <Fold title="Front-desk notices"><ReservationEmailsAdmin isOwner={isOwner} /></Fold>
