@@ -108,7 +108,13 @@ export function buildVerifyPdf(input: PdfInput): Buffer {
   for (let i = 0; i < input.rules.length; i++) {
     const r = input.rules[i]
     line(r.n + '. ' + r.title + '   [initials: ' + r.initials + ']', { font: 'F2', size: 10 })
-    if (r.body) { para(r.body, 9, 'F1'); y -= 4 }
+    if (r.body) {
+      // Body holds newline-separated bullet lines — render each as its own "- " bullet (hyphen is
+      // WinAnsi-safe; a raw • may not encode in the base-14 Helvetica font).
+      const bl = String(r.body).split('\n').map(s => s.trim()).filter(Boolean)
+      for (let b = 0; b < bl.length; b++) para('- ' + bl[b], 9, 'F1')
+      y -= 4
+    }
   }
 
   // Images — each captioned, fitted to the content box, on the current/next page.
