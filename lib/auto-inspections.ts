@@ -58,7 +58,7 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   supervisors: { Miami: 'Yoslenis', Broward: 'Guillermo', North: 'Yoslenis' },
   // Default channel = #vr-customercareteam (verified id, 2026-08-19). The bot must be invited
   // to the channel for the post to land — private channels need membership.
-  noticeDrafts: { enabled: false, fromEmail: 'jon@stay-hospitality.com', slackChannel: 'G01TT278P2L' },
+  noticeDrafts: { enabled: false, fromEmail: 'support@stay-hospitality.com', slackChannel: 'G01TT278P2L' },
 }
 export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
   const s = await getSetting<any>(TASK_AUTOMATION_KEY, null)

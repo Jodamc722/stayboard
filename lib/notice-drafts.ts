@@ -17,23 +17,98 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 import { mergeProperties, RESERVATION_EMAILS_KEY, type PropertyEmail } from './reservation-emails'
 import { buildDraft, type Notice } from './reservation-draft'
-import { draftGmail, type GmailAttachment } from './gmail-send'
-import { getTaskAutomation } from './auto-inspections'
+import { draftGmail, draftStatus, foundInSent, type GmailAttachment } from './gmail-send'
+import { getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
 import { elserPdfBase64 } from './elser-pdf'
+import { getToken } from './guesty'
+import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+// Same field ids app/api/reservation-notices/mark-sent uses (proved against live bookings
+// 2026-07-31 — see that route for why discovery-by-name does not work on this account).
+const EMAIL_SENT_FIELD = '68dd868bcc0af00010bd8ebe'
+const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
+const isNotes = (c: any): boolean =>
+  String(fieldIdOf(c) || '') === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(String(c?.fieldName || ''))
+
+/**
+ * SENT-DETECTION + GUESTY WRITE-BACK (Jon, 2026-08-19: "once sent, it should mark it in Guesty
+ * as sent"). Gmail deletes a draft when it is sent, so each hourly run checks the drafts it
+ * created: draft gone + a matching message in Sent = the team sent it. That marks the notice sent
+ * locally AND ticks Guesty's "reservation email sent" flag + appends the dated Reservation-Notes
+ * line — the exact same write the desk's Mark-sent button does, attributed 'CC' (customer care).
+ * A draft that is gone but NOT in Sent was deleted unsent — it is re-armed so the next hourly run
+ * drafts it again rather than letting a building silently go untold.
+ */
+async function reconcileSentDrafts(db: any, cfg: TaskAutomationCfg, props: PropertyEmail[], out: { sentDetected: number; rearmed: number; errors: string[] }) {
+  const { data: rows } = await db.from('reservation_notices').select('*')
+    .not('draft_id', 'is', null).not('draft_created_at', 'is', null).is('sent_at', null).is('deleted_at', null)
+    .limit(40)
+  const pById: Record<string, PropertyEmail> = {}
+  for (const p of props) pById[p.id] = p
+  for (const n of (rows || []) as any[]) {
+    try {
+      const st = await draftStatus(cfg.noticeDrafts.fromEmail, str(n.draft_id))
+      if (st !== 'gone') continue
+      const p = pById[str(n.property_id)]
+      const subject = p ? buildDraft(p, n as Notice).subject : ''
+      const since = Math.floor(new Date(n.draft_created_at).getTime() / 1000) - 3600
+      const sent = subject ? await foundInSent(cfg.noticeDrafts.fromEmail, subject, since) : null
+      if (sent === false) {
+        // Deleted without sending — re-arm so the notice is drafted again, not lost.
+        await db.from('reservation_notices').update({ draft_id: null, draft_created_at: null }).eq('id', n.id)
+        out.rearmed++
+        continue
+      }
+      if (sent !== true) continue   // could not verify — try again next hour, never guess
+      const nowIso = new Date().toISOString()
+      await db.from('reservation_notices').update({ sent_at: nowIso, sent_by: 'CC', updated_at: nowIso }).eq('id', n.id)
+      out.sentDetected++
+      // Guesty write-back, best-effort — the local record stands whatever Guesty does next.
+      try {
+        const rid = str(n.reservation_id)
+        if (!rid) continue
+        const token = await getToken().catch(() => '')
+        if (!token) throw new Error('no Guesty token')
+        const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+        const line = '[' + stamp + '] ' + (p?.name || str(n.property_id) || 'Building') + ' arrival email sent by CC (support inbox)'
+        const live = await readCustomFields(rid, token)
+        if (live === null) throw new Error('could not read the booking')
+        const existingNote = live.find((c: any) => isNotes(c))
+        const prior = existingNote && typeof existingNote.value === 'string' ? existingNote.value : ''
+        const newNotes = prior.includes(line) ? prior : (prior ? prior + '\n' + line : line)
+        const notesId = existingNote ? (fieldIdOf(existingNote) || RES_NOTES_FIELD) : RES_NOTES_FIELD
+        const res = await writeCustomFields(rid, token, [
+          { fieldId: EMAIL_SENT_FIELD, value: true },
+          { fieldId: notesId, value: newNotes },
+        ])
+        if (!res.ok) throw new Error(res.note || 'write failed')
+      } catch (e: any) {
+        if (out.errors.length < 5) out.errors.push('guesty mark-sent ' + str(n.unit_no) + ': ' + String(e?.message || e).slice(0, 120))
+      }
+    } catch { /* next hour retries */ }
+  }
+}
+
 export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<{
-  ok: boolean; enabled: boolean; today: string; due: number; drafted: number; skipped: number; failed: number; errors: string[]
+  ok: boolean; enabled: boolean; today: string; due: number; drafted: number; skipped: number; failed: number
+  sentDetected: number; rearmed: number; errors: string[]
 }> {
   const cfg = await getTaskAutomation()
   const today = ymdET(new Date())
-  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, errors: [] as string[] }
+  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, errors: [] as string[] }
   if (!cfg.noticeDrafts.enabled && !opts.dryRun) return base
 
   const db = supabaseAdmin()
+  const props: PropertyEmail[] = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
+
+  // First: settle yesterday's-and-today's open drafts — sent ones get marked (here + Guesty),
+  // deleted-unsent ones get re-armed so the pass below re-drafts them.
+  if (!opts.dryRun) { try { await reconcileSentDrafts(db, cfg, props, base) } catch { /* drafting still runs */ } }
+
   const { data: rows } = await db.from('reservation_notices').select('*')
     .eq('arrival_date', today).is('deleted_at', null).is('sent_at', null).is('draft_created_at', null)
     .limit(100)
@@ -41,7 +116,6 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   base.due = due.length
   if (!due.length || opts.dryRun) return base
 
-  const props: PropertyEmail[] = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
   const pById: Record<string, PropertyEmail> = {}
   for (const p of props) pById[p.id] = p
   const draftedList: { unit: string; guest: string; property: string; form: boolean }[] = []

@@ -184,6 +184,38 @@ export async function draftGmail(opts: {
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
 
+/**
+ * Is a draft still sitting in Drafts? In Gmail, SENDING a draft deletes the draft object (the
+ * message moves to Sent) — so "the draft is gone" is the observable fact that someone acted on it.
+ * Returns 'exists' | 'gone' | 'error'.
+ */
+export async function draftStatus(fromEmail: string, draftId: string): Promise<'exists' | 'gone' | 'error'> {
+  const { token } = await accessTokenFor(fromEmail)
+  if (!token) return 'error'
+  try {
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(draftId) + '?format=minimal', {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+    if (r.status === 404) return 'gone'
+    return r.ok ? 'exists' : 'error'
+  } catch { return 'error' }
+}
+
+/** Was a message with this subject actually SENT from the mailbox since `sinceEpochSec`? */
+export async function foundInSent(fromEmail: string, subject: string, sinceEpochSec: number): Promise<boolean | null> {
+  const { token } = await accessTokenFor(fromEmail)
+  if (!token) return null
+  try {
+    const q = 'in:sent after:' + Math.floor(sinceEpochSec) + ' subject:"' + subject.replace(/"/g, '') + '"'
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&q=' + encodeURIComponent(q), {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+    if (!r.ok) return null
+    const j = await r.json().catch(() => ({} as any))
+    return Array.isArray(j.messages) && j.messages.length > 0
+  } catch { return null }
+}
+
 export async function sendGmail(opts: {
   fromEmail: string           // whose mailbox sends (must have a google_tokens row with gmail.send)
   to: string[]
@@ -218,42 +250,4 @@ export async function sendGmail(opts: {
     }
     return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 300)}` }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
-}
-
-// ---- Back-compat shims (2026-08-19) -----------------------------------------------------------
-// createGmailDraft/checkGmailDraftExists were dropped when this file was rewritten around
-// draftGmail/sendGmail, but two callers still import them — app/api/reservation-notices/draft and
-// lib/support-drafts — so `next build` has been failing on the type check since that upload, which
-// means NOTHING has deployed. These are thin wrappers over the new API, additive only: the new
-// names stay the ones to write against, and whoever owns the notices feature can delete these once
-// both callers are moved over.
-export async function createGmailDraft(opts: {
-  fromEmail: string
-  to: string[]
-  cc?: string[]
-  subject: string
-  html: string
-  attachments?: GmailAttachment[]
-}): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const r = await draftGmail(opts)
-  return { ok: r.ok, id: r.draftId, error: r.error }
-}
-
-// 'gone' = the draft is no longer in Drafts, which the support-draft sweep reads as "a human sent
-// it". Anything we cannot prove (no token, network blip, unexpected status) returns 'unknown' so
-// the notice stays on the watch list rather than being falsely stamped as sent.
-export async function checkGmailDraftExists(fromEmail: string, draftId: string): Promise<'present' | 'gone' | 'unknown'> {
-  const id = String(draftId || '').trim()
-  if (!id) return 'unknown'
-  const { token } = await accessTokenFor(fromEmail)
-  if (!token) return 'unknown'
-  try {
-    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(id) + '?format=minimal', {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: 'no-store',
-    })
-    if (r.status === 404) return 'gone'
-    if (r.ok) return 'present'
-    return 'unknown'
-  } catch { return 'unknown' }
 }
