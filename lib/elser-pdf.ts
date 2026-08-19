@@ -1,5 +1,10 @@
-'use client'
 // THE ELSER REGISTRATION FORM — Transient Guest/Occupant Registration Form.
+//
+// NO 'use client' HERE (2026-08-19). This is a plain function module — the desk's board loads it
+// with a dynamic import in the browser, and the arrival-morning draft cron calls it on the SERVER
+// with the npm jsPDF constructor passed in. The directive it used to carry turned the server
+// import into a client-reference stub, so every cron-side form render died with a minified
+// "k is not a function" while the drafts went out form-less.
 //
 // Elser will not admit a guest unless this form reaches their front desk at least two hours before
 // the rental period starts. Every word of the static copy, the fee table and the authorisation
