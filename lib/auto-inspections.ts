@@ -44,6 +44,8 @@ export type TaskAutomationCfg = {
   daysAhead: number                                            // how far ahead to look for arrivals
   assignAlways: string                                         // on every inspection, whatever the market
   supervisors: Record<string, string>                          // market → supervisor name
+  // Arrival-day Gmail drafts for front-desk notices (Jon, 2026-08-18) — its own switch, same roof.
+  noticeDrafts: { enabled: boolean; fromEmail: string }
 }
 export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   enabled: false,
@@ -53,6 +55,7 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   daysAhead: 3,
   assignAlways: 'Roberto',
   supervisors: { Miami: 'Yoslenis', Broward: 'Guillermo', North: 'Yoslenis' },
+  noticeDrafts: { enabled: false, fromEmail: 'jon@stay-hospitality.com' },
 }
 export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
   const s = await getSetting<any>(TASK_AUTOMATION_KEY, null)
@@ -71,6 +74,11 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
       Miami: str(s.supervisors?.Miami).trim() || d.supervisors.Miami,
       Broward: str(s.supervisors?.Broward).trim() || d.supervisors.Broward,
       North: str(s.supervisors?.North).trim() || d.supervisors.North,
+    },
+    noticeDrafts: {
+      enabled: s.noticeDrafts?.enabled === true,
+      fromEmail: typeof s.noticeDrafts?.fromEmail === 'string' && /@/.test(s.noticeDrafts.fromEmail)
+        ? s.noticeDrafts.fromEmail.trim().toLowerCase() : d.noticeDrafts.fromEmail,
     },
   }
 }
@@ -134,15 +142,20 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
   const today = ymdET(new Date())
   const in3 = ymdET(new Date(Date.now() + cfg.daysAhead * 86400000))
 
-  const [{ data: resRows }, { data: owners }, { data: listings }, { data: existing }, { data: bzProps }] = await Promise.all([
+  const [{ data: resRows }, { data: owners }, { data: listings }, { data: existing }, { data: bzProps }, { data: vipProfiles }] = await Promise.all([
     db.from('guesty_reservations')
-      .select('id, listing_id, listing_name, guest_name, check_in, check_out, nights, status, source, money_total, custom_fields, raw')
+      .select('id, listing_id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, custom_fields, raw')
       .gte('check_in', today).lte('check_in', in3).eq('status', 'confirmed').limit(500),
     db.from('guesty_owners').select('full_name, listing_ids').limit(2000),
     db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(2000),
     db.from('auto_inspections').select('reservation_id, task_id'),
     db.from('breezeway_properties').select('reference_property_id, home_id').limit(3000),
+    // VIP from the Guests tab (guest_profiles.vip) — a profile VIP is a VIP arrival, whatever
+    // Guesty's fields say. Table may not exist pre-migration-043; treat that as "no profiles".
+    db.from('guest_profiles').select('email, name').eq('vip', true).limit(2000).then(r => r, () => ({ data: [] as any[] })),
   ])
+  const vipEmails = new Set((vipProfiles || []).map((p: any) => str(p.email).toLowerCase()).filter(e => e && /@/.test(e)))
+  const vipNames = (vipProfiles || []).map((p: any) => str(p.name)).filter(Boolean)
 
   const ownerOf: Record<string, string> = {}
   for (const o of owners || []) {
@@ -165,8 +178,11 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     const value = Number((r as any).money_total) || 0
     const nights = Number((r as any).nights) || 0
     const ownerName = ownerOf[lid] || ''
+    const isVip = vipFlag(r)
+      || vipEmails.has(str((r as any).guest_email).toLowerCase())
+      || vipNames.some(n => nameMatches(str((r as any).guest_name), n))
     const reason = (cfg.bigArrivals && (value >= cfg.bigValue || nights >= cfg.bigNights)) ? 'big arrival'
-      : (cfg.vip && vipFlag(r)) ? 'VIP'
+      : (cfg.vip && isVip) ? 'VIP'
         : (cfg.ownerStays && (OWNER_SRC.test(str((r as any).source)) || (ownerName && nameMatches(str((r as any).guest_name), ownerName)))) ? 'owner stay'
           : ''
     if (!reason) continue

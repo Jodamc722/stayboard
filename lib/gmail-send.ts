@@ -144,6 +144,46 @@ function buildRaw(opts: { to: string[]; cc?: string[]; subject: string; html: st
   return headTo + headCc + headSubj + body
 }
 
+/**
+ * Create a DRAFT in the mailbox instead of sending (Jon, 2026-08-18: "auto draft messages for the
+ * reservation front desk notices in the inbox the day of arrival"). Same MIME builder as
+ * sendGmail; hits /drafts so the message sits in Drafts for a human to review and press send.
+ * NOTE: drafts.create needs the gmail.compose scope — if the Google connection was granted
+ * send-only, this returns a reconnect message rather than failing cryptically.
+ */
+export async function draftGmail(opts: {
+  fromEmail: string
+  to: string[]
+  cc?: string[]
+  subject: string
+  html: string
+  attachments?: GmailAttachment[]
+}): Promise<{ ok: boolean; draftId?: string; error?: string }> {
+  const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
+  const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
+  if (!to.length && !cc.length) return { ok: false, error: 'no recipients' }
+  const { token, error } = await accessTokenFor(opts.fromEmail)
+  if (!token) return { ok: false, error }
+  const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments })
+  try {
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: { raw: rawToB64url(raw) } }),
+      cache: 'no-store',
+    })
+    if (r.ok) {
+      const j = await r.json().catch(() => ({} as any))
+      return { ok: true, draftId: String(j?.id || '') }
+    }
+    const body = await r.text().catch(() => '')
+    if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
+      return { ok: false, error: 'The Google connection cannot create drafts — reconnect Google and approve the compose/draft permission.' }
+    }
+    return { ok: false, error: `Gmail draft failed (${r.status}): ${body.slice(0, 300)}` }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+}
+
 export async function sendGmail(opts: {
   fromEmail: string           // whose mailbox sends (must have a google_tokens row with gmail.send)
   to: string[]
@@ -178,66 +218,4 @@ export async function sendGmail(opts: {
     }
     return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 300)}` }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
-}
-
-
-// CREATE A DRAFT INSTEAD OF SENDING — the front-desk notices flow (Jon, 2026-08-17: "add the
-// support drafts when you click add to drafts... it should be sent from support@stay-hospitality.com").
-// The draft lands in that mailbox's Drafts folder with To/CC/subject/body filled in; a human
-// attaches the registration form and hits send from Gmail itself. Requires the gmail.compose (or
-// gmail.modify) scope on the mailbox's Google connection — gmail.send alone cannot create drafts,
-// and the error says exactly that instead of a generic 403.
-export async function createGmailDraft(opts: {
-  fromEmail: string
-  to: string[]
-  cc?: string[]
-  subject: string
-  html: string
-  attachments?: GmailAttachment[]
-}): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
-  const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
-  if (!to.length && !cc.length) return { ok: false, error: 'no recipients' }
-  const { token, error } = await accessTokenFor(opts.fromEmail)
-  if (!token) return { ok: false, error }
-  const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments })
-  try {
-    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: { raw: rawToB64url(raw) } }),
-      cache: 'no-store',
-    })
-    if (r.ok) {
-      // The draft id is how we later notice it was SENT: a sent draft disappears from Drafts, and
-      // drafts.get starts returning 404. The caller stores this id and polls (see lib/support-drafts).
-      const dj: any = await r.json().catch(() => ({}))
-      return { ok: true, id: dj && dj.id ? String(dj.id) : undefined }
-    }
-    const body = await r.text().catch(() => '')
-    if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
-      return { ok: false, error: `${opts.fromEmail}'s Google connection can send but not create drafts — reconnect it and approve the "Manage drafts and send email" permission.` }
-    }
-    if (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(body)) {
-      return { ok: false, error: 'The Gmail API is not enabled on the Google Cloud project — enable it, wait a minute, then retry.' }
-    }
-    return { ok: false, error: `Gmail draft failed (${r.status}): ${body.slice(0, 300)}` }
-  } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
-}
-
-
-// IS THE DRAFT STILL IN DRAFTS? 'gone' means it left the folder — in practice, it was sent (or
-// deliberately deleted, which the desk treats the same way: the notice is handled). 'unknown'
-// means we could not tell (token trouble, network) and the caller must NOT act on it.
-export async function checkGmailDraftExists(fromEmail: string, draftId: string): Promise<'exists' | 'gone' | 'unknown'> {
-  const { token } = await accessTokenFor(fromEmail)
-  if (!token) return 'unknown'
-  try {
-    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(draftId) + '?format=minimal', {
-      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
-    })
-    if (r.status === 404) return 'gone'
-    if (r.ok) return 'exists'
-    return 'unknown'
-  } catch { return 'unknown' }
 }

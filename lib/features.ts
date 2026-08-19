@@ -25,7 +25,10 @@ export const FEATURES: Feature[] = [
   { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls', group: 'Guests' },
   { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
   { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
-  { key: 'faq',           label: 'Property FAQ',       path: '/faq', group: 'Guests' },
+  { key: 'faq',           label: 'FAQ & How-To',      path: '/faq', group: 'Guests' },
+  // Guests directory + profiles (2026-08-18, Jon): "a tab where we have all guest info, create a
+  // guest profile as well." Aggregated from reservations; VIP on a profile feeds auto-inspections.
+  { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Guests' },
   // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
   // Re-applied after the Patterns upload (73bd724) landed from a pre-salato copy of this file.
   // The public share/verify links (/salato/share, /salato/verify) stay open — OPEN_PREFIXES wins
@@ -51,6 +54,10 @@ export const FEATURES: Feature[] = [
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
   { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Operations' },
   { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
+  // Share Links hub (2026-08-18, Jon): "a place where I can create those links based on
+  // properties, units, owners and customize them to show different information." Carries live
+  // money data, so like Integrations it is deliberately left out of the ops/cs/data bundles.
+  { key: 'share-links',   label: 'Share Links',       path: '/links', group: 'Portfolio' },
   { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
   { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },
@@ -111,7 +118,7 @@ export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt'
 export const OPEN_PREFIXES = [
   '/login', '/auth', '/signup', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
-  '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/',
+  '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/', '/share/',
 ]
 export function isOpenPath(path: string): boolean {
   if (OPEN_EXACT.indexOf(path) >= 0) return true
@@ -120,11 +127,7 @@ export function isOpenPath(path: string): boolean {
 }
 // Login-required pages that deliberately have NO per-role setting:
 // /users gates itself (admin console).
-// /stay-window gates itself too (2026-08-17): every mutation on it goes through
-// requireLevel('revenue','full'), so a non-revenue user who finds the URL sees the screen and can
-// do nothing with it. Kept out of FEATURES so it adds no nav entry without Jon's say-so — promote
-// it to a Money tab whenever he wants it visible.
-export const UNGATED_PAGES = ['/users', '/stay-window']
+export const UNGATED_PAGES = ['/users']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
@@ -227,7 +230,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
     pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
-    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims'] },
+    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
     pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims'] },
 ]
