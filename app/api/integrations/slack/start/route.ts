@@ -16,7 +16,23 @@
 //   channels:read      list public channels for the admin picker
 //   groups:read        ...and the private ones the bot has been invited to
 //
-// Still NO ability to read anyone's messages: nothing here grants channels:history or im:history.
+// READ SCOPES ADDED 2026-08-19 (Jon: "do the slack one now") so Eve can actually learn from the
+// operational conversation instead of only broadcasting into it:
+//
+//   channels:history   read messages in PUBLIC channels the bot is in
+//   groups:history     read messages in PRIVATE channels the bot has been invited to
+//   channels:join      let the bot add itself to a public channel, so the #vr-* channels do not
+//                      each need a manual invite. Private ones still do — no scope avoids that.
+//
+// WHAT IS DELIBERATELY STILL NOT REQUESTED, and why it matters:
+//   im:history / mpim:history  — DMs and group DMs. Jon's explicit choice was "their channels only,
+//                                NO DMs". A bot token with no im:history is STRUCTURALLY incapable
+//                                of reading a direct message, which is a far stronger guarantee than
+//                                a policy note saying we won't.
+//   search:read                — Slack only honours search.messages on a USER token, and a user
+//                                token searches everything that person can see, DMs included. That
+//                                is exactly the exposure Jon ruled out, so Eve searches by scanning
+//                                the channels the bot is in instead. Slower, strictly bounded.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { pageAllowed } from '@/lib/features'
@@ -33,6 +49,9 @@ const SCOPES = [
   'im:write',
   'channels:read',
   'groups:read',
+  'channels:history',
+  'groups:history',
+  'channels:join',
 ].join(',')
 
 export async function GET(req: NextRequest) {
