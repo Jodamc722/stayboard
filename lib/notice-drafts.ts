@@ -59,6 +59,73 @@ async function loadServerJsPdf(): Promise<any> {
   return ctor
 }
 
+// ── GUESTY, LIVE, AT THE MOMENT OF DRAFTING (Jon, 2026-08-19: "do not draft canceled
+// reservations", "if unpaid please mention in red in the body like a warning", "the form is
+// missing the ETA field and the # of adults"). The synced copy is hours old and stripped of
+// guest counts — drafting is the one moment that must see Guesty's CURRENT truth: a same-day
+// cancellation, the open balance, and the fields the building's form wants.
+type LiveRes = { status: string; fullyPaid: boolean | null; balanceDue: number | null; eta: string | null; adults: number | null; children: number | null }
+const isLiveStatus = (s: string) => /^(confirmed|checked_?in)$/i.test(s)
+async function fetchLiveReservation(resId: string): Promise<LiveRes | null> {
+  try {
+    const token = await getGuestyToken().catch(() => '')
+    if (!token || !resId) return null
+    const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+    const r = await fetch(BASE + '/reservations/' + encodeURIComponent(resId)
+      + '?fields=' + encodeURIComponent('status money.balanceDue money.isFullyPaid guestsCount numberOfGuests plannedArrival'),
+      { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }, cache: 'no-store' })
+    if (!r.ok) return null
+    const j: any = await r.json().catch(() => null)
+    if (!j || typeof j !== 'object') return null
+    const int = (v: any) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 && n < 100 ? n : null }
+    const nog = j.numberOfGuests && typeof j.numberOfGuests === 'object' ? j.numberOfGuests : null
+    const money = j.money && typeof j.money === 'object' ? j.money : {}
+    const due = Number(money.balanceDue)
+    return {
+      status: String(j.status || ''),
+      fullyPaid: typeof money.isFullyPaid === 'boolean' ? money.isFullyPaid : null,
+      balanceDue: Number.isFinite(due) ? Math.round(due * 100) / 100 : null,
+      eta: typeof j.plannedArrival === 'string' && j.plannedArrival.trim() ? j.plannedArrival.trim().slice(0, 40) : null,
+      adults: int(nog?.numberOfAdults) ?? int(j.guestsCount),
+      children: int(nog?.numberOfChildren),
+    }
+  } catch { return null }
+}
+
+/**
+ * CANCELED-RESERVATION RETIREMENT. A booking canceled after its notice was filed must never reach
+ * a building — and its draft must never be resurrected (unit 4418 taught us this live: the desk
+ * kept discarding the canceled booking's draft, and the engine kept faithfully recreating it).
+ * Every open notice for today is checked against Guesty's live status; a dead one has its Gmail
+ * draft deleted, its watch entry dropped, and the notice itself soft-deleted.
+ * Returns the live lookups so the drafting pass reuses them instead of asking Guesty twice.
+ */
+async function retireCanceledNotices(db: any, cfg: TaskAutomationCfg, today: string,
+  out: { canceledRetired: number; errors: string[] }): Promise<Map<string, LiveRes>> {
+  const seen = new Map<string, LiveRes>()
+  const { data: rows } = await db.from('reservation_notices').select('id,unit_no,reservation_id,draft_id')
+    .eq('arrival_date', today).is('deleted_at', null).is('sent_at', null).not('reservation_id', 'is', null)
+    .limit(60)
+  for (const n of (rows || []) as any[]) {
+    try {
+      const live = await fetchLiveReservation(str(n.reservation_id))
+      if (!live) continue
+      seen.set(str(n.reservation_id), live)
+      if (isLiveStatus(live.status)) continue
+      if (str(n.draft_id)) { try { await deleteDraft(cfg.noticeDrafts.fromEmail, str(n.draft_id)) } catch { /* draft may already be gone */ } }
+      try {
+        const w = await getAppSetting<any[]>('support_draft_watch', [])
+        const list = Array.isArray(w) ? w : []
+        const kept = list.filter((x: any) => str(x?.nid) !== str(n.id))
+        if (kept.length !== list.length) await setAppSetting('support_draft_watch', kept, 'notice-drafts canceled-retire')
+      } catch { /* watch cleanup is best effort; the soft-delete below is what stops the loop */ }
+      await db.from('reservation_notices').update({ deleted_at: new Date().toISOString() }).eq('id', n.id)
+      out.canceledRetired++
+    } catch (e: any) { out.errors.push('cancel-check ' + str(n.unit_no) + ': ' + String(e?.message || e).slice(0, 100)) }
+  }
+  return seen
+}
+
 /**
  * DEFECTIVE-DRAFT REPAIR (Jon, 2026-08-19: "delete drafts you generated without them"). A notice
  * whose draft is missing its required registration form (no doc marker on an attachPdf property)
@@ -224,11 +291,11 @@ async function recreateTrashedDrafts(db: any, cfg: TaskAutomationCfg, out: { tra
 export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled: boolean; today: string; due: number; drafted: number; skipped: number; failed: number
   sentDetected: number; rearmed: number; reopened: number; confirmedSentNoForm: number; orphansDeleted: number
-  safetyDrafted: number; trashedRecreated: number; errors: string[]
+  safetyDrafted: number; trashedRecreated: number; canceledRetired: number; errors: string[]
 }> {
   const cfg = await getTaskAutomation()
   const today = ymdET(new Date())
-  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, safetyDrafted: 0, trashedRecreated: 0, errors: [] as string[] }
+  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, safetyDrafted: 0, trashedRecreated: 0, canceledRetired: 0, errors: [] as string[] }
   if (!cfg.noticeDrafts.enabled && !opts.dryRun) return base
 
   const db = supabaseAdmin()
@@ -239,7 +306,9 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   // folder (reopening the ones whose draft was deleted, not sent) — so the pass below re-drafts
   // everything that still owes the building a complete email.
   const safety: any[] = []
+  let liveById = new Map<string, LiveRes>()
   if (!opts.dryRun) {
+    try { liveById = await retireCanceledNotices(db, cfg, today, base) } catch { /* drafting still runs */ }
     try { await recreateTrashedDrafts(db, cfg, base) } catch { /* drafting still runs */ }
     try { const sw = await checkSupportDrafts(); base.sentDetected = sw.markedSent } catch { /* drafting still runs */ }
     try { await repairDefectiveDrafts(db, cfg, props, base) } catch { /* drafting still runs */ }
@@ -264,10 +333,29 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   // CDN UMD as the fallback, and a real error message if both fail).
   let jsPdfCtor: any = null
 
-  for (const n of due) {
-    const p = pById[str(n.property_id)]
+  for (const n0 of due) {
+    const p = pById[str(n0.property_id)]
     if (!p || !p.enabled || !str(p.to).trim()) { base.skipped++; continue }
     try {
+      // Live enrichment: fill ETA / adults / children from Guesty when the notice is missing them
+      // (Jon: "the form is missing the ETA field and the # of adults") and read the balance for
+      // the unpaid flag. Cancellations were already retired above, but a notice created between
+      // the sweep and here gets one more status check — a canceled booking must never draft.
+      const live = str(n0.reservation_id)
+        ? (liveById.get(str(n0.reservation_id)) || (opts.dryRun ? null : await fetchLiveReservation(str(n0.reservation_id))))
+        : null
+      if (live && !isLiveStatus(live.status)) { base.skipped++; continue }
+      const n: any = {
+        ...n0,
+        eta: str(n0.eta) || live?.eta || null,
+        adults: (n0 as any).adults ?? live?.adults ?? null,
+        children: (n0 as any).children ?? live?.children ?? null,
+      }
+      const enrich: Record<string, any> = {}
+      if (!str(n0.eta) && n.eta) enrich.eta = n.eta
+      if ((n0 as any).adults == null && n.adults != null) enrich.adults = n.adults
+      if ((n0 as any).children == null && n.children != null) enrich.children = n.children
+      const unpaidDue = live && live.fullyPaid === false && (live.balanceDue ?? 0) > 0 ? live.balanceDue : null
       const d = buildDraft(p, n as Notice)
 
       // THE FORM RIDES ALONG (Jon, 2026-08-19: "why are the PDFs not attaching to the email
@@ -303,7 +391,10 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       }
 
       const isSafety = !!(n as any)._safety
-      const reminder = (attachFailed
+      const unpaidLine = unpaidDue != null
+        ? `<p style="color:#b91c1c;font-weight:bold">&#9888; UNPAID — Guesty shows a balance due of $${unpaidDue.toFixed(2)} on this reservation. Confirm payment before sending. (Delete this line.)</p>`
+        : ''
+      const reminder = unpaidLine + (attachFailed
         ? `<p style="color:#b91c1c;font-weight:bold">⚠ The form could not be generated automatically — attach ${esc(d.attachName)} before sending. (Delete this line.)</p>`
         : '')
         + (isSafety
@@ -324,6 +415,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       await db.from('reservation_notices').update({
         draft_created_at: new Date().toISOString(), draft_id: r.draftId || null,
         ...(docName ? { doc_name: docName } : {}), ...(docPath ? { doc_path: docPath } : {}),
+        ...enrich,   // ETA / adults / children pulled live from Guesty, so the desk sees them too
       }).eq('id', n.id)
       // Register on the support-draft watch: the 20-minute sweep marks it sent (app + Guesty)
       // the moment it leaves Drafts, and the older auto-drafter skips notices it sees here.
@@ -340,7 +432,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments, safety: isSafety })
     } catch (e: any) {
       base.failed++
-      if (base.errors.length < 5) base.errors.push(str(n.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
+      if (base.errors.length < 5) base.errors.push(str(n0.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
     }
   }
 
