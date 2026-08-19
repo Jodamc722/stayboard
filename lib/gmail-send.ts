@@ -285,3 +285,39 @@ export async function checkGmailDraftExists(fromEmail: string, draftId: string):
   const s = await draftStatus(fromEmail, String(draftId || '').trim())
   return s === 'exists' ? 'present' : s === 'gone' ? 'gone' : 'unknown'
 }
+
+// ── DRAFTS FOLDER INVENTORY (2026-08-19). One morning two auto-drafters each filed a copy of the
+// same notices, and the watch only remembers ONE draft id per notice — the other copy is invisible
+// to every check above. The orphan sweep in notice-drafts needs to SEE the folder, not guess ids:
+// subject + whether a PDF rides along is enough to recognize a duplicate that must not be sent.
+export async function listGmailDrafts(fromEmail: string, max = 25): Promise<{ id: string; subject: string; hasPdf: boolean }[] | null> {
+  const { token } = await accessTokenFor(fromEmail)
+  if (!token) return null
+  try {
+    const lr = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts?maxResults=' + Math.min(Math.max(1, max), 50), {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+    if (!lr.ok) return null
+    const lj: any = await lr.json().catch(() => null)
+    const ids: string[] = (Array.isArray(lj?.drafts) ? lj.drafts : []).map((d: any) => String(d?.id || '')).filter(Boolean)
+    const out: { id: string; subject: string; hasPdf: boolean }[] = []
+    for (const id of ids) {
+      const dr = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(id) + '?format=full', {
+        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+      })
+      if (!dr.ok) continue
+      const dj: any = await dr.json().catch(() => null)
+      const headers: any[] = dj?.message?.payload?.headers || []
+      const subject = String(headers.find((h: any) => /^subject$/i.test(String(h?.name || '')))?.value || '')
+      let hasPdf = false
+      const walk = (p: any) => {
+        if (!p || hasPdf) return
+        if (/application\/pdf/i.test(String(p.mimeType || '')) || /\.pdf$/i.test(String(p.filename || ''))) { hasPdf = true; return }
+        for (const c of (Array.isArray(p.parts) ? p.parts : [])) walk(c)
+      }
+      walk(dj?.message?.payload)
+      out.push({ id, subject, hasPdf })
+    }
+    return out
+  } catch { return null }
+}

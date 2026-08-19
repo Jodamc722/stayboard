@@ -17,7 +17,9 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 import { mergeProperties, RESERVATION_EMAILS_KEY, type PropertyEmail } from './reservation-emails'
 import { buildDraft, type Notice } from './reservation-draft'
-import { draftGmail, draftStatus, deleteDraft, type GmailAttachment } from './gmail-send'
+import { draftGmail, draftStatus, deleteDraft, foundInSent, listGmailDrafts, type GmailAttachment } from './gmail-send'
+import { getToken as getGuestyToken } from './guesty'
+import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
 import { getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
 import { elserPdfBase64 } from './elser-pdf'
 // ONE SYSTEM, TWO SESSIONS' PARTS (2026-08-19). A parallel session built the support-draft WATCH:
@@ -111,23 +113,95 @@ async function repairDefectiveDrafts(db: any, cfg: TaskAutomationCfg, props: Pro
   }
 }
 
+/**
+ * SENT-AUDIT + ORPHAN SWEEP (2026-08-19). The watch reads "draft left Drafts" as "sent" — but a
+ * DELETED draft leaves Drafts too, and on the one morning two drafters duplicated every notice,
+ * a desk cleaning up the doubles looks exactly like a send. Gmail's Sent folder settles it:
+ *   - subject found in Sent   → the building really was told (without the form — reported).
+ *   - subject NOT in Sent     → nobody was told: reopen the notice (clear sent + draft columns,
+ *     correct the Guesty flag/note) so the pass below drafts it again, complete this time.
+ * Then delete every PDF-less draft still in the folder whose subject belongs to one of these
+ * notices — those are the untracked duplicate copies, and sending one would hit the building
+ * with a form-less second email.
+ */
+async function auditSentAndOrphans(db: any, cfg: TaskAutomationCfg, props: PropertyEmail[], today: string,
+  out: { reopened: number; confirmedSentNoForm: number; orphansDeleted: number; errors: string[] }) {
+  const { data: rows } = await db.from('reservation_notices').select('*')
+    .eq('arrival_date', today).is('deleted_at', null).not('sent_at', 'is', null).eq('sent_by', 'SUPPORT@')
+    .limit(40)
+  const pById: Record<string, PropertyEmail> = {}
+  for (const p of props) pById[p.id] = p
+  const since = Math.floor(Date.now() / 1000) - 48 * 3600
+  const subjects: string[] = []
+  for (const n of (rows || []) as any[]) {
+    try {
+      const p0 = pById[str(n.property_id)]
+      if (!p0?.attachPdf) continue
+      if (str(n.doc_name) || str(n.doc_path)) continue // went out complete — nothing to audit
+      let subject = str(n.sent_subject)
+      if (!subject) { try { subject = str(buildDraft(p0, n as Notice).subject) } catch { /* below */ } }
+      if (!subject) continue
+      subjects.push(subject)
+      const inSent = await foundInSent(cfg.noticeDrafts.fromEmail, subject, since)
+      if (inSent === true) { out.confirmedSentNoForm++; continue }
+      if (inSent === null) { out.errors.push('sent-audit inconclusive for unit ' + str(n.unit_no)); continue }
+      // Definitely not in Sent: the draft was deleted, not sent. Reopen so it re-drafts complete.
+      await db.from('reservation_notices').update({ sent_at: null, sent_by: null, draft_id: null, draft_created_at: null }).eq('id', n.id)
+      out.reopened++
+      // Correct Guesty — the sweep stamped "email sent" there for a send that never happened.
+      try {
+        if (str(n.reservation_id)) {
+          const token = await getGuestyToken().catch(() => '')
+          if (token) {
+            const stamp = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+            const line = '[' + stamp + '] Correction: the arrival email draft was deleted before sending — a new draft with the registration form is in support@ Drafts.'
+            const live = await readCustomFields(str(n.reservation_id), token)
+            if (live !== null) {
+              const isNotes = (c: any) => String(fieldIdOf(c) || '') === '695f16830cb54c001400b3ff' || /reservation[_ ]?notes/i.test(String(c?.fieldName || ''))
+              const existing = (live as any[]).find(isNotes)
+              const prior = existing && typeof existing.value === 'string' ? existing.value : ''
+              await writeCustomFields(str(n.reservation_id), token, [
+                { fieldId: '68dd868bcc0af00010bd8ebe', value: false },
+                { fieldId: existing ? (fieldIdOf(existing) || '695f16830cb54c001400b3ff') : '695f16830cb54c001400b3ff', value: prior.includes(line) ? prior : (prior ? prior + '\n' + line : line) },
+              ])
+            }
+          }
+        }
+      } catch { /* best effort — the local reopen stands */ }
+    } catch (e: any) { out.errors.push('sent-audit: ' + String(e?.message || e).slice(0, 120)) }
+  }
+  if (!subjects.length) return
+  // Untracked duplicate copies still in Drafts: PDF-less + one of these subjects = delete.
+  try {
+    const drafts = await listGmailDrafts(cfg.noticeDrafts.fromEmail, 30)
+    for (const d of drafts || []) {
+      if (d.hasPdf || !d.subject) continue
+      if (!subjects.includes(d.subject)) continue
+      if (await deleteDraft(cfg.noticeDrafts.fromEmail, d.id)) out.orphansDeleted++
+    }
+  } catch (e: any) { out.errors.push('orphan-sweep: ' + String(e?.message || e).slice(0, 120)) }
+}
+
 export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled: boolean; today: string; due: number; drafted: number; skipped: number; failed: number
-  sentDetected: number; rearmed: number; errors: string[]
+  sentDetected: number; rearmed: number; reopened: number; confirmedSentNoForm: number; orphansDeleted: number; errors: string[]
 }> {
   const cfg = await getTaskAutomation()
   const today = ymdET(new Date())
-  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, errors: [] as string[] }
+  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, errors: [] as string[] }
   if (!cfg.noticeDrafts.enabled && !opts.dryRun) return base
 
   const db = supabaseAdmin()
   const props: PropertyEmail[] = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
 
   // First: run the support-draft sweep (marks sent drafts, here + Guesty), then repair any
-  // defective PDF-less drafts so the pass below re-drafts them complete.
+  // defective PDF-less drafts, then audit today's form-less "sent" notices against Gmail's Sent
+  // folder (reopening the ones whose draft was deleted, not sent) — so the pass below re-drafts
+  // everything that still owes the building a complete email.
   if (!opts.dryRun) {
     try { const sw = await checkSupportDrafts(); base.sentDetected = sw.markedSent } catch { /* drafting still runs */ }
     try { await repairDefectiveDrafts(db, cfg, props, base) } catch { /* drafting still runs */ }
+    try { await auditSentAndOrphans(db, cfg, props, today, base) } catch { /* drafting still runs */ }
   }
 
   const { data: rows } = await db.from('reservation_notices').select('*')
