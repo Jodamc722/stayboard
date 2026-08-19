@@ -27,6 +27,31 @@ const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+// ── jsPDF ON THE SERVER, TWO WAYS (Jon, 2026-08-19: "please be able to attach the form, it
+// should work"). First choice: the npm package, bundled with the function. If the serverless
+// bundle ever drops it, fall back to fetching the UMD build from the CDN and evaluating it —
+// Node cannot import an https URL, but it can run the fetched CommonJS body. Either way a
+// failure now carries a real message into the cron's errors[] instead of dying silently.
+let _srvJsPdf: any = null
+async function loadServerJsPdf(): Promise<any> {
+  if (_srvJsPdf) return _srvJsPdf
+  try {
+    const m: any = await import('jspdf')
+    const ctor = m.jsPDF || m.default?.jsPDF || m.default
+    if (ctor) { _srvJsPdf = ctor; return ctor }
+  } catch (e) { console.error('notice-drafts: npm jspdf import failed, trying CDN', e) }
+  const r = await fetch('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', { cache: 'no-store' })
+  if (!r.ok) throw new Error('jsPDF unavailable: npm import failed and CDN answered ' + r.status)
+  const code = await r.text()
+  const mod: any = { exports: {} }
+  const fn = new Function('module', 'exports', 'window', 'self', code + '\nreturn module.exports;')
+  const out = fn(mod, mod.exports, undefined, undefined)
+  const ctor = (out && (out.jsPDF || out.default?.jsPDF)) || mod.exports?.jsPDF
+  if (!ctor) throw new Error('jsPDF UMD loaded but did not expose a constructor')
+  _srvJsPdf = ctor
+  return ctor
+}
+
 // Same field ids app/api/reservation-notices/mark-sent uses (proved against live bookings
 // 2026-07-31 — see that route for why discovery-by-name does not work on this account).
 const EMAIL_SENT_FIELD = '68dd868bcc0af00010bd8ebe'
@@ -58,7 +83,7 @@ async function reconcileSentDrafts(db: any, cfg: TaskAutomationCfg, props: Prope
       // below re-drafts it complete. An already-SENT draft is never touched.
       if (st === 'exists') {
         const p0 = pById[str(n.property_id)]
-        if (p0?.attachPdf && !str(n.doc_path)) {
+        if (p0?.attachPdf && !str(n.doc_name) && !str(n.doc_path)) {
           const gone = await deleteDraft(cfg.noticeDrafts.fromEmail, str(n.draft_id))
           if (gone) { await db.from('reservation_notices').update({ draft_id: null, draft_created_at: null }).eq('id', n.id); out.rearmed++ }
         }
@@ -132,13 +157,9 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   for (const p of props) pById[p.id] = p
   const draftedList: { unit: string; guest: string; property: string; form: boolean }[] = []
 
-  // The npm jsPDF, loaded once per run, only when some property actually wants a form attached.
-  // (lib/elser-pdf's own loader pulls from a CDN — a browser mechanism; on the server we hand the
-  // real constructor in.)
+  // jsPDF for the server, loaded lazily on first use (see loadServerJsPdf below — npm first,
+  // CDN UMD as the fallback, and a real error message if both fail).
   let jsPdfCtor: any = null
-  if (due.some(n => pById[str(n.property_id)]?.attachPdf)) {
-    try { const m: any = await import('jspdf'); jsPdfCtor = m.jsPDF || m.default?.jsPDF || m.default } catch (e) { console.error('notice-drafts: jspdf load failed', e) }
-  }
 
   for (const n of due) {
     const p = pById[str(n.property_id)]
@@ -153,21 +174,27 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       // only if generation genuinely failed.
       let attachments: GmailAttachment[] | undefined
       let attachFailed = false
+      let docName: string | null = null
+      let docPath: string | null = null
       if (d.attach) {
         try {
-          if (!jsPdfCtor) throw new Error('jspdf unavailable')
+          if (!jsPdfCtor) jsPdfCtor = await loadServerJsPdf()
           const b64 = await elserPdfBase64(n as Notice, undefined, jsPdfCtor)
           const bytes = Buffer.from(b64, 'base64')
           attachments = [{ filename: d.attachName, contentType: 'application/pdf', content: bytes }]
+          // doc_name = the PDF made it onto the draft; doc_path additionally = filed in storage.
+          docName = d.attachName
           try {
             // Same bucket + key scheme as /api/reservation-notices/document.
             await db.storage.createBucket('reservation-docs', { public: false }).catch(() => {})
             const key = 'reservations/' + str(n.id) + '.pdf'
             const up = await db.storage.from('reservation-docs').upload(key, bytes, { contentType: 'application/pdf', upsert: true })
-            if (!up.error) await db.from('reservation_notices').update({ doc_path: key, doc_name: d.attachName }).eq('id', n.id)
+            if (!up.error) docPath = key
+            else if (base.errors.length < 6) base.errors.push('form filing ' + str(n.unit_no) + ': ' + str(up.error.message).slice(0, 100))
           } catch { /* the attachment on the draft is the part that matters */ }
-        } catch (e) {
+        } catch (e: any) {
           attachFailed = true
+          if (base.errors.length < 6) base.errors.push('form for ' + str(n.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
           console.error('notice-drafts: form generation failed for', n.id, e)
         }
       }
@@ -183,7 +210,10 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
         subject: d.subject, html, attachments,
       })
       if (!r.ok) throw new Error(r.error || 'draft failed')
-      await db.from('reservation_notices').update({ draft_created_at: new Date().toISOString(), draft_id: r.draftId || null }).eq('id', n.id)
+      await db.from('reservation_notices').update({
+        draft_created_at: new Date().toISOString(), draft_id: r.draftId || null,
+        ...(docName ? { doc_name: docName } : {}), ...(docPath ? { doc_path: docPath } : {}),
+      }).eq('id', n.id)
       base.drafted++
       draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments })
     } catch (e: any) {
