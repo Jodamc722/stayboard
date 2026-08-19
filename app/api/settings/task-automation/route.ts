@@ -39,6 +39,11 @@ export async function PUT(req: NextRequest) {
       Broward: nm(c.supervisors?.Broward, d.supervisors.Broward),
       North: nm(c.supervisors?.North, d.supervisors.North),
     },
+    noticeDrafts: {
+      enabled: c.noticeDrafts?.enabled === true,
+      fromEmail: typeof c.noticeDrafts?.fromEmail === 'string' && /@/.test(c.noticeDrafts.fromEmail)
+        ? c.noticeDrafts.fromEmail.trim().toLowerCase() : d.noticeDrafts.fromEmail,
+    },
   }
   const res = await setSetting(TASK_AUTOMATION_KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })
