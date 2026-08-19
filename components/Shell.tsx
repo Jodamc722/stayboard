@@ -1,39 +1,43 @@
 'use client'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
+import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
 import {
-  Home, CalendarDays, Building2, Layers, MessageSquare, ClipboardList, KanbanSquare,
+  Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa } from 'lucide-react'
+  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
+  ChevronRight, Search, Menu, X } from 'lucide-react'
 
-// Cleaner information architecture: a small set of clearly-named groups,
-// ordered the way a GM actually moves through the day —
-// command → guests → portfolio → performance → ops → settings.
-const SECTIONS: {
-  title: string | null
-  items: { to: string; label: string; Icon: any }[]
-}[] = [
+// ------------------------------------------------------------------------------------------------
+// NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
+// minute of the day — 40 rows on screen, and Today in Ops sat below eight guest tabs. Two changes:
+//
+//   1. A pinned DAILY band on top. Hover any tab, click its star. Saved per person (not per
+//      device) in app_users.prefs.nav_pins; someone who has never pinned anything inherits the
+//      default for their role from lib/nav.ts.
+//   2. The category groups stay — they are how you find the tab you touch twice a month — but they
+//      FOLD. The group holding the page you are on opens itself; the rest stay shut until clicked,
+//      and what you leave open is remembered on that device.
+//
+// Plus a jump box (Cmd/Ctrl-K) and, below lg, a real mobile header + drawer + a bottom bar carrying
+// the first four pins, because until now the 240px desktop sidebar just squeezed onto a phone.
+//
+// Groups are ordered by how often a day touches them: Overview, Operations, Guests, Portfolio,
+// Money, Team, Settings.
+// ------------------------------------------------------------------------------------------------
+
+type NavItem = { to: string; label: string; Icon: any }
+type NavSection = { title: string; items: NavItem[] }
+
+const SECTIONS: NavSection[] = [
   {
-    title: null,
+    title: 'Overview',
     items: [
       { to: '/command', label: 'Command Center', Icon: Gauge },
       { to: '/',        label: 'Home',           Icon: Home },
-    ],
-  },
-  {
-    title: 'Guests',
-    items: [
-      { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
-      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
-      { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
-      { to: '/reviews',      label: 'Reviews',      Icon: Star },
-      { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
-      { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
-      { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
-      { to: '/faq',          label: 'Unit Knowledge', Icon: Sparkles },
     ],
   },
   {
@@ -50,6 +54,20 @@ const SECTIONS: {
       // Projects (2026-08-10, Jon): the work that is NOT a task — renovations, rollouts,
       // onboarding. Next to Work Orders because that is its closest neighbour.
       { to: '/projects', label: 'Projects', Icon: KanbanSquare },
+    ],
+  },
+  {
+    title: 'Guests',
+    items: [
+      { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
+      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
+      { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
+      { to: '/reviews',      label: 'Reviews',      Icon: Star },
+      { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
+      { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
+      { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
+      // Renamed 2026-08-19 (Jon): "Unit Knowledge" -> "Property FAQ". Same page, same key.
+      { to: '/faq',          label: 'Property FAQ', Icon: Sparkles },
     ],
   },
   {
@@ -89,6 +107,18 @@ const SECTIONS: {
   },
 ]
 
+function readLocal(key: string): any {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+function writeLocal(key: string, value: any) {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* private mode */ }
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname()
   const [email, setEmail] = useState<string | null>(null)
@@ -100,9 +130,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [roleLabel, setRoleLabel] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
 
+  // Pins: null until we know (device copy or server), so the band never flashes the role default
+  // over someone's real choices.
+  const [pins, setPins] = useState<string[] | null>(null)
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean> | null>(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const pinsLoaded = useRef(false)
+
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || null))
+    // Paint the device copy immediately; the fetch below corrects it a moment later.
+    const local = readLocal(PINS_LS_KEY)
+    if (Array.isArray(local) && local.length) setPins(cleanPins(local))
+    const groups = readLocal(GROUPS_LS_KEY)
+    setOpenGroups(groups && typeof groups === 'object' && !Array.isArray(groups) ? groups : {})
+
     fetch('/api/access/me').then(r => r.json()).then(j => {
       setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner)
       setFeatures(j?.features && typeof j.features === 'object' ? j.features : {})
@@ -110,7 +154,40 @@ export function Shell({ children }: { children: React.ReactNode }) {
       if (j?.levels && typeof j.levels === 'object') setLevels(j.levels)
       if (typeof j?.accessRole === 'string' && j.accessRole) setRoleLabel(j.accessRole)
       if (j?.profile?.name) setDisplayName(String(j.profile.name))
-    }).catch(() => {})
+      const roleKey = typeof j?.accessRole === 'string' && j.accessRole ? j.accessRole : (j?.isOwner ? 'admin' : null)
+      // The saved copy wins over the device copy, but only on this first pass — after that the
+      // user's own clicks are the truth.
+      fetch('/api/access/prefs', { cache: 'no-store' }).then(r => r.json()).then(p => {
+        if (pinsLoaded.current) return
+        pinsLoaded.current = true
+        if (p && p.ok && Array.isArray(p.pins) && p.pins.length) {
+          const clean = cleanPins(p.pins)
+          setPins(clean); writeLocal(PINS_LS_KEY, clean)
+          return
+        }
+        const again = readLocal(PINS_LS_KEY)
+        if (Array.isArray(again) && again.length) { setPins(cleanPins(again)); return }
+        setPins(defaultPinsFor(roleKey))
+      }).catch(() => {
+        if (pinsLoaded.current) return
+        pinsLoaded.current = true
+        const again = readLocal(PINS_LS_KEY)
+        setPins(Array.isArray(again) && again.length ? cleanPins(again) : defaultPinsFor(roleKey))
+      })
+    }).catch(() => { /* nav stays fully visible; middleware is the real gate */ })
+  }, [])
+
+  // Close the drawer whenever the route changes — otherwise tapping a link on a phone leaves the
+  // panel sitting over the page you just navigated to.
+  useEffect(() => { setDrawerOpen(false); setPaletteOpen(false) }, [path])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(v => !v) }
+      if (e.key === 'Escape') { setPaletteOpen(false); setDrawerOpen(false) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   async function signOut() {
@@ -121,7 +198,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const initials = (email || 'U').split('@')[0].split('.').map(s => s[0]?.toUpperCase()).slice(0, 2).join('') || 'U'
 
-  const isActive = (to: string) => path === to || (to !== '/' && path?.startsWith(to))
+  const isActive = (to: string) => path === to || (to !== '/' && !!path && path.startsWith(to))
 
   // Hide pages outside the user's workspace bundle or toggled off for them (owner always sees all).
   // While /api/access/me is still loading (workspace === null) show everything — no nav flicker,
@@ -135,17 +212,138 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (levels && levels[feat.key] != null) return levels[feat.key] !== 'off'
     return pageAllowed(workspace, features, feat.key)
   }
-  const sections = SECTIONS
+
+  const sections: NavSection[] = SECTIONS
     .map(sec => sec.title === 'Settings' && isAdmin
-      ? { ...sec, items: [...sec.items, { to: '/users', label: 'Users & admin', Icon: UserCog }] }
+      ? { title: sec.title, items: sec.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) }
       : sec)
-    .map(sec => ({ ...sec, items: sec.items.filter(it => it.to === '/users' || canSee(it.to)) }))
+    .map(sec => ({ title: sec.title, items: sec.items.filter(it => it.to === '/users' || canSee(it.to)) }))
     .filter(sec => sec.items.length > 0)
+
+  // Flat lookup so a pin (a path) renders with the same icon and label as its group row.
+  const byPath: Record<string, NavItem> = {}
+  for (let i = 0; i < sections.length; i++) {
+    const items = sections[i].items
+    for (let j = 0; j < items.length; j++) byPath[items[j].to] = items[j]
+  }
+
+  const pinned: NavItem[] = []
+  if (pins) {
+    for (let i = 0; i < pins.length; i++) {
+      const hit = byPath[pins[i]]
+      if (hit) pinned.push(hit)
+    }
+  }
+
+  // Which group holds the page we are on — that one opens itself, whatever the saved state says.
+  let activeGroup: string | null = null
+  for (let i = 0; i < sections.length && !activeGroup; i++) {
+    const items = sections[i].items
+    for (let j = 0; j < items.length; j++) if (isActive(items[j].to)) { activeGroup = sections[i].title; break }
+  }
+
+  const isGroupOpen = (title: string) => {
+    if (!openGroups) return title === activeGroup
+    if (openGroups[title] != null) return !!openGroups[title]
+    return title === activeGroup
+  }
+  const toggleGroup = (title: string) => {
+    const next: Record<string, boolean> = {}
+    const cur = openGroups || {}
+    const keys = Object.keys(cur)
+    for (let i = 0; i < keys.length; i++) next[keys[i]] = cur[keys[i]]
+    next[title] = !isGroupOpen(title)
+    setOpenGroups(next)
+    writeLocal(GROUPS_LS_KEY, next)
+  }
+
+  function savePins(next: string[]) {
+    setPins(next)
+    writeLocal(PINS_LS_KEY, next)
+    fetch('/api/access/prefs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pins: next }),
+    }).catch(() => { /* the device copy already holds it */ })
+  }
+  const isPinned = (to: string) => !!pins && pins.indexOf(to) >= 0
+  function togglePin(to: string) {
+    const cur = pins || []
+    if (cur.indexOf(to) >= 0) { savePins(cur.filter(p => p !== to)); return }
+    if (cur.length >= MAX_PINS) return
+    savePins(cur.concat([to]))
+  }
 
   // Badge shows the DB role when assigned (pretty-printed key), else the legacy workspace label.
   const wsLabel = roleLabel
     ? roleLabel.split('_').map(w => w === 'cs' ? 'CS' : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
     : (workspace ? workspaceDef(workspace).label : null)
+
+  const here = byPath[path || '']
+  const currentLabel = here ? here.label : (activeGroup || 'Lighthouse')
+
+  const navBody = (onNavigate?: () => void) => (
+    <>
+      <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }}
+        className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl border border-line bg-app/60 text-sm text-muted hover:bg-white hover:border-brand-200 transition-all">
+        <Search size={15} />
+        <span>Jump to…</span>
+        <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border border-line bg-white text-muted">⌘K</span>
+      </button>
+
+      {pinned.length > 0 && (
+        <div>
+          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold text-amber-700 flex items-center gap-1.5">
+            <Star size={11} className="fill-amber-400 text-amber-500" /> Daily
+          </div>
+          {pinned.map(({ to, label, Icon }) => {
+            const active = isActive(to)
+            return (
+              <div key={'pin-' + to} className={`group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                <Link href={to} prefetch={false} onClick={onNavigate} className="flex items-center gap-3 flex-1 min-w-0">
+                  <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
+                  <span className="truncate">{label}</span>
+                </Link>
+                <button type="button" title="Unpin from Daily" aria-label={'Unpin ' + label}
+                  onClick={() => togglePin(to)} className="flex-shrink-0 text-amber-500 hover:text-amber-600">
+                  <Star size={14} className="fill-amber-400" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {sections.map(section => {
+        const open = isGroupOpen(section.title)
+        return (
+          <div key={section.title}>
+            <button type="button" onClick={() => toggleGroup(section.title)}
+              className="w-full mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold text-muted/70 hover:bg-app hover:text-ink transition-all">
+              <ChevronRight size={12} className={'transition-transform ' + (open ? 'rotate-90' : '')} />
+              {section.title}
+              <span className="ml-auto text-[10px] font-bold tracking-normal px-1.5 rounded-full border border-line bg-app text-muted">{section.items.length}</span>
+            </button>
+            {open && section.items.map(({ to, label, Icon }) => {
+              const active = isActive(to)
+              const on = isPinned(to)
+              return (
+                <div key={to} className={`group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                  <Link href={to} prefetch={false} onClick={onNavigate} className="flex items-center gap-3 flex-1 min-w-0">
+                    <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
+                    <span className="truncate">{label}</span>
+                  </Link>
+                  <button type="button" title={on ? 'Unpin from Daily' : 'Pin to Daily'} aria-label={(on ? 'Unpin ' : 'Pin ') + label}
+                    onClick={() => togglePin(to)}
+                    className={'flex-shrink-0 transition-opacity ' + (on ? 'text-amber-500' : 'text-muted/40 opacity-0 group-hover:opacity-100 hover:text-amber-500')}>
+                    <Star size={14} className={on ? 'fill-amber-400' : ''} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+    </>
+  )
 
   return (
     // APP SHELL, NOT A LONG PAGE. This was min-h-screen, so the wrapper grew to the height of the
@@ -154,30 +352,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
     // ancestor, and that ancestor was not scrolling). h-screen makes main the real scroller, so the
     // sidebar stays put and sticky headers work on every page.
     <div className="h-screen overflow-hidden flex bg-app">
-      {/* Sidebar */}
-      <aside className="w-60 bg-white border-r border-line flex flex-col">
+      {/* Sidebar — desktop only. Below lg the header + drawer + bottom bar take over. */}
+      <aside className="hidden lg:flex w-60 bg-white border-r border-line flex-col">
         <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
           <img src="/icon-192.png" alt="Lighthouse" className="w-8 h-8 rounded-lg shadow-sm" />
           <span className="font-bold text-[15px] tracking-tight text-ink">LIGHTHOUSE</span>
         </div>
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
-          {sections.map((section, si) => (
-            <div key={si}>
-              {section.title && (
-                <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider font-semibold text-muted/60">{section.title}</div>
-              )}
-              {section.items.map(({ to, label, Icon }) => {
-                const active = isActive(to)
-                return (
-                  <Link key={to} href={to} prefetch={false}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
-                    <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
-                    {label}
-                  </Link>
-                )
-              })}
-            </div>
-          ))}
+          {navBody()}
         </nav>
         <NotificationsBell />
         <div className="border-t border-line p-3">
@@ -198,10 +380,135 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 overflow-auto">
-        <div className="max-w-[1600px] mx-auto p-6 lg:p-8 animate-fade-in">{children}</div>
-      </main>
+      {/* Main column */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Mobile header */}
+        <header className="lg:hidden flex items-center gap-2 px-3 py-2.5 bg-white border-b border-line flex-shrink-0">
+          <button type="button" onClick={() => setDrawerOpen(true)} aria-label="Open menu"
+            className="w-9 h-9 rounded-lg border border-line grid place-items-center text-muted hover:text-ink">
+            <Menu size={17} />
+          </button>
+          <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
+          <span className="font-semibold text-sm text-ink truncate">{currentLabel}</span>
+          <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Jump to a tab"
+            className="ml-auto w-9 h-9 rounded-lg border border-line grid place-items-center text-muted hover:text-ink">
+            <Search size={16} />
+          </button>
+        </header>
+
+        <main className="flex-1 overflow-auto">
+          <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8 animate-fade-in">{children}</div>
+        </main>
+
+        {/* Mobile bottom bar — the first four pins. One thumb, no scrolling. */}
+        {pinned.length > 0 && (
+          <nav className="lg:hidden flex-shrink-0 border-t border-line bg-white flex items-stretch">
+            {pinned.slice(0, 4).map(({ to, label, Icon }) => {
+              const active = isActive(to)
+              return (
+                <Link key={'bb-' + to} href={to} prefetch={false}
+                  className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold ${active ? 'text-brand-600' : 'text-muted'}`}>
+                  <Icon size={18} strokeWidth={active ? 2.25 : 2} />
+                  <span className="truncate max-w-full px-1">{label}</span>
+                </Link>
+              )
+            })}
+            <button type="button" onClick={() => setDrawerOpen(true)}
+              className="flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold text-muted">
+              <Menu size={18} />
+              <span>More</span>
+            </button>
+          </nav>
+        )}
+      </div>
+
+      {/* Mobile drawer */}
+      {drawerOpen && (
+        <div className="lg:hidden fixed inset-0 z-50" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-ink/40" onClick={() => setDrawerOpen(false)} />
+          <div className="absolute left-0 top-0 bottom-0 w-[82%] max-w-[300px] bg-white shadow-lifted flex flex-col">
+            <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-line">
+              <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
+              <span className="font-bold text-sm tracking-tight text-ink">LIGHTHOUSE</span>
+              <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu"
+                className="ml-auto w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-ink">
+                <X size={17} />
+              </button>
+            </div>
+            <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
+              {navBody(() => setDrawerOpen(false))}
+            </nav>
+            <div className="border-t border-line p-3 flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
+                {initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-ink truncate font-medium">{displayName || email?.split('@')[0]}</div>
+                <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 mt-0.5">
+                  <LogOut size={10} /> Sign out
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {paletteOpen && <JumpPalette sections={sections} onClose={() => setPaletteOpen(false)} />}
+    </div>
+  )
+}
+
+// Cmd/Ctrl-K jump box. Type three letters, hit Enter. This is what makes a folded group free: you
+// never have to remember which drawer a tab lives in.
+function JumpPalette({ sections, onClose }: { sections: { title: string; items: { to: string; label: string; Icon: any }[] }[]; onClose: () => void }) {
+  const router = useRouter()
+  const [q, setQ] = useState('')
+  const [sel, setSel] = useState(0)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => { const t = setTimeout(() => { if (inputRef.current) inputRef.current.focus() }, 20); return () => clearTimeout(t) }, [])
+  useEffect(() => { setSel(0) }, [q])
+
+  const all: { to: string; label: string; Icon: any; group: string }[] = []
+  for (let i = 0; i < sections.length; i++) {
+    const items = sections[i].items
+    for (let j = 0; j < items.length; j++) all.push({ to: items[j].to, label: items[j].label, Icon: items[j].Icon, group: sections[i].title })
+  }
+  const needle = q.trim().toLowerCase()
+  const hits = needle
+    ? all.filter(x => x.label.toLowerCase().indexOf(needle) >= 0 || x.group.toLowerCase().indexOf(needle) >= 0)
+    : all
+
+  const go = (to: string) => { onClose(); router.push(to) }
+
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSel(s => Math.min(s + 1, hits.length - 1)) }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setSel(s => Math.max(s - 1, 0)) }
+    if (e.key === 'Enter' && hits[sel]) { e.preventDefault(); go(hits[sel].to) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-ink/35" onClick={onClose} />
+      <div className="absolute left-1/2 -translate-x-1/2 top-[12vh] w-[92vw] max-w-[560px] bg-white border border-line rounded-2xl shadow-lifted overflow-hidden">
+        <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
+          placeholder="Jump to a tab…" aria-label="Jump to a tab"
+          className="w-full px-4 py-3.5 text-[15px] outline-none border-b border-line text-ink placeholder:text-muted" />
+        <div className="max-h-80 overflow-y-auto p-1.5">
+          {hits.length === 0 && <div className="px-3 py-6 text-sm text-muted text-center">No tab matches that.</div>}
+          {hits.map((h, i) => {
+            const HitIcon = h.Icon
+            return (
+              <button key={h.to} type="button" onMouseEnter={() => setSel(i)} onClick={() => go(h.to)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-left ${i === sel ? 'bg-brand-50 text-brand-700' : 'text-ink hover:bg-app'}`}>
+                <HitIcon size={15} />
+                <span>{h.label}</span>
+                <span className="ml-auto text-[11px] text-muted">{h.group}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
