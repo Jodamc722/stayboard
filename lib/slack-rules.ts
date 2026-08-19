@@ -1,16 +1,20 @@
-// SLACK ALERT RULES — everything about who hears what, and when, editable from /users.
+// SLACK ALERT RULES — who hears what, and when. Editable from /users.
 //
 // Jon, 2026-08-19: "This should be editable in user settings, ect where we can set rules."
-// So nothing here is hardcoded behaviour. The channel each building posts to, who is always
-// tagged, the overtime threshold, the quiet hours, whether an event needs approval before it
-// sends, how long an unapproved item lives — all of it is one JSON blob in app_settings that the
-// admin screen reads and writes. No migration.
 //
-// THE STANDING RULES Jon set, expressed as defaults below:
-//   - Every alert tags the person involved + that building's supervisor + Roberto + Karla + Jon.
-//   - Nothing staff-facing sends until a human approves it; sync failures go straight out.
-//   - Group, never spam: one message per building per run, tagging everyone at once.
-//   - Encouraging tone, always.
+// THE ROUTING MODEL IS AREA × DEPARTMENT, NOT PER-BUILDING. Jon: "we have broward which will be
+// all our broward units so HK broward, Broward maintenance ect, we have Miami same then you will
+// have our vendor operated building like Botanica, PT, Capri Lucerne, etc."
+//
+// So a ROUTING GROUP owns a list of buildings and TWO channels — housekeeping and maintenance —
+// because that is how his Slack is actually organised (#vr-broward-housekeeping is a different
+// room from #vr-broward-maintenance, and 17West has its own pair). Late cleans are housekeeping
+// work and go to the HK channel; a glitch routes on its own category, the same way the Breezeway
+// push already decides which department gets the task. The cleaners never get pinged about an AC
+// compressor, and the maintenance crew never gets pinged about a missed clean.
+//
+// VENDOR GROUPS tag `@here` instead of individuals (Jon's call) — those crews are not ours, they
+// are mostly not in this Slack, and an @-mention that resolves to nobody is worse than useless.
 import 'server-only'
 import { getSetting, setSetting } from './app-settings'
 import { getDirectory, type SlackUser } from './slack'
@@ -30,6 +34,31 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   personal_brief: 'Personal morning brief (DM)',
 }
 
+/** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
+export type Dept = 'housekeeping' | 'maintenance'
+
+/**
+ * Which department owns a glitch, matching `deptFor` in app/api/glitches/action/route.ts so the
+ * Slack routing and the Breezeway task always agree about whose job it is.
+ */
+export function deptForCategory(category: string | null | undefined): Dept {
+  const c = String(category || '').toLowerCase()
+  if (c.startsWith('cleanliness')) return 'housekeeping'
+  return 'maintenance'
+}
+
+export type RoutingGroup = {
+  id: string
+  label: string
+  /** canonical building labels from lib/segments */
+  buildings: string[]
+  housekeeping: string | null   // Slack channel id
+  maintenance: string | null    // Slack channel id
+  supervisors: string[]         // Slack user ids
+  /** vendor-run: tag @here rather than naming people who are not in this workspace */
+  vendor: boolean
+}
+
 export type EventRule = {
   enabled: boolean
   /** Hold in the approval queue instead of sending straight away. */
@@ -44,13 +73,10 @@ export type EventRule = {
 export type SlackRules = {
   /** Gets a copy of everything, so Jon can see the whole picture in one place. */
   firehose: string | null
-  /** Used when a building has no channel of its own. */
+  /** Used when a group has no channel for that department. */
   defaultChannel: string | null
-  /** building label (from lib/segments) -> Slack channel id */
-  buildings: Record<string, string>
-  /** building label -> Slack user ids who supervise it */
-  supervisors: Record<string, string[]>
-  /** Always tagged on every alert, whatever the building. Jon + Roberto + Karla. */
+  groups: RoutingGroup[]
+  /** Always tagged on every alert, whatever the area. Jon + Roberto + Karla. */
   core: string[]
   /** Manual staff-name -> Slack id overrides, for when the fuzzy match cannot get there. */
   people: Record<string, string>
@@ -70,6 +96,62 @@ export const JON_SLACK_ID = 'U04G9B24ECT'
 export const ROBERTO_SLACK_ID = 'U07FSK2BBG8'
 export const KARLA_SLACK_ID = 'U0AFT9LM0RH'
 
+// Jon's real channels, read off the workspace 2026-08-19. Seeded so this works on day one rather
+// than shipping empty and routing nothing; every one of them is editable in the admin.
+const CH = {
+  brow_hk: 'C04BE7CL90W',      // #vr-broward-housekeeping (private — bot must be invited)
+  brow_mt: 'C02S24UE1EZ',      // #vr-broward-maintenance  (private — bot must be invited)
+  miami: 'C094TA92QGM',        // #vr-miami-hk-maintenance-arya-elser-district225
+  w17_hk: 'C09PGAX5ARL',       // #vr-miami-houskeeping-17west (private — bot must be invited)
+  w17_mt: 'C09T9T65VGU',       // #vr-maintenance-17west
+  north: 'C08HW9XBZ8U',        // #vr-lakeworth-palmbeach-amri-capri-lucerne
+  botanica: 'C0B8VTD0BFC',     // #vr-botanica
+  parktower: 'C0AFLUUE8BH',    // #vr-parktower (private — bot must be invited)
+}
+
+/**
+ * Buildings come from lib/segments KNOWN_BUILDINGS. Nomad and Miami House have no channel of
+ * their own — the Miami room is the only sensible home, and Jon can move them in one dropdown.
+ */
+export const DEFAULT_GROUPS: RoutingGroup[] = [
+  {
+    id: '17west', label: '17West',
+    buildings: ['17WEST'],
+    housekeeping: CH.w17_hk, maintenance: CH.w17_mt,
+    supervisors: [], vendor: false,
+  },
+  {
+    id: 'miami', label: 'Miami',
+    buildings: ['Arya', 'Elser', 'District 225', 'Nomad', 'Miami House'],
+    housekeeping: CH.miami, maintenance: CH.miami,
+    supervisors: [], vendor: false,
+  },
+  {
+    id: 'broward', label: 'Broward',
+    buildings: ['Eden', 'Rustic', 'Hendricks', 'Oasis', 'Waves', 'Pelican', 'Salato', '336 Arthur', '7071 SW', '906', '3316', '1587'],
+    housekeeping: CH.brow_hk, maintenance: CH.brow_mt,
+    supervisors: [], vendor: false,
+  },
+  {
+    id: 'north', label: 'North — Capri / Lucerne / Amrit (vendor)',
+    buildings: ['Capri', 'Lucerne', 'Amrit'],
+    housekeeping: CH.north, maintenance: CH.north,
+    supervisors: [], vendor: true,
+  },
+  {
+    id: 'botanica', label: 'Botanica (vendor)',
+    buildings: ['Botanica'],
+    housekeeping: CH.botanica, maintenance: CH.botanica,
+    supervisors: [], vendor: true,
+  },
+  {
+    id: 'parktowers', label: 'Park Towers (vendor)',
+    buildings: ['Park Towers'],
+    housekeeping: CH.parktower, maintenance: CH.parktower,
+    supervisors: [], vendor: true,
+  },
+]
+
 const workHours = (approval: boolean): EventRule => ({
   enabled: true,
   approval,
@@ -81,8 +163,7 @@ const workHours = (approval: boolean): EventRule => ({
 export const DEFAULT_RULES: SlackRules = {
   firehose: null,
   defaultChannel: null,
-  buildings: {},
-  supervisors: {},
+  groups: DEFAULT_GROUPS,
   core: [JON_SLACK_ID, ROBERTO_SLACK_ID, KARLA_SLACK_ID],
   people: {},
   events: {
@@ -113,7 +194,7 @@ const strList = (v: any, cap: number): string[] => {
     const s = String(raw || '').trim()
     if (!s || seen[s]) continue
     seen[s] = true
-    out.push(s.slice(0, 40))
+    out.push(s.slice(0, 80))
   }
   return out
 }
@@ -129,15 +210,24 @@ const strMap = (v: any, cap: number): Record<string, string> => {
   return out
 }
 
-const listMap = (v: any, cap: number): Record<string, string[]> => {
-  const out: Record<string, string[]> = {}
-  if (!v || typeof v !== 'object') return out
-  for (const k of Object.keys(v).slice(0, cap)) {
-    const key = String(k || '').trim().slice(0, 80)
-    const val = strList((v as any)[k], 20)
-    if (key && val.length) out[key] = val
+const chan = (v: any): string | null => {
+  const s = String(v || '').trim().slice(0, 40)
+  return s || null
+}
+
+function mergeGroup(stored: any, index: number): RoutingGroup | null {
+  if (!stored || typeof stored !== 'object') return null
+  const label = String(stored.label || '').trim().slice(0, 80)
+  if (!label) return null
+  return {
+    id: String(stored.id || 'group' + index).trim().slice(0, 40) || 'group' + index,
+    label,
+    buildings: strList(stored.buildings, 60),
+    housekeeping: chan(stored.housekeeping),
+    maintenance: chan(stored.maintenance),
+    supervisors: strList(stored.supervisors, 20),
+    vendor: !!stored.vendor,
   }
-  return out
 }
 
 function mergeRule(stored: any, dflt: EventRule): EventRule {
@@ -155,22 +245,27 @@ function mergeRule(stored: any, dflt: EventRule): EventRule {
 export function mergeRules(stored: any): SlackRules {
   const d = DEFAULT_RULES
   if (!stored || typeof stored !== 'object') {
-    return { ...d, core: d.core.slice(), approvers: d.approvers.slice(), events: { ...d.events } }
+    return { ...d, core: d.core.slice(), approvers: d.approvers.slice(), groups: d.groups.map(g => ({ ...g })), events: { ...d.events } }
   }
   const events = {} as Record<EventKey, EventRule>
   const keys = Object.keys(d.events) as EventKey[]
   for (const k of keys) events[k] = mergeRule((stored.events || {})[k], d.events[k])
+
+  const rawGroups = Array.isArray(stored.groups) ? stored.groups.slice(0, 40) : []
+  const groups = rawGroups.map(mergeGroup).filter(Boolean) as RoutingGroup[]
+
   const core = strList(stored.core, 30)
+  const approvers = strList(stored.approvers, 20)
   return {
-    firehose: stored.firehose ? String(stored.firehose).slice(0, 40) : null,
-    defaultChannel: stored.defaultChannel ? String(stored.defaultChannel).slice(0, 40) : null,
-    buildings: strMap(stored.buildings, 60),
-    supervisors: listMap(stored.supervisors, 60),
+    firehose: chan(stored.firehose),
+    defaultChannel: chan(stored.defaultChannel),
+    // Never leave the app with nowhere to route: an empty list falls back to the seeded areas.
+    groups: groups.length ? groups : d.groups.map(g => ({ ...g })),
     // Jon asked for these three on everything. If someone empties the list we put them back.
     core: core.length ? core : d.core.slice(),
     people: strMap(stored.people, 300),
     events,
-    approvers: strList(stored.approvers, 20).length ? strList(stored.approvers, 20) : d.approvers.slice(),
+    approvers: approvers.length ? approvers : d.approvers.slice(),
     approvalExpiryMin: clampInt(stored.approvalExpiryMin, 15, 7 * 24 * 60, d.approvalExpiryMin),
     overtimeHours: clampInt(stored.overtimeHours, 4, 24, d.overtimeHours),
     tone: String(stored.tone || d.tone).slice(0, 600),
@@ -187,22 +282,37 @@ export async function saveSlackRules(next: any, actor: string): Promise<{ ok: bo
   return { ok: res.ok, error: res.error, rules: clean }
 }
 
-// ── Resolution helpers ─────────────────────────────────────────────────────────────────────────
+// ── Resolution ─────────────────────────────────────────────────────────────────────────────────
 
-/** Where a building's alerts go. Falls back to the default channel, then the firehose. */
-export function channelForBuilding(rules: SlackRules, building: string | null | undefined): string | null {
+/** Which area owns this building. Null when nothing claims it — those fall through to the firehose. */
+export function groupForBuilding(rules: SlackRules, building: string | null | undefined): RoutingGroup | null {
   const b = String(building || '').trim()
-  if (b && rules.buildings[b]) return rules.buildings[b]
+  if (!b) return null
+  for (const g of rules.groups) {
+    if (g.buildings.indexOf(b) >= 0) return g
+  }
+  return null
+}
+
+/** The room this piece of work belongs in. Falls back to the group's other room, then defaults. */
+export function channelFor(rules: SlackRules, group: RoutingGroup | null, dept: Dept): string | null {
+  if (group) {
+    const primary = dept === 'housekeeping' ? group.housekeeping : group.maintenance
+    const other = dept === 'housekeeping' ? group.maintenance : group.housekeeping
+    if (primary) return primary
+    if (other) return other
+  }
   return rules.defaultChannel || rules.firehose || null
 }
 
 /**
- * Everyone who should be tagged on an alert about `building` concerning `people`.
- * Order is deliberate: the people doing the work first, then their supervisor, then the core.
+ * Everyone tagged on an alert. Order is deliberate: the people doing the work, then the area's
+ * supervisor, then the core three. A VENDOR group contributes no individuals — the message uses
+ * @here instead, because those crews are not in this workspace.
  */
 export function audienceFor(
   rules: SlackRules,
-  building: string | null | undefined,
+  group: RoutingGroup | null,
   personIds: (string | null | undefined)[],
 ): string[] {
   const out: string[] = []
@@ -213,9 +323,8 @@ export function audienceFor(
     seen[s] = true
     out.push(s)
   }
-  for (const p of personIds) push(p)
-  const b = String(building || '').trim()
-  if (b && rules.supervisors[b]) for (const s of rules.supervisors[b]) push(s)
+  if (!group || !group.vendor) for (const p of personIds) push(p)
+  if (group) for (const s of group.supervisors) push(s)
   for (const c of rules.core) push(c)
   return out
 }

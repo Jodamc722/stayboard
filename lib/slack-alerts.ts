@@ -1,14 +1,18 @@
-// THE ALERTS. Each function gathers a situation, groups it by building, writes ONE encouraging
-// message per group, and hands it to the outbox. None of them post to Slack directly — that is
-// the outbox's job, after a human has approved (Jon's rule, 2026-08-19).
+// THE ALERTS. Each function gathers a situation, groups it by ROUTING AREA (and for glitches, by
+// department), writes ONE encouraging message per group, and hands it to the outbox. None of them
+// post to Slack directly — that is the outbox's job, after a human has approved.
 //
 // GROUPING IS THE WHOLE POINT. Jon: "if multiple cleans pending, or glitches it should group them
-// ect and tag all parties". So the shape of every function here is the same:
+// ect and tag all parties". And the areas are his, not invented: "we have broward which will be
+// all our broward units so HK broward, Broward maintenance ect, we have Miami same then you will
+// have our vendor operated building like Botanica, PT, Capri Lucerne, etc."
 //
-//     load rows  ->  bucket by building  ->  resolve each person to a Slack id
-//                ->  ONE draft per building, tagging everyone at once
+// So the shape of every function here is:
 //
-// A building with nothing wrong produces no message at all. Silence is a feature.
+//     load rows  ->  bucket by (area × department)  ->  resolve each person to a Slack id
+//                ->  ONE draft per bucket, into that department's channel, tagging everyone
+//
+// A bucket with nothing wrong produces no message at all. Silence is a feature.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { buildingOf } from './segments'
@@ -17,7 +21,8 @@ import { getTimecards } from './homebase-labor'
 import { loadBehind } from './ops-behind'
 import { draft } from './slack-queue'
 import {
-  getSlackRules, channelForBuilding, audienceFor, resolveSlackId, type SlackRules,
+  getSlackRules, groupForBuilding, channelFor, audienceFor, resolveSlackId, deptForCategory,
+  type SlackRules, type RoutingGroup, type Dept,
 } from './slack-rules'
 import {
   lateCleansMessage, glitchesMessage, overtimeMessage, digestMessage,
@@ -40,23 +45,39 @@ async function ctx(): Promise<Ctx> {
   return { rules, users: dir.users }
 }
 
-/** Bucket anything that knows its building. Returns a plain object so the tsconfig stays happy. */
-function byBuilding<T>(rows: T[], keyOf: (row: T) => string): Record<string, T[]> {
-  const out: Record<string, T[]> = {}
+/** A bucket of work that shares one message: one area, one department. */
+type Bucket<T> = { key: string; label: string; group: RoutingGroup | null; dept: Dept; rows: T[] }
+
+/**
+ * Sort rows into (area × department) buckets. A unit whose building no area claims still gets a
+ * bucket — it routes to the fallback channel rather than vanishing, because a silent drop is how
+ * you end up trusting a board that is quietly missing work.
+ */
+function bucketBy<T>(
+  rules: SlackRules,
+  rows: T[],
+  unitOf: (row: T) => string,
+  deptOf: (row: T) => Dept,
+): Bucket<T>[] {
+  const map: Record<string, Bucket<T>> = {}
   for (const r of rows) {
-    const k = keyOf(r) || 'Unassigned'
-    if (!out[k]) out[k] = []
-    out[k].push(r)
+    const building = buildingOf(null, unitOf(r))
+    const group = groupForBuilding(rules, building)
+    const dept = deptOf(r)
+    const label = group ? group.label : (building || 'Unassigned')
+    const key = (group ? group.id : 'unassigned:' + label) + ':' + dept
+    if (!map[key]) map[key] = { key, label, group, dept, rows: [] }
+    map[key].rows.push(r)
   }
-  return out
+  return Object.keys(map).map(k => map[k])
 }
 
 // ── 1. Cleans running behind ───────────────────────────────────────────────────────────────────
 
 /**
  * Reuses `loadBehind()` so the Slack alert and the Today-in-Ops board can never disagree about
- * what "behind" means. BehindRow carries no building, so we re-derive it from the unit name —
- * `buildingOf` matches against the name, which is exactly what a nickname string is.
+ * what "behind" means. Always housekeeping — a clean that has not started is not a maintenance
+ * problem, and the maintenance channel should never see it.
  */
 export async function runLateCleanAlert(): Promise<any> {
   const { rules, users } = await ctx()
@@ -66,29 +87,31 @@ export async function runLateCleanAlert(): Promise<any> {
   const b = await loadBehind()
   if (!b.units.length) return { skipped: 'nothing behind', waiting: b.waiting }
 
-  const groups = byBuilding(b.units, u => buildingOf(null, u.unit) || 'Unassigned')
+  const buckets = bucketBy(rules, b.units, u => u.unit, () => 'housekeeping' as Dept)
   const results: any[] = []
 
-  for (const building of Object.keys(groups)) {
-    const rows = groups[building]
-    const items: LateCleanItem[] = rows.map(r => ({
+  for (const bucket of buckets) {
+    const items: LateCleanItem[] = bucket.rows.map(r => ({
       unit: r.unit,
       assignee: r.assignee,
       assigneeSlackId: resolveSlackId(r.assignee, users, rules),
       arrivingAt: r.arrivingAt,
       checkOutTime: r.checkOutTime,
     }))
-    const audience = audienceFor(rules, building, items.map(i => i.assigneeSlackId))
-    const { body, summary } = lateCleansMessage({ building, items, audience, date: b.date })
+    const vendor = !!(bucket.group && bucket.group.vendor)
+    const audience = audienceFor(rules, bucket.group, items.map(i => i.assigneeSlackId))
+    const { body, summary } = lateCleansMessage({
+      area: bucket.label, items, audience, date: b.date, here: vendor,
+    })
     const res = await draft({
       eventKey: 'late_cleans',
-      groupKey: 'late_cleans:' + building + ':' + b.date,
-      building,
-      channelId: channelForBuilding(rules, building),
+      groupKey: 'late_cleans:' + bucket.key + ':' + b.date,
+      building: bucket.label,
+      channelId: channelFor(rules, bucket.group, 'housekeeping'),
       body, summary, audience,
       itemCount: items.length,
     }, rules)
-    results.push({ building, count: items.length, ...res })
+    results.push({ area: bucket.label, count: items.length, ...res })
   }
   return { ok: true, groups: results.length, results }
 }
@@ -97,6 +120,12 @@ export async function runLateCleanAlert(): Promise<any> {
 
 const CLOSED_STATUSES = ['closed', 'done', 'resolved']
 
+/**
+ * Routes each issue on its own category, matching the Breezeway task department exactly: a
+ * cleanliness complaint reaches housekeeping, everything else reaches maintenance. That means an
+ * area can produce two messages — but each one goes to the people who can actually fix it, which
+ * is the opposite of spam.
+ */
 export async function runGlitchAlert(): Promise<any> {
   const { rules, users } = await ctx()
   const rule = rules.events.glitches
@@ -113,12 +142,11 @@ export async function runGlitchAlert(): Promise<any> {
   const rows = (data || []) as any[]
   if (!rows.length) return { skipped: 'no open issues' }
 
-  const groups = byBuilding(rows, r => buildingOf(null, String(r.unit || '')) || 'Unassigned')
+  const buckets = bucketBy(rules, rows, r => String(r.unit || ''), r => deptForCategory(r.category))
   const results: any[] = []
 
-  for (const building of Object.keys(groups)) {
-    const rs = groups[building]
-    const items: GlitchItem[] = rs.map(r => {
+  for (const bucket of buckets) {
+    const items: GlitchItem[] = bucket.rows.map(r => {
       const created = r.created_at ? Date.parse(r.created_at) : 0
       const ageDays = created ? Math.floor((Date.now() - created) / 86_400_000) : null
       return {
@@ -132,19 +160,23 @@ export async function runGlitchAlert(): Promise<any> {
     })
     // Only speak up when something is actually aging — a fresh board needs no nudge.
     const worth = items.filter(i => i.overdue || (i.ageDays != null && i.ageDays >= 2))
-    if (!worth.length) { results.push({ building, skipped: 'all fresh' }); continue }
+    if (!worth.length) { results.push({ area: bucket.label, dept: bucket.dept, skipped: 'all fresh' }); continue }
 
-    const audience = audienceFor(rules, building, worth.map(i => i.assigneeSlackId))
-    const { body, summary } = glitchesMessage({ building, items: worth, audience, date: today })
+    const vendor = !!(bucket.group && bucket.group.vendor)
+    const audience = audienceFor(rules, bucket.group, worth.map(i => i.assigneeSlackId))
+    const label = bucket.label + (bucket.dept === 'housekeeping' ? ' · housekeeping' : ' · maintenance')
+    const { body, summary } = glitchesMessage({
+      area: label, items: worth, audience, date: today, here: vendor,
+    })
     const res = await draft({
       eventKey: 'glitches',
-      groupKey: 'glitches:' + building + ':' + today,
-      building,
-      channelId: channelForBuilding(rules, building),
+      groupKey: 'glitches:' + bucket.key + ':' + today,
+      building: bucket.label,
+      channelId: channelFor(rules, bucket.group, bucket.dept),
       body, summary, audience,
       itemCount: worth.length,
     }, rules)
-    results.push({ building, count: worth.length, ...res })
+    results.push({ area: bucket.label, dept: bucket.dept, count: worth.length, ...res })
   }
   return { ok: true, groups: results.length, results }
 }
@@ -175,7 +207,8 @@ export async function runOvertimeAlert(): Promise<any> {
     clockIn: t.clockIn ? new Date(t.clockIn).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) : null,
   }))
 
-  // Jon's DM policy: supervisors first, the person tagged rather than DM'd about a problem.
+  // Jon's DM policy: supervisors first, the person tagged rather than DM'd about a problem. This
+  // one is not area-scoped — it is about people, and someone can work across buildings in a day.
   const audience = audienceFor(rules, null, items.map(i => i.slackId))
   const { body, summary } = overtimeMessage({ items, audience, threshold: rules.overtimeHours, date: today })
   const res = await draft({

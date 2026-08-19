@@ -33,8 +33,14 @@ export function humanList(names: string[]): string {
   return c.slice(0, -1).join(', ') + ' and ' + c[c.length - 1]
 }
 
-const ccLine = (audience: string[]): string => {
+/**
+ * The tag line every grouped message ends with. `here` is set for VENDOR areas (Jon's call,
+ * 2026-08-19): those crews are not in this workspace, so an @-mention resolves to nobody —
+ * @here reaches whoever from the vendor side is actually in the channel.
+ */
+const ccLine = (audience: string[], here?: boolean): string => {
   const tags = audience.map(mention).filter(Boolean)
+  if (here) tags.unshift('<!here>')
   return tags.length ? tags.join(' ') : ''
 }
 
@@ -49,26 +55,28 @@ export type LateCleanItem = {
 }
 
 /**
- * ONE message for a whole building. Units are listed compactly; the ones with a guest arriving
+ * ONE message for a whole AREA (all of Broward, all of Miami). Units are listed compactly; the
  * today are called out first because that is the only part that is genuinely time-critical.
  */
 export function lateCleansMessage(opts: {
-  building: string
+  /** the ROUTING AREA — "Broward", "Miami", "17West" — not one building. One message per area. */
+  area: string
   items: LateCleanItem[]
   audience: string[]
   date: string
+  here?: boolean
 }): { body: string; summary: string } {
-  const { building, items, audience, date } = opts
+  const { area, items, audience, date, here } = opts
   const withArrival = items.filter(i => i.arrivingAt)
   const unassigned = items.filter(i => !i.assignee)
   const earliest = withArrival
     .map(i => i.arrivingAt as string)
     .sort()[0] || null
 
-  const head = opener(building + date, [
-    '👋 *' + building + '* — quick pulse on today',
-    '🌤 *' + building + '* — where the day stands',
-    '📋 *' + building + '* — heads up on the board',
+  const head = opener(area + date, [
+    '👋 *' + area + '* — quick pulse on today',
+    '🌤 *' + area + '* — where the day stands',
+    '📋 *' + area + '* — heads up on the board',
   ])
 
   const count = items.length
@@ -99,10 +107,10 @@ export function lateCleansMessage(opts: {
     '',
     ask,
     'Thanks all 🙏',
-    ccLine(audience),
+    ccLine(audience, here),
   ])
 
-  const summary = building + ' — ' + count + ' ' + plural(count, 'clean', 'cleans') + ' to start' +
+  const summary = area + ' — ' + count + ' ' + plural(count, 'clean', 'cleans') + ' to start' +
     (withArrival.length ? ', ' + withArrival.length + ' with arrivals today' : '')
   return { body, summary }
 }
@@ -119,18 +127,20 @@ export type GlitchItem = {
 }
 
 export function glitchesMessage(opts: {
-  building: string
+  /** the ROUTING AREA — one message per area per department. */
+  area: string
   items: GlitchItem[]
   audience: string[]
   date: string
+  here?: boolean
 }): { body: string; summary: string } {
-  const { building, items, audience, date } = opts
+  const { area, items, audience, date, here } = opts
   const overdue = items.filter(i => i.overdue)
 
-  const head = opener(building + date + 'g', [
-    '🔧 *' + building + '* — open guest issues',
-    '🛠 *' + building + '* — what is still open',
-    '📌 *' + building + '* — issues worth a look',
+  const head = opener(area + date + 'g', [
+    '🔧 *' + area + '* — open guest issues',
+    '🛠 *' + area + '* — what is still open',
+    '📌 *' + area + '* — issues worth a look',
   ])
 
   const line1 =
@@ -156,10 +166,10 @@ export function glitchesMessage(opts: {
     rows.join('\n'),
     '',
     ask,
-    ccLine(audience),
+    ccLine(audience, here),
   ])
 
-  const summary = building + ' — ' + items.length + ' open ' + plural(items.length, 'issue', 'issues') +
+  const summary = area + ' — ' + items.length + ' open ' + plural(items.length, 'issue', 'issues') +
     (overdue.length ? ' (' + overdue.length + ' overdue)' : '')
   return { body, summary }
 }
