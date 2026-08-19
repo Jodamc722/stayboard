@@ -519,36 +519,107 @@ export function blockedArrivalsMessage(opts: {
 
 export type MarketLine = {
   market: string
-  headlines: string[]
-  lateCleans: number
-  openIssues: number
+  cleans: number
+  arrivals: number
+  blocked: { unit: string; at: string | null; note?: string }[]
+  lateWithArrival: { unit: string; at: string | null }[]
+  lateNoArrival: { unit: string; at: string | null }[]
+  unassigned: { unit: string; at: string | null }[]
+  overdue: { unit: string; at: string | null; note?: string }[]
+}
+
+/** "Elser 2103, Arya 1705/2 and 3 more" — names first, count only for the tail. */
+function namedList(items: { unit: string }[], cap = 4): string {
+  const names = items.map(i => i.unit)
+  if (names.length <= cap) return humanList(names)
+  return names.slice(0, cap).join(', ') + ' and ' + (names.length - cap) + ' more'
 }
 
 /**
- * Jon: "short and to the point, top priorities per market." So: one line per market, at most three
- * bullets under it, and a clean market gets a single green line rather than a row of zeros.
+ * Jon: "short and to the point, top priorities per market."
+ *
+ * The first version obeyed "short" and nothing else — it posted a bare
+ * *"1 guest booked into a unit that is out of service"* with no unit, no time, no name. Jon: "so
+ * bad... no clarity or detail." Fair. A count nobody can act on is worse than silence, because it
+ * makes someone go and look it up.
+ *
+ * The bar is the humans already in that channel. Hasan writes: "The 1418/2 guest denied PTE. He is
+ * saying he does not want anyone to enter the unit and we can take care of it on Friday when they
+ * check out." Unit, problem, reason, plan. So: every line NAMES ITS UNITS and gives the time that
+ * makes it urgent, every market appears (a missing market reads as a broken report), and the day's
+ * shape sits next to the problems so the numbers mean something.
  */
 export function marketBriefMessage(opts: {
   markets: MarketLine[]
   date: string
   audience: string[]
+  boardUrl?: string
 }): { body: string; summary: string } {
-  const { markets, date, audience } = opts
+  const { markets, date, audience, boardUrl } = opts
+
+  const pretty = (() => {
+    try {
+      return new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', {
+        timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric',
+      })
+    } catch { return date }
+  })()
+
   const blocks = markets.map(m => {
-    if (!m.headlines.length) return '*' + m.market + '* — all clear ✅'
-    return '*' + m.market + '*\n' + m.headlines.map(h => '   ' + h).join('\n')
+    const shape = (m.cleans || m.arrivals)
+      ? '  ·  ' + m.cleans + ' ' + plural(m.cleans, 'clean', 'cleans') + ' · ' + m.arrivals + ' ' + plural(m.arrivals, 'arrival', 'arrivals')
+      : ''
+    const head = '*' + m.market + '*' + shape
+
+    const lines: string[] = []
+
+    // Most urgent first: a guest walking into a dead unit beats everything else on the board.
+    for (const b of m.blocked.slice(0, 4)) {
+      lines.push('🚨 *' + b.unit + '* — guest arrives ' + (b.at || 'soon') +
+        ', unit is out of service' + (b.note ? ' (' + b.note + ')' : ''))
+    }
+    for (const l of m.lateWithArrival.slice(0, 5)) {
+      lines.push('⏰ *' + l.unit + '* — clean not started, guest arrives ' + (l.at || 'today'))
+    }
+    if (m.lateWithArrival.length > 5) {
+      lines.push('⏰ …and ' + (m.lateWithArrival.length - 5) + ' more cleans with arrivals today')
+    }
+    if (m.unassigned.length) {
+      lines.push('👤 No cleaner assigned yet — ' + namedList(m.unassigned))
+    }
+    if (m.overdue.length) {
+      const o = m.overdue[0]
+      lines.push('🔧 ' + m.overdue.length + ' ' + plural(m.overdue.length, 'issue', 'issues') +
+        ' past date — e.g. *' + o.unit + '*' + (o.note ? ': ' + o.note : ''))
+    }
+    // Only worth saying when there is nothing more urgent above it.
+    if (!lines.length && m.lateNoArrival.length) {
+      lines.push('• ' + m.lateNoArrival.length + ' ' + plural(m.lateNoArrival.length, 'clean', 'cleans') +
+        ' still to start, no arrivals waiting — ' + namedList(m.lateNoArrival))
+    }
+
+    if (!lines.length) return head + '\n   all clear ✅'
+    return head + '\n' + lines.map(l => '   ' + l).join('\n')
   })
 
-  const worst = markets.filter(m => m.headlines.length).length
+  const busy = markets.filter(m =>
+    m.blocked.length || m.lateWithArrival.length || m.unassigned.length || m.overdue.length).length
+
   const body = nl([
-    opener(date + 'mb', ['📌 *Top priorities today*', '📌 *Where to push today*', '📌 *Today, in short*']),
+    '📌 *Top priorities — ' + pretty + '*',
     '',
     blocks.join('\n\n'),
     '',
-    worst ? 'That is the whole list — anything not above is running fine.' : 'Nothing outstanding anywhere. Good day to get ahead of the upkeep work.',
+    busy
+      ? 'Anything not listed is running fine. Reply here if you are already on one of these so we do not double up.'
+      : 'Nothing outstanding anywhere — good day to get ahead of the upkeep work.',
+    boardUrl ? '<' + boardUrl + '|Open Today in Ops>' : null,
     ccLine(audience),
   ])
-  const summary = worst ? worst + ' market' + (worst === 1 ? '' : 's') + ' need attention' : 'all markets clear'
+
+  const summary = busy
+    ? busy + ' ' + plural(busy, 'market', 'markets') + ' need attention'
+    : 'all markets clear'
   return { body, summary }
 }
 

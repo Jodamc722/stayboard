@@ -209,7 +209,10 @@ export const DEFAULT_RULES: SlackRules = {
     door_codes: { enabled: true, approval: true, quietStart: 7 * 60, quietEnd: 20 * 60, cooldownMin: 12 * 60 },
     // The one alert that should never wait: a guest is already booked into a dead unit.
     blocked_arrival: { enabled: true, approval: true, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 6 * 60 },
-    market_brief: { enabled: true, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
+    // approval:true since 2026-08-19 — the first auto-sent version was unusable ("so bad... no
+    // clarity or detail") and went out before anyone could stop it. Flip it off in settings once
+    // the wording has earned trust.
+    market_brief: { enabled: true, approval: true, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
     // Written in the evening for the next day, like the human version it replaces.
     handover: { enabled: true, approval: true, quietStart: 16 * 60, quietEnd: 23 * 60, cooldownMin: 20 * 60 },
   },

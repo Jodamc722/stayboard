@@ -419,10 +419,12 @@ export async function runMarketBrief(): Promise<any> {
   const audience = rules.core
   const { body, summary } = marketBriefMessage({
     markets: markets.map(m => ({
-      market: m.market, headlines: m.headlines,
-      lateCleans: m.lateCleans, openIssues: m.openIssues,
+      market: m.market, cleans: m.cleans, arrivals: m.arrivals,
+      blocked: m.blocked, lateWithArrival: m.lateWithArrival,
+      lateNoArrival: m.lateNoArrival, unassigned: m.unassigned, overdue: m.overdue,
     })),
     date: today, audience,
+    boardUrl: (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '') + '/plan',
   })
   return draft({
     eventKey: 'market_brief',

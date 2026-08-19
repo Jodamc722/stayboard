@@ -220,80 +220,96 @@ export async function findBlockedArrivals(lookaheadDays = 5): Promise<BlockedArr
 
 // ── 4. Top priorities per market ───────────────────────────────────────────────────────────────
 
+export type NamedUnit = { unit: string; at: string | null; note?: string }
+
 export type MarketPriority = {
   market: string
-  lateCleans: number
-  cleansWithArrival: number
-  unassigned: number
-  openIssues: number
-  overdueIssues: number
-  blockedWithArrival: number
-  /** the two or three things actually worth naming, already phrased as priorities */
-  headlines: string[]
+  cleans: number
+  arrivals: number
+  /** Every problem NAMES ITS UNITS. A count with no unit name cannot be acted on. */
+  blocked: NamedUnit[]
+  lateWithArrival: NamedUnit[]
+  lateNoArrival: NamedUnit[]
+  unassigned: NamedUnit[]
+  overdue: NamedUnit[]
 }
 
+/** Always report every market, even the quiet ones — a missing market reads as a broken report. */
+const ALL_MARKETS = ['Miami', 'Broward', 'North']
+
 /**
- * Jon: "should be short and to the point, top priorities per market." So this deliberately does
- * NOT return everything — it returns counts plus at most three headline lines per market, and a
- * market with nothing wrong says so in one line rather than printing zeros.
+ * Jon: "short and to the point, top priorities per market." The first version obeyed the "short"
+ * half and failed the rest — it posted *"1 guest booked into a unit that is out of service"* with
+ * no unit, no time and no name, which nobody can act on. Jon: "so bad… no clarity or detail."
+ *
+ * The bar is the humans in that channel. Hasan writes: "The 1418/2 guest denied PTE. He is saying
+ * he does not want anyone to enter the unit and we can take care of it on Friday when they check
+ * out." Unit, problem, reason, plan. So every line here names the unit and the time.
  */
 export async function marketPriorities(): Promise<MarketPriority[]> {
   const today = ymdET(new Date())
   const db = supabaseAdmin()
 
+  let sheet: any = null
+  try {
+    const mod = await import('./daysheet')
+    sheet = await mod.buildDaySheet(today)
+  } catch { /* shape is a nice-to-have; the problems below are the point */ }
+
   const [behind, glitchRes, blockedArrivals] = await Promise.all([
     loadBehind().catch(() => null),
-    db.from('glitches').select('unit, due_date, status')
+    db.from('glitches').select('unit, overview, category, due_date, status')
       .not('status', 'in', '("' + CLOSED.join('","') + '")').limit(500),
-    findBlockedArrivals(3).catch(() => [] as BlockedArrival[]),
+    findBlockedArrivals(1).catch(() => [] as BlockedArrival[]),
   ])
 
   const markets: Record<string, MarketPriority> = {}
   const bucket = (m: string): MarketPriority => {
     if (!markets[m]) {
-      markets[m] = {
-        market: m, lateCleans: 0, cleansWithArrival: 0, unassigned: 0,
-        openIssues: 0, overdueIssues: 0, blockedWithArrival: 0, headlines: [],
-      }
+      markets[m] = { market: m, cleans: 0, arrivals: 0, blocked: [], lateWithArrival: [], lateNoArrival: [], unassigned: [], overdue: [] }
     }
     return markets[m]
   }
-  const marketFor = (unit: string): string => {
+  for (const m of ALL_MARKETS) bucket(m)
+
+  const marketFor = (unit: string, known?: string | null): string => {
+    if (known && ALL_MARKETS.indexOf(known) >= 0) return known
     const b = buildingOf(null, unit)
     try { return marketOf(b, null, unit) as Market } catch { return 'Miami' }
   }
 
+  // Day shape, so the numbers give the problems some context.
+  if (sheet && sheet.ok) {
+    for (const w of (sheet.work || [])) bucket(marketFor(String(w.unit || ''), w.market)).cleans++
+    for (const a of (sheet.arrivals || [])) bucket(marketFor(String(a.unit || ''), a.market)).arrivals++
+  }
+
   if (behind) {
     for (const u of behind.units) {
-      const m = bucket(u.market || marketFor(u.unit))
-      m.lateCleans++
-      if (u.arrivingAt) m.cleansWithArrival++
-      if (!u.assignee) m.unassigned++
+      const m = bucket(marketFor(u.unit, u.market || null))
+      if (u.arrivingAt) m.lateWithArrival.push({ unit: u.unit, at: u.arrivingAt })
+      else m.lateNoArrival.push({ unit: u.unit, at: null })
+      if (!u.assignee) m.unassigned.push({ unit: u.unit, at: u.arrivingAt })
     }
   }
+
   for (const g of ((glitchRes.data || []) as any[])) {
     const unit = String(g.unit || '')
     if (!unit) continue
-    const m = bucket(marketFor(unit))
-    m.openIssues++
-    if (g.due_date && String(g.due_date) < today) m.overdueIssues++
+    if (!g.due_date || String(g.due_date) >= today) continue
+    const issue = String(g.overview || g.category || 'open issue').replace(/\s+/g, ' ').trim()
+    bucket(marketFor(unit)).overdue.push({ unit, at: null, note: issue.slice(0, 80) })
   }
+
   for (const b of blockedArrivals) {
-    bucket(b.market || marketFor(b.unit)).blockedWithArrival++
+    bucket(marketFor(b.unit, b.market)).blocked.push({
+      unit: b.unit,
+      at: b.checkIn === today ? 'today' : b.checkIn,
+      note: b.reason,
+    })
   }
 
-  // Headlines, most urgent first, capped at three so the brief stays short.
-  for (const key of Object.keys(markets)) {
-    const m = markets[key]
-    const h: string[] = []
-    if (m.blockedWithArrival) h.push('🚨 ' + m.blockedWithArrival + ' guest' + (m.blockedWithArrival === 1 ? '' : 's') + ' booked into a unit that is out of service')
-    if (m.cleansWithArrival) h.push('⏰ ' + m.cleansWithArrival + ' clean' + (m.cleansWithArrival === 1 ? '' : 's') + ' with a guest arriving today')
-    if (m.unassigned) h.push('👤 ' + m.unassigned + ' clean' + (m.unassigned === 1 ? '' : 's') + ' with nobody assigned')
-    if (h.length < 3 && m.overdueIssues) h.push('🔧 ' + m.overdueIssues + ' issue' + (m.overdueIssues === 1 ? '' : 's') + ' past their date')
-    m.headlines = h.slice(0, 3)
-  }
-
-  return Object.keys(markets).map(k => markets[k]).sort((a, b) => a.market.localeCompare(b.market))
+  return ALL_MARKETS.map(m => markets[m]).filter(Boolean)
 }
 
 // ── 5. Tomorrow, per supervisor — the raw material for the handover ────────────────────────────
