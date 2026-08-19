@@ -125,7 +125,8 @@ async function repairDefectiveDrafts(db: any, cfg: TaskAutomationCfg, props: Pro
  * with a form-less second email.
  */
 async function auditSentAndOrphans(db: any, cfg: TaskAutomationCfg, props: PropertyEmail[], today: string,
-  out: { reopened: number; confirmedSentNoForm: number; orphansDeleted: number; errors: string[] }) {
+  out: { reopened: number; confirmedSentNoForm: number; orphansDeleted: number; errors: string[] },
+  safety: any[]) {
   const { data: rows } = await db.from('reservation_notices').select('*')
     .eq('arrival_date', today).is('deleted_at', null).not('sent_at', 'is', null).eq('sent_by', 'SUPPORT@')
     .limit(40)
@@ -144,7 +145,15 @@ async function auditSentAndOrphans(db: any, cfg: TaskAutomationCfg, props: Prope
       subjects.push(subject)
       const inSent = await foundInSent(cfg.noticeDrafts.fromEmail, subject, since)
       if (inSent === true) { out.confirmedSentNoForm++; continue }
-      if (inSent === null) { out.errors.push('sent-audit inconclusive for unit ' + str(n.unit_no)); continue }
+      if (inSent === null) {
+        // Inconclusive (no Gmail read scope yet). Jon, 2026-08-19: "draft it for now, even if
+        // sent" — a duplicate the desk discards beats a building never told. Queue a SAFETY draft:
+        // the notice keeps its sent status (Guesty untouched), but a complete, form-attached copy
+        // lands in Drafts with a discard-if-duplicate banner. Filing it sets doc_name/doc_path,
+        // which is exactly the filter above — so each notice gets its safety copy at most once.
+        safety.push(n)
+        continue
+      }
       // Definitely not in Sent: the draft was deleted, not sent. Reopen so it re-drafts complete.
       await db.from('reservation_notices').update({ sent_at: null, sent_by: null, draft_id: null, draft_created_at: null }).eq('id', n.id)
       out.reopened++
@@ -184,11 +193,12 @@ async function auditSentAndOrphans(db: any, cfg: TaskAutomationCfg, props: Prope
 
 export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled: boolean; today: string; due: number; drafted: number; skipped: number; failed: number
-  sentDetected: number; rearmed: number; reopened: number; confirmedSentNoForm: number; orphansDeleted: number; errors: string[]
+  sentDetected: number; rearmed: number; reopened: number; confirmedSentNoForm: number; orphansDeleted: number
+  safetyDrafted: number; errors: string[]
 }> {
   const cfg = await getTaskAutomation()
   const today = ymdET(new Date())
-  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, errors: [] as string[] }
+  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, safetyDrafted: 0, errors: [] as string[] }
   if (!cfg.noticeDrafts.enabled && !opts.dryRun) return base
 
   const db = supabaseAdmin()
@@ -198,22 +208,26 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   // defective PDF-less drafts, then audit today's form-less "sent" notices against Gmail's Sent
   // folder (reopening the ones whose draft was deleted, not sent) — so the pass below re-drafts
   // everything that still owes the building a complete email.
+  const safety: any[] = []
   if (!opts.dryRun) {
     try { const sw = await checkSupportDrafts(); base.sentDetected = sw.markedSent } catch { /* drafting still runs */ }
     try { await repairDefectiveDrafts(db, cfg, props, base) } catch { /* drafting still runs */ }
-    try { await auditSentAndOrphans(db, cfg, props, today, base) } catch { /* drafting still runs */ }
+    try { await auditSentAndOrphans(db, cfg, props, today, base, safety) } catch { /* drafting still runs */ }
   }
 
   const { data: rows } = await db.from('reservation_notices').select('*')
     .eq('arrival_date', today).is('deleted_at', null).is('sent_at', null).is('draft_created_at', null)
     .limit(100)
   const due = (rows || []) as any[]
+  // Safety copies ride the same drafting pass as fresh notices — same form, same filing, same
+  // watch registration — just flagged so the draft and the Slack note say "confirm not a dupe".
+  for (const s of safety) due.push({ ...s, _safety: true })
   base.due = due.length
   if (!due.length || opts.dryRun) return base
 
   const pById: Record<string, PropertyEmail> = {}
   for (const p of props) pById[p.id] = p
-  const draftedList: { unit: string; guest: string; property: string; form: boolean }[] = []
+  const draftedList: { unit: string; guest: string; property: string; form: boolean; safety: boolean }[] = []
 
   // jsPDF for the server, loaded lazily on first use (see loadServerJsPdf below — npm first,
   // CDN UMD as the fallback, and a real error message if both fail).
@@ -257,9 +271,13 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
         }
       }
 
-      const reminder = attachFailed
+      const isSafety = !!(n as any)._safety
+      const reminder = (attachFailed
         ? `<p style="color:#b91c1c;font-weight:bold">⚠ The form could not be generated automatically — attach ${esc(d.attachName)} before sending. (Delete this line.)</p>`
-        : ''
+        : '')
+        + (isSafety
+          ? `<p style="color:#b45309;font-weight:bold">⚠ Safety copy — this notice is marked sent but the send could not be confirmed in ${esc(cfg.noticeDrafts.fromEmail)}'s Sent folder. If the building already received it, discard this draft. (Delete this line before sending.)</p>`
+          : '')
       const html = reminder + '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.55;white-space:pre-wrap">' + esc(d.body) + '</div>'
       const r = await draftGmail({
         fromEmail: cfg.noticeDrafts.fromEmail,
@@ -283,7 +301,8 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
         } catch { /* the board-load sweep still covers it */ }
       }
       base.drafted++
-      draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments })
+      if (isSafety) base.safetyDrafted++
+      draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments, safety: isSafety })
     } catch (e: any) {
       base.failed++
       if (base.errors.length < 5) base.errors.push(str(n.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
@@ -297,7 +316,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
     try {
       const { postToChannel } = await import('./slack')
       const lines = draftedList.map(x =>
-        `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})`)
+        `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})${x.safety ? ' — _safety copy: marked sent but unconfirmed; discard if the building already got it_' : ''}`)
       const msg = `📬 *Front-desk notice draft${base.drafted === 1 ? '' : 's'} ready* — ${base.drafted} new in ${cfg.noticeDrafts.fromEmail}'s Gmail Drafts for today's arrivals:\n`
         + lines.join('\n')
         + `\nReview and send to the building${base.drafted === 1 ? '' : 's'}.`
