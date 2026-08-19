@@ -55,8 +55,10 @@ export function elserPdfName(n: Notice): string {
 }
 
 /** Build the form. Returns the jsPDF doc so the caller can save it, or take a blob to upload. */
-export async function buildElserPdf(n: Notice, agent: AgentDetails = DEFAULT_AGENT): Promise<any> {
-  const JsPDF = await loadJsPdf()
+export async function buildElserPdf(n: Notice, agent: AgentDetails = DEFAULT_AGENT, jsPdfCtor?: any): Promise<any> {
+  // jsPdfCtor lets a SERVER caller (the arrival-morning draft cron) hand in the npm jspdf
+  // constructor — the CDN dynamic import below is a browser mechanism and does not exist in Node.
+  const JsPDF = jsPdfCtor || await loadJsPdf()
   const doc = new JsPDF({ unit: 'pt', format: 'letter' })
   const W = doc.internal.pageSize.getWidth(), M = 64, CW = W - M * 2
   let y = 38
@@ -168,8 +170,8 @@ export async function buildElserPdf(n: Notice, agent: AgentDetails = DEFAULT_AGE
 }
 
 /** The form as a base64 payload, for handing to the document store. */
-export async function elserPdfBase64(n: Notice, agent?: AgentDetails): Promise<string> {
-  const doc = await buildElserPdf(n, agent)
+export async function elserPdfBase64(n: Notice, agent?: AgentDetails, jsPdfCtor?: any): Promise<string> {
+  const doc = await buildElserPdf(n, agent, jsPdfCtor)
   const raw = doc.output('datauristring') as string
   const comma = raw.indexOf(',')
   return comma >= 0 ? raw.slice(comma + 1) : raw

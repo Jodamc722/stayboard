@@ -17,35 +17,27 @@
 
 export const MAX_PINS = 12
 
-// Jon's own daily list (2026-08-19): "Reviews, Today in ops, Scheduler, Command Center, Claims,
-// Glitches (guest issues), Unit Knowledge -> should be Property FAQ, Properties, Blocked units,
-// Billable Hours." Ordered the way the morning actually runs rather than the order he said them:
-// what needs me -> today's work -> the board -> what broke -> money owed.
-const OWNER_DAILY = [
-  '/command',   // what needs a decision
-  '/plan',      // today in ops
-  '/schedule',  // the turnover board
-  '/glitches',  // guest issues
-  '/claims',
-  '/reviews',
-  '/buildings', // properties
-  '/blocked',   // blocked units
-  '/faq',       // property FAQ
-  '/billing',   // billable hours
+// THE TOP SIX, verbatim (Jon, 2026-08-19): "at the top lets have Command Center, Scheduler,
+// Reviews, Today in Ops, Claims, Glitches." One standing daily band for EVERY role, in exactly
+// that order — nobody has to star anything to get a useful top (his earlier point: "be able to
+// arrange without having to favorite it"). Drag still reorders; the star still adds extras for
+// whoever wants more; canSee() hides whatever a role can't open.
+const DAILY_SIX = [
+  '/command',   // Command Center
+  '/schedule',  // Scheduler
+  '/reviews',   // Reviews
+  '/plan',      // Today in Ops
+  '/claims',    // Claims
+  '/glitches',  // Glitches
 ]
 
-// Keys match app_roles.key (migration 023). Anything unknown falls back to FALLBACK_PINS.
+// Every role starts from the same six; role visibility trims what a role can't see at render.
 export const DEFAULT_PINS: Record<string, string[]> = {
-  admin: OWNER_DAILY,
-  manager: ['/plan', '/schedule', '/glitches', '/reviews', '/claims', '/buildings'],
-  cs_manager: ['/messages', '/reviews', '/claims', '/reservations', '/glitches'],
-  cs: ['/messages', '/reviews', '/reservations', '/welcome-calls', '/claims'],
-  ops: ['/plan', '/schedule', '/glitches', '/requests', '/cleaners'],
-  maintenance: ['/requests', '/glitches', '/plan', '/projects'],
-  data: ['/revenue', '/reports', '/labor', '/buildings'],
+  admin: DAILY_SIX, manager: DAILY_SIX, cs_manager: DAILY_SIX, cs: DAILY_SIX,
+  ops: DAILY_SIX, maintenance: DAILY_SIX, data: DAILY_SIX,
 }
 
-export const FALLBACK_PINS = ['/plan', '/schedule', '/glitches', '/reviews']
+export const FALLBACK_PINS = DAILY_SIX.slice()
 
 export function defaultPinsFor(roleKey: string | null | undefined): string[] {
   const key = String(roleKey || '').toLowerCase()
