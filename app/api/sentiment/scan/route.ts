@@ -9,7 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { markReservationSensitive } from '@/lib/sensitive'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300
 
 // High-risk keywords -> one of the four warning triggers.
 const KW = [
@@ -25,16 +25,28 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 const isGuest = (sender: string) => /guest/i.test(sender) || sender === 'inbound'
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Accept the Vercel cron as well as a logged-in user.
+  //
+  // 2026-08-19: this route had NO cron and required a session, which meant guest sentiment was only
+  // ever scanned when somebody happened to click. 392 conversations were sitting unscanned. For an
+  // assistant meant to run customer service that is the difference between knowing a guest is unhappy
+  // and finding out from the review.
+  const authHeader = req.headers.get('authorization') || ''
+  const viaCron = !!process.env.CRON_SECRET && authHeader === ('Bearer ' + process.env.CRON_SECRET)
+  if (!viaCron) {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured - add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
 
   const params = new URL(req.url).searchParams
   const days = Math.min(60, Math.max(1, Number(params.get('days')) || 30))
-  const limit = Math.min(8, Math.max(1, Number(params.get('limit')) || 5))
+  // Interactive callers stay capped at 8 to respect the org token-per-minute tier; the cron may go
+  // wider because nothing else is competing with it.
+  const limit = Math.min(viaCron ? 25 : 8, Math.max(1, Number(params.get('limit')) || 5))
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
 
   const sb = supabaseAdmin()
