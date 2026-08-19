@@ -552,8 +552,11 @@ export async function checkReadiness(): Promise<Readiness> {
 
   const units: ReadinessUnit[] = []
   const seen: Record<string, boolean> = {}
+  // A row whose listing metadata never resolved arrives as "Unknown unit" and would otherwise
+  // become its own fake area named "Unknown" posted to #vr-ops. Nobody can act on that.
+  const namelessRe = /^(unknown unit|unknown|unit)$/i
   const push = (unit: string, w: any) => {
-    if (!unit || seen[unit]) return
+    if (!unit || seen[unit] || namelessRe.test(unit.trim())) return
     seen[unit] = true
     const a = arrivalByUnit[unit]
     units.push({

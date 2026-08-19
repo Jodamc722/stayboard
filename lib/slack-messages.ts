@@ -751,34 +751,56 @@ export function readinessMessage(opts: {
 
   const who = (i: ReadinessItem) => i.assignees.length ? i.assignees.join(', ') : '_nobody assigned_'
   const when = (i: ReadinessItem) => i.at ? 'guest ' + i.at : 'guest today'
+  const cuando = (i: ReadinessItem) => i.at ? 'huésped ' + i.at : 'huésped hoy'
+  const quien = (i: ReadinessItem) => i.assignees.length ? i.assignees.join(', ') : '_sin asignar_'
 
-  const lines: string[] = []
-  if (notStarted.length) {
-    lines.push('*Not started (' + notStarted.length + ')*')
-    for (const i of notStarted.slice(0, 10)) lines.push('• *' + i.unit + '* — ' + when(i) + ' · ' + who(i))
-    if (notStarted.length > 10) lines.push('• …and ' + (notStarted.length - 10) + ' more')
-  }
-  if (inProgress.length) {
-    if (lines.length) lines.push('')
-    lines.push('*In progress (' + inProgress.length + ')*')
-    for (const i of inProgress.slice(0, 8)) {
-      lines.push('• *' + i.unit + '* — ' + when(i) + ' · ' + who(i) + (i.startedAt ? ' · started ' + i.startedAt : ''))
+  // Both languages get the SAME detail. The cleaners who need to act on this read Spanish; a
+  // Spanish headline over an English list is not bilingual, it is decoration.
+  const detail = (es: boolean) => {
+    const t = es
+      ? { not: 'Sin empezar', prog: 'En proceso', none: 'Salida y llegada hoy, sin limpieza programada', more: 'y ', rest: ' más', started: ' · empezó ' }
+      : { not: 'Not started', prog: 'In progress', none: 'Turning over with no clean scheduled', more: '…and ', rest: ' more', started: ' · started ' }
+    const w = es ? quien : who
+    const c = es ? cuando : when
+    const out: string[] = []
+    if (notStarted.length) {
+      out.push('*' + t.not + ' (' + notStarted.length + ')*')
+      for (const i of notStarted.slice(0, 10)) out.push('• *' + i.unit + '* — ' + c(i) + ' · ' + w(i))
+      if (notStarted.length > 10) out.push('• ' + t.more + (notStarted.length - 10) + t.rest)
     }
-  }
-  if (noClean.length) {
-    if (lines.length) lines.push('')
-    lines.push('*Turning over with no clean scheduled (' + noClean.length + ')*')
-    lines.push('• ' + noClean.slice(0, 8).map(i => i.unit).join(', '))
+    if (inProgress.length) {
+      if (out.length) out.push('')
+      out.push('*' + t.prog + ' (' + inProgress.length + ')*')
+      for (const i of inProgress.slice(0, 8)) {
+        out.push('• *' + i.unit + '* — ' + c(i) + ' · ' + w(i) + (i.startedAt ? t.started + i.startedAt : ''))
+      }
+    }
+    if (noClean.length) {
+      if (out.length) out.push('')
+      out.push('*' + t.none + ' (' + noClean.length + ')*')
+      out.push('• ' + noClean.slice(0, 8).map(i => i.unit).join(', '))
+    }
+    return out
   }
 
   const remaining = notStarted.length + inProgress.length + noClean.length
   const allReady = remaining === 0
+
+  const enLines = detail(false)
+  const esLines = spanish ? detail(true) : []
+
   const es = spanish
     ? nl([
         '🕒 *' + area + '* — revisión de las 3pm',
         allReady
-          ? 'Las ' + done.length + ' unidades con llegada hoy están listas. Gracias 🙏'
-          : done.length + ' de ' + items.length + ' listas. Quedan ' + remaining + ' antes de las 4pm.',
+          ? (done.length === 1
+              ? 'La unidad con llegada hoy está lista. Gracias 🙏'
+              : 'Las ' + done.length + ' unidades con llegada hoy están listas. Gracias 🙏')
+          : '*' + done.length + ' de ' + items.length + ' listas* para las 4pm. Faltan ' + remaining + '.',
+        esLines.length ? '' : null,
+        esLines.length ? esLines.join('\n') : null,
+        esLines.length ? '' : null,
+        allReady ? null : 'Queda una hora. Si alguna no llega a las 4pm, dilo ahora y avisamos al huésped o lo movemos.',
         '',
         '— — —',
       ])
@@ -790,9 +812,9 @@ export function readinessMessage(opts: {
       ? 'All ' + done.length + ' ' + plural(done.length, 'unit', 'units') + ' with a guest today ' +
         plural(done.length, 'is', 'are') + ' ready. Nice work 🙏'
       : '*' + done.length + ' of ' + items.length + ' ready* for 4pm. ' + remaining + ' still to finish.',
-    lines.length ? '' : null,
-    lines.length ? lines.join('\n') : null,
-    lines.length ? '' : null,
+    enLines.length ? '' : null,
+    enLines.length ? enLines.join('\n') : null,
+    enLines.length ? '' : null,
     allReady ? null : 'An hour to go. If any of these will not make 4pm, say so now and we will warn the guest or move them.',
     ccLine(audience, here),
   ])
