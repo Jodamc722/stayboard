@@ -2,12 +2,13 @@
 import { useState, useRef, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { Sparkles, X, Send } from 'lucide-react'
+import { useAccess } from '@/lib/useAccess'
 
 type Msg = { role: 'user' | 'assistant'; content: string }
 
 const HELLO: Msg = {
   role: 'assistant',
-  content: "Hey Jon — I'm Eve. Ask me what needs approval, who's arriving today, or say \"draft an ops plan for the Miami and Broward teams.\""
+  content: "I'm Eve. I can see operations, money, quality, labor and guests — ask me what's going wrong today, why a building is underperforming, or what a clean actually costs us."
 }
 
 const SUGGEST = [
@@ -18,6 +19,7 @@ const SUGGEST = [
 
 export function BrainChat() {
   const path = usePathname()
+  const acc = useAccess()
   const [open, setOpen] = useState(false)
   const [msgs, setMsgs] = useState<Msg[]>([HELLO])
   const [input, setInput] = useState('')
@@ -43,9 +45,15 @@ export function BrainChat() {
     } finally { setBusy(false) }
   }
 
-  // The Command Center already embeds the full Eve console, so the floating pill there
-  // is redundant and overlaps it. Hide the floater on /command, on public guest books (/g/), and on auth screens.
-  if (path === '/command' || (path || '').startsWith('/g/') || (path || '').startsWith('/guide/') || path === '/login' || path === '/no-access' || (path || '').startsWith('/signup')) return null
+  // Eve is admin-and-up (Jon, 2026-08-19). The route 403s anyone else, but the pill used to render
+  // for everybody and only fail on click — which reads as a broken app rather than a permission.
+  // useAccess fails open to 'full' while loading, so gate on the resolved answer only.
+  if (acc.loading) return null
+  if (!(acc.isOwner || acc.isAdmin || (acc.accessRole && acc.atLeast('eve', 'view')))) return null
+
+  // The Command Center and /eve already embed the full console, so the floating pill there is
+  // redundant and overlaps it. Also hidden on public guest books (/g/) and auth screens.
+  if (path === '/command' || path === '/eve' || (path || '').startsWith('/g/') || (path || '').startsWith('/guide/') || path === '/login' || path === '/no-access' || (path || '').startsWith('/signup')) return null
 
   return (
     <>

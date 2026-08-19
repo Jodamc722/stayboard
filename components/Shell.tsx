@@ -37,6 +37,7 @@ const SECTIONS: NavSection[] = [
     title: 'Overview',
     items: [
       { to: '/command', label: 'Command Center', Icon: Gauge },
+      { to: '/eve',     label: 'Eve',            Icon: Sparkles },
       { to: '/',        label: 'Home',           Icon: Home },
     ],
   },
