@@ -106,7 +106,7 @@ type Data = {
 }
 
 const FLAG_LABEL: Record<FlagType, string> = {
-  negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphan reimb',
+  negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphaned revenue',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
   empty_statement: 'Empty statement', owner_stay: 'Owner / F&F stay',
@@ -114,7 +114,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
   low_rate: 'Revenue far below what this stay’s night mix (midweek vs weekend) normally earns in its building/size cohort, with slack for last-minute bookings — or under the hard floor.',
-  orphan_reimb: 'Reimbursement lines with no rental income on the block.',
+  orphan_reimb: 'Rental income is zero but other revenue NETS to something real — channel-fee reimbursements, parking, cleaning. Fully reversed postings (net $0) do not count. The amount is on the flag.',
   refund: 'Any refund-looking line, captured with its amount.',
   zero_rev: '$0 reservations that are not obviously owner stays.',
   passthru: 'Commission fully offsets rental — a wash by design (informational).',
@@ -429,9 +429,19 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     await save(it, pending.body, { status: it.status, touched: it.touched })
   }
 
-  const setStatus = (it: Item, s: Status) => {
-    if (it.status === s) return
+  const setStatus = async (it: Item, s: Status) => {
     const prev = { status: it.status, touched: it.touched }
+    // TOGGLE OFF (bookkeeper request): pressing the active Action button un-marks the row —
+    // back to Needs review if it carries flags, back to No issues found if it does not. The
+    // server stores 'clear', which the reader ignores, so the row reverts to its computed state.
+    if (s === it.status && s === 'action') {
+      const back: Status = it.needsReview ? 'review' : 'clear'
+      patchItem(it, { status: back, touched: true })
+      const ok = await save(it, { status: 'clear' }, prev)
+      if (ok) patchItem(it, { status: back })
+      return
+    }
+    if (it.status === s) return
     patchItem(it, { status: s, touched: true })
     save(it, { status: s }, prev)
   }
@@ -700,14 +710,21 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     return m
   }, [filtered])
 
+  // Flag chips count OPEN work only — an approved row is closed out and should stop counting
+  // (bookkeeper: "I approved the F&F items after adding cleaning charges, but the count is
+  // still at 4"). The row itself keeps its chips inside Approved & closed for the paper trail.
   const flagCounts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const it of (data?.items || [])) {
+      if (it.status === 'done') continue
       const seen: Record<string, boolean> = {}
       for (const f of it.flags) { if (!seen[f.type]) { m[f.type] = (m[f.type] || 0) + 1; seen[f.type] = true } }
     }
     return m
   }, [data])
+  const openFlagged = useMemo(() =>
+    (data?.items || []).filter(it => it.status !== 'done' && it.flags.some(f => f.severity !== 'info')).length,
+  [data])
 
   const exportCsv = () => {
     if (!data) return
@@ -793,7 +810,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           </div>
           <div className="flex flex-wrap gap-1 min-w-[90px]">
             {it.flags.filter(f => f.severity !== 'info').map((f, i) => (
-              <span key={i} title={f.detail} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS[f.severity]}>{FLAG_LABEL[f.type]}</span>
+              <span key={i} title={f.detail} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS[f.severity]}>
+                {FLAG_LABEL[f.type]}{f.type === 'orphan_reimb' && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
+              </span>
             ))}
             {it.flags.filter(f => f.severity === 'info').map((f, i) => (
               <span key={'i' + i} title={f.detail} className={'text-[10px] px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.info}>{FLAG_LABEL[f.type]}</span>
@@ -826,7 +845,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <Check size={10} /> Approve
                 </button>
                 <button onClick={() => setStatus(it, 'action')} disabled={saving}
-                  title="Needs fixing in Guesty — keep it open"
+                  title={it.status === 'action' ? 'Un-mark — press again to take the Action flag off' : 'Needs fixing in Guesty — keep it open'}
                   className={'text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset transition ' + (it.status === 'action' ? STATUS_CLS.action : 'bg-white text-muted ring-line hover:text-ink')}>
                   Action
                 </button>
@@ -1898,7 +1917,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 </button>
                 <button onClick={() => setFFlag(fFlag === 'flagged' ? '' : 'flagged')}
                   className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200 transition' + (fFlag === 'flagged' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                  <ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged {t!.flagged}
+                  <ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged {openFlagged}
                 </button>
                 {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => flagCounts[f]).map(f => (
                   <button key={f} onClick={() => setFFlag(fFlag === f ? '' : f)}
