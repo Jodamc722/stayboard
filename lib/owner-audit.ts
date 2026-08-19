@@ -258,7 +258,6 @@ export function reservationNoteOf(customFields: any): string {
 }
 
 const REFUND_RE = /refund/i
-const REIMB_RE = /reimburs|cleaning/i
 const OWNERISH_RE = /owner/i
 // Guesty's own two source values: 'owner' (the owner staying) and 'owner-guest' (their guest).
 const OWNER_GUEST_RE = /owner[-_ ]?guest/i
@@ -977,7 +976,6 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const on = rules.enabled
     if (g.resCode) {
       const refundAmt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
-      const reimbAmt = money(g.lines.filter(l => REIMB_RE.test(l.label) && l.amount > 0).reduce((a, l) => a + l.amount, 0))
       const isPassthru = g.rental > 1 && g.commission / g.rental >= rules.passthruLo && g.commission / g.rental <= rules.passthruHi
 
       if (on.negative && g.rental < -0.005) {
@@ -986,8 +984,30 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         flags.push({ type: 'refund', severity: 'review', amount: refundAmt, detail: 'Refund on this reservation — verify it was authorized.' })
       }
-      if (Math.abs(g.rental) < 0.005 && reimbAmt > 0.005) {
-        if (on.orphan_reimb) flags.push({ type: 'orphan_reimb', severity: 'review', amount: reimbAmt, detail: 'Reimbursement with no rental income on the block — no booking justifies it.' })
+      // ORPHANED REVENUE — the bookkeeper's rule (2026-08-19): flag when rental income is ZERO but
+      // other revenue NETS to something real — channel-fee reimbursements, parking, cleaning — and
+      // put the VALUE in the flag, because "orphaned" without the amount made the team open Guesty
+      // to answer a question the row already knew.
+      //
+      // NET, not "any positive line". The old rule summed only positive reimbursement lines, so
+      // HMMWPDKN8H — a canceled booking whose 40 line items all net to $0.00 (a $5.00 cleaning fee
+      // posted and reversed to the cent) — was flagged for $5.00 that does not exist. The
+      // bookkeeper checked the first two Botanica flags and called both false; they were ($0.00
+      // and $0.14 net). A fully reversed posting is nothing; money that actually nets is the flag.
+      const miscNet = money(g.other)
+      if (on.orphan_reimb && Math.abs(g.rental) < 0.005 && Math.abs(miscNet) >= 1) {
+        const kinds = Array.from(new Set(g.lines
+          .filter(l => l.code !== 'AF' && l.code !== 'CMS' && Math.abs(l.amount) > 0.005)
+          .map(l => /park/i.test(l.label) ? 'parking'
+            : /reimburs/i.test(l.label) ? 'channel-fee reimbursements'
+              : /clean/i.test(l.label) ? 'cleaning' : 'other charges')))
+        flags.push({
+          type: 'orphan_reimb', severity: 'review', amount: miscNet,
+          detail: 'No rental income, but ' + (miscNet > 0
+            ? '$' + miscNet.toFixed(2) + ' of other revenue'
+            : '$' + Math.abs(miscNet).toFixed(2) + ' of other charges')
+            + ' on this booking' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '') + '.',
+        })
       } else if (on.zero_rev && Math.abs(g.rental) < 0.005 && !flags.length) {
         // MONEY STILL MOVED. "Canceled, so $0 is expected" is only true when the row really is $0.
         // Keith Dobrolinsky's canceled stay paid the owner $7.60 and barry griggs $8.20 with no room
