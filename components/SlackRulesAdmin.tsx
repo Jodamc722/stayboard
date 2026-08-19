@@ -67,7 +67,7 @@ type Dest =
 const ALERTS: { key: string; title: string; blurb: string; dest: Dest }[] = [
   { key: 'late_cleans', title: 'Cleans running behind', dest: { kind: 'area', note: 'housekeeping channel' },
     blurb: 'Departure cleans that have not started once the guest has gone, with the cleaner tagged.' },
-  { key: 'glitches', title: 'Guest issues still open', dest: { kind: 'area', note: 'by type — cleanliness to housekeeping, the rest to maintenance' },
+  { key: 'glitches', title: 'Guest issues still open', dest: { kind: 'area', note: 'housekeeping or maintenance channel, by issue type' },
     blurb: 'Open issues that are overdue or more than two days old.' },
   { key: 'repeat_offenders', title: 'Same problem coming back', dest: { kind: 'area', note: 'maintenance channel' },
     blurb: 'A unit with the same fault reported twice in two weeks, after it was closed as fixed.' },
