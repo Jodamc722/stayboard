@@ -1046,7 +1046,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const proj = await projectCleaners(ymdET(new Date()))
     const rowsC = proj.people
       .map(p => {
-        const mine = (variant === 'full' || variant === 'GM') ? p.byMarket : p.byMarket.filter(b => b.market === variant)
+        const mine = (variant === 'full' || variant === 'GM') ? p.byMarket : p.byMarket.filter(b => b.market === String(variant).toLowerCase())
         const cleansN = Math.round(mine.reduce((a, b) => a + b.cleans, 0) * 10) / 10
         const hoursN = Math.round(mine.reduce((a, b) => a + b.hours, 0) * 10) / 10
         return { name: p.name, cleans: cleansN, hours: hoursN, sched: p.scheduledHours }
