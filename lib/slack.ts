@@ -112,6 +112,20 @@ export async function postToChannel(channel: string, text: string, blocks?: any[
   return { ok: !!j.ok, error: j.ok ? undefined : String(j.error || 'failed'), ts: j.ts, channel: j.channel }
 }
 
+/**
+ * Reply in the thread under a message we just posted.
+ *
+ * Jon, 2026-08-19: "Should be in English for now and in the comments for the post it should be in
+ * spanish too." The channel stays readable in one language; the translation lives one click down.
+ */
+export async function postThreadReply(channel: string, threadTs: string, text: string): Promise<SlackResult> {
+  if (!channel || !threadTs) return { ok: false, error: 'no_thread' }
+  const j = await slackApi('chat.postMessage', {
+    channel, thread_ts: threadTs, text, unfurl_links: false, unfurl_media: false,
+  })
+  return { ok: !!j.ok, error: j.ok ? undefined : String(j.error || 'failed'), ts: j.ts, channel: j.channel }
+}
+
 /** Open (or reuse) the DM with one person and post into it. */
 export async function dmUser(userId: string, text: string, blocks?: any[]): Promise<SlackResult> {
   if (!userId) return { ok: false, error: 'no_user' }

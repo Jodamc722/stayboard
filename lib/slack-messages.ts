@@ -726,6 +726,12 @@ export type ReadinessItem = {
   status: 'done' | 'in progress' | 'not started' | 'no clean scheduled'
   assignees: string[]
   startedAt: string | null
+  guest?: string | null
+  nights?: number | null
+  outGuest?: string | null
+  outAt?: string | null
+  flags?: string[]
+  task?: string | null
 }
 
 /**
@@ -742,43 +748,76 @@ export function readinessMessage(opts: {
   audience: string[]
   here?: boolean
   spanish?: boolean
-}): { body: string; summary: string } {
+}): { body: string; threadBody: string | null; summary: string } {
   const { area, items, audience, here, spanish } = opts
   const done = items.filter(i => i.status === 'done')
   const notStarted = items.filter(i => i.status === 'not started')
   const inProgress = items.filter(i => i.status === 'in progress')
   const noClean = items.filter(i => i.status === 'no clean scheduled')
 
-  const who = (i: ReadinessItem) => i.assignees.length ? i.assignees.join(', ') : '_nobody assigned_'
-  const when = (i: ReadinessItem) => i.at ? 'guest ' + i.at : 'guest today'
-  const cuando = (i: ReadinessItem) => i.at ? 'huésped ' + i.at : 'huésped hoy'
-  const quien = (i: ReadinessItem) => i.assignees.length ? i.assignees.join(', ') : '_sin asignar_'
+  // Jon, 2026-08-19: "also needs to be specific". Every line answers the four questions someone
+  // reading it at 3pm actually has: WHICH unit, WHO is arriving and when, WHO is on the clean,
+  // and WHAT is in the way. A bare unit number and "guest today" is not a message, it is a ping.
+  const T = {
+    en: {
+      not: 'Not started', prog: 'In progress', none: 'No clean scheduled',
+      nobody: '_nobody assigned_', arrives: 'arrives', checkin: 'check-in',
+      out: 'out', nights: 'nights', started: 'started', more: 'and', rest: 'more',
+      head: (a: string) => '🕒 *' + a + ' — 3pm check*',
+      allReady: (n: number) =>
+        'All ' + n + ' ' + plural(n, 'unit', 'units') + ' arriving today ' +
+        plural(n, 'is', 'are') + ' clean and ready for 4pm. Nice work 🙏',
+      score: (d: number, t: number, r: number) =>
+        '*' + d + ' of ' + t + ' ready* for 4pm — ' + r + ' still to finish.',
+      close: 'One hour to go. If any of these will not make 4pm, say so here now and we will let the guest know or move them.',
+    },
+    es: {
+      not: 'Sin empezar', prog: 'En proceso', none: 'Sin limpieza programada',
+      nobody: '_sin asignar_', arrives: 'llega', checkin: 'entrada',
+      out: 'salida', nights: 'noches', started: 'empezó', more: 'y', rest: 'más',
+      head: (a: string) => '🕒 *' + a + " — revisión de las 3pm*",
+      allReady: (n: number) =>
+        (n === 1
+          ? 'La unidad que llega hoy está limpia y lista para las 4pm.'
+          : 'Las ' + n + ' unidades que llegan hoy están limpias y listas para las 4pm.') + ' Gracias 🙏',
+      score: (d: number, t: number, r: number) =>
+        '*' + d + ' de ' + t + ' listas* para las 4pm — faltan ' + r + '.',
+      close: 'Queda una hora. Si alguna no llega a las 4pm, dilo aquí ahora y avisamos al huésped o lo movemos.',
+    },
+  }
 
-  // Both languages get the SAME detail. The cleaners who need to act on this read Spanish; a
-  // Spanish headline over an English list is not bilingual, it is decoration.
-  const detail = (es: boolean) => {
-    const t = es
-      ? { not: 'Sin empezar', prog: 'En proceso', none: 'Salida y llegada hoy, sin limpieza programada', more: 'y ', rest: ' más', started: ' · empezó ' }
-      : { not: 'Not started', prog: 'In progress', none: 'Turning over with no clean scheduled', more: '…and ', rest: ' more', started: ' · started ' }
-    const w = es ? quien : who
-    const c = es ? cuando : when
+  const line = (i: ReadinessItem, t: typeof T.en): string => {
+    const bits: string[] = []
+    // who is coming, and when
+    const guest = i.guest ? i.guest : null
+    const at = i.at ? t.arrives + ' ' + i.at : t.checkin + ' 4pm'
+    bits.push(guest ? guest + ', ' + at : at)
+    if (i.nights) bits.push(i.nights + ' ' + t.nights)
+    // who is still in the way
+    if (i.outGuest || i.outAt) bits.push((t.out + ' ' + (i.outAt || '')).trim() + (i.outGuest ? ' (' + i.outGuest + ')' : ''))
+    // who is on it
+    bits.push(i.assignees.length ? i.assignees.join(', ') : t.nobody)
+    if (i.startedAt) bits.push(t.started + ' ' + i.startedAt)
+    const flag = (i.flags && i.flags.length) ? '  ⚠️ ' + i.flags.join(' · ') : ''
+    return '• *' + i.unit + '* — ' + bits.join(' · ') + flag
+  }
+
+  const detail = (t: typeof T.en): string[] => {
     const out: string[] = []
     if (notStarted.length) {
       out.push('*' + t.not + ' (' + notStarted.length + ')*')
-      for (const i of notStarted.slice(0, 10)) out.push('• *' + i.unit + '* — ' + c(i) + ' · ' + w(i))
-      if (notStarted.length > 10) out.push('• ' + t.more + (notStarted.length - 10) + t.rest)
+      for (const i of notStarted.slice(0, 12)) out.push(line(i, t))
+      if (notStarted.length > 12) out.push('• …' + t.more + ' ' + (notStarted.length - 12) + ' ' + t.rest)
     }
     if (inProgress.length) {
       if (out.length) out.push('')
       out.push('*' + t.prog + ' (' + inProgress.length + ')*')
-      for (const i of inProgress.slice(0, 8)) {
-        out.push('• *' + i.unit + '* — ' + c(i) + ' · ' + w(i) + (i.startedAt ? t.started + i.startedAt : ''))
-      }
+      for (const i of inProgress.slice(0, 12)) out.push(line(i, t))
     }
     if (noClean.length) {
       if (out.length) out.push('')
       out.push('*' + t.none + ' (' + noClean.length + ')*')
-      out.push('• ' + noClean.slice(0, 8).map(i => i.unit).join(', '))
+      for (const i of noClean.slice(0, 12)) out.push(line(i, t))
     }
     return out
   }
@@ -786,42 +825,27 @@ export function readinessMessage(opts: {
   const remaining = notStarted.length + inProgress.length + noClean.length
   const allReady = remaining === 0
 
-  const enLines = detail(false)
-  const esLines = spanish ? detail(true) : []
+  const build = (t: typeof T.en, withCc: boolean) => {
+    const lines = allReady ? [] : detail(t)
+    return nl([
+      t.head(area),
+      allReady ? t.allReady(done.length) : t.score(done.length, items.length, remaining),
+      lines.length ? '' : null,
+      lines.length ? lines.join('\n') : null,
+      lines.length ? '' : null,
+      allReady ? null : t.close,
+      withCc ? ccLine(audience, here) : null,
+    ])
+  }
 
-  const es = spanish
-    ? nl([
-        '🕒 *' + area + '* — revisión de las 3pm',
-        allReady
-          ? (done.length === 1
-              ? 'La unidad con llegada hoy está lista. Gracias 🙏'
-              : 'Las ' + done.length + ' unidades con llegada hoy están listas. Gracias 🙏')
-          : '*' + done.length + ' de ' + items.length + ' listas* para las 4pm. Faltan ' + remaining + '.',
-        esLines.length ? '' : null,
-        esLines.length ? esLines.join('\n') : null,
-        esLines.length ? '' : null,
-        allReady ? null : 'Queda una hora. Si alguna no llega a las 4pm, dilo ahora y avisamos al huésped o lo movemos.',
-        '',
-        '— — —',
-      ])
-    : ''
-
-  const en = nl([
-    '🕒 *' + area + ' — 3pm check*',
-    allReady
-      ? 'All ' + done.length + ' ' + plural(done.length, 'unit', 'units') + ' with a guest today ' +
-        plural(done.length, 'is', 'are') + ' ready. Nice work 🙏'
-      : '*' + done.length + ' of ' + items.length + ' ready* for 4pm. ' + remaining + ' still to finish.',
-    enLines.length ? '' : null,
-    enLines.length ? enLines.join('\n') : null,
-    enLines.length ? '' : null,
-    allReady ? null : 'An hour to go. If any of these will not make 4pm, say so now and we will warn the guest or move them.',
-    ccLine(audience, here),
-  ])
-
+  // Jon, 2026-08-19: "Should be in English for now and in the comments for the post it should be
+  // in spanish too." The post is English; the Spanish goes in the thread, so the channel reads
+  // clean and nobody has to scroll past a language they do not use.
   const summary = area + ' 3pm — ' + done.length + '/' + items.length + ' ready' +
     (notStarted.length ? ', ' + notStarted.length + ' not started' : '')
-  return { body: es ? es + '\n\n' + en : en, summary }
+  const body = build(T.en, true)
+  const threadBody = spanish ? build(T.es, false) : null
+  return { body, threadBody, summary }
 }
 
 // ── Hours, for leadership ──────────────────────────────────────────────────────────────────────

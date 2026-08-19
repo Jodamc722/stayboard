@@ -495,6 +495,16 @@ export type ReadinessUnit = {
   status: 'done' | 'in progress' | 'not started' | 'no clean scheduled'
   assignees: string[]
   startedAt: string | null
+  /** Jon, 2026-08-19: "also needs to be specific" — a unit number alone is not actionable. */
+  guest: string | null
+  nights: number | null
+  /** who is leaving that unit today, and at what time — the clean cannot start before they go */
+  outGuest: string | null
+  outAt: string | null
+  /** 'owner stay', 'booked today', 'late booking' — the things that change how you treat it */
+  flags: string[]
+  /** the clean's own name off the Breezeway board, e.g. "Departure Clean — deep" */
+  task: string | null
 }
 
 export type Readiness = { date: string; units: ReadinessUnit[] }
@@ -545,7 +555,11 @@ export async function checkReadiness(): Promise<Readiness> {
   }
 
   const departedToday: Record<string, boolean> = {}
-  for (const d of (sheet.departures || [])) departedToday[String(d.unit || '')] = true
+  const departureByUnit: Record<string, any> = {}
+  for (const d of (sheet.departures || [])) {
+    departedToday[String(d.unit || '')] = true
+    departureByUnit[String(d.unit || '')] = d
+  }
 
   const arrivalByUnit: Record<string, any> = {}
   for (const a of (sheet.arrivals || [])) arrivalByUnit[String(a.unit || '')] = a
@@ -559,13 +573,26 @@ export async function checkReadiness(): Promise<Readiness> {
     if (!unit || seen[unit] || namelessRe.test(unit.trim())) return
     seen[unit] = true
     const a = arrivalByUnit[unit]
+    const d = departureByUnit[unit]
+    const flags: string[] = []
+    if (a) {
+      if (a.ownerFlag) flags.push(String(a.ownerFlag))
+      if (a.bookedToday) flags.push('booked today')
+      else if (a.lateBooking) flags.push('booked last minute')
+    }
     units.push({
       unit,
       market: (a && a.market) || (w && w.market) || null,
       at: a ? (a.checkInTime || null) : null,
+      guest: a ? (a.guest || null) : null,
+      nights: a && a.nights != null ? Number(a.nights) : null,
+      outGuest: d ? (d.guest || null) : null,
+      outAt: d ? (d.checkOutTime || null) : null,
+      flags,
+      task: w ? (w.label || w.name || null) : null,
       status: w ? (String(w.status) as any) : 'no clean scheduled',
       assignees: w && Array.isArray(w.assignees) ? w.assignees.filter(Boolean) : [],
-      startedAt: w ? timeET(w.startedAt) : null,
+      startedAt: w ? (w.startedAt ? String(w.startedAt) : null) : null,
     })
   }
 

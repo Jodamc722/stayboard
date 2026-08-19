@@ -14,7 +14,7 @@
 import 'server-only'
 import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
-import { postToChannel, dmUser, mention } from './slack'
+import { postToChannel, postThreadReply, dmUser, mention } from './slack'
 import { getSlackRules, withinWindow, type EventKey, type SlackRules } from './slack-rules'
 
 export type OutboxStatus = 'pending' | 'approved' | 'sent' | 'skipped' | 'expired' | 'failed'
@@ -48,6 +48,8 @@ export type DraftInput = {
   channelId?: string | null
   dmUserIds?: string[]
   body: string
+  /** Posted as a threaded reply under the main message — the Spanish half lives here. */
+  threadBody?: string | null
   summary?: string
   audience?: string[]
   itemCount?: number
@@ -58,6 +60,19 @@ export type DraftResult =
   | { ok: false; reason: string }
 
 const TABLE = 'slack_outbox'
+
+/**
+ * The thread reply travels inside `body` behind a sentinel rather than in its own column, so this
+ * works on the outbox table Jon has already migrated. Nothing a human writes contains this string.
+ */
+export const THREAD_SEP = '\n\u241Fthread\u241F\n'
+
+export function splitThread(stored: string): { body: string; thread: string | null } {
+  const raw = String(stored || '')
+  const i = raw.indexOf(THREAD_SEP)
+  if (i < 0) return { body: raw, thread: null }
+  return { body: raw.slice(0, i), thread: raw.slice(i + THREAD_SEP.length) || null }
+}
 
 const nowIso = () => new Date().toISOString()
 const minutesAgoIso = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
@@ -100,7 +115,8 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
     building: input.building || null,
     channel_id: input.channelId || null,
     dm_user_ids: input.dmUserIds && input.dmUserIds.length ? input.dmUserIds : [],
-    body: String(input.body || '').slice(0, 3500),
+    body: String(input.body || '').slice(0, 3500) +
+      (input.threadBody ? THREAD_SEP + String(input.threadBody).slice(0, 3500) : ''),
     summary: (input.summary || '').slice(0, 300) || null,
     audience: input.audience && input.audience.length ? input.audience : [],
     item_count: Math.max(1, Math.round(Number(input.itemCount) || 1)),
@@ -153,10 +169,11 @@ async function notifyApprovers(id: string, rules: SlackRules): Promise<void> {
   const yes = base + '/approve/slack/' + row.token + '?go=1'
   const no = base + '/approve/slack/' + row.token + '?go=0'
   const where = row.building ? row.building : 'Lighthouse'
+  const preview = splitThread(row.body)
   const text = [
     '*Ready to send — ' + where + '*',
     '',
-    row.body,
+    preview.body + (preview.thread ? '\n\n_(a Spanish copy goes in the thread)_' : ''),
     '',
     '<' + yes + '|✅ Send it>   ·   <' + no + '|🚫 Skip>   ·   <' + base + '/command|Open Command Center>',
     '_Expires in ' + Math.round(rules.approvalExpiryMin / 60) + 'h if nobody acts._',
@@ -208,20 +225,34 @@ export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: b
   const problems: string[] = []
   let delivered = 0
 
+  const { body: mainBody, thread: threadBody } = splitThread(row.body)
+
   if (row.channel_id) {
-    const r = await postToChannel(row.channel_id, row.body)
-    if (r.ok) delivered++
-    else problems.push('channel: ' + (r.error || 'failed'))
+    const r = await postToChannel(row.channel_id, mainBody)
+    if (r.ok) {
+      delivered++
+      // The reply is a nice-to-have: if it fails the main message still stands, so it is recorded
+      // as a problem but never flips the row to 'failed'.
+      if (threadBody && r.ts) {
+        const t = await postThreadReply(row.channel_id, String(r.ts), threadBody)
+        if (!t.ok) problems.push('thread: ' + (t.error || 'failed'))
+      }
+    } else problems.push('channel: ' + (r.error || 'failed'))
   }
   for (const u of row.dm_user_ids || []) {
-    const r = await dmUser(u, row.body)
-    if (r.ok) delivered++
-    else problems.push('dm ' + u + ': ' + (r.error || 'failed'))
+    const r = await dmUser(u, mainBody)
+    if (r.ok) {
+      delivered++
+      if (threadBody && r.ts && r.channel) {
+        const t = await postThreadReply(String(r.channel), String(r.ts), threadBody)
+        if (!t.ok) problems.push('thread dm ' + u + ': ' + (t.error || 'failed'))
+      }
+    } else problems.push('dm ' + u + ': ' + (r.error || 'failed'))
   }
   // Jon's copy of everything — but never twice into the same channel.
   if (rules.firehose && rules.firehose !== row.channel_id) {
     const tag = row.building ? '[' + row.building + '] ' : ''
-    await postToChannel(rules.firehose, tag + row.body)
+    await postToChannel(rules.firehose, tag + mainBody)
   }
 
   const ok = delivered > 0

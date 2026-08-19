@@ -529,10 +529,12 @@ export async function runReadinessCheck(): Promise<any> {
     // We cannot see their readiness, so we do not claim to.
     if (vendor) { results.push({ area: bucket.label, skipped: 'vendor-run — no clean data' }); continue }
     const audience = audienceFor(rules, bucket.group, [])
-    const { body, summary } = readinessMessage({
+    const { body, threadBody, summary } = readinessMessage({
       area: bucket.label,
       items: bucket.rows.map(u => ({
         unit: u.unit, at: u.at, status: u.status, assignees: u.assignees, startedAt: u.startedAt,
+        guest: u.guest, nights: u.nights, outGuest: u.outGuest, outAt: u.outAt,
+        flags: u.flags, task: u.task,
       })),
       audience,
       spanish: rules.bilingualFieldChannels,
@@ -542,7 +544,7 @@ export async function runReadinessCheck(): Promise<any> {
       groupKey: 'ready3pm:' + bucket.key + ':' + date,
       building: bucket.label,
       channelId: channelFor(rules, bucket.group, 'housekeeping'),
-      body, summary, audience, itemCount: bucket.rows.length,
+      body, threadBody, summary, audience, itemCount: bucket.rows.length,
     }, rules)
     results.push({ area: bucket.label, count: bucket.rows.length, ...res })
   }
