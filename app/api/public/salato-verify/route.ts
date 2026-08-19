@@ -13,6 +13,7 @@ import { buildVerifyPdf } from '@/lib/salato-pdf'
 import { sendGmail } from '@/lib/gmail-send'
 import { getAccess } from '@/lib/access'
 import { adminPasswordOk } from '@/lib/shareAuth'
+import { SALATO_RULES_INTRO, SALATO_RULES_IMPORTANT } from '@/lib/salato-rules'
 
 function escapeHtml(s: any): string { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }
 function fmtDay(d?: string): string { if (!d) return '—'; const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? String(d) : x.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
@@ -214,14 +215,18 @@ export async function POST(req: NextRequest) {
           att.push({ filename: 'salato-verification-' + (info.confirmationCode || rid) + '.pdf', content: pdf, contentType: 'application/pdf' })
         } catch {}
         const rowsHtml = details.map(d => '<tr><td style="padding:2px 12px 2px 0;color:#6b7280;font-size:13px">' + escapeHtml(d.label) + '</td><td style="padding:2px 0;font-weight:600;font-size:13px">' + escapeHtml(d.value) + '</td></tr>').join('')
-        const rulesHtml = pdfRules.map(r => '<li style="margin-bottom:8px"><b>' + escapeHtml(r.title) + '</b> &mdash; <span style="color:#059669;font-weight:700">initialed ' + escapeHtml(r.initials) + '</span>' + (r.body ? '<br><span style="color:#6b7280;font-size:12px">' + escapeHtml(r.body) + '</span>' : '') + '</li>').join('')
+        const bulletsHtml = (body: string) => String(body || '').split('\n').map(s => s.trim()).filter(Boolean).map(s => '&bull; ' + escapeHtml(s)).join('<br>')
+        const rulesHtml = pdfRules.map(r => '<li style="margin-bottom:8px"><b>' + escapeHtml(r.title) + '</b> &mdash; <span style="color:#059669;font-weight:700">initialed ' + escapeHtml(r.initials) + '</span>' + (r.body ? '<br><span style="color:#6b7280;font-size:12px">' + bulletsHtml(r.body) + '</span>' : '') + '</li>').join('')
         const html = '<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;max-width:640px;margin:0 auto">'
           + '<div style="background:#111827;color:#fff;border-radius:14px;padding:18px 20px;margin-bottom:16px"><div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#fcd34d;font-weight:700">Stay Hospitality</div><div style="font-size:20px;font-weight:800;margin-top:4px">Salato verification completed</div></div>'
           + '<table style="border-collapse:collapse;margin-bottom:16px">' + rowsHtml + '</table>'
           + '<div style="font-weight:700;margin:8px 0">ID &amp; selfie</div>'
           + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px"><img src="cid:idimg" alt="ID" style="max-width:300px;border:1px solid #e5e7eb;border-radius:10px"><img src="cid:selfieimg" alt="Selfie" style="max-width:220px;border:1px solid #e5e7eb;border-radius:10px"></div>'
           + '<div style="font-weight:700;margin:8px 0">Signature</div><img src="cid:sigimg" alt="Signature" style="max-width:360px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;margin-bottom:16px">'
-          + '<div style="font-weight:700;margin:8px 0">House &amp; building rules (v' + rulesVersion + ') — initialed by guest</div><ol style="padding-left:18px;margin-top:4px">' + rulesHtml + '</ol>'
+          + '<div style="font-weight:700;margin:8px 0">House &amp; building rules (v' + rulesVersion + ') — initialed by guest</div>'
+          + '<p style="font-size:12px;color:#6b7280;margin:4px 0 10px">' + escapeHtml(SALATO_RULES_INTRO) + '</p>'
+          + '<ol style="padding-left:18px;margin-top:4px">' + rulesHtml + '</ol>'
+          + '<div style="background:#fbbf24;color:#111827;border-radius:10px;padding:12px 14px;font-size:12px;font-weight:600;margin-top:12px"><b>IMPORTANT:</b> ' + escapeHtml(SALATO_RULES_IMPORTANT) + '</div>'
           + '<p style="font-size:12px;color:#6b7280;margin-top:16px">A PDF copy is attached. View on the board: <a href="' + viewLink + '">' + viewLink + '</a></p></div>'
         const send = await sendGmail({ fromEmail, to, cc, subject: 'Salato verification — ' + (fullName || 'Guest') + (info.unit ? ' — ' + info.unit : ''), html, attachments: att })
         record.emailedTo = send.ok ? to : []
