@@ -28,6 +28,7 @@ export type EventKey =
   // added 2026-08-19 after reading 30 days of every ops channel — see [[reference-slack-channels]]
   | 'repeat_offenders' | 'door_codes' | 'blocked_arrival' | 'market_brief' | 'handover'
   | 'walk_in_risk'
+  | 'readiness_3pm' | 'labor_report' | 'notable_arrivals'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -42,6 +43,9 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   market_brief: 'Top priorities per market',
   handover: 'Nightly handover draft (leadership)',
   walk_in_risk: 'Could be a walk-in tonight',
+  readiness_3pm: '3pm check — ready for 4pm?',
+  labor_report: 'Hours, no-shows, over hours',
+  notable_arrivals: 'Owner stays & big bookings',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -105,6 +109,12 @@ export type SlackRules = {
   approvalExpiryMin: number
   /** Hours on the clock in one day before we flag someone as running long. */
   overtimeHours: number
+  /** A reservation at or above this total counts as a "big booking" worth flagging. */
+  bigBookingUsd: number
+  /** Nights at or above this counts as a long stay. */
+  longStayNights: number
+  /** How far ahead the owner-stay / big-booking heads-up looks. */
+  notableLookaheadDays: number
   /** Free-text steer folded into every generated message. */
   tone: string
 }
@@ -198,34 +208,47 @@ export const DEFAULT_RULES: SlackRules = {
   core: [JON_SLACK_ID, ROBERTO_SLACK_ID, KARLA_SLACK_ID],
   people: {},
   events: {
-    late_cleans: workHours(true),
-    glitches: workHours(true),
-    overtime: workHours(true),
+    // superseded by readiness_3pm — the same information at the only hour it changes anything.
+    late_cleans: { ...workHours(true), enabled: false },
+    glitches: { ...workHours(true), enabled: false },
+    // folded into labor_report, which says the same thing with the rest of the payroll picture.
+    overtime: { ...workHours(true), enabled: false },
     // A dead feed is not a judgement call and waiting on a human defeats the point.
     sync: { enabled: true, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 360 },
-    digest: { enabled: true, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
+    digest: { enabled: false, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
     personal_brief: { enabled: false, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
     // Once a day is plenty — a repeat is a week-old pattern, not breaking news.
-    repeat_offenders: { enabled: true, approval: true, quietStart: 8 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
+    repeat_offenders: { enabled: false, approval: true, quietStart: 8 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
     // Codes matter before check-in, so this one is allowed to speak early.
-    door_codes: { enabled: true, approval: true, quietStart: 7 * 60, quietEnd: 20 * 60, cooldownMin: 12 * 60 },
+    door_codes: { enabled: false, approval: true, quietStart: 7 * 60, quietEnd: 20 * 60, cooldownMin: 12 * 60 },
     // The one alert that should never wait: a guest is already booked into a dead unit.
-    blocked_arrival: { enabled: true, approval: true, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 6 * 60 },
+    blocked_arrival: { enabled: false, approval: true, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 6 * 60 },
     // approval:true since 2026-08-19 — the first auto-sent version was unusable ("so bad... no
     // clarity or detail") and went out before anyone could stop it. Flip it off in settings once
     // the wording has earned trust.
-    market_brief: { enabled: true, approval: true, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
+    market_brief: { enabled: false, approval: true, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
     // Written in the evening for the next day, like the human version it replaces.
     handover: { enabled: true, approval: true, quietStart: 16 * 60, quietEnd: 23 * 60, cooldownMin: 20 * 60 },
     // NO APPROVAL, and a short cooldown so it re-raises while the problem is still unfixed. Jon
     // asked for anything that could cause a walk-in to be stated as it is caught — a guest who
     // cannot get in tonight will not wait for someone to click approve. It re-checks all day and
     // goes quiet the moment the unit is clear.
-    walk_in_risk: { enabled: true, approval: false, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 90 },
+    walk_in_risk: { enabled: false, approval: false, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 90 },
+    // THE 3PM CHECK. One narrow window on purpose: at 15:00 every arrival either has a finished
+    // clean or it does not, and there is still an hour to act. Before 3pm it is noise, after 4pm it
+    // is too late. Auto-sends — an hour of warning is the entire value.
+    readiness_3pm: { enabled: true, approval: false, quietStart: 15 * 60, quietEnd: 15 * 60 + 45, cooldownMin: 20 * 60 },
+    // Hours late in the afternoon, when "over hours" and "never showed" are both answerable.
+    labor_report: { enabled: true, approval: false, quietStart: 17 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
+    // A heads-up, so it goes out with the morning rather than interrupting the day.
+    notable_arrivals: { enabled: true, approval: false, quietStart: 8 * 60, quietEnd: 11 * 60, cooldownMin: 20 * 60 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,
   overtimeHours: 9,
+  bigBookingUsd: 3000,
+  longStayNights: 14,
+  notableLookaheadDays: 7,
   tone: 'Warm, encouraging, on the team’s side. Name the situation plainly, then point at the next action. Never scold, never blame an individual, never imply someone is in trouble.',
 }
 
@@ -321,6 +344,9 @@ export function mergeRules(stored: any): SlackRules {
     approvers: approvers.length ? approvers : d.approvers.slice(),
     approvalExpiryMin: clampInt(stored.approvalExpiryMin, 15, 7 * 24 * 60, d.approvalExpiryMin),
     overtimeHours: clampInt(stored.overtimeHours, 4, 24, d.overtimeHours),
+    bigBookingUsd: clampInt(stored.bigBookingUsd, 0, 1000000, d.bigBookingUsd),
+    longStayNights: clampInt(stored.longStayNights, 2, 365, d.longStayNights),
+    notableLookaheadDays: clampInt(stored.notableLookaheadDays, 1, 30, d.notableLookaheadDays),
     tone: String(stored.tone || d.tone).slice(0, 600),
   }
 }

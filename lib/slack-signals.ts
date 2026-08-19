@@ -22,6 +22,8 @@ import { buildingOf, marketOf, type Market } from './segments'
 import { blockedUnits, type BlockedRun } from './blocked-units'
 import { isLiveStay } from './stay-status'
 import { loadBehind } from './ops-behind'
+import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
+import { getTimecards } from './homebase-labor'
 
 const DAY = 86_400_000
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -471,4 +473,238 @@ export async function findWalkInRisks(): Promise<WalkInRisk[]> {
     const ta = a.at || '99:99', tb = b.at || '99:99'
     return ta.localeCompare(tb) || a.unit.localeCompare(b.unit)
   })
+}
+
+
+// ── 7. THE 3PM CHECK — will these units be ready for 4pm? ──────────────────────────────────────
+//
+// Jon, 2026-08-19: "it should just be based on status cleans at 3pm to make sure units are ready
+// at 4pm."
+//
+// This replaces the all-day "cleans running behind" nagging with the ONE moment that matters. At
+// 3pm every arrival either has a finished clean or it does not, and there is still an hour to do
+// something about it. Before 3pm it is noise; after 4pm it is too late.
+//
+// Read off the day sheet so it agrees exactly with the board the team is already looking at.
+
+export type ReadinessUnit = {
+  unit: string
+  market: string | null
+  /** local check-in time if known */
+  at: string | null
+  status: 'done' | 'in progress' | 'not started' | 'no clean scheduled'
+  assignees: string[]
+  startedAt: string | null
+}
+
+export type Readiness = { date: string; units: ReadinessUnit[] }
+
+const timeET = (iso: any): string | null => {
+  if (!iso) return null
+  try {
+    return new Date(String(iso)).toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit',
+    })
+  } catch { return null }
+}
+
+/** Every unit with a guest arriving today, and whether its clean is actually finished. */
+export async function checkReadiness(): Promise<Readiness> {
+  const today = ymdET(new Date())
+  let sheet: any = null
+  try {
+    const mod = await import('./daysheet')
+    sheet = await mod.buildDaySheet(today)
+  } catch { return { date: today, units: [] } }
+  if (!sheet || !sheet.ok) return { date: today, units: [] }
+
+  // clean status per unit — a departure clean is the one that gates readiness
+  const cleanByUnit: Record<string, any> = {}
+  for (const w of (sheet.work || [])) {
+    const unit = String(w.unit || '')
+    if (!unit) continue
+    const dept = String(w.dept || '').toLowerCase()
+    const name = String(w.name || '').toLowerCase()
+    const isClean = dept.indexOf('housekeep') >= 0 || /clean|turnover/.test(name)
+    if (!isClean) continue
+    // keep the least-finished task for the unit: if anything is unstarted, the unit is not ready
+    const prev = cleanByUnit[unit]
+    const rank = (st: string) => (st === 'not started' ? 0 : st === 'in progress' ? 1 : 2)
+    if (!prev || rank(String(w.status)) < rank(String(prev.status))) cleanByUnit[unit] = w
+  }
+
+  const units: ReadinessUnit[] = []
+  for (const a of (sheet.arrivals || [])) {
+    const unit = String(a.unit || '')
+    if (!unit) continue
+    const w = cleanByUnit[unit]
+    const status: ReadinessUnit['status'] = w
+      ? (String(w.status) as any)
+      : 'no clean scheduled'
+    units.push({
+      unit,
+      market: a.market || null,
+      at: a.checkInTime || null,
+      status,
+      assignees: w && Array.isArray(w.assignees) ? w.assignees.filter(Boolean) : [],
+      startedAt: w ? timeET(w.startedAt) : null,
+    })
+  }
+
+  // worst first: not started, then in progress, then the rest
+  const rank = (u: ReadinessUnit) =>
+    u.status === 'not started' ? 0 : u.status === 'no clean scheduled' ? 1 : u.status === 'in progress' ? 2 : 3
+  units.sort((x, y) => rank(x) - rank(y) || String(x.at || '').localeCompare(String(y.at || '')))
+  return { date: today, units }
+}
+
+// ── 8. HOURS — who is on the clock, who is not, who is over ────────────────────────────────────
+//
+// Jon, 2026-08-19: "sending a message in leadership chat sharing hours, not clocked in, over
+// hours, ect."
+//
+// Three questions in one message: what has today cost so far, is anyone scheduled who never
+// showed, and is anyone running long. Scheduled-vs-actual is matched with the same fuzzy name
+// matcher the staffing check uses, because Homebase and Breezeway spell people differently.
+
+export type LaborSnapshot = {
+  date: string
+  totalHours: number
+  clockedInNow: { name: string; hours: number; since: string | null }[]
+  overHours: { name: string; hours: number; since: string | null }[]
+  notClockedIn: { name: string; shift: string }[]
+  missedClockOut: { name: string; hours: number }[]
+  complete: boolean
+}
+
+export async function laborSnapshot(overtimeHours = 9): Promise<LaborSnapshot> {
+  const today = ymdET(new Date())
+  const empty: LaborSnapshot = {
+    date: today, totalHours: 0, clockedInNow: [], overHours: [],
+    notClockedIn: [], missedClockOut: [], complete: false,
+  }
+
+  let cards: Awaited<ReturnType<typeof getTimecards>> = []
+  let shifts: Awaited<ReturnType<typeof getShifts>> = []
+  try {
+    const [c, sh] = await Promise.all([
+      getTimecards(today, today),
+      getShifts(today).catch(() => [] as any[]),
+    ])
+    cards = c
+    shifts = sh
+  } catch { return empty }
+
+  const todays = cards.filter(t => t.date === today)
+  const totalHours = Math.round(todays.reduce((a, t) => a + (t.hours || 0), 0) * 10) / 10
+
+  // "On the clock NOW" needs the date guard — t.open alone also matches a card someone forgot to
+  // close weeks ago, which is the bug still live in /api/ops-today/staffing.
+  const open = todays.filter(t => t.open)
+  const clockedInNow = open.map(t => ({
+    name: t.name, hours: Math.round((t.hours || 0) * 10) / 10, since: timeET(t.clockIn),
+  })).sort((a, b) => b.hours - a.hours)
+
+  const overHours = clockedInNow.filter(t => t.hours >= overtimeHours)
+
+  // Scheduled today but no punch at all.
+  const punched = todays.map(t => t.name).filter(Boolean)
+  const notClockedIn: { name: string; shift: string }[] = []
+  for (const sh of shifts) {
+    if (sh.open) continue                     // an unfilled shift is a staffing gap, not a no-show
+    const name = String(sh.name || '').trim()
+    if (!name) continue
+    const matched = punched.some(p => nameMatches(p, name)) || !!nameMatchesRoster(name, punched)
+    if (!matched) notClockedIn.push({ name, shift: sh.label || '' })
+  }
+
+  // Clocked in yesterday and never closed — payroll noise, worth naming.
+  const missedClockOut = cards
+    .filter(t => t.open && t.date !== today)
+    .map(t => ({ name: t.name, hours: Math.round((t.hours || 0) * 10) / 10 }))
+
+  return {
+    date: today, totalHours, clockedInNow, overHours, notClockedIn, missedClockOut,
+    complete: todays.length > 0 || shifts.length > 0,
+  }
+}
+
+// ── 9. OWNER STAYS & BIG BOOKINGS — a heads-up, not a task ─────────────────────────────────────
+//
+// Jon, 2026-08-19: "It should also send updates for owner stays, big bookings, etc."
+//
+// Both are the same shape of information: an upcoming arrival that deserves a different level of
+// attention than a normal one. An owner walking into their own unit and a $6k two-week stay both
+// go wrong in ways an ordinary turnover does not, and both are knowable days ahead.
+//
+// Owner detection matches the day sheet exactly (`/^owner/i` on the reservation source) so the two
+// never disagree about who is an owner.
+
+const OWNER_SRC = /^owner/i
+
+export type NotableArrival = {
+  unit: string
+  building: string | null
+  guest: string
+  checkIn: string
+  nights: number | null
+  value: number | null
+  source: string
+  kind: 'owner' | 'big' | 'long'
+  daysAway: number
+}
+
+export async function findNotableArrivals(opts?: {
+  days?: number
+  bigBookingUsd?: number
+  longStayNights?: number
+}): Promise<NotableArrival[]> {
+  const days = Math.max(1, Math.min(30, opts?.days ?? 7))
+  const bigUsd = Math.max(0, opts?.bigBookingUsd ?? 3000)
+  const longNights = Math.max(2, opts?.longStayNights ?? 14)
+
+  const today = ymdET(new Date())
+  const until = addDays(today, days)
+  const db = supabaseAdmin()
+
+  const [rRes, lRes] = await Promise.all([
+    db.from('guesty_reservations')
+      .select('id,listing_id,guest_name,check_in,nights,status,source,money_total')
+      .gte('check_in', today).lte('check_in', until)
+      .order('check_in', { ascending: true }).limit(1500),
+    db.from('guesty_listings').select('id,nickname,title'),
+  ])
+
+  const names: Record<string, string> = {}
+  for (const l of ((lRes.data || []) as any[])) {
+    names[String(l.id)] = String(l.nickname || l.title || 'Unit')
+  }
+
+  const out: NotableArrival[] = []
+  for (const r of ((rRes.data || []) as any[])) {
+    if (!isLiveStay(r.status)) continue
+    const source = String(r.source || '')
+    const nights = r.nights == null ? null : Number(r.nights)
+    const value = r.money_total == null ? null : Number(r.money_total)
+
+    let kind: NotableArrival['kind'] | null = null
+    if (OWNER_SRC.test(source)) kind = 'owner'
+    else if (value != null && value >= bigUsd) kind = 'big'
+    else if (nights != null && nights >= longNights) kind = 'long'
+    if (!kind) continue
+
+    const unit = names[String(r.listing_id)] || 'Unit'
+    const ci = String(r.check_in || '').slice(0, 10)
+    out.push({
+      unit,
+      building: buildingOf(null, unit),
+      guest: String(r.guest_name || 'Guest'),
+      checkIn: ci,
+      nights, value, source, kind,
+      daysAway: Math.round((Date.parse(ci + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / DAY),
+    })
+  }
+  // owners first, then by how soon
+  const rank = (k: NotableArrival['kind']) => (k === 'owner' ? 0 : k === 'big' ? 1 : 2)
+  return out.sort((a, b) => rank(a.kind) - rank(b.kind) || a.daysAway - b.daysAway)
 }

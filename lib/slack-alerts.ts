@@ -30,11 +30,12 @@ import {
   lateCleansSpanish, glitchesSpanish,
   repeatOffendersMessage, codeProblemsMessage, blockedArrivalsMessage,
   marketBriefMessage, handoverMessage, walkInRiskMessage,
+  readinessMessage, laborMessage, notableArrivalsMessage,
   type LateCleanItem, type GlitchItem, type LongShift,
 } from './slack-messages'
 import {
   findRepeatOffenders, findCodeProblems, findBlockedArrivals, marketPriorities, tomorrowByArea,
-  findWalkInRisks,
+  findWalkInRisks, checkReadiness, laborSnapshot, findNotableArrivals,
 } from './slack-signals'
 
 /** Today in ET, YYYY-MM-DD. Everything operational in this app is anchored to Eastern. */
@@ -502,4 +503,112 @@ export async function runWalkInRiskAlert(): Promise<any> {
     results.push({ area: bucket.label, count: bucket.rows.length, ...res })
   }
   return { ok: true, groups: results.length, results }
+}
+
+// ── 12. THE 3PM CHECK ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Jon, 2026-08-19: "it should just be based on status cleans at 3pm to make sure units are ready at
+ * 4pm." One message per area, into the housekeeping channel, at 3pm — and it sends even when
+ * everything is ready, because "all ready" at 3pm is genuinely the news.
+ */
+export async function runReadinessCheck(): Promise<any> {
+  const { rules } = await ctx()
+  const rule = rules.events.readiness_3pm
+  if (!rule.enabled) return { skipped: 'disabled' }
+
+  const { date, units } = await checkReadiness()
+  if (!units.length) return { skipped: 'no arrivals today' }
+
+  const buckets = bucketBy(rules, units, u => u.unit, () => 'housekeeping' as Dept)
+  const results: any[] = []
+  for (const bucket of buckets) {
+    const vendor = !!(bucket.group && bucket.group.vendor)
+    const audience = audienceFor(rules, bucket.group, [])
+    const { body, summary } = readinessMessage({
+      area: bucket.label,
+      items: bucket.rows.map(u => ({
+        unit: u.unit, at: u.at, status: u.status, assignees: u.assignees, startedAt: u.startedAt,
+      })),
+      audience, here: vendor,
+      spanish: rules.bilingualFieldChannels && !vendor,
+    })
+    const res = await draft({
+      eventKey: 'readiness_3pm',
+      groupKey: 'ready3pm:' + bucket.key + ':' + date,
+      building: bucket.label,
+      channelId: channelFor(rules, bucket.group, 'housekeeping'),
+      body, summary, audience, itemCount: bucket.rows.length,
+    }, rules)
+    results.push({ area: bucket.label, count: bucket.rows.length, ...res })
+  }
+  return { ok: true, groups: results.length, results }
+}
+
+// ── 13. HOURS, to leadership ───────────────────────────────────────────────────────────────────
+
+/**
+ * Jon, 2026-08-19: "sending a message in leadership chat sharing hours, not clocked in, over
+ * hours, ect." Goes to the leadership channel, tagging the leadership group.
+ */
+export async function runLaborReport(): Promise<any> {
+  const rules = await getSlackRules()
+  const rule = rules.events.labor_report
+  if (!rule.enabled) return { skipped: 'disabled' }
+  const channelId = rules.leadershipChannel || rules.defaultChannel || rules.firehose
+  if (!channelId) return { skipped: 'no leadership channel set — pick one in /users' }
+
+  const snap = await laborSnapshot(rules.overtimeHours)
+  if (!snap.complete) return { skipped: 'no Homebase data for today' }
+
+  const audience = rules.leadership.length ? rules.leadership : rules.core
+  const { body, summary } = laborMessage({
+    date: snap.date,
+    totalHours: snap.totalHours,
+    clockedInNow: snap.clockedInNow,
+    overHours: snap.overHours,
+    notClockedIn: snap.notClockedIn,
+    missedClockOut: snap.missedClockOut,
+    threshold: rules.overtimeHours,
+    audience,
+  })
+  return draft({
+    eventKey: 'labor_report',
+    groupKey: 'labor:' + snap.date,
+    channelId,
+    body, summary, audience, itemCount: 1,
+  }, rules)
+}
+
+// ── 14. Owner stays & big bookings ─────────────────────────────────────────────────────────────
+
+/** Jon, 2026-08-19: "It should also send updates for owner stays, big bookings, etc." */
+export async function runNotableArrivals(): Promise<any> {
+  const rules = await getSlackRules()
+  const rule = rules.events.notable_arrivals
+  if (!rule.enabled) return { skipped: 'disabled' }
+  const channelId = rules.leadershipChannel || rules.opsChannel || rules.defaultChannel || rules.firehose
+  if (!channelId) return { skipped: 'no channel set' }
+
+  const items = await findNotableArrivals({
+    days: rules.notableLookaheadDays,
+    bigBookingUsd: rules.bigBookingUsd,
+    longStayNights: rules.longStayNights,
+  })
+  if (!items.length) return { skipped: 'nothing notable coming up' }
+
+  const today = etDate()
+  const audience = rules.leadership.length ? rules.leadership : rules.core
+  const { body, summary } = notableArrivalsMessage({
+    items: items.map(i => ({
+      unit: i.unit, guest: i.guest, checkIn: i.checkIn, daysAway: i.daysAway,
+      nights: i.nights, value: i.value, kind: i.kind,
+    })),
+    audience, days: rules.notableLookaheadDays,
+  })
+  return draft({
+    eventKey: 'notable_arrivals',
+    groupKey: 'notable:' + today,
+    channelId, body, summary, audience, itemCount: items.length,
+  }, rules)
 }

@@ -263,3 +263,25 @@ export async function sendGmail(opts: {
     return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 300)}` }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
+
+// ── Back-compat shims ──────────────────────────────────────────────────────────────────────────
+//
+// `createGmailDraft` and `checkGmailDraftExists` were renamed to `draftGmail` / `draftStatus`, but
+// two callers still import the old names — lib/support-drafts.ts and
+// app/api/reservation-notices/draft/route.ts. They were restored once already (commit 29fef08) and
+// went missing again, which turns the whole build red and blocks every deploy. Keeping them as
+// one-line aliases costs nothing; delete them only when both callers have been updated.
+
+/**
+ * @deprecated use `draftGmail`
+ * Both callers read `.id`, not `.draftId`, so this maps the field as well as the name.
+ */
+export async function createGmailDraft(opts: Parameters<typeof draftGmail>[0]): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const r = await draftGmail(opts)
+  return { ok: r.ok, id: r.draftId, error: r.error }
+}
+
+/** @deprecated use `draftStatus` */
+export async function checkGmailDraftExists(fromEmail: string, draftId: string): Promise<'exists' | 'gone' | 'error'> {
+  return draftStatus(fromEmail, draftId)
+}

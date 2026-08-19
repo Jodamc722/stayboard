@@ -717,3 +717,227 @@ export function walkInRiskMessage(opts: {
     items.slice(0, 3).map(i => i.unit).join(', ')
   return { body, summary }
 }
+
+// ── The 3pm readiness check ────────────────────────────────────────────────────────────────────
+
+export type ReadinessItem = {
+  unit: string
+  at: string | null
+  status: 'done' | 'in progress' | 'not started' | 'no clean scheduled'
+  assignees: string[]
+  startedAt: string | null
+}
+
+/**
+ * Jon, 2026-08-19: "it should just be based on status cleans at 3pm to make sure units are ready
+ * at 4pm."
+ *
+ * So this is a readiness scoreboard, not a nag: ready count first, then only the units that still
+ * need something, each with who is on it and when the guest lands. If everything is done it says
+ * so in one line — that is worth sending, because "all ready" at 3pm is the news.
+ */
+export function readinessMessage(opts: {
+  area: string
+  items: ReadinessItem[]
+  audience: string[]
+  here?: boolean
+  spanish?: boolean
+}): { body: string; summary: string } {
+  const { area, items, audience, here, spanish } = opts
+  const done = items.filter(i => i.status === 'done')
+  const notStarted = items.filter(i => i.status === 'not started')
+  const inProgress = items.filter(i => i.status === 'in progress')
+  const noClean = items.filter(i => i.status === 'no clean scheduled')
+
+  const who = (i: ReadinessItem) => i.assignees.length ? i.assignees.join(', ') : '_nobody assigned_'
+  const when = (i: ReadinessItem) => i.at ? 'guest ' + i.at : 'guest today'
+
+  const lines: string[] = []
+  if (notStarted.length) {
+    lines.push('*Not started (' + notStarted.length + ')*')
+    for (const i of notStarted.slice(0, 10)) lines.push('• *' + i.unit + '* — ' + when(i) + ' · ' + who(i))
+    if (notStarted.length > 10) lines.push('• …and ' + (notStarted.length - 10) + ' more')
+  }
+  if (inProgress.length) {
+    if (lines.length) lines.push('')
+    lines.push('*In progress (' + inProgress.length + ')*')
+    for (const i of inProgress.slice(0, 8)) {
+      lines.push('• *' + i.unit + '* — ' + when(i) + ' · ' + who(i) + (i.startedAt ? ' · started ' + i.startedAt : ''))
+    }
+  }
+  if (noClean.length) {
+    if (lines.length) lines.push('')
+    lines.push('*No clean on the board (' + noClean.length + ')* — worth a check')
+    lines.push('• ' + noClean.slice(0, 8).map(i => i.unit).join(', '))
+  }
+
+  const allReady = !notStarted.length && !inProgress.length && !noClean.length
+  const es = spanish
+    ? nl([
+        '🕒 *' + area + '* — revisión de las 3pm',
+        allReady
+          ? 'Las ' + done.length + ' unidades con llegada hoy están listas. Gracias 🙏'
+          : done.length + ' de ' + items.length + ' listas. Quedan ' + (notStarted.length + inProgress.length) + ' antes de las 4pm.',
+        '',
+        '— — —',
+        '',
+      ])
+    : ''
+
+  const en = nl([
+    '🕒 *' + area + ' — 3pm check*',
+    allReady
+      ? 'All ' + done.length + ' ' + plural(done.length, 'unit', 'units') + ' with a guest today ' +
+        plural(done.length, 'is', 'are') + ' ready. Nice work 🙏'
+      : '*' + done.length + ' of ' + items.length + ' ready* for 4pm. ' +
+        (notStarted.length + inProgress.length) + ' still to finish.',
+    lines.length ? '' : null,
+    lines.length ? lines.join('\n') : null,
+    lines.length ? '' : null,
+    allReady ? null : 'An hour to go. If any of these will not make 4pm, say so now and we will warn the guest or move them.',
+    ccLine(audience, here),
+  ])
+
+  const summary = area + ' 3pm — ' + done.length + '/' + items.length + ' ready' +
+    (notStarted.length ? ', ' + notStarted.length + ' not started' : '')
+  return { body: es + en, summary }
+}
+
+// ── Hours, for leadership ──────────────────────────────────────────────────────────────────────
+
+export type LaborItem = { name: string; hours: number; since?: string | null }
+
+/**
+ * Jon, 2026-08-19: "sending a message in leadership chat sharing hours, not clocked in, over
+ * hours, ect."
+ *
+ * Facts, in the order a manager reads them: what today has cost, who never showed, who is running
+ * long, and whose card from an earlier day was never closed.
+ */
+export function laborMessage(opts: {
+  date: string
+  totalHours: number
+  clockedInNow: LaborItem[]
+  overHours: LaborItem[]
+  notClockedIn: { name: string; shift: string }[]
+  missedClockOut: LaborItem[]
+  threshold: number
+  audience: string[]
+}): { body: string; summary: string } {
+  const { date, totalHours, clockedInNow, overHours, notClockedIn, missedClockOut, threshold, audience } = opts
+
+  const pretty = (() => {
+    try {
+      return new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', {
+        timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric',
+      })
+    } catch { return date }
+  })()
+
+  const sections: string[] = []
+
+  sections.push('*On the clock now:* ' + clockedInNow.length +
+    '   ·   *Hours today so far:* ' + totalHours.toFixed(1) + 'h')
+
+  if (notClockedIn.length) {
+    sections.push('*Scheduled, no punch (' + notClockedIn.length + ')*\n' +
+      notClockedIn.slice(0, 10).map(n => '• ' + n.name + (n.shift ? ' — ' + n.shift : '')).join('\n') +
+      (notClockedIn.length > 10 ? '\n• …and ' + (notClockedIn.length - 10) + ' more' : ''))
+  }
+
+  if (overHours.length) {
+    sections.push('*Over ' + threshold + 'h (' + overHours.length + ')*\n' +
+      overHours.map(o => '• ' + o.name + ' — *' + o.hours.toFixed(1) + 'h*' + (o.since ? ' since ' + o.since : '')).join('\n'))
+  }
+
+  if (missedClockOut.length) {
+    sections.push('*Never clocked out (earlier day)*\n' +
+      missedClockOut.slice(0, 8).map(m => '• ' + m.name + ' — ' + m.hours.toFixed(1) + 'h open').join('\n'))
+  }
+
+  const clean = !notClockedIn.length && !overHours.length && !missedClockOut.length
+
+  const body = nl([
+    '👥 *Hours — ' + pretty + '*',
+    '',
+    sections.join('\n\n'),
+    '',
+    clean
+      ? 'Everyone scheduled is on the clock and nobody is running long.'
+      : 'Worth a look at the names above before the day closes out.',
+    ccLine(audience),
+  ])
+
+  const summary = 'Hours — ' + totalHours.toFixed(1) + 'h, ' + clockedInNow.length + ' on the clock' +
+    (notClockedIn.length ? ', ' + notClockedIn.length + ' no punch' : '') +
+    (overHours.length ? ', ' + overHours.length + ' over ' + threshold + 'h' : '')
+  return { body, summary }
+}
+
+// ── Owner stays & big bookings ─────────────────────────────────────────────────────────────────
+
+export type NotableItem = {
+  unit: string
+  guest: string
+  checkIn: string
+  daysAway: number
+  nights: number | null
+  value: number | null
+  kind: 'owner' | 'big' | 'long'
+}
+
+const money = (n: number | null): string =>
+  n == null ? '' : '$' + Math.round(n).toLocaleString('en-US')
+
+/**
+ * Jon, 2026-08-19: "It should also send updates for owner stays, big bookings, etc."
+ *
+ * A heads-up, not a task list — so it names who is coming, when, and why it is worth extra care,
+ * and asks for nothing. The point is that nobody finds out an owner is arriving on the day.
+ */
+export function notableArrivalsMessage(opts: {
+  items: NotableItem[]
+  audience: string[]
+  days: number
+}): { body: string; summary: string } {
+  const { items, audience, days } = opts
+  const owners = items.filter(i => i.kind === 'owner')
+  const big = items.filter(i => i.kind === 'big')
+  const long = items.filter(i => i.kind === 'long')
+
+  const whenOf = (i: NotableItem) =>
+    i.daysAway <= 0 ? 'today' : i.daysAway === 1 ? 'tomorrow' : 'in ' + i.daysAway + ' days (' + i.checkIn + ')'
+
+  const sections: string[] = []
+  if (owners.length) {
+    sections.push('*Owner stays (' + owners.length + ')*\n' + owners.map(i =>
+      '• *' + i.unit + '* — ' + i.guest + ', ' + whenOf(i) +
+      (i.nights ? ' · ' + i.nights + ' ' + plural(i.nights, 'night', 'nights') : '')).join('\n'))
+  }
+  if (big.length) {
+    sections.push('*Big bookings (' + big.length + ')*\n' + big.map(i =>
+      '• *' + i.unit + '* — ' + i.guest + ', ' + whenOf(i) +
+      (i.value ? ' · ' + money(i.value) : '') +
+      (i.nights ? ' · ' + i.nights + ' ' + plural(i.nights, 'night', 'nights') : '')).join('\n'))
+  }
+  if (long.length) {
+    sections.push('*Long stays (' + long.length + ')*\n' + long.map(i =>
+      '• *' + i.unit + '* — ' + i.guest + ', ' + whenOf(i) +
+      (i.nights ? ' · ' + i.nights + ' nights' : '')).join('\n'))
+  }
+
+  const body = nl([
+    '⭐ *Worth knowing — next ' + days + ' days*',
+    '',
+    sections.join('\n\n'),
+    '',
+    'Nothing to action right now — just so nobody finds out on the day. Extra attention on the clean and the welcome for these.',
+    ccLine(audience),
+  ])
+
+  const bits: string[] = []
+  if (owners.length) bits.push(owners.length + ' owner')
+  if (big.length) bits.push(big.length + ' big')
+  if (long.length) bits.push(long.length + ' long')
+  return { body, summary: 'Worth knowing — ' + bits.join(', ') }
+}
