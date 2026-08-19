@@ -44,29 +44,30 @@ const SECTIONS: NavSection[] = [
   {
     title: 'Operations',
     items: [
+      // Ordered by use (Jon, 2026-08-19: "all other tabs can be reorganized to make sense"):
+      // the everyday verbs first, then field work, then the periodic audit/purchasing layer.
       { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
-      { to: '/schedule', label: 'Schedule', Icon: CalendarRange },
-      { to: '/glitches', label: 'Guest Issues', Icon: AlertTriangle },
-      { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
-      { to: '/ffe',      label: 'FF&E Audit', Icon: Sofa }, // 2026-08-10 - furniture order, not work orders
-      { to: '/inspections', label: 'Inspections', Icon: ClipboardCheck }, // gated 2026-08-06 — was URL-only
-      { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
+      { to: '/schedule', label: 'Scheduler', Icon: CalendarRange },  // Jon 2026-08-19: his word for it
+      { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },   // Jon 2026-08-19: back to Glitches
       { to: '/requests', label: 'Work Orders', Icon: ClipboardList },
-      // Projects (2026-08-10, Jon): the work that is NOT a task — renovations, rollouts,
-      // onboarding. Next to Work Orders because that is its closest neighbour.
       { to: '/projects', label: 'Projects', Icon: KanbanSquare },
+      { to: '/inspections', label: 'Inspections', Icon: ClipboardCheck },
+      { to: '/audits',   label: 'Audits',   Icon: ClipboardList },
+      { to: '/ffe',      label: 'FF&E Audit', Icon: Sofa },
+      { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
     ],
   },
   {
     title: 'Guests',
     items: [
+      // Daily comms first; reference material (guidebooks, FAQ) after.
       { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
-      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
       { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
-      { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
       { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
+      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
+      { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
       // Renamed 2026-08-19 (Jon): "Unit Knowledge" -> "Property FAQ". Same page, same key.
       { to: '/faq',          label: 'Property FAQ', Icon: Sparkles },
       // Guests directory (2026-08-18, Jon, parallel session): guest profiles aggregated from
