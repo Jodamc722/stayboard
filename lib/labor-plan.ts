@@ -36,7 +36,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf } from './segments'
-import { getShifts } from './homebase'
+import { getShifts, nameMatchesRoster } from './homebase'
 import { getCrew } from './crew'
 
 const TZ = 'America/New_York'
@@ -213,6 +213,75 @@ export async function pickupFactors(): Promise<{ factors: number[]; samples: num
     samples[lead] = ratios.length
   }
   return { factors, samples }
+}
+
+// ---------------------------------------------------------------------------
+// Per-cleaner projection for one day (Jon, 2026-08-19: "look at each cleaner and project a
+// number of hours each should work based on the number of cleans assigned"). Assigned
+// departure cleans come from Breezeway; hours use the settled per-market hours-per-clean plus
+// the unmatched-hours share; today's Homebase shift sits beside it. A clean with two names on
+// it counts half to each. Used by all four morning briefs and the Daily Labor email.
+// ---------------------------------------------------------------------------
+export type CleanerToday = {
+  name: string
+  byMarket: { market: string; cleans: number; hours: number }[]
+  cleans: number
+  projectedHours: number
+  scheduledHours: number | null
+}
+export async function projectCleaners(date: string): Promise<{ people: CleanerToday[]; overheadShare: number }> {
+  const db = supabaseAdmin()
+  const cal = await getCalibration()
+  const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
+  const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
+  const meta: Record<string, { market: string; vendor: boolean }> = {}
+  for (const l of (listings || []) as any[]) {
+    const name = l.nickname || l.title || 'Unit'
+    const building = String(l.building || '')
+    meta[String(l.id)] = {
+      market: String(marketOf(building, l.address_city, name) || 'Miami').toLowerCase(),
+      vendor: VENDOR.test(building) || VENDOR.test(String(name)),
+    }
+  }
+  const { data: tasks } = await db.from('breezeway_tasks_sync')
+    .select('id,name,status,assignees,reference_property_id')
+    .eq('scheduled_date', date).limit(2000)
+  const per: Record<string, Record<string, number>> = {}
+  for (const t of (tasks || []) as any[]) {
+    const status = String(t.status || '').toLowerCase()
+    if (/delete|cancel/.test(status)) continue
+    if (!/departure clean|turnover clean|check-?out clean/i.test(String(t.name || ''))) continue
+    const m = meta[String(t.reference_property_id)]
+    if (!m || m.vendor) continue
+    const ppl = (Array.isArray(t.assignees) ? t.assignees : [])
+      .map((a: any) => String(a?.name || a || '').trim()).filter(Boolean)
+    if (!ppl.length) continue
+    const share = 1 / ppl.length
+    for (const pn of ppl) { per[pn] = per[pn] || {}; per[pn][m.market] = (per[pn][m.market] || 0) + share }
+  }
+  const sched: Record<string, number> = {}
+  try {
+    const shifts = await getShifts(date, TZ)
+    for (const sft of shifts) {
+      if (sft.open || !sft.name) continue
+      const a = sft.startAt ? new Date(sft.startAt).getTime() : NaN
+      const b = sft.endAt ? new Date(sft.endAt).getTime() : NaN
+      if (Number.isFinite(a) && Number.isFinite(b) && b > a) sched[sft.name] = (sched[sft.name] || 0) + Math.min(12, (b - a) / 3600000)
+    }
+  } catch { /* shifts unavailable → column shows a dash */ }
+  const schedNames = Object.keys(sched)
+  const people: CleanerToday[] = Object.keys(per).map(name => {
+    const byMarket = Object.keys(per[name]).sort().map(mk => {
+      const c = calFor(cal, mk)
+      const cleans = round1(per[name][mk])
+      return { market: mk, cleans, hours: round1(cleans * c.hoursPerClean * (1 + cal.overheadShare)) }
+    })
+    const cleans = round1(byMarket.reduce((a, b) => a + b.cleans, 0))
+    const projectedHours = round1(byMarket.reduce((a, b) => a + b.hours, 0))
+    const hit = nameMatchesRoster(name, schedNames)
+    return { name, byMarket, cleans, projectedHours, scheduledHours: hit ? round1(sched[hit]) : null }
+  }).sort((a, b) => b.projectedHours - a.projectedHours)
+  return { people, overheadShare: cal.overheadShare }
 }
 
 // ---------------------------------------------------------------------------
