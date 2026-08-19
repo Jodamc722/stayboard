@@ -201,6 +201,18 @@ export async function draftStatus(fromEmail: string, draftId: string): Promise<'
   } catch { return 'error' }
 }
 
+/** Discard a draft we created (used only to replace a defective one — e.g. missing its PDF). */
+export async function deleteDraft(fromEmail: string, draftId: string): Promise<boolean> {
+  const { token } = await accessTokenFor(fromEmail)
+  if (!token) return false
+  try {
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts/' + encodeURIComponent(draftId), {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+    return r.ok || r.status === 404
+  } catch { return false }
+}
+
 /** Was a message with this subject actually SENT from the mailbox since `sinceEpochSec`? */
 export async function foundInSent(fromEmail: string, subject: string, sinceEpochSec: number): Promise<boolean | null> {
   const { token } = await accessTokenFor(fromEmail)

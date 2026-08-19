@@ -17,7 +17,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 import { mergeProperties, RESERVATION_EMAILS_KEY, type PropertyEmail } from './reservation-emails'
 import { buildDraft, type Notice } from './reservation-draft'
-import { draftGmail, draftStatus, foundInSent, type GmailAttachment } from './gmail-send'
+import { draftGmail, draftStatus, foundInSent, deleteDraft, type GmailAttachment } from './gmail-send'
 import { getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
 import { elserPdfBase64 } from './elser-pdf'
 import { getToken } from './guesty'
@@ -52,6 +52,18 @@ async function reconcileSentDrafts(db: any, cfg: TaskAutomationCfg, props: Prope
   for (const n of (rows || []) as any[]) {
     try {
       const st = await draftStatus(cfg.noticeDrafts.fromEmail, str(n.draft_id))
+      // SELF-HEALING (Jon, 2026-08-19: "delete drafts you generated without them"): a draft that
+      // still exists but is missing its required form (doc_path empty on an attachPdf property —
+      // set only when the PDF actually rode along) is defective. Discard it and re-arm; the pass
+      // below re-drafts it complete. An already-SENT draft is never touched.
+      if (st === 'exists') {
+        const p0 = pById[str(n.property_id)]
+        if (p0?.attachPdf && !str(n.doc_path)) {
+          const gone = await deleteDraft(cfg.noticeDrafts.fromEmail, str(n.draft_id))
+          if (gone) { await db.from('reservation_notices').update({ draft_id: null, draft_created_at: null }).eq('id', n.id); out.rearmed++ }
+        }
+        continue
+      }
       if (st !== 'gone') continue
       const p = pById[str(n.property_id)]
       const subject = p ? buildDraft(p, n as Notice).subject : ''
