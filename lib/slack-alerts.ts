@@ -524,14 +524,18 @@ export async function runReadinessCheck(): Promise<any> {
   const results: any[] = []
   for (const bucket of buckets) {
     const vendor = !!(bucket.group && bucket.group.vendor)
+    // Vendor buildings do not put cleans on our Breezeway board (Botanica runs off Guesty alone),
+    // so every unit there reads as "no clean scheduled" — seven of them did on the first run.
+    // We cannot see their readiness, so we do not claim to.
+    if (vendor) { results.push({ area: bucket.label, skipped: 'vendor-run — no clean data' }); continue }
     const audience = audienceFor(rules, bucket.group, [])
     const { body, summary } = readinessMessage({
       area: bucket.label,
       items: bucket.rows.map(u => ({
         unit: u.unit, at: u.at, status: u.status, assignees: u.assignees, startedAt: u.startedAt,
       })),
-      audience, here: vendor,
-      spanish: rules.bilingualFieldChannels && !vendor,
+      audience,
+      spanish: rules.bilingualFieldChannels,
     })
     const res = await draft({
       eventKey: 'readiness_3pm',

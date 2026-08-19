@@ -508,7 +508,18 @@ const timeET = (iso: any): string | null => {
   } catch { return null }
 }
 
-/** Every unit with a guest arriving today, and whether its clean is actually finished. */
+/**
+ * Every unit that has to BE READY for 4pm today — and whether it is.
+ *
+ * The first version asked "every arrival today, is there a clean?" and produced nonsense: seven
+ * Botanica units reported as "0 of 7 ready … 0 still to finish", and Elser 2811 flagged for having
+ * no clean on the board when the guest was arriving for 42 nights into a unit cleaned days ago.
+ *
+ * A unit only needs a clean TODAY if somebody checked out today. So the set is:
+ *   - units with a departure clean on the board today, and
+ *   - units that turn over today (checkout + check-in) but have NO clean scheduled — the real alarm.
+ * An arrival into a unit nobody left today is already clean and is not this alert's business.
+ */
 export async function checkReadiness(): Promise<Readiness> {
   const today = ymdET(new Date())
   let sheet: any = null
@@ -518,7 +529,7 @@ export async function checkReadiness(): Promise<Readiness> {
   } catch { return { date: today, units: [] } }
   if (!sheet || !sheet.ok) return { date: today, units: [] }
 
-  // clean status per unit — a departure clean is the one that gates readiness
+  // clean status per unit — the departure clean is what gates readiness
   const cleanByUnit: Record<string, any> = {}
   for (const w of (sheet.work || [])) {
     const unit = String(w.unit || '')
@@ -527,31 +538,44 @@ export async function checkReadiness(): Promise<Readiness> {
     const name = String(w.name || '').toLowerCase()
     const isClean = dept.indexOf('housekeep') >= 0 || /clean|turnover/.test(name)
     if (!isClean) continue
-    // keep the least-finished task for the unit: if anything is unstarted, the unit is not ready
+    // keep the least-finished task: if anything is unstarted, the unit is not ready
     const prev = cleanByUnit[unit]
     const rank = (st: string) => (st === 'not started' ? 0 : st === 'in progress' ? 1 : 2)
     if (!prev || rank(String(w.status)) < rank(String(prev.status))) cleanByUnit[unit] = w
   }
 
+  const departedToday: Record<string, boolean> = {}
+  for (const d of (sheet.departures || [])) departedToday[String(d.unit || '')] = true
+
+  const arrivalByUnit: Record<string, any> = {}
+  for (const a of (sheet.arrivals || [])) arrivalByUnit[String(a.unit || '')] = a
+
   const units: ReadinessUnit[] = []
-  for (const a of (sheet.arrivals || [])) {
-    const unit = String(a.unit || '')
-    if (!unit) continue
-    const w = cleanByUnit[unit]
-    const status: ReadinessUnit['status'] = w
-      ? (String(w.status) as any)
-      : 'no clean scheduled'
+  const seen: Record<string, boolean> = {}
+  const push = (unit: string, w: any) => {
+    if (!unit || seen[unit]) return
+    seen[unit] = true
+    const a = arrivalByUnit[unit]
     units.push({
       unit,
-      market: a.market || null,
-      at: a.checkInTime || null,
-      status,
+      market: (a && a.market) || (w && w.market) || null,
+      at: a ? (a.checkInTime || null) : null,
+      status: w ? (String(w.status) as any) : 'no clean scheduled',
       assignees: w && Array.isArray(w.assignees) ? w.assignees.filter(Boolean) : [],
       startedAt: w ? timeET(w.startedAt) : null,
     })
   }
 
-  // worst first: not started, then in progress, then the rest
+  // 1. everything with a clean on the board today
+  for (const unit of Object.keys(cleanByUnit)) push(unit, cleanByUnit[unit])
+  // 2. same-day turns with NO clean scheduled — the case worth shouting about
+  for (const unit of Object.keys(arrivalByUnit)) {
+    if (cleanByUnit[unit]) continue
+    if (!departedToday[unit]) continue
+    push(unit, null)
+  }
+
+  // worst first: not started, then a missing clean, then in progress, then done
   const rank = (u: ReadinessUnit) =>
     u.status === 'not started' ? 0 : u.status === 'no clean scheduled' ? 1 : u.status === 'in progress' ? 2 : 3
   units.sort((x, y) => rank(x) - rank(y) || String(x.at || '').localeCompare(String(y.at || '')))

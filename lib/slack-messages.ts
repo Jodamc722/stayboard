@@ -767,20 +767,20 @@ export function readinessMessage(opts: {
   }
   if (noClean.length) {
     if (lines.length) lines.push('')
-    lines.push('*No clean on the board (' + noClean.length + ')* — worth a check')
+    lines.push('*Turning over with no clean scheduled (' + noClean.length + ')*')
     lines.push('• ' + noClean.slice(0, 8).map(i => i.unit).join(', '))
   }
 
-  const allReady = !notStarted.length && !inProgress.length && !noClean.length
+  const remaining = notStarted.length + inProgress.length + noClean.length
+  const allReady = remaining === 0
   const es = spanish
     ? nl([
         '🕒 *' + area + '* — revisión de las 3pm',
         allReady
           ? 'Las ' + done.length + ' unidades con llegada hoy están listas. Gracias 🙏'
-          : done.length + ' de ' + items.length + ' listas. Quedan ' + (notStarted.length + inProgress.length) + ' antes de las 4pm.',
+          : done.length + ' de ' + items.length + ' listas. Quedan ' + remaining + ' antes de las 4pm.',
         '',
         '— — —',
-        '',
       ])
     : ''
 
@@ -789,8 +789,7 @@ export function readinessMessage(opts: {
     allReady
       ? 'All ' + done.length + ' ' + plural(done.length, 'unit', 'units') + ' with a guest today ' +
         plural(done.length, 'is', 'are') + ' ready. Nice work 🙏'
-      : '*' + done.length + ' of ' + items.length + ' ready* for 4pm. ' +
-        (notStarted.length + inProgress.length) + ' still to finish.',
+      : '*' + done.length + ' of ' + items.length + ' ready* for 4pm. ' + remaining + ' still to finish.',
     lines.length ? '' : null,
     lines.length ? lines.join('\n') : null,
     lines.length ? '' : null,
@@ -800,7 +799,7 @@ export function readinessMessage(opts: {
 
   const summary = area + ' 3pm — ' + done.length + '/' + items.length + ' ready' +
     (notStarted.length ? ', ' + notStarted.length + ' not started' : '')
-  return { body: es + en, summary }
+  return { body: es ? es + '\n\n' + en : en, summary }
 }
 
 // ── Hours, for leadership ──────────────────────────────────────────────────────────────────────
