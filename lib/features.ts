@@ -18,6 +18,11 @@ export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Mo
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
   { key: 'home',          label: 'Home',              path: '/', group: 'Overview' },
+  // Eve (2026-08-19, Jon): "Eve should only be for Admin and up users." Registering her as a real
+  // feature key replaces the hardcoded jon@-only check that used to live in /api/agent, so she is
+  // owner + admin out of the box AND can be switched on for one more role from the Roles grid
+  // without a deploy. Migration 045 seeds admin=full and every other role=off.
+  { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Overview' },
   { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guests' },
   { key: 'reservation-emails', label: 'Reservation Emails', path: '/reservation-emails', group: 'Guests' },
   { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guests' },
