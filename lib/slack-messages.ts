@@ -15,6 +15,16 @@ import { mention } from './slack'
 const nl = (lines: (string | null | undefined)[]): string =>
   lines.filter(l => l !== null && l !== undefined && l !== '').join('\n')
 
+/** "13:40" off the day sheet reads as "1:40pm" to everyone who has to act on it. */
+function clock12(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || ''))
+  if (!m) return String(hhmm || '')
+  const h = Number(m[1])
+  const suffix = h >= 12 ? 'pm' : 'am'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return h12 + ':' + m[2] + suffix
+}
+
 /** Rotates the greeting by day so a daily message does not read like a robot stuck in a loop. */
 function opener(seed: string, options: string[]): string {
   let h = 0
@@ -763,6 +773,9 @@ export function readinessMessage(opts: {
       not: 'Not started', prog: 'In progress', none: 'No clean scheduled',
       nobody: '_nobody assigned_', arrives: 'arrives', checkin: 'check-in',
       out: 'out', nights: 'nights', started: 'started', more: 'and', rest: 'more',
+      flag: { 'owner booking': 'owner stay', 'manual / block': 'manual block',
+              'name matches owner': 'name matches owner', 'booked today': 'booked today',
+              'booked last minute': 'booked last minute' } as Record<string, string>,
       head: (a: string) => '🕒 *' + a + ' — 3pm check*',
       allReady: (n: number) =>
         'All ' + n + ' ' + plural(n, 'unit', 'units') + ' arriving today ' +
@@ -775,6 +788,9 @@ export function readinessMessage(opts: {
       not: 'Sin empezar', prog: 'En proceso', none: 'Sin limpieza programada',
       nobody: '_sin asignar_', arrives: 'llega', checkin: 'entrada',
       out: 'salida', nights: 'noches', started: 'empezó', more: 'y', rest: 'más',
+      flag: { 'owner booking': 'estancia del propietario', 'manual / block': 'bloqueo manual',
+              'name matches owner': 'el nombre coincide con el propietario',
+              'booked today': 'reservado hoy', 'booked last minute': 'reservado a última hora' } as Record<string, string>,
       head: (a: string) => '🕒 *' + a + " — revisión de las 3pm*",
       allReady: (n: number) =>
         (n === 1
@@ -797,8 +813,10 @@ export function readinessMessage(opts: {
     if (i.outGuest || i.outAt) bits.push((t.out + ' ' + (i.outAt || '')).trim() + (i.outGuest ? ' (' + i.outGuest + ')' : ''))
     // who is on it
     bits.push(i.assignees.length ? i.assignees.join(', ') : t.nobody)
-    if (i.startedAt) bits.push(t.started + ' ' + i.startedAt)
-    const flag = (i.flags && i.flags.length) ? '  ⚠️ ' + i.flags.join(' · ') : ''
+    if (i.startedAt) bits.push(t.started + ' ' + clock12(i.startedAt))
+    const flag = (i.flags && i.flags.length)
+      ? '  ⚠️ ' + i.flags.map(f => t.flag[f] || f).join(' · ')
+      : ''
     return '• *' + i.unit + '* — ' + bits.join(' · ') + flag
   }
 
@@ -830,9 +848,9 @@ export function readinessMessage(opts: {
     return nl([
       t.head(area),
       allReady ? t.allReady(done.length) : t.score(done.length, items.length, remaining),
-      lines.length ? '' : null,
+      lines.length ? ' ' : null,
       lines.length ? lines.join('\n') : null,
-      lines.length ? '' : null,
+      lines.length ? ' ' : null,
       allReady ? null : t.close,
       withCc ? ccLine(audience, here) : null,
     ])
