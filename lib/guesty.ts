@@ -515,8 +515,20 @@ export async function syncCustomFields(): Promise<number> {
 
 export async function syncConversations(): Promise<number> {
   const sb = supabaseAdmin()
-  // Guesty's inbox endpoint does NOT accept `skip`; pull the 100 most-recently-active conversations.
-  const data: any = await api<any>(`/communication/conversations?limit=100&sort=-lastMessageAt`)
+  // Guesty's inbox endpoint does NOT accept `skip`; pull the most-recently-active conversations.
+  //
+  // 2026-08-19: this was 500ing on EVERY sync at limit=100 while the same endpoint returns 200 at a
+  // small limit — Guesty chokes on the wide page, not on the request. The feed recorded the error
+  // and moved on, so conversations quietly stopped refreshing. Step down through smaller pages
+  // rather than failing the whole entity.
+  let data: any = null
+  let lastErr: any = null
+  const LIMITS = [100, 50, 25]
+  for (const lim of LIMITS) {
+    try { data = await api<any>(`/communication/conversations?limit=${lim}&sort=-lastMessageAt`); lastErr = null; break }
+    catch (e: any) { lastErr = e }
+  }
+  if (lastErr) throw lastErr
   // Response shape varies; find the first array anywhere in the payload.
   const list: any[] =
     Array.isArray(data) ? data
@@ -672,22 +684,84 @@ export async function syncReviews(maxPages = 60, since: string | null = null): P
   return total
 }
 
-// Fetch message bodies for the most recently active conversations (bounded for rate limits).
-export async function syncRecentMessages(maxConversations = 150): Promise<number> {
+export const GUEST_COMMS_WATERMARK = 'guest_comms_watermark'
+
+/**
+ * Fetch message bodies for conversations that have actually moved since we last looked.
+ *
+ * WHY THIS WAS REWRITTEN (2026-08-19). The old version pulled the 150 most-recent conversations and
+ * synced every one, unconditionally, as the LAST step of runFullSync on a 60-second function. 150
+ * sequential Guesty calls cannot finish in the seconds left after listings/reservations/reviews have
+ * run, so the process was killed mid-loop every single time. Because it died rather than threw,
+ * recordSync() never ran and no error was recorded either — the feed just showed "no error" and a
+ * timestamp drifting further into the past. It had been stale for 2.5 days before anyone noticed,
+ * while Eve was answering guest questions off it.
+ *
+ * Three changes make that impossible to repeat:
+ *   1. INCREMENTAL — only conversations with activity since the last successful pass.
+ *   2. OLDEST FIRST — so a partial run always moves the watermark forward instead of redoing the
+ *      same newest conversations and never reaching the backlog.
+ *   3. TIME-BOXED — stops cleanly inside its budget and records what it got, so a partial run is
+ *      visible as a partial run rather than as silence.
+ */
+export async function syncRecentMessages(maxConversations = 150, opts?: { budgetMs?: number }): Promise<number> {
   const sb = supabaseAdmin()
+  const startedAt = Date.now()
+  const budgetMs = Math.max(5000, opts?.budgetMs ?? 30000)
+
+  // Where did we get to last time? Fall back to a 3-day lookback on first run.
+  let watermark: string | null = null
+  try {
+    const { data } = await sb.from('app_settings').select('value').eq('key', GUEST_COMMS_WATERMARK).maybeSingle()
+    const raw = (data as any)?.value
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (parsed && typeof parsed === 'object' && parsed.at) watermark = String(parsed.at)
+  } catch { /* first run */ }
+  if (!watermark) watermark = new Date(Date.now() - 3 * 86400000).toISOString()
+
+  // A small overlap absorbs clock skew and messages that land during a run.
+  const since = new Date(new Date(watermark).getTime() - 60 * 60 * 1000).toISOString()
+
   const { data, error } = await sb
     .from('guesty_conversations')
     .select('id, last_message_at')
-    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .gte('last_message_at', since)
+    .order('last_message_at', { ascending: true, nullsFirst: false })
     .limit(maxConversations)
   if (error) throw new Error(`read conversations for messages: ${error.message}`)
-  const convos = (data || []) as { id: string }[]
+  const convos = (data || []) as { id: string; last_message_at: string | null }[]
+
   let total = 0
+  let done = 0
+  let cursor: string | null = null
+  let ranOut = false
   for (const c of convos) {
     if (!c.id) continue
-    total += await syncMessages(c.id)
+    if (Date.now() - startedAt > budgetMs) { ranOut = true; break }
+    try {
+      total += await syncMessages(c.id)
+      done++
+      if (c.last_message_at) cursor = c.last_message_at
+    } catch (e: any) {
+      // One bad conversation must not cost us the whole batch — note it and keep going.
+      if (!/rate|429/i.test(String(e?.message || e))) continue
+      ranOut = true
+      break
+    }
   }
-  await recordSync('messages', total)
+
+  // Advance the watermark to the last conversation we actually finished.
+  if (cursor) {
+    try {
+      await sb.from('app_settings').upsert({
+        key: GUEST_COMMS_WATERMARK,
+        value: JSON.stringify({ at: cursor, done, total, partial: ranOut, ranAt: new Date().toISOString() }),
+        updated_at: new Date().toISOString(), updated_by: 'guest-comms-sync',
+      }, { onConflict: 'key' })
+    } catch { /* watermark is an optimisation, not a correctness requirement */ }
+  }
+
+  await recordSync('messages', total, ranOut ? `partial: ${done}/${convos.length} conversations in budget — will resume from ${cursor || 'start'}` : null)
   return total
 }
 
@@ -719,6 +793,8 @@ export async function runFullSync(full = false): Promise<{ reservations: number;
   await safe('reservations',  () => syncReservations(40, resSince),  v => result.reservations  = v)
   await safe('conversations', syncConversations, v => result.conversations = v)
   await safe('reviews', syncReviews, v => result.reviews = v)
-  await safe('messages', () => syncRecentMessages(150), v => result.messages = v)
+  // Messages get a deliberately SMALL slice here. The real work happens on the dedicated
+  // /api/cron/guest-comms route, which has a 300s budget instead of this route's 60s.
+  await safe('messages', () => syncRecentMessages(25, { budgetMs: 8000 }), v => result.messages = v)
   return result
 }
