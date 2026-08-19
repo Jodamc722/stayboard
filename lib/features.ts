@@ -25,7 +25,7 @@ export const FEATURES: Feature[] = [
   { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls', group: 'Guests' },
   { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
   { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
-  { key: 'faq',           label: 'FAQ & How-To',      path: '/faq', group: 'Guests' },
+  { key: 'faq',           label: 'Property FAQ',       path: '/faq', group: 'Guests' },
   // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
   // Re-applied after the Patterns upload (73bd724) landed from a pre-salato copy of this file.
   // The public share/verify links (/salato/share, /salato/verify) stay open — OPEN_PREFIXES wins
