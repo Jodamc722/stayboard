@@ -433,15 +433,18 @@ export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
 }
 
 /**
- * The month the team is actually working: the previous calendar month (month-end review
- * happens after the month closes) — unless newer statements already exist.
+ * The month the team is actually working: THE CURRENT CALENDAR MONTH. This board is a
+ * daily/weekly tool that audits the month as it accrues, so it opens on today's month —
+ * "we are in August" (Jon, 2026-08-19, after the board kept opening on July). Last month's
+ * statement review is one click back in the picker, and when its statements finalise that
+ * work is ties + sign-off, not the daily default.
  */
 export function defaultAuditMonth(months: AuditMonthPick[]): string {
-  const now = new Date()
-  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
+  const cur = new Date().toISOString().slice(0, 7)
+  if (months.some(x => x.m === cur)) return cur
+  // No current-month entry (fresh install, empty mirror): newest month with statements.
   const withStmts = months.filter(x => x.statements > 0).map(x => x.m).sort().reverse()[0] || ''
-  const pick = withStmts > prev ? withStmts : prev
-  return months.some(x => x.m === pick) ? pick : (months[0]?.m || '')
+  return months.some(x => x.m === withStmts) ? withStmts : (months[0]?.m || '')
 }
 
 /** Build the whole audit for one statement month. */
