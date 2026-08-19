@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
-import { postSlack } from '@/lib/integrations'
+import { runSyncAlert } from '@/lib/slack-alerts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -90,20 +90,19 @@ async function run(req: NextRequest) {
     }
   }
 
-  let slack: string = 'not-needed'
-  if (alerts.length) {
-    slack = await postSlack('⚠️ *Lighthouse sync problem*\n' + alerts.join('\n') +
-      '\nThe day sheet and the boards may be showing old information until this is fixed.')
-  } else if (recovered.length) {
-    slack = await postSlack('✅ *Lighthouse sync recovered*\n' + recovered.join('\n'))
+  // Goes through the Slack outbox, not a raw webhook: it lands in the right channel, gets a copy
+  // in the firehose, and shows in Command Center. This is the ONE alert that never waits for
+  // approval — a dead feed is not a judgement call (lib/slack-rules, events.sync.approval=false).
+  let slack: any = 'not-needed'
+  if (alerts.length || recovered.length) {
+    slack = await runSyncAlert(alerts, recovered).catch((e: any) => ({ error: String(e && e.message) }))
   }
   try { await setSetting(ALERT_KEY, next, 'watchdog') } catch {}
 
   return NextResponse.json({
     ranAt: nowIso, healthy: !alerts.length && !Object.keys(next).length,
     feeds: report, alerts, recovered, slack,
-    // If this says no-webhook, SLACK_WEBHOOK_URL is not set in Vercel and nobody is being told.
-    hint: slack === 'no-webhook' ? 'Set SLACK_WEBHOOK_URL in Vercel to receive these alerts.' : undefined,
+    hint: slack && slack.reason ? String(slack.reason) : undefined,
   })
 }
 
