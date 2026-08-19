@@ -7,6 +7,7 @@ import { noBreezewayRegex } from '@/lib/ops-presets'
 import { Shell } from '@/components/Shell'
 import { BrainConsole } from '@/components/BrainConsole'
 import { ConnectTools } from '@/components/ConnectTools'
+import { SlackQueueCard } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { MissionFeed } from '@/components/MissionFeed'
 import { GeneratePlanButton } from '@/components/OpsPlanUI'
@@ -336,6 +337,7 @@ export default async function CommandCenterPage() {
         </div>
 
         <div className="lg:col-span-1 order-1 lg:order-2 space-y-4 lg:sticky lg:top-4">
+          <SlackQueueCard />
           <ConnectTools />
           <BrainConsole />
 
