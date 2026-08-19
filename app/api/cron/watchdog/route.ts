@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
-import { runSyncAlert } from '@/lib/slack-alerts'
+import { postSlack } from '@/lib/integrations'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -21,6 +21,10 @@ const FEEDS: Feed[] = [
   { key: 'listings', label: 'Listings (Guesty)', maxMin: 24 * 60 },
   { key: 'reviews', label: 'Reviews (Guesty)', maxMin: 24 * 60 },
   { key: 'breezeway_tasks', label: 'Tasks (Breezeway)', maxMin: 60 }, // pulls every 15 min
+  // Not a job — a data pulse. Fires when NO new review has arrived in 4 days even though the sync
+  // itself is green, which at this portfolio's ~8-reviews/day baseline means the channel feed into
+  // Guesty (usually Airbnb) has stalled, not us.
+  { key: 'reviews_content', label: 'New guest reviews (none arriving — check Guesty’s channel connections, likely Airbnb)', maxMin: 4 * 24 * 60 },
 ]
 const ALERT_KEY = 'sync_watchdog_state'
 const REALERT_MIN = 6 * 60
@@ -49,6 +53,17 @@ async function run(req: NextRequest) {
   }
   ages['breezeway_tasks'] = { age: minsSince(((bz.data || []) as any[])[0]?.synced_at), error: null }
 
+  // CONTENT FRESHNESS, not just cadence (Jon, 2026-08-19: "make sure reviews are populating").
+  // The Aug-2026 incident: the review sync ran perfectly every 2 hours — and mirrored a Guesty
+  // that had stopped receiving Airbnb reviews around Aug 14. "Did the job run" was green while
+  // the data quietly starved. So the watchdog now also asks "did anything NEW actually arrive":
+  // the newest review's own date, at roughly 8/day baseline, going 4+ days silent is an upstream
+  // problem (usually the Guesty↔channel connection), and someone should hear about it.
+  try {
+    const { data: nr } = await db.from('guesty_reviews').select('created_at').order('created_at', { ascending: false }).limit(1)
+    ages['reviews_content'] = { age: minsSince(((nr || []) as any[])[0]?.created_at), error: null }
+  } catch { ages['reviews_content'] = { age: null, error: null } }
+
   const state = await getSetting<Record<string, { since: string; alertedAt: string }>>(ALERT_KEY, {})
   const next: Record<string, { since: string; alertedAt: string }> = {}
   const nowIso = new Date().toISOString()
@@ -75,21 +90,20 @@ async function run(req: NextRequest) {
     }
   }
 
-  // A dead feed is not a judgement call, so this is the one alert that skips the approval queue
-  // and goes straight out (see lib/slack-rules — events.sync.approval is false by default).
-  // It still records a row in slack_outbox, so the Command Center shows it and the firehose
-  // channel gets its copy like everything else.
-  let slack: any = 'not-needed'
-  if (alerts.length || recovered.length) {
-    slack = await runSyncAlert(alerts, recovered).catch((e: any) => ({ error: String(e && e.message) }))
+  let slack: string = 'not-needed'
+  if (alerts.length) {
+    slack = await postSlack('⚠️ *Lighthouse sync problem*\n' + alerts.join('\n') +
+      '\nThe day sheet and the boards may be showing old information until this is fixed.')
+  } else if (recovered.length) {
+    slack = await postSlack('✅ *Lighthouse sync recovered*\n' + recovered.join('\n'))
   }
   try { await setSetting(ALERT_KEY, next, 'watchdog') } catch {}
 
   return NextResponse.json({
     ranAt: nowIso, healthy: !alerts.length && !Object.keys(next).length,
     feeds: report, alerts, recovered, slack,
-    // If this reports no bot token, nobody is being told — connect Slack from the Command Center.
-    hint: slack && slack.reason ? String(slack.reason) : undefined,
+    // If this says no-webhook, SLACK_WEBHOOK_URL is not set in Vercel and nobody is being told.
+    hint: slack === 'no-webhook' ? 'Set SLACK_WEBHOOK_URL in Vercel to receive these alerts.' : undefined,
   })
 }
 
