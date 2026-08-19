@@ -170,30 +170,32 @@ export async function GET(req: NextRequest) {
             : '<p style="margin:6px 0 0;font-size:12px;color:#047857">Rest of week is on plan.</p>') +
           '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af"><a href="https://lighthouse-stay.vercel.app/schedule?tab=weekly" style="color:#2563eb">Open the Weekly planner</a> to move hours.</p>' +
           '</div>'
-        // PER-CLEANER (Jon, 2026-08-19): each cleaner's assigned cleans → the hours that work
-        // takes, beside today's Homebase shift. Same projection the briefs carry.
+        // PER-CLEANER, PROFIT-FIRST (Jon, 2026-08-19: "base hours on work and rev to make
+        // sure profitable"): what each cleaner's assigned cleans earn, the hours that revenue
+        // supports at the target margin, and her actual shift.
         try {
           const proj = await projectCleaners(today)
           const ppl = proj.people.filter(pp => pp.cleans > 0)
           if (ppl.length) {
             const rowsP = ppl.map(pp => {
+              const over = pp.scheduledHours != null && pp.scheduledHours > pp.budgetHours
               const readTxt = pp.scheduledHours == null ? '<span style="color:#9ca3af">no shift found</span>'
-                : (pp.scheduledHours + 1 < pp.projectedHours) ? '<span style="' + RED + '">short ' + r1(pp.projectedHours - pp.scheduledHours) + 'h</span>'
-                : (pp.scheduledHours > pp.projectedHours + 2) ? '<span style="' + AMBER + '">' + r1(pp.scheduledHours - pp.projectedHours) + 'h spare</span>'
-                : '<span style="' + GREEN + '">right-sized</span>'
+                : over ? '<span style="' + RED + '">over by ' + r1((pp.scheduledHours as number) - pp.budgetHours) + 'h</span>'
+                : '<span style="' + GREEN + '">profitable' + (pp.marginAtScheduledPct != null ? ' · keeps ' + pp.marginAtScheduledPct + '%' : '') + '</span>'
               return '<tr><td style="' + td + '"><b>' + esc(pp.name) + '</b> <span style="color:#9ca3af;font-size:11px">' + pp.byMarket.map(bm => bm.market + ' ' + bm.cleans).join(' · ') + '</span></td>' +
                 '<td style="' + td + ';text-align:right">' + pp.cleans + '</td>' +
-                '<td style="' + td + ';text-align:right"><b>~' + pp.projectedHours + 'h</b></td>' +
+                '<td style="' + td + ';text-align:right">' + money(pp.revenue) + '</td>' +
+                '<td style="' + td + ';text-align:right"><b>' + pp.budgetHours + 'h</b></td>' +
                 '<td style="' + td + ';text-align:right">' + (pp.scheduledHours != null ? pp.scheduledHours + 'h' : '&mdash;') + '</td>' +
                 '<td style="' + td + '">' + readTxt + '</td></tr>'
             }).join('')
             todayCard += '<div style="' + cardStyle + '">' +
-              secTitle('Cleaner hours today', 'assigned cleans &times; settled hours per clean &middot; vs Homebase shift') +
+              secTitle('Cleaner hours today', 'profitable at ' + proj.targetMarginPct + '%? &middot; hours budget = net revenue of assigned cleans &times; (1 &minus; target) &divide; wage') +
               '<table width="100%" cellspacing="0" cellpadding="0">' +
               '<tr><th style="' + th + '">Cleaner</th><th style="' + th + ';text-align:right">Cleans</th>' +
-              '<th style="' + th + ';text-align:right">Hours needed</th><th style="' + th + ';text-align:right">Scheduled</th>' +
-              '<th style="' + th + '">Read</th></tr>' + rowsP + '</table>' +
-              '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">A clean with two names on it counts half to each. Unassigned cleans are not here &mdash; they show on the ops brief priorities.</p>' +
+              '<th style="' + th + ';text-align:right">Earns</th><th style="' + th + ';text-align:right">Hours it affords</th>' +
+              '<th style="' + th + ';text-align:right">Shift</th><th style="' + th + '">Read</th></tr>' + rowsP + '</table>' +
+              '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Finish inside the budget and the day is profitable at target. A clean with two names counts half to each; unassigned cleans show on the ops brief priorities.</p>' +
               '</div>'
           }
         } catch { /* additive */ }
