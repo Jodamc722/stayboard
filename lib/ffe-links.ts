@@ -20,9 +20,18 @@
 import 'server-only'
 import { createHmac } from 'crypto'
 
-// Falls back to a build constant so the feature works before the env var is set — the fallback is
-// still not derivable from a listing id by anyone outside the server.
-const SECRET = process.env.FFE_LINK_SECRET || 'stayboard-ffe-v1-2026'
+// SECRET RESOLUTION (Jon, 2026-08-18: "can we fix it"). The old fallback was a constant in this
+// file, which meant anyone who could read the repo could derive every share link. Now:
+//   1. FFE_LINK_SECRET if set — the explicit knob, rotate it to kill every outstanding link.
+//   2. Else a secret DERIVED from the service-role key (already server-side, never shipped to the
+//      client, unknown to anyone without production env access). Deriving rather than using it raw
+//      means the service key itself never doubles as an HMAC key anywhere.
+//   3. The old constant only remains as a last resort for local dev with no env at all.
+// Switching secrets rotates every outstanding link once — fresh ones come straight from the app.
+const SECRET = process.env.FFE_LINK_SECRET
+  || (process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createHmac('sha256', process.env.SUPABASE_SERVICE_ROLE_KEY).update('stayboard-ffe-links').digest('hex')
+    : 'stayboard-ffe-v1-2026')
 
 export type FfeScopeKind = 'unit' | 'building' | 'owner' | 'order'
 

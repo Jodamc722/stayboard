@@ -11,9 +11,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf, type Market } from './segments'
 import { rollupBuilding, ratingToStars, ratingAsGuestSaw } from './optimize-score'
-import { REVIEW_THEMES } from './health-score'
 import { THEMES, looksNegative, sentenceAbout } from './review-themes'
-import { getOpsPresets, getSetting } from './app-settings'
+import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
 import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
@@ -24,6 +23,7 @@ import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
 import { laborAmount } from './billing'
 import { blockedUnits, type BlockedRun } from './blocked-units'
 import { laborEconomics } from './labor-econ'
+import { upcomingAutoInspections } from './auto-inspections'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -122,29 +122,14 @@ async function gather(variant: BriefVariant) {
 
   // NEW reviews since yesterday — the score everyone should hear about at standup.
   const allRevs = ((revRes.data || []) as any[]).filter(r => inVariant(String(r.listing_id)) && Number.isFinite(Number(r.rating)))
-  // MOST RECENT REVIEWS, NOT JUST THE LAST 26 HOURS (Jon, 2026-08-14: "reviews don't seem to be
-  // fully populating"). Measured live: 3 reviews arrived in the past day against 8 in the past
-  // week — so a strict since-yesterday filter left the card empty most mornings and the team
-  // stopped looking at it. Show the latest ten whenever they landed, newest first, and count the
-  // genuinely new ones separately. Low scores still sort to the top of attention by colour.
-  // SINCE THE LAST BRIEF, NOT SINCE AN ARBITRARY CLOCK (Jon, 2026-08-17: "should be from the last
-  // pull — we should not see the same reviews over and over"). The cron stamps a watermark after
-  // each successful send; everything newer than that is what this brief has to say. When nothing
-  // new has landed the card shrinks to one line instead of repeating yesterday's list.
-  const seenMark = str(await getSetting<string>('ops_brief_reviews_seen', '').catch(() => ''))
-  const sinceMark = seenMark || dayAgo
-  const fresh = allRevs.filter(r => str(r.created_at) > sinceMark)
-  const newSinceYesterday = fresh.length
-  const newReviews = (fresh.length ? fresh : allRevs.slice(0, 1))
-    .slice()
-    .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
+  const newReviews = allRevs
+    .filter(r => str(r.created_at) >= dayAgo)
+    .sort((a, b) => Number(a.rating) - Number(b.rating))
     .slice(0, 10)
     .map(r => ({
       unit: meta[String(r.listing_id)]?.name ?? 'Unit', rating: Number(r.rating),
       guest: str(r.guest_name).split(' ')[0] || null, channel: str(r.channel),
       snippet: str(r.content).replace(/\s+/g, ' ').slice(0, 110),
-      at: str(r.created_at).slice(0, 10),
-      isNew: str(r.created_at) >= dayAgo,
     }))
 
   // Inspect-worthy: open urgent feedback actions.
@@ -233,50 +218,9 @@ async function gather(variant: BriefVariant) {
     avg: byMarket[m].n ? Math.round((byMarket[m].sum / byMarket[m].n) * 100) / 100 : null,
   })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
 
-  // ---- LAST 30 DAYS OF FEEDBACK — the standing watch-list (Jon, 2026-08-17: "it should still show
-  // highlights to look for or check on for the last 30 days of feedback"). The New-reviews card is
-  // the NEWS — only what landed since the last send, so nothing repeats. This is the WATCH-LIST: every
-  // low score still inside the 30-day window, the units it keeps happening to, and the themes guests
-  // keep naming. A unit does not stop needing attention just because its bad review is a week old.
-  // Ratings run through ratingToStars() so a Booking 6/10 is judged as 3.0★, not "6 stars".
-  const lowRevs = allRevs
-    .filter(r => { const st = ratingToStars(Number(r.rating)); return st != null && st <= 3 })
-    .slice()
-    .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
-  const low30 = lowRevs.slice(0, 8).map(r => ({
-    unit: meta[String(r.listing_id)]?.name ?? 'Unit',
-    stars: ratingToStars(Number(r.rating)) as number,
-    channel: str(r.channel),
-    at: str(r.created_at).slice(0, 10),
-    replied: !!r.has_reply,
-    snippet: str(r.content).replace(/\s+/g, ' ').slice(0, 110),
-  }))
-  // Units with MORE THAN ONE low score in the window — a pattern, not a bad night. These are the
-  // ones to physically walk before the next arrival.
-  const lowByUnit: Record<string, number> = {}
-  for (const r of lowRevs) { const u = meta[String(r.listing_id)]?.name ?? 'Unit'; lowByUnit[u] = (lowByUnit[u] || 0) + 1 }
-  const repeatUnits = Object.keys(lowByUnit).filter(u => lowByUnit[u] >= 2)
-    .map(u => ({ unit: u, n: lowByUnit[u] })).sort((a, b) => b.n - a.n).slice(0, 6)
-  // What guests actually complained about, counted across every negative review in the window. Same
-  // theme dictionary the Health score penalises on, so the brief and the board name faults alike.
-  const themeHits: Record<string, number> = {}
-  for (const r of allRevs) {
-    const st = ratingToStars(Number(r.rating))
-    if (st == null || st > 3.5) continue
-    const text = str(r.content).toLowerCase()
-    if (!text) continue
-    const names = Object.keys(REVIEW_THEMES)
-    for (let i = 0; i < names.length; i++) {
-      if (REVIEW_THEMES[names[i]].some(k => text.indexOf(k) >= 0)) themeHits[names[i]] = (themeHits[names[i]] || 0) + 1
-    }
-  }
-  const themes = Object.keys(themeHits).filter(t => themeHits[t] >= 2)
-    .map(t => ({ theme: t, n: themeHits[t] })).sort((a, b) => b.n - a.n).slice(0, 5)
-  const watch30 = { low: low30, lowTotal: lowRevs.length, repeatUnits, themes, unanswered: owed, since: monthAgo.slice(0, 10) }
-
   return {
-    today, sheet, cleans, newReviews, newSinceYesterday, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
-    rep: { n: allRevs.length, avg, five, owed }, watch30,
+    today, sheet, cleans, newReviews, inspect, bigArrivals, bigTodayIds,
+    rep: { n: allRevs.length, avg, five, owed },
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
   }
@@ -329,23 +273,13 @@ function tileRow(tiles: Tile[]): string {
 }
 
 // A section card: thin accent bar on the header, count de-emphasised next to the title.
-// EVERY CARD SAYS WHAT WINDOW IT COVERS (Jon, 2026-08-14: "label when the data is from — labor by
-// day, last 30 days, etc"). A number with no date on it is a number somebody has to ask about.
-function card(title: string, count: number | null, inner: string, accent = '#6366f1', when?: string): string {
+function card(title: string, count: number | null, inner: string, accent = '#6366f1'): string {
   return `<div style="${S.card}">
     <div style="${S.cardHead};border-left:3px solid ${accent}">
       <p style="${S.h2}">${title}${count != null ? ` <span style="${S.h2n}">· ${count}</span>` : ''}</p>
-      ${when ? `<p style="margin:2px 0 0;font-size:11px;color:#9ca3af;letter-spacing:.02em">${when}</p>` : ''}
     </div>
     <div style="${S.cardBody}">${inner}</div>
   </div>`
-}
-/** "Thu, Aug 14" — the human form of a YYYY-MM-DD, for card datelines. */
-function niceDay(ymd: string): string {
-  try {
-    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' })
-      .format(new Date(ymd + 'T12:00:00Z'))
-  } catch { return ymd }
 }
 const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:8px 0 2px">${t}</p>`
 
@@ -518,15 +452,10 @@ const numBadge = (n: number, hot: boolean) =>
 
 export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const d = await gather(variant)
-  // BLOCKED UNITS: GM BRIEF + FULL BRIEF, NEVER THE MARKET CREWS. Jon 2026-08-12 pulled them off
-  // every ops brief ("only go in the GM brief"); 2026-08-17 added them back to the FULL brief —
-  // the ops manager reading it decides what comes back on the calendar, so it is actionable there.
-  // A Miami/Broward crew still cannot act on a block at 7am, so their briefs stay clean.
-  let fullBlocked: BlockedRun[] = []
-  let fullBlockedLinked = 0
-  if (variant === 'full') {
-    try { const rep = await blockedUnits(30); fullBlocked = rep.runs; fullBlockedLinked = rep.linkedCount } catch { /* brief still sends */ }
-  }
+  // BLOCKED UNITS LIVE ON THE GM BRIEF ONLY (Jon, 2026-08-12: "the blocked unit should only go in
+  // the GM brief"). A block is a revenue decision — who took the unit off the calendar and why —
+  // and it is not something a market crew can act on at 7am, so it was pulling attention away
+  // from the work they can actually do. buildGmBrief() still carries the full card.
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
@@ -567,18 +496,26 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     `<span style="${tone === 'red' ? S.red : S.amber}">●</span>&nbsp; <b>${esc(unit)}</b> <span style="color:#374151">— ${what}</span>` +
     (how ? `<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${esc(how).slice(0, 96)}</span>` : '') + `</td></tr>`
   const priorities: string[] = []
-  // SAME-DAY TURNS: ONE LINE, NOT ONE ALARM PER DOOR (Jon, 2026-08-17: "don't need priorities for
-  // all departure cleans... it has not started at 7am as no cleans start that early"). This lands
-  // at 7am — flagging every turn "not started" was noise dressed as urgency and it buried the
-  // things that ARE urgent. The turns are named once, in one line; the door list below carries
-  // per-unit detail.
-  if (sameDay.length)
-    priorities.push(prio('red', `${sameDay.length} same-day turn${sameDay.length === 1 ? '' : 's'} today`,
-      `guest lands the same day — these doors first: ${sameDay.slice(0, 8).map(c => esc(c.unit)).join(', ')}${sameDay.length > 8 ? ` +${sameDay.length - 8} more` : ''}`))
+  for (const c of sameDay) priorities.push(prio('red', c.unit, `same-day turn, clean ${c.state === 'running' ? 'in progress' : '<b>not started</b>'}`))
   for (const c of unassigned) priorities.push(prio('red', c.unit, 'clean has <b>no one assigned</b>'))
   for (const a of walkIns.slice(0, 4)) priorities.push(prio('amber', str(a.unit), `walk-in arriving today (${esc(str(a.guest).split(' ')[0])})`, 'Booked last minute — confirm the unit is guest-ready.'))
   for (const e of highExceptions) priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
   for (const g of glitches.slice(0, 3)) priorities.push(prio('amber', str(g.unit), `open guest issue`, str(g.overview)))
+
+  // AUTO-CREATED ARRIVAL INSPECTIONS (Jon, 2026-08-18: "shared in the brief as todo / priorities").
+  // The ones not yet done for arrivals today/tomorrow go straight into the priority list with who
+  // holds them; the full window gets its own card below. Market variants only see their market.
+  let autoInsp: Awaited<ReturnType<typeof upcomingAutoInspections>> = []
+  try {
+    autoInsp = (await upcomingAutoInspections(2))
+      .filter(i => variant === 'full' || variant === 'GM' || str(i.market) === variant)
+  } catch { /* automation table may not exist yet — the brief still sends */ }
+  const inspOpen = autoInsp.filter(i => !/complet|finish|close|approv/i.test(str(i.status)))
+  for (const i of inspOpen.filter(x => x.check_in <= ymdET(new Date(Date.now() + 86400000))).slice(0, 4)) {
+    priorities.push(prio('amber', str(i.unit_name),
+      `pre-arrival inspection — <b>${esc(str(i.reason))}</b> lands ${esc(str(i.check_in))}`,
+      i.assignees.length ? 'With ' + i.assignees.join(' and ') + '.' : 'Not assigned — pick it up.'))
+  }
 
   // Arrivals carry their TIME (the thing that sets the deadline) and, when somebody left one, the
   // guest note — the difference between a unit being ready and a unit being ready correctly.
@@ -603,13 +540,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const cleansRows = d.cleans.map(c => `
     <tr><td style="${S.td}">${esc(c.unit)}${c.sameDayArrival ? ` <span style="${S.red}">← arrival today</span>` : ''}</td>
     <td style="${S.td}${/UNASSIGNED/.test(c.assignee) ? ';color:#b91c1c;font-weight:600' : ''}">${esc(c.assignee)}</td>
-    <td style="${S.td}">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">scheduled</span>`}</td></tr>`).join('')
+    <td style="${S.td}">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">not started</span>`}</td></tr>`).join('')
 
-  // Colour carries the urgency: 3 and under is a problem to answer today, 4 and under is a watch.
-  const revTone = (n: number) => n <= 3 ? S.red : n < 4.5 ? S.amber : S.green
   const newRevRows = d.newReviews.map(r => `
-    <tr${r.rating <= 3 ? ' style="background:#fef2f2"' : ''}><td style="${S.td}"><b>${esc(r.unit)}</b>${r.isNew ? ' <span style="font-size:10px;color:#4338ca;font-weight:700">NEW</span>' : ''}<br><span style="color:#6b7280">${esc(r.channel)}${r.guest ? ' · ' + esc(r.guest) : ''} · ${esc(niceDay(r.at))}</span></td>
-    <td style="${S.td}"><span style="${revTone(r.rating)}">${stars(r.rating)} <b>${esc(ratingAsGuestSaw(r.rating, r.channel) || String(r.rating))}</b></span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
+    <tr><td style="${S.td}"><b>${esc(r.unit)}</b><br><span style="color:#6b7280">${esc(r.channel)}${r.guest ? ' · ' + esc(r.guest) : ''}</span></td>
+    <td style="${S.td}"><span style="${r.rating <= 3 ? S.red : S.green}">${stars(r.rating)} ${esc(ratingAsGuestSaw(r.rating, r.channel) || String(r.rating))}</span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
 
   const bigRows = d.bigArrivals.map(b => `
     <tr><td style="${S.td}"><b>${esc(b.unit)}</b>${b.today ? ' ' + pillRed('TODAY') : ''} <span style="${S.muted};font-size:12px">· ${esc(b.guest)} · ${b.when}${b.nights ? ` · ${b.nights}n` : ''}</span></td>
@@ -643,33 +578,6 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       (rep.owed ? ` · <span style="${S.red}">${rep.owed} awaiting a reply</span>` : ' · all replied')
     : 'No reviews in the last 30 days.'
 
-  // ---- Last 30 days of feedback: the watch-list, not the news ----------------
-  const w30 = d.watch30
-  const low30Rows = w30.low.map(r =>
-    '<tr style="background:#fef2f2"><td style="' + S.td + '"><b>' + esc(r.unit) + '</b>' +
-    (r.replied ? '' : ' ' + pillRed('NO REPLY')) +
-    '<br><span style="color:#6b7280">' + esc(r.channel) + ' · ' + esc(niceDay(r.at)) + '</span></td>' +
-    '<td style="' + S.td + '"><span style="' + S.red + '">' + stars(r.stars) + ' <b>' + esc(ratingAsGuestSaw(r.stars, r.channel) || r.stars.toFixed(1) + '\u2605') + '</b></span>' +
-    (r.snippet ? '<br><span style="color:#6b7280">' + esc(r.snippet) + '\u2026</span>' : '') +
-    '</td></tr>').join('')
-  const repeatLine = w30.repeatUnits.length
-    ? '<p style="margin:10px 0 0;font-size:12.5px"><b>Walk these first</b> \u2014 more than one low score in 30 days: ' +
-      w30.repeatUnits.map((u: any) => esc(u.unit) + ' <span style="' + S.red + '">(' + u.n + ')</span>').join(' \u00b7 ') + '</p>'
-    : ''
-  const themeLine = w30.themes.length
-    ? '<p style="margin:6px 0 0;font-size:12.5px"><b>What guests keep naming:</b> ' +
-      w30.themes.map((t: any) => esc(t.theme) + ' <span style="color:#6b7280">\u00d7' + t.n + '</span>').join(' \u00b7 ') + '</p>'
-    : ''
-  const moreLow = w30.lowTotal > w30.low.length
-    ? '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">+' + (w30.lowTotal - w30.low.length) + ' more low score' + (w30.lowTotal - w30.low.length === 1 ? '' : 's') + ' in the window \u2014 full list on the Reviews board.</p>'
-    : ''
-  const repHeadline = '<p style="font-size:13px;margin:8px 0 2px">' + repLine + '</p>' +
-    (w30.lowTotal
-      ? '<p style="margin:8px 0 6px;font-size:12.5px"><span style="' + S.red + '"><b>' + w30.lowTotal + ' at 3\u2605 or below</b></span> in the last 30 days' +
-        (w30.unanswered ? ' \u00b7 <span style="' + S.amber + '">' + w30.unanswered + ' still awaiting a reply</span>' : '') + ' \u2014 these are the ones to check on.</p>'
-      : '<p style="margin:8px 0 0;font-size:12.5px"><span style="' + S.green + '">No review at 3\u2605 or below in the last 30 days.</span></p>')
-
-
   const table = (heads: string[], rows: string) =>
     `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
 
@@ -693,7 +601,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const db2 = supabaseAdmin()
     const [lr2, rr2] = await Promise.all([
       db2.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
-      db2.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
+      db2.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
         .gte('check_out', yd).lte('check_out', yd)
         .not('status', 'in', '("canceled","cancelled","declined")').limit(2000),
     ])
@@ -710,28 +618,18 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     // Payroll is one Homebase location and cannot be split by market, so the labor %
     // is always portfolio-wide payroll vs portfolio-wide in-house fees - comparing
     // whole payroll to one market's fees produced a nonsense 300%+ figure.
-    // NET of the channel's cut — the exact formula lib/labor-econ.ts uses, so this headline
-    // reconciles with every margin in the crew table below instead of quietly running on gross.
-    const netFee2 = (r: any): number => {
-      const feeGross = Number(r.cleaning)
-      if (!Number.isFinite(feeGross) || feeGross <= 0) return 0
-      const chFee = Math.max(0, Number(r.channelFee) || 0)
-      const payoutBase = (Number(r.grossFare) || 0) + feeGross
-      return payoutBase > 0 && chFee > 0
-        ? Math.round(Math.max(0, feeGross - chFee * (feeGross / payoutBase)) * 100) / 100
-        : feeGross
-    }
     let fees = 0
     for (const r of (rr2.data || []) as any[]) {
       const info = mk2[String(r.listing_id)]
       if (!info || info.vendor) continue
-      fees += netFee2(r)
+      const f = Number((r as any).cleaning); if (Number.isFinite(f)) fees += f
     }
     let vendorFees = 0
     for (const r of (rr2.data || []) as any[]) {
       const info = mk2[String(r.listing_id)]
       if (!info || !info.vendor) continue
-      vendorFees += netFee2(r)
+      const f = Number((r as any).cleaning)
+      if (Number.isFinite(f)) vendorFees += f
     }
     const status = laborRevenueStatus(payroll > 0 ? payroll : null, fees > 0 ? fees : null, lset)
     const flagBits: string[] = []
@@ -740,69 +638,11 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     if (flags.overSchedule.length) flagBits.push(`${flags.overSchedule.length} worked past schedule (${flags.overSchedule.slice(0, 4).map(x => `${esc(x.name)} +${x.overByHours}h`).join(', ')})`)
     if (flags.missedClockOuts.length) flagBits.push(`${flags.missedClockOuts.length} timecard${flags.missedClockOuts.length === 1 ? '' : 's'} left open`)
     const money = variant === 'full'
-      ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees (net of channel cut) · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
+      ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
       : ''
     const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
-    // STAFFING PLAN, ONE LINE (Jon, 2026-08-18) — the margin-first hours plan from the Weekly
-    // planner, surfaced in the inbox: scheduled vs needed for the rest of this week, plus which
-    // days to fix. FULL BRIEF ONLY, and additive — if the plan cannot be built the brief goes
-    // out without it.
-    let planLine = ''
-    if (variant === 'full') {
-      try {
-        const { buildWeekPlan } = await import('./labor-plan')
-        const plan = await buildWeekPlan()
-        const r1p = (n: number) => Math.round(n * 10) / 10
-        const fut = plan.days.filter(d => !d.isPast && (d.projectedCleans > 0 || (d.scheduledHours || 0) > 0))
-        if (fut.length) {
-          const short = fut.filter(d => d.verdict === 'under_floor')
-            .map(d => `${d.day} &minus;${r1p(Math.max(0, d.floorHours - (d.scheduledHours || 0)))}h`)
-          const over = fut.filter(d => d.verdict === 'over_budget')
-            .map(d => `${d.day} +${r1p(Math.max(0, (d.scheduledHours || 0) - (d.budgetHours || d.floorHours)))}h`)
-          planLine = `<p style="margin:6px 0 0;padding-top:6px;border-top:1px dashed #e5e7eb;font-size:12.5px;color:#374151"><b>Hours plan</b> <span style="color:#9ca3af">rest of week · target ${plan.targetMarginPct}% kept</span> — ` +
-            `<b>${plan.totals.scheduledHours}h</b> scheduled vs <b>${plan.totals.floorHours}h</b> the booked cleans need` +
-            (short.length ? ` · <span style="${S.red}">short: ${short.join(', ')}</span>` : '') +
-            (over.length ? ` · <span style="${S.amber}">over budget: ${over.join(', ')}</span>` : '') +
-            ((!short.length && !over.length) ? ` · <span style="${S.green}">on plan</span>` : '') +
-            ` <a href="https://lighthouse-stay.vercel.app/schedule?tab=weekly" style="color:#2563eb">planner</a></p>`
-        }
-      } catch { /* additive only */ }
-    }
-    // The 30-day figure comes from the daily true-up snapshot, not a second full computation:
-    // it is already settled, already stored, and says when it was taken.
-    // FULL BRIEF ONLY. It carries dollar amounts, and the Miami/Broward briefs that go to the
-    // teams show the portfolio-wide labor-% band and nothing priced — Jon's standing rule. This
-    // used to render on every variant, which quietly put payroll and revenue in front of the crews.
-    let thirty = ''
-    try {
-      const snap = variant === 'full' ? await getSetting<any>('labor_trueup_snapshot', null) : null
-      if (snap && snap.from) {
-        const m = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
-        thirty = `<p style="margin:8px 0 0;padding-top:8px;border-top:1px solid #e5e7eb;font-size:12.5px;color:#374151">` +
-          `<b>Last 30 days</b> <span style="color:#9ca3af">${snap.from} to ${snap.to}${snap.takenAt ? ' · trued up ' + String(snap.takenAt).slice(0, 10) : ''}</span><br>` +
-          // Cost per clean is HOUSEKEEPERS ONLY, so the payroll beside it must be the same base.
-          // Supervisors and maintenance are shown on their own line underneath, never divided into
-          // a per-clean figure (Jon, 2026-08-17: "not with supervisors").
-          `${snap.cleans} departure cleans · <b>${m(snap.costPerClean || 0)} labor / clean</b> — ${m(snap.cleaningRevenue || 0)} net cleaning revenue vs ${m(snap.hkPayroll != null ? snap.hkPayroll : 0)} housekeeping payroll` +
-          (snap.payroll ? `<br><span style="color:#9ca3af">All-in labor incl. supervisors + maintenance: ${m(snap.payroll)} — carried, never divided into a per-clean number.</span>` : '') +
-          // The settled market comparison. One day of Miami vs Broward is mostly noise — 30 days is
-          // the number to manage on, so it sits right under the 30-day headline.
-          (Array.isArray(snap.markets) && snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null).length
-            ? `<br><span style="color:#6b7280">By market: </span>` +
-              snap.markets.filter((k: any) => k.inHouse && k.costPerClean != null)
-                .map((k: any) => `<b>${esc(String(k.label))}</b> ${k.cleans} cleans @ ${m(k.costPerClean)}${k.hoursPerClean != null ? ' / ' + k.hoursPerClean + 'h' : ''}`)
-                .join(' &middot; ') +
-              // Vendor buildings earn too — shown beside the markets, never inside a cost per clean.
-              snap.markets.filter((k: any) => !k.inHouse && (k.revenue > 0 || k.cleans > 0))
-                .map((k: any) => ` &middot; <b>${esc(String(k.label))}</b> ${k.cleans} cleans, ${m(k.revenue)} rev (their crews)`)
-                .join('')
-            : '') +
-          `</p>`
-      }
-    } catch { /* the 30-day line is a bonus, never a blocker */ }
-    laborCard = card(`Labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>` + planLine + thirty,
-      status.band === 'over' ? '#dc2626' : '#6366f1', `Yesterday · ${niceDay(yd)}`)
+    laborCard = card(`Yesterday's labor · Homebase`, null, `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>`, status.band === 'over' ? '#dc2626' : '#6366f1')
     laborTile = { label: 'Labor %', value: status.pct != null ? status.pct + '%' : '—', note: 'yesterday', tone: status.band === 'over' ? 'red' : status.band === 'watch' ? 'amber' : 'green' }
     // ---- Team economics yesterday (FULL brief only - carries dollars) --------
     //
@@ -817,194 +657,59 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     //   Supervisors   no margin. Overhead carried by management fees, shown beside it.
     if (variant === 'full') {
       const ec = await laborEconomics({ from: yd, to: yd, market: 'all' })
-      const K = ec.kpi
-      // HONESTY GATE (Jon, 2026-08-17: "I just want this to be so accurate"). If Homebase failed to
-      // return any timecard week, payroll is understated and every margin below would be a quiet
-      // lie — a $24 cost per clean that looks perfectly normal. So when the audit says incomplete,
-      // the card says THAT, loudly, and prints no payroll-derived numbers at all.
-      if (ec.payrollAudit && !ec.payrollAudit.complete) {
-        crewCard = card('By the numbers — revenue vs payroll', null,
-          '<p style="margin:0;font-size:13px;line-height:1.6;color:#b91c1c"><b>Payroll data incomplete — numbers withheld.</b> ' +
-          'Homebase did not return ' + (ec.payrollAudit.failedWeeks.length === 1 && ec.payrollAudit.failedWeeks[0] === 'all' ? 'any timecards' : 'timecards for ' + esc(ec.payrollAudit.failedWeeks.join(', '))) +
-          ' after retries. Printing margins on partial payroll would understate labor cost, so this card is blank on purpose. ' +
-          'It will populate on the next run once Homebase responds.</p>', '#dc2626', `Yesterday · ${niceDay(yd)}`)
-        throw Object.assign(new Error('payroll incomplete'), { _handled: true })
-      }
       const usd = (n: number) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
-      const pctTxt = (n: number | null) => (n == null ? '—' : Math.round(n) + '%')
+      const cpcLine = (() => {
+        const m = ec.costPerCleanByMarket || {}
+        const one = (k: string) => (m[k] != null ? usd(m[k] as number) : 'n/a')
+        return 'Cost / clean: Miami ' + one('miami') + ', Broward ' + one('broward') +
+          ', North ' + one('north') + ', All ' + (ec.costPerClean != null ? usd(ec.costPerClean) : 'n/a')
+      })()
       const hoursTxt = (h: number) => (h > 0 ? String(Math.round(h * 10) / 10) + 'h' : '—')
-      const tone = (m: number) => (m < 0 ? '#dc2626' : '#047857')
-      const round2b = (n: number) => Math.round(n * 100) / 100
-
-      // THE THREE RATIOS, BIG AND FIRST. Each one is revenue over the payroll that earned it.
-      const kpiRow = (label: string, sub: string, rev: number, pay: number, margin: number, mPct: number | null, extra: string) =>
-        '<tr>' +
-        '<td style="' + S.td + ';width:31%"><b>' + label + '</b><br><span style="color:#6b7280;font-size:11.5px">' + sub + '</span></td>' +
-        '<td style="' + S.td + ';text-align:right">' + usd(rev) + '</td>' +
-        '<td style="' + S.td + ';text-align:right">' + usd(pay) + '</td>' +
-        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(margin) + '">' + usd(margin) + '</td>' +
-        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(margin) + '">' + pctTxt(mPct) + '</td>' +
-        '<td style="' + S.td + ';color:#6b7280;font-size:11.5px">' + extra + '</td></tr>'
-
-      let kpiRows = ''
-      // THREE LAYERS, IN THE ORDER JON ASKED FOR THEM (2026-08-17): "cost per clean is # of cleans
-      // and payroll to get cost per DEPARTURE clean. We can then take payroll and rev to get profit
-      // margins for HK, then supervisor added in, and then keep maintenance separate."
-      //   1. HOUSEKEEPING      the cleaners: all the cleaning revenue they earn vs their own wages.
-      //                        Cost per clean uses DEPARTURE cleans only as the denominator.
-      //   2. + SUPERVISORS     the same revenue carrying supervision too — the loaded cost of a turn.
-      //   3. MAINTENANCE       on its own, below a divider, never blended into either.
-      // "If HK gets rev for outside cleaning it should be added to the rev" (Jon, same day): so the
-      // housekeeping revenue here is ALL of it — departure fees, charged cleaning tasks, and the
-      // cleans our crew does inside vendor-managed buildings. Only the DENOMINATOR is departure-only.
-      const hkRev = K.housekeepingLoaded ? K.housekeepingLoaded.revenue : K.housekeeping.revenue
-      const hkMargin = round2b(hkRev - K.housekeeping.payroll)
-      kpiRows += kpiRow('Housekeeping', K.housekeeping.cleans + ' departure cleans · ' + hoursTxt(K.housekeeping.hours),
-        hkRev, K.housekeeping.payroll, hkMargin,
-        hkRev > 0 ? Math.round((hkMargin / hkRev) * 100) : null,
-        (K.housekeeping.costPerClean != null ? '<b>' + usd(K.housekeeping.costPerClean) + ' cost / departure clean</b>' : 'no cleans') +
-        (K.housekeeping.revPerClean != null ? ' · ' + usd(K.housekeeping.revPerClean) + ' net / clean' : '') +
-        (K.housekeeping.hoursPerClean != null ? ' · ' + K.housekeeping.hoursPerClean + 'h each' : '') +
-        (K.housekeeping.chargedCleans > 0
-          ? '<br>incl. ' + usd(K.housekeeping.chargedCleans) + ' from ' + (K.housekeeping.chargedCleanCount || 0) +
-            ' other paid clean' + ((K.housekeeping.chargedCleanCount || 0) === 1 ? '' : 's') + ' (not turnovers — revenue only, never in the denominator)'
-          : ''))
-      // Layer 2: supervision loaded onto the same revenue.
-      if (K.housekeepingLoaded)
-        kpiRows += kpiRow('+ Supervisors', 'loaded cost of running housekeeping · ' + hoursTxt(K.housekeepingLoaded.hours),
-          K.housekeepingLoaded.revenue, K.housekeepingLoaded.payroll, K.housekeepingLoaded.margin, K.housekeepingLoaded.marginPct,
-          (K.housekeepingLoaded.costPerClean != null ? '<b>' + usd(K.housekeepingLoaded.costPerClean) + ' loaded / departure clean</b>' : '') +
-          ' · adds ' + usd(K.housekeepingLoaded.supervisorPayroll) + ' of supervision')
-      // VENDOR REVENUE, VISIBLE (Jon, 2026-08-17: "we should also show vendor rev as well"). The
-      // cleaning fees earned on vendor-cleaned buildings (Botanica, PT, Amrit, Capri, Lucerne) are
-      // real revenue to the business even though no in-house hour goes into them — so they get a
-      // row, with no payroll and no margin, and they never touch cost per clean. When our own crew
-      // ALSO billed work inside those buildings, that is named too, because it is the number the
-      // vendor invoices get checked against.
-      if ((ec.cleaningRevenueVendor || 0) > 0 || (ec.vendorWork && ec.vendorWork.ourBilled > 0))
-        kpiRows += '<tr><td style="' + S.td + '"><b>Vendor-cleaned units</b><br>' +
-          '<span style="color:#6b7280;font-size:11.5px">their crews clean — fee revenue only' +
-          (ec.vendorWork && ec.vendorWork.ourBilled > 0 ? ' · our crew billed ' + usd(ec.vendorWork.ourBilled) + ' inside these buildings' : '') + '</span></td>' +
-          '<td style="' + S.td + ';text-align:right">' + usd(ec.cleaningRevenueVendor || 0) + '</td>' +
-          '<td style="' + S.td + ';text-align:right;color:#9ca3af">n/a</td>' +
-          '<td style="' + S.td + ';text-align:right;color:#9ca3af">—</td>' +
-          '<td style="' + S.td + ';text-align:right;color:#9ca3af">—</td>' +
-          '<td style="' + S.td + ';color:#6b7280;font-size:11.5px">kept out of cost per clean and margins</td></tr>'
-      // Layer 3: maintenance, on its own side of a divider.
-      kpiRows += '<tr><td colspan="6" style="padding:6px 8px 2px;border-top:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280">Maintenance — tracked separately</td></tr>'
-      kpiRows += kpiRow('Maintenance', K.maintenance.tasksBilled + ' tasks billed · ' + hoursTxt(K.maintenance.hours),
-        K.maintenance.revenue, K.maintenance.payroll, K.maintenance.margin, K.maintenance.marginPct,
-        K.maintenance.tasksNoCharge > 0
-          ? '<span style="color:#b45309">' + K.maintenance.tasksNoCharge + ' finished with no charge entered</span>'
-          : 'every task charged')
-      // No blended "Staff total" row — Jon (2026-08-18): keep tabs on HK and Maintenance,
-      // supervisors as their own line. Blending HK + maintenance was exactly what he said not to do.
-      // Supervisors sit BELOW the line: a fixed cost, never divided into revenue.
-      kpiRows += '<tr><td style="' + S.td + ';border-top:2px solid #111827;background:#fafaf9">Supervisors <span style="color:#6b7280;font-size:11.5px">fixed</span><br>' +
-        '<span style="color:#6b7280;font-size:11.5px">' + esc((K.supervisors.names || []).join(', ') || 'none') + '</span></td>' +
-        '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">n/a</td>' +
-        '<td style="' + S.td + ';background:#fafaf9;text-align:right">' + usd(K.supervisors.payroll) + '</td>' +
-        '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">—</td>' +
-        '<td style="' + S.td + ';background:#fafaf9;text-align:right;color:#9ca3af">—</td>' +
-        '<td style="' + S.td + ';background:#fafaf9;color:#6b7280;font-size:11.5px">' + pctTxt(K.supervisors.pctOfManagementFee) + ' of ' + usd(K.supervisors.managementFee) + ' management fees</td></tr>'
-      kpiRows += '<tr><td style="' + S.td + '"><b>All in</b><br><span style="color:#6b7280;font-size:11.5px">HK + maintenance + supervisors</span></td>' +
-        '<td style="' + S.td + ';text-align:right">' + usd(K.allIn.revenue) + '</td>' +
-        '<td style="' + S.td + ';text-align:right">' + usd(K.allIn.payroll) + '</td>' +
-        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(K.allIn.margin) + '">' + usd(K.allIn.margin) + '</td>' +
-        '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + tone(K.allIn.margin) + '">' + pctTxt(K.allIn.marginPct) + '</td>' +
-        '<td style="' + S.td + '"></td></tr>'
-
-      const kpiTable = '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">' +
-        '<tr><th style="' + S.th + '">Crew</th><th style="' + S.th + ';text-align:right">Revenue</th>' +
-        '<th style="' + S.th + ';text-align:right">Payroll</th><th style="' + S.th + ';text-align:right">Margin</th>' +
-        '<th style="' + S.th + ';text-align:right">Margin %</th><th style="' + S.th + '">Read</th></tr>' + kpiRows + '</table>'
-
-      // WHAT TO DO ABOUT IT — only lines that imply an action appear.
-      const acts: string[] = []
-      if (K.maintenance.tasksNoCharge > 0)
-        acts.push('<b>' + K.maintenance.tasksNoCharge + ' maintenance job' + (K.maintenance.tasksNoCharge === 1 ? '' : 's') +
-          ' finished with no cost entered</b> — that work bills nothing until someone types the charge in Breezeway.')
-      if (ec.cleaningRevenueUnattributed > 0)
-        acts.push('<b>' + usd(ec.cleaningRevenueUnattributed) + ' of cleaning fees</b> could not be matched to a person&rsquo;s clean — check Breezeway assignees.')
-      // Charged maintenance work closed by people who are not on the maintenance crew. It is real
-      // revenue that never reaches the maintenance line, so the margin below reads worse than the
-      // department actually did. Naming them is the whole point — one crew_roles entry fixes it.
-      if (K.maintenance.billedOutsideCrew > 0)
-        acts.push('<b>' + usd(K.maintenance.billedOutsideCrew) + ' of maintenance charges</b> were billed by people not on the maintenance crew (' +
-          (K.maintenance.outsideDetail || []).slice(0, 3).map((o: any) => esc(String(o.name)) + ' ' + usd(o.amount)).join(', ') +
-          ') — maintenance margin is understated until they are on the roster.')
-      if (ec.vendorWork && ec.vendorWork.ourTaskCount > 0)
-        acts.push('<b>' + ec.vendorWork.ourTaskCount + ' job' + (ec.vendorWork.ourTaskCount === 1 ? '' : 's') +
-          ' our crew did on vendor-managed units</b>' + (ec.vendorWork.unbilled > 0 ? ' — ' + ec.vendorWork.unbilled + ' billed to nobody.' : '.'))
-      if (K.housekeeping.marginPct != null && K.housekeeping.marginPct < 40)
-        acts.push('Housekeeping margin at <b>' + pctTxt(K.housekeeping.marginPct) + '</b> — labor is taking ' + pctTxt(K.housekeeping.laborPct) + ' of cleaning revenue.')
-      const actionBlock = acts.length
-        ? '<p style="margin:10px 0 0;font-size:12.5px;color:#374151"><b>Worth acting on</b></p><ul style="margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#374151">' +
-          acts.map(a2 => '<li style="margin:2px 0">' + a2 + '</li>').join('') + '</ul>'
-        : ''
-
-      // ---- MIAMI vs BROWARD, SIDE BY SIDE (Jon, 2026-08-17: "want to see cost separated by market
-      // in the full brief for labor — need to see how Miami is performing and Broward").
-      // One row per market off the same buckets the labor board uses: what its cleans earned, what
-      // its housekeepers cost, and the two numbers that actually compare across markets — labor
-      // dollars per clean and hours per clean. Payroll is split across markets in proportion to
-      // each housekeeper's cleans there, so a cleaner who works both is not billed twice.
-      // FULL BRIEF ONLY — this block never renders on the Miami/Broward team briefs, which show
-      // the labor-% band and no dollar figures.
-      const mkBuckets = (ec.buckets || []).filter((b2: any) => b2.cleans > 0 || b2.payroll > 0)
-      const mkRow = (b2: any) => {
-        const vendorRow = !b2.inHouse
-        // "Unassigned unit" is HK payroll for hours that produced no matched clean (walk time,
-        // help on someone else's unit, a clean never closed in Breezeway). It stays INSIDE the
-        // HK totals and cost per clean above — this row just shows where those dollars sat.
-        const unassignedRow = /unassigned/i.test(String(b2.label))
-        return '<tr>' +
-          '<td style="' + S.td + '"><b>' + (unassignedRow ? 'No clean matched' : esc(String(b2.label))) + '</b>' +
-          (unassignedRow ? '<br><span style="color:#6b7280;font-size:11.5px">HK hours with no matched clean &mdash; already counted in cost per clean</span>' : '') +
-          (vendorRow && !/vendor/i.test(String(b2.label)) ? ' <span style="color:#6b7280;font-size:11.5px">vendor-cleaned</span>' : '') + '</td>' +
-          '<td style="' + S.td + ';text-align:right">' + b2.cleans + '</td>' +
-          '<td style="' + S.td + ';text-align:right">' + usd(b2.cleaningRevenue) + '</td>' +
-          '<td style="' + S.td + ';text-align:right">' + (vendorRow ? '<span style="color:#9ca3af">n/a</span>' : usd(b2.payroll)) + '</td>' +
-          '<td style="' + S.td + ';text-align:right;font-weight:700;color:' + (vendorRow ? '#6b7280' : tone(b2.margin)) + '">' +
-            (vendorRow ? '<span style="color:#9ca3af">—</span>' : usd(b2.margin)) + '</td>' +
-          '<td style="' + S.td + ';text-align:right">' + (b2.laborCostPerClean != null ? '<b>' + usd(b2.laborCostPerClean) + '</b>' : '<span style="color:#9ca3af">—</span>') + '</td>' +
-          '<td style="' + S.td + ';text-align:right">' + (b2.hoursPerClean != null ? b2.hoursPerClean + 'h' : '<span style="color:#9ca3af">—</span>') + '</td></tr>'
+      const personRow = (p: any) => '<tr>' +
+        '<td style="' + S.td + '">' + esc(p.name) + '<br><span style="color:#6b7280">' + esc(p.market || '') + '</span></td>' +
+        '<td style="' + S.td + '">' + hoursTxt(p.hours) + '</td>' +
+        '<td style="' + S.td + '">' + (p.payroll ? usd(p.payroll) : '—') + '</td>' +
+        '<td style="' + S.td + '">' + (p.cleans || '—') + '</td>' +
+        '<td style="' + S.td + '">' + (p.cleaningRevenue ? usd(p.cleaningRevenue) : '—') + '</td>' +
+        '<td style="' + S.td + '">' + (p.billableRevenue ? usd(p.billableRevenue) : '—') + '</td>' +
+        '<td style="' + S.td + ';font-weight:600;color:' + (p.margin < 0 ? '#dc2626' : '#047857') + '">' + usd(p.margin) + '</td>' +
+        '</tr>'
+      let trRows = ''
+      let shown = 0
+      for (const d of ec.departments) {
+        const rows = ec.people.filter((p: any) => p.dept === d.key)
+        if (!rows.length) continue
+        rows.sort((a: any, b: any) => b.revenue - a.revenue || b.payroll - a.payroll)
+        shown += rows.length
+        const bits: string[] = [usd(d.payroll) + ' payroll (' + hoursTxt(d.hours) + ')']
+        if (d.cleans) bits.push(d.cleans + ' cleans, ' + usd(d.cleaningRevenue) + ' cleaning rev')
+        if (d.billableRevenue) bits.push(usd(d.billableRevenue) + ' billable')
+        // Supervisors are deliberately NOT given a margin — see the note above.
+        const tail = d.key === 'supervision'
+          ? ' — overhead vs ' + usd(ec.managementFee) + ' management fees'
+          : (d.revenue > 0 || d.payroll > 0 ? ' — margin ' + usd(d.margin) : '')
+        const head = d.label.toUpperCase() + ': ' + bits.join(', ') + tail +
+          (d.key === 'housekeeping' && d.costPerClean != null ? ' · ' + usd(d.costPerClean) + ' / clean' : '')
+        trRows += '<tr><td colspan="7" style="' + S.td + ';background:#f5f5f4;font-weight:bold">' + esc(head) + '</td></tr>'
+        trRows += rows.map(personRow).join('')
       }
-      const mkTable = mkBuckets.length
-        ? '<p style="margin:12px 0 4px;font-size:12.5px;color:#374151"><b>By market</b> <span style="color:#9ca3af">— departure cleans, net revenue, yesterday</span></p>' +
-          '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">' +
-          '<tr><th style="' + S.th + '">Market</th><th style="' + S.th + ';text-align:right">Cleans</th>' +
-          '<th style="' + S.th + ';text-align:right">Revenue</th><th style="' + S.th + ';text-align:right">Payroll</th>' +
-          '<th style="' + S.th + ';text-align:right">Margin</th><th style="' + S.th + ';text-align:right">$ / clean</th>' +
-          '<th style="' + S.th + ';text-align:right">h / clean</th></tr>' +
-          mkBuckets.map(mkRow).join('') + '</table>'
-        : ''
-      // Name the gap out loud rather than making someone read two rows and subtract.
-      const inH: { label: string; cpc: number }[] = mkBuckets
-        .filter((b2: any) => b2.inHouse && b2.laborCostPerClean != null)
-        .map((b2: any) => ({ label: String(b2.label), cpc: Number(b2.laborCostPerClean) }))
-      const cheapest = inH.slice().sort((x, y) => x.cpc - y.cpc)[0]
-      const dearest = inH.slice().sort((x, y) => y.cpc - x.cpc)[0]
-      const mkRead = inH.length > 1 && cheapest && dearest && dearest.cpc > cheapest.cpc
-        ? '<p style="margin:4px 0 0;font-size:12px;color:#6b7280">' + esc(dearest.label) + ' is costing ' +
-          usd(dearest.cpc - cheapest.cpc) + ' more per clean than ' + esc(cheapest.label) +
-          ' (' + usd(dearest.cpc) + ' vs ' + usd(cheapest.cpc) + ').</p>'
-        : ''
-
-      crewCard = card('By the numbers — revenue vs payroll', null,
-        kpiTable +
-        mkTable + mkRead +
-        actionBlock +
-        '<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">Cost per clean counts DEPARTURE cleans only, against the guest cleaning fee ' +
-        '<b>net of the channel&rsquo;s commission</b> — what we actually keep, not what the guest was charged' +
-        (ec.channelCut > 0 ? ' (the channels took ' + usd(ec.channelCut) + ' off ' + usd(ec.cleaningRevenueGross) + ' of cleaning fees)' : '') + '. ' +
-        // The Expedia repair is an estimate, so it is stated rather than folded in quietly.
-        (ec.bundledFeeBackfill && ec.bundledFeeBackfill.checkouts > 0
-          ? '<b>' + ec.bundledFeeBackfill.checkouts + ' Expedia checkout' + (ec.bundledFeeBackfill.checkouts === 1 ? '' : 's') + '</b> arrived with the cleaning fee bundled into the room rate; ' +
-            usd(ec.bundledFeeBackfill.amount) + ' was split back out using each unit&rsquo;s usual fee, so those cleans count. '
-          : '') +
-        'Other paid cleaning work is listed on its own row. Strips, common areas, pool, trash and office cleaning earn nothing and are excluded from both sides. ' +
-        'Supervisors are a fixed cost and are never divided into revenue.</p>', '#0891b2', `Yesterday · ${niceDay(yd)}`)
+      if (trRows) {
+        const totalRev = ec.cleaningRevenue + ec.billableRevenue
+        trRows += '<tr><td colspan="7" style="' + S.td + ';font-weight:bold;border-top:2px solid #111827">' +
+          'TOTAL: ' + usd(ec.payroll) + ' payroll vs ' + usd(totalRev) + ' revenue (' +
+          usd(ec.cleaningRevenue) + ' cleaning + ' + usd(ec.billableRevenue) + ' billable) — margin ' + usd(ec.margin) +
+          ' · with ' + usd(ec.managementFee) + ' management fees: ' + usd(ec.marginWithFee) + '</td></tr>'
+        // The coverage line is the honesty check: a task finished with no charge entered earns
+        // nothing here, so a low billable number may be a data-entry gap rather than a slow day.
+        const gap = ec.coverage.tasksWithNoCharge
+        const note = '<p style="margin:0 0 8px;font-size:12.5px;color:#374151">' + esc(cpcLine) +
+          '. Billable = the charge entered on the Breezeway task. Vendor-cleaned units earned ' +
+          usd(ec.cleaningRevenueVendor) + ', kept separate.' +
+          (gap ? ' <span style="color:#b45309">' + gap + ' task' + (gap === 1 ? '' : 's') + ' finished with no charge entered.</span>' : '') +
+          '</p>'
+        crewCard = card('Team economics yesterday — by department', shown,
+          note + table(['Person', 'Hours', 'Payroll', 'Cleans', 'Cleaning rev', 'Billable', 'Margin'], trRows), '#0891b2')
+      }
     }
   } catch { /* Homebase down — the brief still sends */ }
 
@@ -1043,28 +748,21 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${crewCard}
 
   ${eyebrow('Today')}
+  ${autoInsp.length ? card('Arrival inspections — auto-assigned', autoInsp.length, bare(autoInsp.map(i => `
+    <tr><td style="${S.td}"><b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(str(i.check_in))}</span><br>
+    <span style="font-size:12px;color:#6b7280">${esc(str(i.reason))}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${/complet|finish|close|approv/i.test(str(i.status)) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')), '#7c3aed') : ''}
   ${arrivals.length ? card('Arrivals', arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
   ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, bare(ownerRows), '#4338ca') : ''}
   ${glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
   ${eyebrow('Good to know')}
   ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
-  ${d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
-      (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
-      (d.newSinceYesterday ? '' : `<p style="margin:0 0 8px;font-size:12.5px;color:#6b7280">Nothing since the last brief. The most recent one, for context:</p>`) +
-      table(['Unit', 'Score'], newRevRows),
-      lowNew.length ? '#dc2626' : '#059669',
-      d.newSinceYesterday
-        ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
-        : `Last checked ${niceDay(d.today)}`) : ''}
+  ${d.newReviews.length ? card('New reviews since yesterday', d.newReviews.length, table(['Unit', 'Score'], newRevRows), lowNew.length ? '#dc2626' : '#059669') : ''}
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
-  ${variant === 'full' ? blockedCard(fullBlocked, { showMarket: true, limit: 10, linked: fullBlockedLinked }) : ''}
   ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
-  ${card('Reputation — last 30 days', w30.lowTotal || null,
-      repHeadline + (low30Rows ? table(['Unit', 'What they said']  , low30Rows) : '') + moreLow + repeatLine + themeLine,
-      w30.lowTotal ? '#dc2626' : '#059669',
-      `Last 30 days · since ${niceDay(w30.since)}`)}
+  ${card('Reputation — last 30 days', null, `<p style="font-size:13px;margin:8px 0 2px">${repLine}</p>`)}
 
   ${closingNote(d.today)}
   <p style="${S.foot}">Sent automatically by Lighthouse every morning · the boards have the live picture.</p>
