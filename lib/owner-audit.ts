@@ -91,6 +91,9 @@ export type AuditItem = {
   lines: AuditLine[]             // capped for payload size — see lineCount
   lineCount: number              // how many statement line items this row REALLY has, so the
                                  // detail never shows a truncated table that quietly fails to add up
+  lastPosted: string             // newest line-item date on this row — the heartbeat that lets the
+                                 // team work the month WEEKLY: "what posted since I last looked"
+                                 // instead of re-reading everything on statement day
   // HOW THE ROW'S TOTAL WAS BUILT, and what the booking itself says — the two numbers the team
   // kept finding side by side without an explanation.
   posted: number                 // everything credited to the owner this month on this booking
@@ -184,6 +187,7 @@ export type AuditData = {
     owners: number; statements: number; reservations: number
     flagged: number; high: number
     review: number; action: number; done: number; clear: number
+    postedThisWeek: number       // rows with line items posted in the last 7 days — the weekly worklist
     signedOff: number
     prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
@@ -613,8 +617,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
       .not('status', 'in', '(canceled,cancelled,inquiry,declined,expired)')
       .or('source.ilike.%expedia%,source.ilike.%orbitz%,source.ilike.%travelocity%,source.ilike.%hotels%,source.ilike.%wotif%,source.ilike.%ebookers%,source.ilike.%cheaptickets%')
       .limit(1000)
+    // The mirror holds some bookings TWICE (17 duplicate rows found in July 2026 — same code and
+    // listing, different mirror ids). Every scan that reads reservations dedupes on the code, or
+    // the board shows the same guest twice and every total built from the scan is inflated.
+    const seenExp = new Set<string>()
     for (const r of (data || []) as any[]) {
       if (!EXPEDIA_RE.test(String(r.source || ''))) continue
+      const k = String(r.confirmation_code || r.id || '')
+      if (seenExp.has(k)) continue
+      seenExp.add(k)
       expRes.push(r)
       if (r.listing_id) listingIds.add(String(r.listing_id))
     }
@@ -627,6 +638,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // no row — the board tagged 0 of 1,292 rows while the team's spreadsheet listed 15 by hand.
   // So they are pulled from the month's reservations and joined in below, statement money or not.
   const ownerStayRes: any[] = []
+  const seenOwnerStay = new Set<string>()   // the mirror duplicates bookings — dedupe on the code
   let ownerScanCount = 0
   // PAGED, not limited. A plain .limit() stops at the mirror's 1,000-row ceiling — July touches
   // more reservations than that, so a single call silently scanned part of the month and any owner
@@ -642,6 +654,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
     for (const r of batch) {
       const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
       if (!isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) continue
+      const k = String(r.confirmation_code || r.id || '') + '|' + String(r.listing_id || '')
+      if (seenOwnerStay.has(k)) continue
+      seenOwnerStay.add(k)
       ownerStayRes.push(r)
       if (r.listing_id) listingIds.add(String(r.listing_id))
     }
@@ -1178,6 +1193,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       rate, avgRate,
       lines: g.lines.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 60),
       lineCount: g.lines.length,
+      lastPosted: g.lines.reduce((m, l) => (l.date > m ? l.date : m), ''),
       posted: g.posted,
       reversed: g.reversed,
       resValue: res ? (Number((res as any).money_total) || Number((res as any).fare) || null) : null,
@@ -1226,7 +1242,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
         stayTag: kind, canceled: /cancel/i.test(String(r.status || '')),
         statusTag: /cancel/i.test(String(r.status || '')) ? 'canceled' : null,
         rental: 0, commission: 0, other: 0, net: 0, rate: null, avgRate: null,
-        lines: [], lineCount: 0, posted: 0, reversed: 0,
+        lines: [], lineCount: 0, lastPosted: String(r.check_in || '').slice(0, 10), posted: 0, reversed: 0,
         resValue: Number(r.money_total) || null,
         flags: [(() => {
           const folio = folioByRes[String(r.id || '')] || []
@@ -1276,7 +1292,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
         benchRate: null, benchLabel: '', benchPct: null, benchPrev: null,
         mixWeekday: 0, mixWeekend: 0, leadDays: null, stayTag: null, canceled: false, statusTag: null,
         rental: 0, commission: 0, other: 0, net: 0, rate: null, avgRate: null,
-        lines: [], lineCount: 0, posted: 0, reversed: 0, resValue: null,
+        lines: [], lineCount: 0, lastPosted: '', posted: 0, reversed: 0, resValue: null,
         flags: [{
           type: 'empty_statement', severity: 'review',
           detail: 'Guesty generated a ' + MONTH_LABEL(month) + ' statement for this owner with no line items at all'
@@ -1427,6 +1443,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
     action: items.filter(i => i.status === 'action').length,
     done: items.filter(i => i.status === 'done').length,
     clear: items.filter(i => i.status === 'clear').length,
+    postedThisWeek: (() => {
+      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+      return items.filter(i => i.lastPosted && i.lastPosted >= weekAgo).length
+    })(),
     signedOff: Object.values(owners).filter(o => o.signOff).length,
     prepOpen: prep.filter(p => !prepResolved(p)).length,
     rental: money(Object.values(owners).reduce((a, o) => a + o.rental, 0)),
