@@ -15,6 +15,7 @@ import {
   runLateCleanAlert, runGlitchAlert, runOvertimeAlert,
   runRepeatOffenderAlert, runDoorCodeAlert, runBlockedArrivalAlert,
   runMarketBrief, runHandover, runWalkInRiskAlert,
+  runReadinessCheck, runLaborReport, runNotableArrivals,
 } from '@/lib/slack-alerts'
 import { expireStale, dispatchApproved } from '@/lib/slack-queue'
 import { botConnected } from '@/lib/slack'
@@ -41,7 +42,11 @@ async function run(req: NextRequest) {
   // keeps both to once a day. That is why there is one cron here rather than five.
   const safe = (p: Promise<any>) => p.catch((e: any) => ({ error: String((e && e.message) || e) }))
 
-  // First, every pass: anything that could put a guest on the doorstep tonight.
+  // The two Jon actually asked for. Their own windows keep them to 3pm and 5pm — everything else
+  // below ships disabled and only runs if someone turns it on in /users.
+  const readiness = await safe(runReadinessCheck())
+  const labor = await safe(runLaborReport())
+  const notable = await safe(runNotableArrivals())
   const walkIn = await safe(runWalkInRiskAlert())
   const lateCleans = await safe(runLateCleanAlert())
   const glitches = await safe(runGlitchAlert())
@@ -55,7 +60,7 @@ async function run(req: NextRequest) {
 
   return NextResponse.json({
     ok: true, ranAt: new Date().toISOString(), expired,
-    walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals,
+    readiness, labor, notable, walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals,
     marketBrief, handover, dispatched,
   })
 }
