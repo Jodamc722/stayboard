@@ -85,7 +85,9 @@ export async function POST(req: NextRequest) {
   const lastUser = String([...messages].reverse().find((m: any) => m.role === 'user')?.content || '')
   const wholeThread = messages.map((m: any) => String(m.content || '')).join(' \n ')
   const scopes = scopesForText(wholeThread, ctx.listingMeta)
-  const memories = await loadMemories(scopes, ctx.email)
+  // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories
+  // about the thing being asked beat equally-weighted trivia about everything else.
+  const memories = await loadMemories(scopes, ctx.email, 60, lastUser || wholeThread)
   const voice = await safe(getVoiceProfile(), '')
 
   const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
