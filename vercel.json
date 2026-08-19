@@ -83,6 +83,18 @@
     {
       "path": "/api/sentiment/scan",
       "schedule": "10,40 * * * *"
+    },
+    {
+      "path": "/api/cron/slack",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/slack-digest",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/eve-metrics",
+      "schedule": "40 7 * * *"
     }
   ]
 }
