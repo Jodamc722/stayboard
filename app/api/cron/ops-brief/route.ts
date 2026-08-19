@@ -16,7 +16,7 @@ import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type Brie
 import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 export const OPS_BRIEF_KEY = 'ops_brief'
 type BriefCfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: Partial<Record<VendorGroup, string[]>> }
