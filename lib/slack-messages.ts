@@ -344,3 +344,272 @@ export function personalBriefMessage(b: PersonalBrief): { body: string; summary:
 
   return { body, summary: b.name + ' — ' + b.cleans.length + ' cleans, ' + b.otherTasks.length + ' other tasks' }
 }
+
+// ── Bilingual support (field channels) ─────────────────────────────────────────────────────────
+//
+// Jon, 2026-08-19: "Bilingual in the field channels." The crews are Spanish-first and currently
+// write translated English ("Plis", "The lovy is ready", "Streps unit 508") — the wire is English
+// but comprehension is not. So field-facing messages lead with Spanish, then the same thing in
+// English. Management and CCS channels stay English-only.
+//
+// The unit list is NOT duplicated — names, times and @-mentions are language-neutral and repeating
+// twenty lines twice would make the message unreadable. Only the framing is translated.
+
+const ES = {
+  behindHead: (area: string) => '👋 *' + area + '* — resumen de hoy',
+  behindCount: (n: number, arr: number) =>
+    n + (n === 1 ? ' limpieza de salida pendiente' : ' limpiezas de salida pendientes') +
+    (arr ? ', y ' + arr + (arr === 1 ? ' tiene' : ' tienen') + ' huésped que llega hoy' : ''),
+  behindAsk: (unassigned: number) => unassigned
+    ? '¿Podemos asignar ' + (unassigned === 1 ? 'la que está' : 'las ' + unassigned + ' que están') + ' sin nombre? En cuanto estén cubiertas, el resto es sencillo.'
+    : 'Todo está asignado — solo falta empezar. Si algo les está bloqueando, díganlo aquí y lo resolvemos.',
+  behindThanks: 'Gracias a todos 🙏',
+  glitchHead: (area: string) => '🔧 *' + area + '* — incidencias abiertas',
+  glitchCount: (n: number, overdue: number) =>
+    n + (n === 1 ? ' incidencia abierta' : ' incidencias abiertas') +
+    (overdue ? ', ' + overdue + ' fuera de fecha' : ''),
+  glitchAsk: 'Con una nota corta de cómo va cada una es suficiente. Si algo espera una pieza o al propietario, avisen y lo empujamos nosotros.',
+  divider: '— — —',
+}
+
+/** Spanish lead-in for a late-cleans message. Returns '' when bilingual is off. */
+export function lateCleansSpanish(area: string, items: LateCleanItem[], on?: boolean): string {
+  if (!on) return ''
+  const arr = items.filter(i => i.arrivingAt).length
+  const un = items.filter(i => !i.assignee).length
+  return nl([
+    ES.behindHead(area),
+    ES.behindCount(items.length, arr) + '.',
+    ES.behindAsk(un),
+    ES.behindThanks,
+    '',
+    ES.divider,
+    '',
+  ])
+}
+
+/** Spanish lead-in for a glitches message. Returns '' when bilingual is off. */
+export function glitchesSpanish(area: string, items: GlitchItem[], on?: boolean): string {
+  if (!on) return ''
+  const overdue = items.filter(i => i.overdue).length
+  return nl([
+    ES.glitchHead(area),
+    ES.glitchCount(items.length, overdue) + '.',
+    ES.glitchAsk,
+    '',
+    ES.divider,
+    '',
+  ])
+}
+
+// ── Repeat offenders ───────────────────────────────────────────────────────────────────────────
+
+export type RepeatItem = {
+  unit: string
+  category: string
+  count: number
+  closedBefore: number
+  firstSeen: string
+  lastSeen: string
+  latestIssue: string
+}
+
+/**
+ * The point of this message is the WORD "again". It is not a nag at whoever did the repair — it is
+ * a flag that the fix is not holding and the next visit should look deeper.
+ */
+export function repeatOffendersMessage(opts: {
+  items: RepeatItem[]
+  audience: string[]
+  windowDays: number
+}): { body: string; summary: string } {
+  const { items, audience, windowDays } = opts
+  const rows = items.slice(0, 10).map(i =>
+    '• *' + i.unit + '* — ' + i.category + '\n   ' + i.count + ' tickets in ' + windowDays +
+    ' days, ' + i.closedBefore + ' already closed as fixed  ·  latest: ' + i.latestIssue.slice(0, 70))
+  if (items.length > 10) rows.push('• …and ' + (items.length - 10) + ' more')
+
+  const body = nl([
+    '🔁 *Coming back again*',
+    plural(items.length, 'One unit has', items.length + ' units have') +
+      ' had the same problem reported more than once in ' + windowDays + ' days, after it was closed as fixed.',
+    '',
+    rows.join('\n'),
+    '',
+    'Nothing wrong with the work — it just means the root cause is probably still there. Worth a longer look on the next visit rather than another quick fix.',
+    ccLine(audience),
+  ])
+  const summary = items.length + ' repeat ' + plural(items.length, 'issue', 'issues') + ' — ' +
+    items.slice(0, 3).map(i => i.unit).join(', ')
+  return { body, summary }
+}
+
+// ── Door codes ─────────────────────────────────────────────────────────────────────────────────
+
+export function codeProblemsMessage(opts: {
+  duplicates: { code: string; units: string[] }[]
+  missing: string[]
+  audience: string[]
+}): { body: string; summary: string } {
+  const { duplicates, missing, audience } = opts
+  const lines: string[] = []
+  if (duplicates.length) {
+    lines.push('*Same code on more than one unit*')
+    for (const d of duplicates) lines.push('• `' + d.code + '` — ' + d.units.join(' and '))
+  }
+  if (missing.length) {
+    if (lines.length) lines.push('')
+    lines.push('*No code on file, guest arriving*')
+    lines.push('• ' + missing.slice(0, 12).join(', ') + (missing.length > 12 ? ' …and ' + (missing.length - 12) + ' more' : ''))
+  }
+
+  const body = nl([
+    '🔑 *Door codes worth a check*',
+    '',
+    lines.join('\n'),
+    '',
+    duplicates.length
+      ? 'Two guests holding the same code is worth fixing before check-in — easy to change, awkward to explain afterwards.'
+      : 'These just need a code set before the guest arrives, so nobody is locked out at 1am.',
+    ccLine(audience),
+  ])
+  const summary = (duplicates.length ? duplicates.length + ' duplicate' : '') +
+    (duplicates.length && missing.length ? ', ' : '') +
+    (missing.length ? missing.length + ' missing' : '') + ' door code' + (duplicates.length + missing.length === 1 ? '' : 's')
+  return { body, summary }
+}
+
+// ── Booked into a blocked unit ─────────────────────────────────────────────────────────────────
+
+export type BlockedArrivalItem = {
+  unit: string
+  checkIn: string
+  daysAway: number
+  reason: string
+  openEnded: boolean
+  blockedTo: string
+}
+
+export function blockedArrivalsMessage(opts: {
+  items: BlockedArrivalItem[]
+  audience: string[]
+}): { body: string; summary: string } {
+  const { items, audience } = opts
+  const rows = items.map(i => {
+    const when = i.daysAway <= 0 ? 'arriving TODAY' : i.daysAway === 1 ? 'arriving tomorrow' : 'arriving in ' + i.daysAway + ' days'
+    const until = i.openEnded ? 'no end date set' : 'blocked to ' + i.blockedTo
+    return '• *' + i.unit + '* — ' + when + ' (' + i.checkIn + ')\n   ' + i.reason + ' · ' + until
+  })
+
+  const body = nl([
+    '🚨 *Guest booked into a unit that is out of service*',
+    'Better to catch these now than at the door.',
+    '',
+    rows.join('\n'),
+    '',
+    'Either the unit needs to be ready in time, or the guest needs moving. Whoever picks it up, drop a note here so we do not both chase it.',
+    ccLine(audience),
+  ])
+  const summary = items.length + ' arrival' + (items.length === 1 ? '' : 's') + ' into blocked ' +
+    plural(items.length, 'unit', 'units') + ' — ' + items.slice(0, 3).map(i => i.unit).join(', ')
+  return { body, summary }
+}
+
+// ── Short market brief ─────────────────────────────────────────────────────────────────────────
+
+export type MarketLine = {
+  market: string
+  headlines: string[]
+  lateCleans: number
+  openIssues: number
+}
+
+/**
+ * Jon: "short and to the point, top priorities per market." So: one line per market, at most three
+ * bullets under it, and a clean market gets a single green line rather than a row of zeros.
+ */
+export function marketBriefMessage(opts: {
+  markets: MarketLine[]
+  date: string
+  audience: string[]
+}): { body: string; summary: string } {
+  const { markets, date, audience } = opts
+  const blocks = markets.map(m => {
+    if (!m.headlines.length) return '*' + m.market + '* — all clear ✅'
+    return '*' + m.market + '*\n' + m.headlines.map(h => '   ' + h).join('\n')
+  })
+
+  const worst = markets.filter(m => m.headlines.length).length
+  const body = nl([
+    opener(date + 'mb', ['📌 *Top priorities today*', '📌 *Where to push today*', '📌 *Today, in short*']),
+    '',
+    blocks.join('\n\n'),
+    '',
+    worst ? 'That is the whole list — anything not above is running fine.' : 'Nothing outstanding anywhere. Good day to get ahead of the upkeep work.',
+    ccLine(audience),
+  ])
+  const summary = worst ? worst + ' market' + (worst === 1 ? '' : 's') + ' need attention' : 'all markets clear'
+  return { body, summary }
+}
+
+// ── Nightly handover (leadership) ──────────────────────────────────────────────────────────────
+
+export type HandoverAreaLine = {
+  area: string
+  cleans: number
+  arrivals: number
+  departures: number
+  sameDayTurns: number
+  openIssues: number
+}
+
+/**
+ * The draft of what Karla writes by hand every night. Explicitly framed as a DRAFT, because Jon
+ * asked for it to go to leadership so they "can then edit it as needed" — it is a starting point,
+ * not a published report, and saying so stops anyone treating it as final.
+ */
+export function handoverMessage(opts: {
+  date: string
+  areas: HandoverAreaLine[]
+  audience: string[]
+}): { body: string; summary: string } {
+  const { date, areas, audience } = opts
+  const busiest = areas.slice().sort((a, b) => (b.cleans + b.arrivals) - (a.cleans + a.arrivals))[0]
+  const totals = areas.reduce((acc, a) => ({
+    cleans: acc.cleans + a.cleans,
+    arrivals: acc.arrivals + a.arrivals,
+    departures: acc.departures + a.departures,
+    turns: acc.turns + a.sameDayTurns,
+  }), { cleans: 0, arrivals: 0, departures: 0, turns: 0 })
+
+  const rows = areas
+    .filter(a => a.cleans || a.arrivals || a.departures)
+    .map(a => {
+      const bits = [
+        a.cleans ? a.cleans + ' ' + plural(a.cleans, 'clean', 'cleans') : null,
+        a.arrivals ? a.arrivals + ' in' : null,
+        a.departures ? a.departures + ' out' : null,
+        a.sameDayTurns ? a.sameDayTurns + ' same-day ' + plural(a.sameDayTurns, 'turn', 'turns') : null,
+        a.openIssues ? a.openIssues + ' open ' + plural(a.openIssues, 'issue', 'issues') : null,
+      ].filter(Boolean)
+      return '• *' + a.area + '* — ' + bits.join(' · ')
+    })
+
+  const body = nl([
+    '🌙 *Highlights for tomorrow — ' + date + '*',
+    '_Draft from Lighthouse. Edit anything that needs it before it goes out._',
+    '',
+    totals.cleans + ' ' + plural(totals.cleans, 'clean', 'cleans') + ', ' + totals.arrivals + ' ' +
+      plural(totals.arrivals, 'arrival', 'arrivals') + ', ' + totals.departures + ' ' +
+      plural(totals.departures, 'departure', 'departures') +
+      (totals.turns ? ', ' + totals.turns + ' same-day ' + plural(totals.turns, 'turn', 'turns') : '') + '.',
+    busiest && (busiest.cleans + busiest.arrivals) > 0 ? 'Heaviest area is *' + busiest.area + '*.' : null,
+    '',
+    rows.join('\n'),
+    '',
+    'Anything to add before this goes to the team?',
+    ccLine(audience),
+  ])
+  const summary = 'Handover draft for ' + date + ' — ' + totals.cleans + ' cleans, ' + totals.arrivals + ' arrivals'
+  return { body, summary }
+}

@@ -27,8 +27,14 @@ import {
 import {
   lateCleansMessage, glitchesMessage, overtimeMessage, digestMessage,
   syncProblemMessage, syncRecoveredMessage,
+  lateCleansSpanish, glitchesSpanish,
+  repeatOffendersMessage, codeProblemsMessage, blockedArrivalsMessage,
+  marketBriefMessage, handoverMessage,
   type LateCleanItem, type GlitchItem, type LongShift,
 } from './slack-messages'
+import {
+  findRepeatOffenders, findCodeProblems, findBlockedArrivals, marketPriorities, tomorrowByArea,
+} from './slack-signals'
 
 /** Today in ET, YYYY-MM-DD. Everything operational in this app is anchored to Eastern. */
 export function etDate(d?: Date): string {
@@ -100,9 +106,12 @@ export async function runLateCleanAlert(): Promise<any> {
     }))
     const vendor = !!(bucket.group && bucket.group.vendor)
     const audience = audienceFor(rules, bucket.group, items.map(i => i.assigneeSlackId))
-    const { body, summary } = lateCleansMessage({
+    const { body: en, summary } = lateCleansMessage({
       area: bucket.label, items, audience, date: b.date, here: vendor,
     })
+    // Field crews are Spanish-first (Jon, 2026-08-19). Vendor areas stay English — those are
+    // outside companies with their own office staff, not our crews.
+    const body = (rules.bilingualFieldChannels && !vendor ? lateCleansSpanish(bucket.label, items) : '') + en
     const res = await draft({
       eventKey: 'late_cleans',
       groupKey: 'late_cleans:' + bucket.key + ':' + b.date,
@@ -165,9 +174,10 @@ export async function runGlitchAlert(): Promise<any> {
     const vendor = !!(bucket.group && bucket.group.vendor)
     const audience = audienceFor(rules, bucket.group, worth.map(i => i.assigneeSlackId))
     const label = bucket.label + (bucket.dept === 'housekeeping' ? ' · housekeeping' : ' · maintenance')
-    const { body, summary } = glitchesMessage({
+    const { body: en, summary } = glitchesMessage({
       area: label, items: worth, audience, date: today, here: vendor,
     })
+    const body = (rules.bilingualFieldChannels && !vendor ? glitchesSpanish(label, worth) : '') + en
     const res = await draft({
       eventKey: 'glitches',
       groupKey: 'glitches:' + bucket.key + ':' + today,
@@ -296,5 +306,161 @@ export async function runDigest(): Promise<any> {
     channelId: rules.defaultChannel || rules.firehose,
     body, summary, audience,
     itemCount: 1,
+  }, rules)
+}
+
+// ── 6. The same problem coming back ────────────────────────────────────────────────────────────
+
+/**
+ * Arya 2004/2 A/C: closed as fixed on the 13th, reopened the 14th, reopened the 15th. Nobody
+ * linked them — it surfaced because Jon remembered. This is that memory, automated.
+ */
+export async function runRepeatOffenderAlert(windowDays = 14): Promise<any> {
+  const rules = await getSlackRules()
+  if (!rules.events.repeat_offenders.enabled) return { skipped: 'disabled' }
+  const items = await findRepeatOffenders(windowDays)
+  if (!items.length) return { skipped: 'nothing repeating' }
+
+  const today = etDate()
+  const buckets = bucketBy(rules, items, i => i.unit, () => 'maintenance' as Dept)
+  const results: any[] = []
+  for (const bucket of buckets) {
+    const audience = audienceFor(rules, bucket.group, [])
+    const { body, summary } = repeatOffendersMessage({
+      items: bucket.rows.map(r => ({
+        unit: r.unit, category: r.category, count: r.count,
+        closedBefore: r.closedBefore, firstSeen: r.firstSeen, lastSeen: r.lastSeen,
+        latestIssue: r.latestIssue,
+      })),
+      audience, windowDays,
+    })
+    const res = await draft({
+      eventKey: 'repeat_offenders',
+      groupKey: 'repeat:' + bucket.key + ':' + today,
+      building: bucket.label,
+      channelId: channelFor(rules, bucket.group, 'maintenance'),
+      body, summary, audience, itemCount: bucket.rows.length,
+    }, rules)
+    results.push({ area: bucket.label, count: bucket.rows.length, ...res })
+  }
+  return { ok: true, groups: results.length, results }
+}
+
+// ── 7. Door codes ──────────────────────────────────────────────────────────────────────────────
+
+export async function runDoorCodeAlert(): Promise<any> {
+  const rules = await getSlackRules()
+  if (!rules.events.door_codes.enabled) return { skipped: 'disabled' }
+  const problems = await findCodeProblems(2)
+  if (!problems.length) return { skipped: 'codes look fine' }
+
+  const duplicates: { code: string; units: string[] }[] = []
+  let missing: string[] = []
+  for (const p of problems) {
+    if (p.kind === 'duplicate') duplicates.push({ code: p.code, units: p.units })
+    else missing = p.units
+  }
+
+  const today = etDate()
+  const audience = audienceFor(rules, null, [])
+  const { body, summary } = codeProblemsMessage({ duplicates, missing, audience })
+  // Codes are issued centrally by CCS, not per area — so this goes to one place, not per building.
+  return draft({
+    eventKey: 'door_codes',
+    groupKey: 'codes:' + today,
+    channelId: rules.opsChannel || rules.defaultChannel || rules.firehose,
+    body, summary, audience,
+    itemCount: duplicates.length + (missing.length ? 1 : 0),
+  }, rules)
+}
+
+// ── 8. Guest booked into a blocked unit ────────────────────────────────────────────────────────
+
+export async function runBlockedArrivalAlert(lookaheadDays = 5): Promise<any> {
+  const rules = await getSlackRules()
+  if (!rules.events.blocked_arrival.enabled) return { skipped: 'disabled' }
+  const items = await findBlockedArrivals(lookaheadDays)
+  if (!items.length) return { skipped: 'no arrivals into blocked units' }
+
+  const today = etDate()
+  const buckets = bucketBy(rules, items, i => i.unit, () => 'maintenance' as Dept)
+  const results: any[] = []
+  for (const bucket of buckets) {
+    const audience = audienceFor(rules, bucket.group, [])
+    const { body, summary } = blockedArrivalsMessage({
+      items: bucket.rows.map(r => ({
+        unit: r.unit, checkIn: r.checkIn, daysAway: r.daysAway,
+        reason: r.reason, openEnded: r.openEnded, blockedTo: r.blockedTo,
+      })),
+      audience,
+    })
+    const res = await draft({
+      eventKey: 'blocked_arrival',
+      groupKey: 'blocked:' + bucket.key + ':' + today,
+      building: bucket.label,
+      channelId: channelFor(rules, bucket.group, 'maintenance'),
+      body, summary, audience, itemCount: bucket.rows.length,
+    }, rules)
+    results.push({ area: bucket.label, count: bucket.rows.length, ...res })
+  }
+  return { ok: true, groups: results.length, results }
+}
+
+// ── 9. Top priorities per market ───────────────────────────────────────────────────────────────
+
+/** Jon: "a general brief in the VR ops channel, short and to the point, top priorities per market." */
+export async function runMarketBrief(): Promise<any> {
+  const rules = await getSlackRules()
+  if (!rules.events.market_brief.enabled) return { skipped: 'disabled' }
+  const markets = await marketPriorities()
+  if (!markets.length) return { skipped: 'no markets with work' }
+
+  const today = etDate()
+  const audience = rules.core
+  const { body, summary } = marketBriefMessage({
+    markets: markets.map(m => ({
+      market: m.market, headlines: m.headlines,
+      lateCleans: m.lateCleans, openIssues: m.openIssues,
+    })),
+    date: today, audience,
+  })
+  return draft({
+    eventKey: 'market_brief',
+    groupKey: 'marketbrief:' + today,
+    channelId: rules.opsChannel || rules.defaultChannel || rules.firehose,
+    body, summary, audience, itemCount: markets.length,
+  }, rules)
+}
+
+// ── 10. Nightly handover draft ─────────────────────────────────────────────────────────────────
+
+/**
+ * Karla writes this by hand every night. Jon asked for it to go to leadership so they can edit it
+ * before it goes out — so it is explicitly labelled a draft and holds if no leadership channel is
+ * set rather than guessing which room "Leadership" means.
+ */
+export async function runHandover(): Promise<any> {
+  const rules = await getSlackRules()
+  if (!rules.events.handover.enabled) return { skipped: 'disabled' }
+  if (!rules.leadershipChannel) {
+    return { skipped: 'no leadership channel set — pick one in /users then invite the bot' }
+  }
+  const { date, areas } = await tomorrowByArea()
+  if (!areas.length) return { skipped: 'nothing on the board for tomorrow' }
+
+  const audience = rules.leadership
+  const { body, summary } = handoverMessage({
+    date,
+    areas: areas.map(a => ({
+      area: a.area, cleans: a.cleans, arrivals: a.arrivals,
+      departures: a.departures, sameDayTurns: a.sameDayTurns, openIssues: a.openIssues,
+    })),
+    audience,
+  })
+  return draft({
+    eventKey: 'handover',
+    groupKey: 'handover:' + date,
+    channelId: rules.leadershipChannel,
+    body, summary, audience, itemCount: areas.length,
   }, rules)
 }

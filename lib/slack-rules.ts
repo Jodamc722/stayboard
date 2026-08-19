@@ -23,7 +23,10 @@ import { nameMatches, nameMatchesRoster } from './homebase'
 export const RULES_KEY = 'slack_rules'
 
 /** The alerts this system can send. Adding one here + a default rule is all it takes. */
-export type EventKey = 'late_cleans' | 'glitches' | 'overtime' | 'sync' | 'digest' | 'personal_brief'
+export type EventKey =
+  | 'late_cleans' | 'glitches' | 'overtime' | 'sync' | 'digest' | 'personal_brief'
+  // added 2026-08-19 after reading 30 days of every ops channel — see [[reference-slack-channels]]
+  | 'repeat_offenders' | 'door_codes' | 'blocked_arrival' | 'market_brief' | 'handover'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -32,6 +35,11 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   sync: 'Sync failures (system)',
   digest: 'Morning ops digest',
   personal_brief: 'Personal morning brief (DM)',
+  repeat_offenders: 'Same problem coming back',
+  door_codes: 'Door code duplicates & gaps',
+  blocked_arrival: 'Guest booked into a blocked unit',
+  market_brief: 'Top priorities per market',
+  handover: 'Nightly handover draft (leadership)',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -75,6 +83,14 @@ export type SlackRules = {
   firehose: string | null
   /** Used when a group has no channel for that department. */
   defaultChannel: string | null
+  /** The short per-market priorities brief goes here. Jon: "in the VR ops channel". */
+  opsChannel: string | null
+  /** The nightly handover draft goes here for leadership to edit before it goes out. */
+  leadershipChannel: string | null
+  /** Tagged on the handover: Karla, Roberto, Silvia, Sulaman, Bernadette, Jon. */
+  leadership: string[]
+  /** Field-facing messages lead with Spanish, then English. */
+  bilingualFieldChannels: boolean
   groups: RoutingGroup[]
   /** Always tagged on every alert, whatever the area. Jon + Roberto + Karla. */
   core: string[]
@@ -95,6 +111,11 @@ export type SlackRules = {
 export const JON_SLACK_ID = 'U04G9B24ECT'
 export const ROBERTO_SLACK_ID = 'U07FSK2BBG8'
 export const KARLA_SLACK_ID = 'U0AFT9LM0RH'
+// The handover audience Jon named on 2026-08-19: "Send to her, Roberto, Silvia, Suluman,
+// Bernadette and I in Leadership channel and we can then edit it as needed."
+export const SILVIA_SLACK_ID = 'U0BQJQ0EYKT'
+export const SULAMAN_SLACK_ID = 'U07PXLLK0LR'
+export const BERNADETTE_SLACK_ID = 'U0A0MS29MNG'
 
 // Jon's real channels, read off the workspace 2026-08-19. Seeded so this works on day one rather
 // than shipping empty and routing nothing; every one of them is editable in the admin.
@@ -163,6 +184,14 @@ const workHours = (approval: boolean): EventRule => ({
 export const DEFAULT_RULES: SlackRules = {
   firehose: null,
   defaultChannel: null,
+  // #vr-ops-team-projects — low volume, already report-shaped, supervisors expect structure here.
+  opsChannel: 'C083X66C17W',
+  // Left unset on purpose: Jon said "Leadership channel" and the only match in the workspace is
+  // #vr-jjleadership, which reads like the vendor's leadership room rather than Stay's. Pick it
+  // in the admin and invite the bot; until then the handover holds rather than going somewhere wrong.
+  leadershipChannel: null,
+  leadership: [KARLA_SLACK_ID, ROBERTO_SLACK_ID, SILVIA_SLACK_ID, SULAMAN_SLACK_ID, BERNADETTE_SLACK_ID, JON_SLACK_ID],
+  bilingualFieldChannels: true,
   groups: DEFAULT_GROUPS,
   core: [JON_SLACK_ID, ROBERTO_SLACK_ID, KARLA_SLACK_ID],
   people: {},
@@ -174,6 +203,15 @@ export const DEFAULT_RULES: SlackRules = {
     sync: { enabled: true, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 360 },
     digest: { enabled: true, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
     personal_brief: { enabled: false, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
+    // Once a day is plenty — a repeat is a week-old pattern, not breaking news.
+    repeat_offenders: { enabled: true, approval: true, quietStart: 8 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
+    // Codes matter before check-in, so this one is allowed to speak early.
+    door_codes: { enabled: true, approval: true, quietStart: 7 * 60, quietEnd: 20 * 60, cooldownMin: 12 * 60 },
+    // The one alert that should never wait: a guest is already booked into a dead unit.
+    blocked_arrival: { enabled: true, approval: true, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 6 * 60 },
+    market_brief: { enabled: true, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
+    // Written in the evening for the next day, like the human version it replaces.
+    handover: { enabled: true, approval: true, quietStart: 16 * 60, quietEnd: 23 * 60, cooldownMin: 20 * 60 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,
@@ -245,7 +283,7 @@ function mergeRule(stored: any, dflt: EventRule): EventRule {
 export function mergeRules(stored: any): SlackRules {
   const d = DEFAULT_RULES
   if (!stored || typeof stored !== 'object') {
-    return { ...d, core: d.core.slice(), approvers: d.approvers.slice(), groups: d.groups.map(g => ({ ...g })), events: { ...d.events } }
+    return { ...d, core: d.core.slice(), approvers: d.approvers.slice(), leadership: d.leadership.slice(), groups: d.groups.map(g => ({ ...g })), events: { ...d.events } }
   }
   const events = {} as Record<EventKey, EventRule>
   const keys = Object.keys(d.events) as EventKey[]
@@ -256,9 +294,14 @@ export function mergeRules(stored: any): SlackRules {
 
   const core = strList(stored.core, 30)
   const approvers = strList(stored.approvers, 20)
+  const leadership = strList(stored.leadership, 30)
   return {
     firehose: chan(stored.firehose),
     defaultChannel: chan(stored.defaultChannel),
+    opsChannel: stored.opsChannel === undefined ? d.opsChannel : chan(stored.opsChannel),
+    leadershipChannel: chan(stored.leadershipChannel),
+    leadership: leadership.length ? leadership : d.leadership.slice(),
+    bilingualFieldChannels: stored.bilingualFieldChannels === undefined ? d.bilingualFieldChannels : !!stored.bilingualFieldChannels,
     // Never leave the app with nowhere to route: an empty list falls back to the seeded areas.
     groups: groups.length ? groups : d.groups.map(g => ({ ...g })),
     // Jon asked for these three on everything. If someone empties the list we put them back.
