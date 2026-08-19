@@ -65,6 +65,12 @@ type Dest =
  * one says what will actually appear in the channel.
  */
 const ALERTS: { key: string; title: string; blurb: string; dest: Dest }[] = [
+  { key: 'readiness_3pm', title: '3pm check — ready for 4pm?', dest: { kind: 'area', note: 'housekeeping channel' },
+    blurb: 'At 3pm: how many of today\u2019s arrivals are cleaned and ready, and exactly which ones are not.' },
+  { key: 'labor_report', title: 'Hours, no-shows, over hours', dest: { kind: 'channel', field: 'leadershipChannel' },
+    blurb: 'Late afternoon: hours worked so far, anyone scheduled who never punched in, anyone running long.' },
+  { key: 'notable_arrivals', title: 'Owner stays & big bookings', dest: { kind: 'channel', field: 'leadershipChannel' },
+    blurb: 'Owner stays, high-value bookings and long stays arriving in the next week.' },
   { key: 'late_cleans', title: 'Cleans running behind', dest: { kind: 'area', note: 'housekeeping channel' },
     blurb: 'Departure cleans that have not started once the guest has gone, with the cleaner tagged.' },
   { key: 'glitches', title: 'Guest issues still open', dest: { kind: 'area', note: 'housekeeping or maintenance channel, by issue type' },
@@ -77,6 +83,8 @@ const ALERTS: { key: string; title: string; blurb: string; dest: Dest }[] = [
     blurb: 'Two arriving units sharing one code, or a unit with no code on file.' },
   { key: 'market_brief', title: 'Top priorities per market', dest: { kind: 'channel', field: 'opsChannel' },
     blurb: 'A short morning list — the two or three things worth pushing on, per market.' },
+  { key: 'walk_in_risk', title: 'Could be a walk-in tonight', dest: { kind: 'area', note: 'housekeeping channel' },
+    blurb: 'Any arrival today that is blocked or uncleaned. Mostly covered by the 3pm check \u2014 off by default.' },
   { key: 'handover', title: 'Nightly handover draft', dest: { kind: 'channel', field: 'leadershipChannel' },
     blurb: 'Tomorrow in numbers, per area, as a draft for leadership to edit before it goes out.' },
   { key: 'overtime', title: 'Someone running over hours', dest: { kind: 'channel', field: 'defaultChannel' },
