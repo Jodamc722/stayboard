@@ -82,21 +82,37 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Every reservation code that carries recognized money this month.
+      // Every reservation code that carries recognized money this month — and, as a side effect,
+      // which owner each listing's money lands with. That mapping is what lets this run BEFORE
+      // statements exist: pre-statement, "missing" means revenue not reaching the ledger at all,
+      // which is exactly the thing to catch during the month instead of on statement day.
       const onStatement = new Set<string>()
+      const ledgerOwnerOfListing: Record<string, string> = {}
       for (let off = 0; off < 100_000; off += 1000) {
         // Same selector the audit uses — the code lives in the row's JSON, not in a column.
         const { data, error } = await sb.from('guesty_owner_ledger')
-          .select('res:raw->reservationConfirmationCode->>title')
+          .select('owner_id, listing_id, res:raw->reservationConfirmationCode->>title')
           .eq('recognized', true).eq('entry_month', month)
           .range(off, off + 999)
         if (error) break
         const batch = (data || []) as any[]
-        for (const r of batch) { const c = String((r as any).res || '').trim(); if (c) onStatement.add(c) }
+        for (const r of batch) {
+          const c = String((r as any).res || '').trim(); if (c) onStatement.add(c)
+          const lid = String((r as any).listing_id || '')
+          if (lid && (r as any).owner_id) ledgerOwnerOfListing[lid] = String((r as any).owner_id)
+        }
         if (batch.length < 1000) break
       }
+      // Names for the fallback mapping and for units, so the answer reads like the portfolio.
+      const { data: ownRows } = await sb.from('guesty_owners').select('id, full_name')
+      const ownerNameOf: Record<string, string> = {}
+      for (const o of (ownRows || []) as any[]) ownerNameOf[String(o.id)] = String(o.full_name || '')
+      const { data: lstRows } = await sb.from('guesty_listings').select('id, nickname, title')
+      const unitNameOf: Record<string, string> = {}
+      for (const l of (lstRows || []) as any[]) unitNameOf[String(l.id)] = String(l.nickname || l.title || '')
 
       const missing: any[] = []; const changed: any[] = []; const canceledAfter: any[] = []
+      const seenCode = new Set<string>()   // the mirror duplicates bookings — dedupe on code+listing
       let scanned = 0, missingMoney = 0
       for (let off = 0; off < 20_000; off += 1000) {
         const { data, error } = await sb.from('guesty_reservations')
@@ -113,13 +129,17 @@ export async function POST(req: NextRequest) {
           const dead = /cancel|inquiry|declin|expir/.test(status)
           const lid = String(r.listing_id || '')
           const st = genByListing[lid]
+          const fallbackOwner = ledgerOwnerOfListing[lid] ? (ownerNameOf[ledgerOwnerOfListing[lid]] || '') : ''
           const row = {
-            code, guest: String(r.guest_name || ''), unit: lid,
+            code, guest: String(r.guest_name || ''), unit: unitNameOf[lid] || lid,
             checkIn: String(r.check_in || ''), checkOut: String(r.check_out || ''),
             status, source: String(r.source || ''), money: Math.round(money * 100) / 100,
-            owner: st ? st.owner : '(listing not on any statement)',
+            owner: st ? st.owner : (fallbackOwner || '(listing not tied to any owner this month)'),
           }
-          if (!dead && money > 1 && code && !onStatement.has(code)) { missing.push(row); missingMoney += money }
+          const dupKey = code + '|' + lid
+          if (!dead && money > 1 && code && !onStatement.has(code) && !seenCode.has(dupKey)) {
+            seenCode.add(dupKey); missing.push(row); missingMoney += money
+          }
           const upd = String((r as any).upd || '')
           if (st && st.gen && upd && upd > st.gen) {
             if (/cancel/.test(status)) canceledAfter.push({ ...row, changedAt: upd, statementBuilt: st.gen, onStatement: onStatement.has(code) })
@@ -130,7 +150,11 @@ export async function POST(req: NextRequest) {
       }
       const byOwner = (arr: any[]) => arr.reduce((a: any, r: any) => { a[r.owner] = (a[r.owner] || 0) + 1; return a }, {})
       return NextResponse.json({
-        ok: true, month, statementsGeneratedUpTo: genMax, reservationsScanned: scanned,
+        ok: true, month,
+        // pre-statement = statements don't exist yet, so "missing" means revenue not reaching the
+        // owners ledger as the month accrues — the weekly check, not the statement-day one.
+        mode: (stRows || []).length ? 'vs-statements' : 'pre-statement',
+        statementsGeneratedUpTo: genMax, reservationsScanned: scanned,
         codesOnStatements: onStatement.size,
         earnedButNotOnAnyStatement: { count: missing.length, money: Math.round(missingMoney * 100) / 100, byOwner: byOwner(missing), rows: missing.slice(0, 400) },
         changedAfterTheStatementWasBuilt: { count: changed.length, byOwner: byOwner(changed), rows: changed.slice(0, 200) },
