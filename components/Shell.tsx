@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
+import { EveFloat } from '@/components/EveFloat'
 import {
   Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
@@ -37,7 +38,9 @@ const SECTIONS: NavSection[] = [
     title: 'Overview',
     items: [
       { to: '/command', label: 'Command Center', Icon: Gauge },
-      { to: '/eve',     label: 'Eve',            Icon: Sparkles },
+      // Eve left the sidebar on 2026-08-19 (Jon: "Eve does not need her own page — a floating
+      // icon"). She is the bubble in the bottom-right corner of every page now; managing her
+      // memory/voice/direction lives in Users & admin → Settings → Eve.
       { to: '/',        label: 'Home',           Icon: Home },
     ],
   },
@@ -432,6 +435,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <main className="flex-1 overflow-auto">
           <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8 animate-fade-in">{children}</div>
         </main>
+
+        {/* Eve rides along on every page (Jon, 2026-08-19: floating icon, not a page). Same
+            role gate the old sidebar entry used — a role with eve 'off' never sees the bubble. */}
+        {canSee('/eve') && <EveFloat />}
 
         {/* Mobile bottom bar — the first four pins. One thumb, no scrolling. */}
         {pinned.length > 0 && (
