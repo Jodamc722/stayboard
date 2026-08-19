@@ -77,7 +77,7 @@ type Item = {
   statusTag: 'canceled' | 'inquiry' | 'declined' | 'expired' | null
   rental: number; commission: number; other: number; net: number
   rate: number | null; avgRate: number | null
-  lines: Line[]; lineCount: number; posted: number; reversed: number; resValue: number | null
+  lines: Line[]; lineCount: number; lastPosted: string; posted: number; reversed: number; resValue: number | null
   flags: Flag[]; needsReview: boolean
   status: Status; touched: boolean; note: string; comments: Comment[]
   updatedBy: string | null; updatedAt: string | null
@@ -96,7 +96,7 @@ type Data = {
   month: string; label: string; owners: Owner[]; items: Item[]
   totals: {
     owners: number; statements: number; reservations: number; flagged: number; high: number
-    review: number; action: number; done: number; clear: number; signedOff: number; prepOpen: number
+    review: number; action: number; done: number; clear: number; postedThisWeek: number; signedOff: number; prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
   coverage: { ready: boolean; missing: string[]; syncedAt: string | null; resScanned: number; ownerStaysFound: number }
@@ -290,6 +290,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [fOwner, setFOwner] = useState('')
   const [fSource, setFSource] = useState('')                                 // channel filter (label)
   const [fTag, setFTag] = useState<'' | 'canceled' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'>('')
+  // The weekly lens: only rows whose line items moved in the last 7 days. This is what makes the
+  // board a Monday-morning tool instead of a statement-day scramble — the team reviews what
+  // CHANGED since last week, and by generation day there is nothing left to discover.
+  const [fFresh, setFFresh] = useState(false)
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({})
   // Worklist opens CLEAN: every statement collapsed to its totals row. expandedOwners is the
   // explicit open/close override; sections auto-open while filters or a search are active.
@@ -302,6 +306,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [recheckBusy, setRecheckBusy] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [rowSync, setRowSync] = useState('')   // item key currently being re-pulled from Guesty
+  const [covBusy, setCovBusy] = useState(false)
+  const [cov, setCov] = useState<any>(null)    // coverage check result (revenue not reaching the ledger)
+  const [routineOpen, setRoutineOpen] = useState(false)
   // Changes the server never confirmed, keyed by row — shown on the row with a Retry button so a
   // dropped connection can never look like saved work.
   const [unsaved, setUnsaved] = useState<Record<string, { body: Record<string, any>; label: string }>>({})
@@ -576,6 +583,21 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     setRowSync('')
   }
 
+  // COVERAGE — the other direction. The audit reads what IS on the statements; this asks what
+  // never arrived: bookings with guest revenue and no line in the month's ledger. Run weekly, it
+  // catches an unmapped listing in week one instead of on statement day.
+  const checkCoverage = async () => {
+    if (!month || covBusy) return
+    setCovBusy(true); setCov(null)
+    try {
+      const r = await fetch('/api/sync/owner-statements?gap=1&month=' + month, { method: 'POST' })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) { setError(j.error || 'Coverage check failed — try again in a minute.'); setCovBusy(false); return }
+      setCov(j)
+    } catch (e: any) { setError(String(e?.message || e)) }
+    setCovBusy(false)
+  }
+
   // Pull this month's statements + line items straight from Guesty. The hourly sync keeps the
   // mirror current by itself; this is for the moment right after someone generates or re-recognizes
   // statements in Guesty and wants the board to reflect it immediately.
@@ -641,7 +663,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const filtered = useMemo(() => {
     if (!data) return [] as Item[]
     const needle = q.trim().toLowerCase()
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
     return data.items.filter(it => {
+      if (fFresh && !(it.lastPosted && it.lastPosted >= weekAgo)) return false
       if (fOwner && it.ownerId !== fOwner) return false
       if (fStatus && it.status !== fStatus) return false
       if (fFlag === 'flagged' && !it.flags.some(f => f.severity !== 'info')) return false
@@ -655,7 +679,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       }
       return true
     })
-  }, [data, q, fStatus, fFlag, fOwner, fSource, fTag, ownerName])
+  }, [data, q, fStatus, fFlag, fOwner, fSource, fTag, fFresh, ownerName])
 
   // Tag + channel counts for the filter chips.
   const tagCounts = useMemo(() => {
@@ -737,6 +761,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.stayTag && (
                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-violet-50 text-violet-700 ring-violet-200">
                   {STAY_LABEL[it.stayTag]}
+                </span>
+              )}
+              {it.lastPosted && it.lastPosted >= freshCut && (
+                <span title={'Line items posted ' + dateShort(it.lastPosted) + ' — new activity since last week'}
+                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-teal-50 text-teal-700 ring-teal-200">
+                  posted {dateShort(it.lastPosted)}
                 </span>
               )}
               {it.statusTag === 'canceled' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-neutral-100 text-neutral-600 ring-neutral-300 line-through decoration-neutral-400">Canceled</span>}
@@ -1051,6 +1081,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
   const staleHours = data ? hoursSince(data.coverage.syncedAt) : null
   const draftCount = data ? data.owners.filter(o => o.hasStatement && o.isDraft).length : 0
+  const freshCut = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+  // A month being audited BEFORE its statements exist — the daily/weekly mode.
+  const preStatement = !!data && data.totals.statements === 0 && data.items.length > 0
   const t = data?.totals
   const total = t ? t.review + t.action + t.done : 0
   const pct = total ? Math.round((t!.done / total) * 100) : 0
@@ -1117,6 +1150,36 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           <AlertTriangle size={14} /> The statement line items for {data.label} are still syncing from Guesty — rows may be incomplete until the sync finishes.
         </div>
       )}
+      {/* PRE-STATEMENT MONTH — the daily/weekly mode. Statements don't exist yet; the board is
+          auditing the month as it accrues so that generation day is boring. */}
+      {preStatement && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-900 text-sm px-3 py-2 flex items-start gap-2">
+          <Check size={14} className="mt-0.5 shrink-0 text-indigo-600" />
+          <span>
+            No statements have been generated for {data!.label} yet — you&rsquo;re auditing the month <span className="font-semibold">as it builds</span>.
+            Work the flagged rows and the &ldquo;Posted this week&rdquo; filter each week, and by the time Guesty generates the statements there should be nothing left to find.
+          </span>
+        </div>
+      )}
+      {/* WEEKLY ROUTINE — the team's checklist, on the board where the work happens. */}
+      {data && (
+        <div className="rounded-xl border border-line bg-white">
+          <button onClick={() => setRoutineOpen(v => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-muted hover:text-ink">
+            {routineOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <span className="font-semibold text-ink">How to run the week</span>
+            <span className="text-xs">— the routine that keeps statement day boring</span>
+          </button>
+          {routineOpen && (
+            <div className="px-4 pb-3 text-sm text-ink space-y-1.5">
+              <div><span className="font-semibold">1 · Sync.</span> Hit <span className="font-semibold">Sync now</span> so the board reflects Guesty as of this morning (it also refreshes hourly on its own).</div>
+              <div><span className="font-semibold">2 · Work what changed.</span> Turn on <span className="font-semibold">Posted this week</span> — that&rsquo;s everything with new line items since last review. Approve the clean ones, mark Action on anything that needs fixing in Guesty.</div>
+              <div><span className="font-semibold">3 · Check coverage.</span> Run <span className="font-semibold">Check coverage</span> — bookings earning money that isn&rsquo;t reaching the ledger. An unmapped listing caught in week one is a five-minute fix; caught on statement day it&rsquo;s a re-generation.</div>
+              <div><span className="font-semibold">4 · Prep + owner stays.</span> The Prep tab for Expedia fee breakouts; the <span className="font-semibold">Owner / F&amp;F stay</span> flags for cleaning fees that were never charged.</div>
+              <div><span className="font-semibold">5 · Statement week.</span> When Guesty generates the statements, the only new work is the ties: confirm each statement matches the rows you already approved, then sign off owner by owner.</div>
+            </div>
+          )}
+        </div>
+      )}
       {/* DRAFT MONTH — Guesty has not finalised these statements, so their balances are still
           moving and cannot be reconciled yet. Said once, at the top, before anyone chases a
           difference that is only a draft in progress. */}
@@ -1146,11 +1209,46 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             {staleHours != null && staleHours > 26 && ' It refreshes hourly on its own — if this keeps growing, the sync has stopped.'}
           </span>
           {internal && (
-            <button onClick={syncNow} disabled={syncing}
-              title="Pull this month's statements and line items from Guesty right now"
-              className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50">
-              <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Pulling from Guesty…' : 'Sync now'}
-            </button>
+            <span className="ml-auto flex items-center gap-2">
+              <button onClick={checkCoverage} disabled={covBusy}
+                title="Find bookings earning money that isn't reaching the ledger — unmapped listings, unrecognised stays"
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50">
+                <ShieldAlert size={12} /> {covBusy ? 'Checking…' : 'Check coverage'}
+              </button>
+              <button onClick={syncNow} disabled={syncing}
+                title="Pull this month's statements and line items from Guesty right now"
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50">
+                <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Pulling from Guesty…' : 'Sync now'}
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+      {/* COVERAGE RESULT — revenue that exists on bookings but not in the month's ledger. */}
+      {cov && (
+        <div className={'rounded-xl border text-sm px-3 py-2 ' + (cov.earnedButNotOnAnyStatement.count ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800')}>
+          <div className="flex items-center gap-2">
+            {cov.earnedButNotOnAnyStatement.count ? <AlertTriangle size={14} className="shrink-0" /> : <Check size={14} className="shrink-0" />}
+            <span className="font-semibold">
+              {cov.earnedButNotOnAnyStatement.count
+                ? cov.earnedButNotOnAnyStatement.count + ' booking' + (cov.earnedButNotOnAnyStatement.count === 1 ? '' : 's') + ' · ' + fmt0(cov.earnedButNotOnAnyStatement.money) + ' of guest revenue is not ' + (cov.mode === 'pre-statement' ? 'reaching the ledger' : 'on any statement')
+                : 'Every booking with revenue this month is ' + (cov.mode === 'pre-statement' ? 'flowing into the ledger' : 'on a statement') + '.'}
+            </span>
+            <button onClick={() => setCov(null)} className="ml-auto text-xs font-semibold hover:underline">Dismiss</button>
+          </div>
+          {cov.earnedButNotOnAnyStatement.count > 0 && (
+            <div className="mt-1.5 text-xs space-y-0.5 max-h-44 overflow-y-auto">
+              {cov.earnedButNotOnAnyStatement.rows.slice(0, 25).map((r: any, i: number) => (
+                <div key={i} className="flex flex-wrap gap-x-2">
+                  <span className="font-medium">{r.unit}</span>
+                  <span>{r.guest}</span>
+                  <span className="opacity-70">{dateShort(r.checkIn)}–{dateShort(r.checkOut)}</span>
+                  <span className="font-semibold tabular-nums ml-auto">{fmt(r.money)}</span>
+                  <span className="opacity-70">{r.owner}</span>
+                </div>
+              ))}
+              {cov.earnedButNotOnAnyStatement.count > 25 && <div className="italic opacity-70">…and {cov.earnedButNotOnAnyStatement.count - 25} more</div>}
+            </div>
           )}
         </div>
       )}
@@ -1792,6 +1890,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   </button>
                 ))}
                 <span className="w-px h-5 bg-line mx-1" />
+                {/* The weekly lens: what moved since last week's review. */}
+                <button onClick={() => setFFresh(v => !v)}
+                  title="Only rows with line items posted in the last 7 days — review what changed since last week"
+                  className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-teal-50 text-teal-700 ring-teal-200 transition' + (fFresh ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
+                  <RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week {t!.postedThisWeek}
+                </button>
                 <button onClick={() => setFFlag(fFlag === 'flagged' ? '' : 'flagged')}
                   className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200 transition' + (fFlag === 'flagged' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
                   <ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged {t!.flagged}
@@ -1832,8 +1936,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, code…"
                     className="text-xs border border-line rounded-lg pl-7 pr-2.5 py-1.5 w-48 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 </div>
-                {(fStatus || fFlag || fTag || fSource || fOwner || q) && (
-                  <button onClick={() => { setFStatus(''); setFFlag(''); setFTag(''); setFSource(''); setFOwner(''); setQ('') }}
+                {(fStatus || fFlag || fTag || fSource || fOwner || q || fFresh) && (
+                  <button onClick={() => { setFStatus(''); setFFlag(''); setFTag(''); setFSource(''); setFOwner(''); setQ(''); setFFresh(false) }}
                     className="text-[11px] font-medium text-muted hover:text-ink underline">Clear all</button>
                 )}
               </div>
@@ -1842,7 +1946,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   and open rows first, with the full statement one click further */}
               {data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length).map(o => {
                 const items = byOwner[o.ownerId]
-                const filterActive = !!(q.trim() || fStatus || fFlag || fOwner || fSource || fTag)
+                const filterActive = !!(q.trim() || fStatus || fFlag || fOwner || fSource || fTag || fFresh)
                 const isOpen = expandedOwners[o.ownerId] !== undefined ? expandedOwners[o.ownerId] : filterActive
                 const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
                 const s = stats[o.ownerId] || { notes: 0, comments: 0 }
