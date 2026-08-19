@@ -1,24 +1,58 @@
 // Salato house rules shown on the iPad check-in / verification flow. The guest initials each
 // rule and signs at the end; the signed set + version are stored with the verification record.
-// DRAFT — Jon to review/edit wording. Bump SALATO_RULES_VERSION whenever the text changes so
+// These four rules + the intro and IMPORTANT note mirror the official "SALATO — Pompano Beach"
+// printed house-rules card exactly. Bump SALATO_RULES_VERSION whenever the text changes so
 // existing signatures stay tied to the exact version the guest agreed to.
-export const SALATO_RULES_VERSION = 1
+export const SALATO_RULES_VERSION = 2
 
 export type HouseRule = { id: string; title: string; body: string }
 
+// Framing text from the printed card. Shown above (intro) and below (important) the rule cards on
+// the verification form and in the emailed record. Not part of the per-rule initialing.
+export const SALATO_RULES_INTRO =
+  'Salato is a private residential community, not a hotel. Residents are responsible for the conduct of their household members, tenants and guests.'
+export const SALATO_RULES_IMPORTANT =
+  'Violations may result in warnings, cleaning or damage charges, loss of amenity privileges, or other action permitted by the governing documents. Report active disturbances to the Front Desk immediately.'
+
+// Each rule's body holds its bullet lines separated by newlines; every surface renders them as a
+// bulleted list. Titles carry NO leading number — the form/PDF number them from their position.
 export const SALATO_RULES: HouseRule[] = [
-  { id: 'occupancy', title: 'Registered guests & occupancy', body: 'Only the guests on the reservation may stay overnight. The maximum occupancy for the unit may not be exceeded at any time. Please let the front desk know if this changes.' },
-  { id: 'no-parties', title: 'No parties or events', body: 'Parties, events, and gatherings beyond the registered guests are not permitted. Violations may result in immediate removal without refund and additional charges.' },
-  { id: 'quiet-hours', title: 'Quiet hours (10:00 PM – 8:00 AM)', body: 'Please keep noise to a respectful level at all times, and especially during quiet hours. This is a residential building and noise complaints may result in fines or removal.' },
-  { id: 'no-smoking', title: 'No smoking', body: 'Smoking or vaping of any kind is prohibited inside the unit and on balconies. A cleaning/remediation fee of up to $500 applies to violations.' },
-  { id: 'building-rules', title: 'Building & amenity rules', body: 'I agree to follow all building rules, including for elevators, pool, gym, and common areas, and to treat neighbors, staff, and security with respect.' },
-  { id: 'parking', title: 'Parking', body: 'Park only in your assigned spot or as directed by the front desk. Unauthorized vehicles may be towed at the owner’s expense.' },
-  { id: 'no-pets', title: 'Pets', body: 'Pets are not permitted unless approved in writing before arrival. Service animals are welcome as required by law.' },
-  { id: 'damage', title: 'Damage & responsibility', body: 'I am responsible for any damage, loss, or extraordinary cleaning caused during my stay and authorize reasonable charges for such costs to the payment method on file.' },
-  { id: 'keys-access', title: 'Keys, fobs & access', body: 'I will safeguard all keys, fobs, and access codes and not share them. Lost keys/fobs or lockout assistance may incur a fee.' },
-  { id: 'checkout', title: 'Check-out', body: 'Check-out is by the time stated on my reservation. Late check-out must be approved in advance and may incur a fee. Please leave the unit secured.' },
-  { id: 'id-consent', title: 'ID & identity verification', body: 'I consent to providing a valid government-issued photo ID and a photo of myself for identity verification, and confirm the ID is mine and I am the guest of record.' },
-  { id: 'accuracy', title: 'Accuracy & agreement', body: 'I confirm the information I have provided is accurate, I am at least 18 years old (or the local age of majority), and I agree to these house rules for the duration of my stay.' },
+  {
+    id: 'quiet-hours',
+    title: 'Quiet Hours & Balcony Noise',
+    body:
+      'Quiet hours are 9:00 p.m. to 10:00 a.m.\n' +
+      'Music and amplified sound are not permitted on balconies or patios during quiet hours.\n' +
+      'Shouting, loud singing and conversations must not be audible from neighboring residences.\n' +
+      'Noise must remain reasonable at all times, even outside quiet hours.',
+  },
+  {
+    id: 'proper-attire',
+    title: 'Proper Attire',
+    body:
+      'Shirts or appropriate tops, bottoms and footwear are required in indoor common areas.\n' +
+      "Swimwear must be covered in the lobby, hallways, elevators and Owners' Lounge.\n" +
+      'Wet swimwear and bare feet are not permitted in indoor common areas.\n' +
+      'Proper athletic clothing and closed-toe shoes are required in the fitness center.',
+  },
+  {
+    id: 'clean-up',
+    title: 'Clean Up After Yourself',
+    body:
+      'Remove all towels, trash, food, beverage containers and personal belongings when leaving.\n' +
+      'Return chairs, tables and other furniture to their designated locations.\n' +
+      'Do not leave wet towels on loungers or cups and beverages in amenity areas.\n' +
+      'Clean spills immediately and report any damage or unsafe condition to staff.',
+  },
+  {
+    id: 'pool-shared',
+    title: 'Pool & Shared Areas',
+    body:
+      'The pool and pool deck are open from sunrise to sunset.\n' +
+      'Glass containers, smoking, vaping, rough play and disruptive music are prohibited.\n' +
+      'Common areas must remain clean, quiet and unobstructed.\n' +
+      'Furniture, equipment and property items may not be moved, damaged or misused.',
+  },
 ]
 
 // Rules can be edited by the team (Rules tab on the Salato board); the active set is stored here.
