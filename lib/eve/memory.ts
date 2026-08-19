@@ -80,22 +80,52 @@ export function scopesForText(text: string, listingMeta: Record<string, { name: 
   return scopes
 }
 
-/** Load the memories that matter for this turn, highest weight first. */
-export async function loadMemories(scopes: string[], email: string, limit = 60): Promise<EveMemory[]> {
+// Tokenise for relevance scoring: lowercase words of 3+ chars, minus glue words that carry no
+// signal. Deterministic and cheap — this runs on every turn, so no model call and no regex storms.
+const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'what', 'when', 'where', 'which', 'have', 'has', 'are', 'was', 'were', 'you', 'your', 'her', 'she', 'about', 'should', 'would', 'could', 'from', 'into', 'they', 'them', 'there', 'their', 'been', 'being', 'not', 'can', 'will', 'why', 'how', 'who', 'all', 'any', 'our', 'out', 'get', 'got'])
+function words(s: string): string[] {
+  return lc(s).split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOP.has(w))
+}
+
+/**
+ * Load the memories that matter for THIS turn. Two-stage on purpose:
+ *   1. SQL narrows to the relevant scopes (never the whole table) and returns a wide candidate set.
+ *   2. In-process ranking orders candidates by weight, proven usefulness (use_count), recency, AND
+ *      overlap with the actual question — so when Jon asks about refunds, the refund rules beat an
+ *      equally-weighted note about parking, instead of losing on a tie-break of updated_at.
+ * The question is optional; without it the ranking degrades exactly to the old weight/recency order.
+ */
+export async function loadMemories(scopes: string[], email: string, limit = 60, question = ''): Promise<EveMemory[]> {
   const db = supabaseAdmin()
   const wanted = scopes.slice()
   if (email) wanted.push('person:' + lc(email))
   try {
     const { data, error } = await db.from('eve_memory')
-      .select('*')
+      .select('id,kind,text,why,scope,weight,source,confidence,evidence,created_by,use_count,last_used_at,expires_on,superseded_by,created_at,updated_at')
       .is('superseded_by', null)
       .in('scope', wanted)
       .order('weight', { ascending: false })
       .order('updated_at', { ascending: false })
-      .limit(limit)
+      .limit(Math.max(limit * 2, 120))
     if (error) return []
     const today = new Date().toISOString().slice(0, 10)
-    return (data || []).filter((r: any) => !r.expires_on || String(r.expires_on) >= today) as EveMemory[]
+    const live = ((data || []) as any[]).filter(r => !r.expires_on || String(r.expires_on) >= today)
+    const qWords = new Set(words(question))
+    const now = Date.now()
+    const scored = live.map(r => {
+      let rel = 0
+      if (qWords.size) {
+        for (const w of words(String(r.text || '') + ' ' + String(r.why || ''))) if (qWords.has(w)) rel++
+      }
+      const ageDays = Math.max(0, (now - new Date(r.updated_at || r.created_at).getTime()) / 864e5)
+      const recency = ageDays < 7 ? 3 : ageDays < 30 ? 2 : ageDays < 90 ? 1 : 0
+      // Rules and corrections must never be crowded out by chatty insights — they get a floor bump.
+      const kindBump = r.kind === 'rule' || r.kind === 'correction' ? 4 : r.kind === 'preference' ? 2 : 0
+      const score = Number(r.weight || 0) * 3 + Math.min(Number(r.use_count || 0), 12) + recency + Math.min(rel, 6) * 4 + kindBump
+      return { r, score }
+    })
+    scored.sort((a, b) => b.score - a.score)
+    return scored.slice(0, limit).map(x => x.r) as EveMemory[]
   } catch { return [] }
 }
 
@@ -132,10 +162,43 @@ export type SaveMemoryInput = {
   supersedes?: string | null; expires_on?: string | null
 }
 
-export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean; id?: string; error?: string }> {
+// Near-duplicate test for the dedupe below: same words is the same memory, however punctuated.
+function sameThought(a: string, b: string): boolean {
+  const A = new Set(words(a)), B = new Set(words(b))
+  if (!A.size || !B.size) return lc(a).trim() === lc(b).trim()
+  let inter = 0
+  A.forEach(w => { if (B.has(w)) inter++ })
+  const jaccard = inter / (A.size + B.size - inter)
+  const containment = inter / Math.min(A.size, B.size)
+  return jaccard >= 0.85 || (containment >= 0.95 && Math.min(A.size, B.size) >= 4)
+}
+
+export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean; id?: string; error?: string; deduped?: boolean }> {
   const db = supabaseAdmin()
   const text = String(input.text || '').trim().slice(0, 1000)
   if (!text) return { ok: false, error: 'empty memory' }
+
+  // DEDUPE, DON'T PILE UP (Jon, 2026-08-19: "make the memory feature faster and better"). The
+  // nightly sweep and the remember tool both re-learn the same facts; before this, each re-learning
+  // was a fresh row, so the table grew noise and the prompt budget filled with repeats. Now a new
+  // memory that says what an existing same-scope one already says REINFORCES it — weight keeps the
+  // higher value, the timestamp refreshes (so it ranks as current), and the row count stays flat.
+  try {
+    const scope = normScope(input.scope)
+    const { data: peers } = await db.from('eve_memory')
+      .select('id,text,weight,why')
+      .is('superseded_by', null).eq('scope', scope)
+      .order('updated_at', { ascending: false }).limit(120)
+    const twin = ((peers || []) as any[]).find(p => sameThought(String(p.text || ''), text))
+    if (twin) {
+      await db.from('eve_memory').update({
+        weight: Math.max(Number(twin.weight || 0), normWeight(input.weight)),
+        why: twin.why || (input.why ? String(input.why).slice(0, 500) : null),
+        updated_at: new Date().toISOString(),
+      }).eq('id', twin.id)
+      return { ok: true, id: twin.id, deduped: true }
+    }
+  } catch { /* dedupe is an optimisation — a failed check must never block learning */ }
   const row: any = {
     kind: normKind(input.kind),
     text,
