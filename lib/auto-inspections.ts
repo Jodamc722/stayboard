@@ -203,12 +203,14 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     const description =
       `AUTO-CREATED: ${c.reason.toUpperCase()} arriving ${c.check_in}.\n` +
       `Guest: ${c.guest_name} · ${c.nights || '?'} night${c.nights === 1 ? '' : 's'}${c.value ? ' · $' + Math.round(c.value).toLocaleString('en-US') : ''}\n` +
-      `Walk the unit before the guest lands: cleanliness to standard, AC cooling, hot water, wifi, ` +
-      `door code working, no maintenance flags. Photograph anything off and file it before check-in.\n\n` +
+      `Walk the unit AFTER the turn and BEFORE the guest lands: cleanliness to standard, AC cooling, ` +
+      `hot water, wifi, door code working, no maintenance flags. Photograph anything off and file it before check-in.\n\n` +
       `Created automatically by Lighthouse (big arrival / VIP / owner stay rule).`
-    // The day BEFORE the guest lands when there is one; arrival day itself when there isn't.
-    const dayBefore = ymdET(new Date(new Date(c.check_in + 'T12:00:00Z').getTime() - 86400000))
-    const scheduled = dayBefore >= today ? dayBefore : today
+    // ARRIVAL DAY, not the day before (Jon, 2026-08-18: "it should be assigned for the day of
+    // arrival, that way we can guarantee an inspection — maybe we have a checkout"). The day
+    // before, the unit may still be occupied or mid-turn; on arrival day the clean is done or
+    // finishing, so the inspection can actually happen — after the turn, before the guest.
+    const scheduled = c.check_in >= today ? c.check_in : today
 
     try {
       const r = await createBreezewayTask({
