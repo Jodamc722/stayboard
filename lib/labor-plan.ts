@@ -216,22 +216,31 @@ export async function pickupFactors(): Promise<{ factors: number[]; samples: num
 }
 
 // ---------------------------------------------------------------------------
-// Per-cleaner projection for one day (Jon, 2026-08-19: "look at each cleaner and project a
-// number of hours each should work based on the number of cleans assigned"). Assigned
-// departure cleans come from Breezeway; hours use the settled per-market hours-per-clean plus
-// the unmatched-hours share; today's Homebase shift sits beside it. A clean with two names on
-// it counts half to each. Used by all four morning briefs and the Daily Labor email.
+// Per-cleaner, day-of (Jon, 2026-08-19: "it should base hours on work and rev to make sure
+// profitable"). For each cleaner: the NET revenue their assigned departure cleans earn, and the
+// MOST hours that revenue supports at the target margin — revenue x (1 - target) / wage, per
+// market. A shift inside that budget is a profitable day at target; over it, the day pays less
+// than the target no matter how well it goes. Assigned cleans come from Breezeway; a clean with
+// two names on it counts half to each. Typical-pace hours (settled hours-per-clean) are carried
+// as a reference floor but the judgment is revenue-based, not pace-based.
 // ---------------------------------------------------------------------------
 export type CleanerToday = {
   name: string
-  byMarket: { market: string; cleans: number; hours: number }[]
+  byMarket: { market: string; cleans: number; hours: number; revenue: number; budgetHours: number }[]
   cleans: number
-  projectedHours: number
-  scheduledHours: number | null
+  revenue: number                  // net fees the assigned cleans earn
+  projectedHours: number           // typical pace at settled hours/clean — reference only
+  budgetHours: number              // most hours the day's revenue supports at the target margin
+  scheduledHours: number | null    // today's Homebase shift
+  marginAtScheduledPct: number | null
 }
-export async function projectCleaners(date: string): Promise<{ people: CleanerToday[]; overheadShare: number }> {
+export async function projectCleaners(date: string): Promise<{ people: CleanerToday[]; overheadShare: number; targetMarginPct: number }> {
   const db = supabaseAdmin()
   const cal = await getCalibration()
+  const cfg = await getSetting<{ targetMarginPct?: number }>('labor_plan', {}).catch(() => ({} as any))
+  const setT = Number(cfg?.targetMarginPct)
+  const targetPct = Number.isFinite(setT) && setT > 0 && setT < 90 ? Math.round(setT)
+    : Math.min(60, Math.max(30, (cal.settledMarginPct != null ? cal.settledMarginPct + 3 : 45)))
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
   const meta: Record<string, { market: string; vendor: boolean }> = {}
@@ -274,14 +283,28 @@ export async function projectCleaners(date: string): Promise<{ people: CleanerTo
     const byMarket = Object.keys(per[name]).sort().map(mk => {
       const c = calFor(cal, mk)
       const cleans = round1(per[name][mk])
-      return { market: mk, cleans, hours: round1(cleans * c.hoursPerClean * (1 + cal.overheadShare)) }
+      const revenue = round2(cleans * c.feePerClean)
+      return {
+        market: mk, cleans, revenue,
+        hours: round1(cleans * c.hoursPerClean * (1 + cal.overheadShare)),
+        budgetHours: c.wage > 0 ? round1((revenue * (1 - targetPct / 100)) / c.wage) : 0,
+      }
     })
     const cleans = round1(byMarket.reduce((a, b) => a + b.cleans, 0))
+    const revenue = round2(byMarket.reduce((a, b) => a + b.revenue, 0))
     const projectedHours = round1(byMarket.reduce((a, b) => a + b.hours, 0))
+    const budgetHours = round1(byMarket.reduce((a, b) => a + b.budgetHours, 0))
     const hit = nameMatchesRoster(name, schedNames)
-    return { name, byMarket, cleans, projectedHours, scheduledHours: hit ? round1(sched[hit]) : null }
-  }).sort((a, b) => b.projectedHours - a.projectedHours)
-  return { people, overheadShare: cal.overheadShare }
+    const scheduledHours = hit ? round1(sched[hit]) : null
+    // Margin the scheduled shift leaves on this cleaner's revenue, at her market-mix wage.
+    const wageMix = projectedHours > 0
+      ? byMarket.reduce((a, b) => a + b.hours * calFor(cal, b.market).wage, 0) / projectedHours
+      : FALLBACK.wage
+    const marginAtScheduledPct = scheduledHours != null && revenue > 0
+      ? Math.round((1 - (scheduledHours * wageMix) / revenue) * 100) : null
+    return { name, byMarket, cleans, revenue, projectedHours, budgetHours, scheduledHours, marginAtScheduledPct }
+  }).sort((a, b) => b.revenue - a.revenue)
+  return { people, overheadShare: cal.overheadShare, targetMarginPct: targetPct }
 }
 
 // ---------------------------------------------------------------------------
