@@ -18,7 +18,7 @@ type Cfg = {
   vip: boolean; ownerStays: boolean; daysAhead: number
   assignAlways: string
   supervisors: { Miami: string; Broward: string; North: string }
-  noticeDrafts: { enabled: boolean; fromEmail: string }
+  noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
 }
 
 export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
@@ -143,12 +143,21 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           Gmail draft — addressed, subject and body filled — in the mailbox below. A human reviews and
           presses send; nothing goes out on its own.
         </p>
-        <div className="flex items-center gap-2 mt-2">
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
           <span className="text-[12.5px] text-muted shrink-0">Drafts appear in</span>
           <input value={cfg.noticeDrafts?.fromEmail || ''}
             onChange={e => set({ noticeDrafts: { ...cfg.noticeDrafts, fromEmail: e.target.value } })}
             className={box + ' max-w-[280px]'} disabled={!isOwner} placeholder="mailbox with Google connected" />
+          <span className="text-[12.5px] text-muted shrink-0">Notify Slack channel</span>
+          <input value={cfg.noticeDrafts?.slackChannel || ''}
+            onChange={e => set({ noticeDrafts: { ...cfg.noticeDrafts, slackChannel: e.target.value } })}
+            className={box + ' max-w-[180px]'} disabled={!isOwner} placeholder="channel id" />
         </div>
+        <p className="text-[11px] text-muted mt-1">
+          Runs at 7am, then re-checks hourly until midnight — late bookings get drafted the same day. The
+          channel only hears from it when a NEW draft lands. Default channel: #vr-customercareteam (the
+          Lighthouse bot must be invited there).
+        </p>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap pt-1">
