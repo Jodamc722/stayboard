@@ -8,7 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { runNoticeDrafts } from '@/lib/notice-drafts'
-import { gmailProfileEmail } from '@/lib/gmail-send'
+import { gmailProfileEmail, inspectDraft } from '@/lib/gmail-send'
+import { getSetting } from '@/lib/app-settings'
 import { getTaskAutomation } from '@/lib/auto-inspections'
 
 export const dynamic = 'force-dynamic'
@@ -39,8 +40,22 @@ export async function GET(req: NextRequest) {
     // The mailbox the token ACTUALLY opens (users/me/profile) — when this differs from the
     // configured fromEmail, every draft is landing in the wrong account's Drafts folder.
     let mailbox: string | null = null
-    try { mailbox = await gmailProfileEmail((await getTaskAutomation()).noticeDrafts.fromEmail) } catch { /* debug only */ }
-    return NextResponse.json({ ...out, mailbox })
+    const fromEmail = (await getTaskAutomation()).noticeDrafts.fromEmail
+    try { mailbox = await gmailProfileEmail(fromEmail) } catch { /* debug only */ }
+    // ?inspect=1 → per-watched-draft label + date state, for the "exists but invisible" mystery.
+    let drafts: any[] | undefined
+    if (new URL(req.url).searchParams.get('inspect') === '1') {
+      try {
+        const watch = await getSetting<any[]>('support_draft_watch', [])
+        drafts = []
+        for (const w of (Array.isArray(watch) ? watch : [])) {
+          const info = await inspectDraft(fromEmail, String(w?.draftId || ''))
+          drafts.push({ nid: String(w?.nid || '').slice(0, 8), draftId: String(w?.draftId || ''), ...info,
+            internalDateIso: info?.internalDate ? new Date(Number(info.internalDate)).toISOString() : null })
+        }
+      } catch (e: any) { drafts = [{ error: String(e?.message || e).slice(0, 120) }] }
+    }
+    return NextResponse.json({ ...out, mailbox, ...(drafts ? { drafts } : {}) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
