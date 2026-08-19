@@ -29,11 +29,12 @@ import {
   syncProblemMessage, syncRecoveredMessage,
   lateCleansSpanish, glitchesSpanish,
   repeatOffendersMessage, codeProblemsMessage, blockedArrivalsMessage,
-  marketBriefMessage, handoverMessage,
+  marketBriefMessage, handoverMessage, walkInRiskMessage,
   type LateCleanItem, type GlitchItem, type LongShift,
 } from './slack-messages'
 import {
   findRepeatOffenders, findCodeProblems, findBlockedArrivals, marketPriorities, tomorrowByArea,
+  findWalkInRisks,
 } from './slack-signals'
 
 /** Today in ET, YYYY-MM-DD. Everything operational in this app is anchored to Eastern. */
@@ -465,4 +466,44 @@ export async function runHandover(): Promise<any> {
     channelId: rules.leadershipChannel,
     body, summary, audience, itemCount: areas.length,
   }, rules)
+}
+
+// ── 11. Walk-in risk — runs all day, never waits ───────────────────────────────────────────────
+
+/**
+ * Jon, 2026-08-19: "Anything that it catches throughout the day that might be urgent or to prevent
+ * a walkin, it should state." So this one skips the approval queue by default and re-checks every
+ * pass: a guest arriving tonight into a unit that is blocked, uncleaned, or has no working code.
+ */
+export async function runWalkInRiskAlert(): Promise<any> {
+  const { rules, users } = await ctx()
+  const rule = rules.events.walk_in_risk
+  if (!rule.enabled) return { skipped: 'disabled' }
+
+  const risks = await findWalkInRisks()
+  if (!risks.length) return { skipped: 'no arrivals at risk' }
+
+  const today = etDate()
+  const buckets = bucketBy(rules, risks, r => r.unit, () => 'housekeeping' as Dept)
+  const results: any[] = []
+  for (const bucket of buckets) {
+    const vendor = !!(bucket.group && bucket.group.vendor)
+    const audience = audienceFor(rules, bucket.group, [])
+    const { body, summary } = walkInRiskMessage({
+      items: bucket.rows.map(r => ({ unit: r.unit, at: r.at, problems: r.problems, unassigned: r.unassigned })),
+      audience, here: vendor,
+    })
+    // The group key carries the unit list, so a NEW unit going at-risk raises a fresh message
+    // rather than silently updating one nobody looked at again.
+    const sig = bucket.rows.map(r => r.unit).sort().join('|').slice(0, 90)
+    const res = await draft({
+      eventKey: 'walk_in_risk',
+      groupKey: 'walkin:' + bucket.key + ':' + today + ':' + sig,
+      building: bucket.label,
+      channelId: channelFor(rules, bucket.group, 'housekeeping'),
+      body, summary, audience, itemCount: bucket.rows.length,
+    }, rules)
+    results.push({ area: bucket.label, count: bucket.rows.length, ...res })
+  }
+  return { ok: true, groups: results.length, results }
 }

@@ -27,6 +27,7 @@ export type EventKey =
   | 'late_cleans' | 'glitches' | 'overtime' | 'sync' | 'digest' | 'personal_brief'
   // added 2026-08-19 after reading 30 days of every ops channel — see [[reference-slack-channels]]
   | 'repeat_offenders' | 'door_codes' | 'blocked_arrival' | 'market_brief' | 'handover'
+  | 'walk_in_risk'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -40,6 +41,7 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   blocked_arrival: 'Guest booked into a blocked unit',
   market_brief: 'Top priorities per market',
   handover: 'Nightly handover draft (leadership)',
+  walk_in_risk: 'Could be a walk-in tonight',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -215,6 +217,11 @@ export const DEFAULT_RULES: SlackRules = {
     market_brief: { enabled: true, approval: true, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
     // Written in the evening for the next day, like the human version it replaces.
     handover: { enabled: true, approval: true, quietStart: 16 * 60, quietEnd: 23 * 60, cooldownMin: 20 * 60 },
+    // NO APPROVAL, and a short cooldown so it re-raises while the problem is still unfixed. Jon
+    // asked for anything that could cause a walk-in to be stated as it is caught — a guest who
+    // cannot get in tonight will not wait for someone to click approve. It re-checks all day and
+    // goes quiet the moment the unit is clear.
+    walk_in_risk: { enabled: true, approval: false, quietStart: 7 * 60, quietEnd: 21 * 60, cooldownMin: 90 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,

@@ -367,3 +367,104 @@ export async function tomorrowByArea(): Promise<{ date: string; areas: HandoverA
     areas: Object.keys(areas).map(k => areas[k]).sort((a, b) => a.area.localeCompare(b.area)),
   }
 }
+
+// ── 6. WALK-IN RISK — the thing that must never wait ───────────────────────────────────────────
+//
+// Jon, 2026-08-19: "Anything that it catches throughout the day that might be urgent or to prevent
+// a walkin, it should state."
+//
+// A walk-in here is the failure that actually costs money and reviews: a guest turns up and cannot
+// stay — the unit is out of service, or it has not been cleaned, or they cannot get through the
+// door. Every one of those is knowable HOURS in advance, and every one of them was being caught by
+// hand: "We have a reservation in 512... the unit is not ready. Should we just cancel?"
+//
+// So this runs on every pass, looks only at TODAY's arrivals, and asks one question per unit: is
+// there anything that stops this guest getting in tonight?
+
+export type WalkInRisk = {
+  unit: string
+  building: string | null
+  market: string | null
+  /** local check-in time if we know it, else null */
+  at: string | null
+  /** what will stop them, most severe first */
+  problems: string[]
+  /** true when nobody is even assigned to the clean */
+  unassigned: boolean
+}
+
+export async function findWalkInRisks(): Promise<WalkInRisk[]> {
+  const today = ymdET(new Date())
+  const db = supabaseAdmin()
+
+  const [behind, blocked, codes, arrRes, lRes] = await Promise.all([
+    loadBehind().catch(() => null),
+    findBlockedArrivals(1).catch(() => [] as BlockedArrival[]),
+    findCodeProblems(0).catch(() => [] as CodeProblem[]),
+    db.from('guesty_reservations').select('listing_id,check_in,status').eq('check_in', today).limit(1000),
+    db.from('guesty_listings').select('id,nickname,title,checkIn:raw->>defaultCheckInTime'),
+  ])
+
+  // unit name -> arrival time, for everyone arriving today
+  const nameById: Record<string, { unit: string; at: string | null }> = {}
+  for (const l of ((lRes.data || []) as any[])) {
+    nameById[String(l.id)] = { unit: String(l.nickname || l.title || 'Unit'), at: l.checkIn ? String(l.checkIn) : null }
+  }
+  const arrivingToday: Record<string, string | null> = {}
+  for (const r of ((arrRes.data || []) as any[])) {
+    if (!isLiveStay(r.status)) continue
+    const l = nameById[String(r.listing_id)]
+    if (l) arrivingToday[l.unit] = l.at
+  }
+
+  const risks: Record<string, WalkInRisk> = {}
+  const add = (unit: string, at: string | null, problem: string, unassigned?: boolean) => {
+    if (!unit) return
+    if (!risks[unit]) {
+      risks[unit] = {
+        unit, building: buildingOf(null, unit), market: null,
+        at: at || arrivingToday[unit] || null, problems: [], unassigned: false,
+      }
+    }
+    if (risks[unit].problems.indexOf(problem) < 0) risks[unit].problems.push(problem)
+    if (unassigned) risks[unit].unassigned = true
+    if (!risks[unit].at && at) risks[unit].at = at
+  }
+
+  // 1. Out of service with someone arriving today — the worst one, they simply cannot stay.
+  for (const b of blocked) {
+    if (b.checkIn !== today) continue
+    add(b.unit, null, 'unit is out of service (' + b.reason + ')')
+    if (b.market) risks[b.unit].market = b.market
+  }
+
+  // 2. Clean not started and a guest is coming today.
+  if (behind) {
+    for (const u of behind.units) {
+      if (!u.arrivingAt) continue
+      add(u.unit, u.arrivingAt, u.assignee ? 'clean not started yet' : 'clean not started and nobody assigned', !u.assignee)
+      if (u.market) risks[u.unit].market = u.market
+    }
+  }
+
+  // 3. They cannot get in: no code, or a code shared with another unit arriving today.
+  for (const c of codes) {
+    if (c.kind === 'missing') {
+      for (const unit of c.units) {
+        if (arrivingToday[unit] === undefined) continue
+        add(unit, null, 'no door code on file')
+      }
+    } else {
+      for (const unit of c.units) {
+        if (arrivingToday[unit] === undefined) continue
+        add(unit, null, 'door code `' + c.code + '` is also on ' + c.units.filter(u => u !== unit).join(', '))
+      }
+    }
+  }
+
+  // Sort by arrival time so the tightest one reads first.
+  return Object.keys(risks).map(k => risks[k]).sort((a, b) => {
+    const ta = a.at || '99:99', tb = b.at || '99:99'
+    return ta.localeCompare(tb) || a.unit.localeCompare(b.unit)
+  })
+}

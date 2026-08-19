@@ -684,3 +684,51 @@ export function handoverMessage(opts: {
   const summary = 'Handover draft for ' + date + ' — ' + totals.cleans + ' cleans, ' + totals.arrivals + ' arrivals'
   return { body, summary }
 }
+
+// ── Walk-in risk ───────────────────────────────────────────────────────────────────────────────
+
+export type WalkInItem = {
+  unit: string
+  at: string | null
+  problems: string[]
+  unassigned: boolean
+}
+
+/**
+ * Jon: "Anything that it catches throughout the day that might be urgent or to prevent a walkin,
+ * it should state."
+ *
+ * The only message in this system that leads with the consequence rather than the situation,
+ * because the consequence IS the point: a guest is going to turn up and not get in. Named unit,
+ * arrival time, exactly what is wrong, and one clear ask.
+ */
+export function walkInRiskMessage(opts: {
+  items: WalkInItem[]
+  audience: string[]
+  here?: boolean
+}): { body: string; summary: string } {
+  const { items, audience, here } = opts
+
+  const rows = items.map(i => {
+    const when = i.at ? ' — guest arrives *' + i.at + '*' : ' — guest arrives today'
+    const why = i.problems.map(p => '      ↳ ' + p).join('\n')
+    return '• *' + i.unit + '*' + when + '\n' + why
+  })
+
+  const soonest = items.find(i => i.at)
+  const body = nl([
+    '⚠️ *Could be a walk-in tonight*',
+    plural(items.length, 'One unit', items.length + ' units') + ' with a guest arriving today ' +
+      plural(items.length, 'has', 'have') + ' something in the way' +
+      (soonest && soonest.at ? ' — earliest arrival ' + soonest.at : '') + '.',
+    '',
+    rows.join('\n'),
+    '',
+    'If you are already on one of these, say so here so we do not double up. If one cannot be fixed in time, flag it now while there is still room to move the guest.',
+    ccLine(audience, here),
+  ])
+
+  const summary = items.length + ' possible walk-in' + (items.length === 1 ? '' : 's') + ' — ' +
+    items.slice(0, 3).map(i => i.unit).join(', ')
+  return { body, summary }
+}
