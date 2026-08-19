@@ -149,37 +149,77 @@ export async function computeTrend(opts: { metric: string; scope?: string; days?
 
 export type Anomaly = { scope: string; metric: string; label: string; z: number; current: number | null; baselineMean: number | null; verdict: string; good: boolean | null }
 
-/** Sweep every metric across every scope and return whatever is genuinely off its own norm. */
+/**
+ * Sweep every metric across every scope and return whatever is genuinely off its own norm.
+ *
+ * PERFORMANCE NOTE, learned the hard way: the obvious implementation calls computeTrend() in a loop,
+ * which is ~24 scopes x 23 metrics = 550+ sequential round trips and takes minutes. This version
+ * pulls the WHOLE window in one paged query and does the arithmetic in memory. Same maths, ~2s.
+ */
 export async function anomalyScan(opts?: { days?: number; sigma?: number; scope?: string }): Promise<{ scanned: number; anomalies: Anomaly[]; note?: string }> {
   const db = supabaseAdmin()
   const sigma = Math.max(1.5, Number(opts?.sigma) || ANOMALY_SIGMA)
   const days = Math.min(Math.max(Number(opts?.days) || 7, 1), 30)
-  const { data: scopeRows } = await db.from('eve_metrics').select('scope').limit(5000)
-  const seen: Record<string, true> = {}
-  const scopes: string[] = []
-  for (const r of (scopeRows || [])) {
-    const s = String((r as any).scope)
-    if (!seen[s]) { seen[s] = true; scopes.push(s) }
+  const baseDays = 90
+  const end = shiftDay(todayET(), -1)
+  const curFrom = shiftDay(end, -(days - 1))
+  const baseFrom = shiftDay(end, -(baseDays - 1))
+
+  // One paged pull of everything in the window.
+  const rows: any[] = []
+  for (let page = 0; page < 40; page++) {
+    let q = db.from('eve_metrics').select('day,scope,metric,value,n').gte('day', baseFrom).lte('day', end)
+    if (opts?.scope) q = q.eq('scope', String(opts.scope))
+    const { data, error } = await q.order('day').range(page * 1000, page * 1000 + 999)
+    if (error) break
+    rows.push(...(data || []))
+    if ((data || []).length < 1000) break
   }
-  const useScopes = opts?.scope ? scopes.filter(s => s === opts.scope) : scopes
-  const metrics = Object.keys(METRIC_BY_KEY)
+  if (!rows.length) return { scanned: 0, anomalies: [], note: 'No baselines stored yet — run the metrics job with ?backfill=90 first.' }
+
+  // Group by scope+metric.
+  const groups: Record<string, TrendPoint[]> = {}
+  for (const r of rows) {
+    if (r.value == null) continue
+    const k = String(r.scope) + '||' + String(r.metric)
+    if (!groups[k]) groups[k] = []
+    groups[k].push({ day: String(r.day).slice(0, 10), value: Number(r.value), n: Number(r.n) || 0 })
+  }
+
   const out: Anomaly[] = []
-  let scanned = 0
-  for (const scope of useScopes) {
-    for (const metric of metrics) {
-      scanned++
-      const t = await computeTrend({ metric, scope, days })
-      if ((t as any).error) continue
-      const tr = t as Trend
-      if (tr.z == null || Math.abs(tr.z) < sigma) continue
-      const good = tr.higherIsBetter == null ? null : (tr.z > 0) === tr.higherIsBetter
-      out.push({ scope, metric, label: tr.label, z: tr.z, current: tr.current, baselineMean: tr.baselineMean, verdict: tr.verdict, good })
-    }
+  const keys = Object.keys(groups)
+  for (const k of keys) {
+    const parts = k.split('||')
+    const scope = parts[0]
+    const metric = parts[1]
+    const def = METRIC_BY_KEY[metric]
+    if (!def) continue
+    const pts = groups[k].sort((a, b) => a.day.localeCompare(b.day))
+    const cur = pts.filter(p => p.day >= curFrom)
+    const base = pts.filter(p => p.day < curFrom)
+    if (base.length < MIN_BASELINE || !cur.length) continue
+    const baseVals = base.map(p => p.value)
+    const bMean = mean(baseVals)
+    const bSd = sd(baseVals)
+    if (!bSd || bSd < 1e-9) continue
+    const current = aggregate(def, cur)
+    if (current == null) continue
+    const perDay = isRate(def) ? current : current / cur.length
+    const z = round2((perDay - bMean) / bSd)
+    if (Math.abs(z) < sigma) continue
+    const good = def.higherIsBetter == null ? null : (z > 0) === def.higherIsBetter
+    out.push({
+      scope, metric, label: def.label, z,
+      current: round2(current), baselineMean: round2(bMean),
+      verdict: `${Math.abs(z)} sigma ${z > 0 ? 'above' : 'below'} its own ${base.length}-day norm.`
+        + (good == null ? '' : good ? ' Good move.' : ' Bad move.'),
+      good,
+    })
   }
   out.sort((a, b) => Math.abs(b.z) - Math.abs(a.z))
   return {
-    scanned,
-    anomalies: out,
+    scanned: keys.length,
+    anomalies: out.slice(0, 40),
     note: out.length ? undefined : 'Nothing outside normal range. That is a real answer, not a failure.',
   }
 }
