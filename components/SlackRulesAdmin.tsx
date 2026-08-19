@@ -11,11 +11,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, Save, RefreshCw, Slack as SlackIcon, AlertTriangle, Check } from 'lucide-react'
 
 type Level = { enabled: boolean; approval: boolean; quietStart: number; quietEnd: number; cooldownMin: number }
+type Group = {
+  id: string
+  label: string
+  buildings: string[]
+  housekeeping: string | null
+  maintenance: string | null
+  supervisors: string[]
+  vendor: boolean
+}
 type Rules = {
   firehose: string | null
   defaultChannel: string | null
-  buildings: Record<string, string>
-  supervisors: Record<string, string[]>
+  groups: Group[]
   core: string[]
   people: Record<string, string>
   events: Record<string, Level>
@@ -65,6 +73,15 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Anything the areas do not claim routes to the fallback channel — surface it rather than
+  // letting a building quietly stop producing alerts.
+  const unmapped = useMemo(() => {
+    if (!rules) return []
+    const claimed: Record<string, boolean> = {}
+    for (const g of rules.groups) for (const b of g.buildings) claimed[b] = true
+    return buildings.map(b => b.label).filter(l => !claimed[l])
+  }, [rules, buildings])
 
   const userName = useMemo(() => {
     const m: Record<string, string> = {}
@@ -154,37 +171,77 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
         <div className="text-[11px] text-muted mt-1.5">{rules.core.map(id => userName[id] || id).join(' · ') || 'nobody selected'}</div>
       </div>
 
-      {/* per building */}
+      {/* per area — this is the routing model Jon described: area x department */}
       <div className="rounded-xl border border-line bg-white overflow-hidden">
-        <div className="px-3 py-2 bg-app/60 border-b border-line text-[10px] font-semibold uppercase tracking-wide text-muted">
-          Per building — channel &amp; supervisor
+        <div className="px-3 py-2 bg-app/60 border-b border-line">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Areas &amp; channels</div>
+          <p className="text-[11px] text-muted mt-0.5">
+            Cleans running behind go to the housekeeping room. Guest issues route on their own category &mdash;
+            cleanliness to housekeeping, everything else to maintenance. Vendor areas tag <code className="font-mono">@here</code> instead
+            of naming people, since those crews are not in this workspace.
+          </p>
         </div>
-        <div className="divide-y divide-line max-h-[420px] overflow-y-auto">
-          {buildings.map(b => (
-            <div key={b.label} className="px-3 py-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2 items-start">
-              <div className="text-[12.5px] font-semibold text-ink">
-                {b.label}
-                <span className="block text-[11px] font-normal text-muted">{b.market}{b.vendor ? ' · vendor' : ''}</span>
+        <div className="divide-y divide-line">
+          {rules.groups.map((g, gi) => {
+            const setG = (patchG: Partial<Group>) => patch(r => {
+              const next = r.groups.slice()
+              next[gi] = { ...next[gi], ...patchG }
+              return { ...r, groups: next }
+            })
+            return (
+              <div key={g.id} className="px-3 py-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    className={INPUT + ' font-semibold w-[190px]'}
+                    value={g.label}
+                    onChange={e => setG({ label: e.target.value })}
+                  />
+                  <label className="flex items-center gap-1.5 text-[12px] text-muted">
+                    <input type="checkbox" checked={g.vendor} onChange={e => setG({ vendor: e.target.checked })} />
+                    vendor-run (tag @here)
+                  </label>
+                  <span className="text-[11px] text-muted ml-auto">{g.buildings.length} buildings</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] text-muted block mb-1">Housekeeping channel</span>
+                    <ChannelSelect value={g.housekeeping} onChange={v => setG({ housekeeping: v })} />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-muted block mb-1">Maintenance channel</span>
+                    <ChannelSelect value={g.maintenance} onChange={v => setG({ maintenance: v })} />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] text-muted block mb-1">Buildings in this area</span>
+                    <select
+                      multiple
+                      className={INPUT + ' min-h-[92px] w-full'}
+                      value={g.buildings}
+                      onChange={e => setG({ buildings: Array.from(e.target.selectedOptions).map(o => o.value) })}
+                    >
+                      {buildings.map(b => (
+                        <option key={b.label} value={b.label}>{b.label} &mdash; {b.market}{b.vendor ? ' (vendor)' : ''}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-muted block mb-1">Supervisor(s) for this area</span>
+                    <PeopleSelect value={g.supervisors} onChange={v => setG({ supervisors: v })} />
+                  </label>
+                </div>
               </div>
-              <ChannelSelect
-                value={rules.buildings[b.label] || null}
-                onChange={v => patch(r => {
-                  const next = { ...r.buildings }
-                  if (v) next[b.label] = v; else delete next[b.label]
-                  return { ...r, buildings: next }
-                })}
-              />
-              <PeopleSelect
-                value={rules.supervisors[b.label] || []}
-                onChange={v => patch(r => {
-                  const next = { ...r.supervisors }
-                  if (v.length) next[b.label] = v; else delete next[b.label]
-                  return { ...r, supervisors: next }
-                })}
-              />
-            </div>
-          ))}
+            )
+          })}
         </div>
+        {unmapped.length ? (
+          <div className="px-3 py-2 border-t border-line bg-amber-50 text-[11.5px] text-amber-800">
+            <b>Not in any area:</b> {unmapped.join(', ')}. Their alerts fall through to the fallback channel until you place them.
+          </div>
+        ) : null}
       </div>
 
       {/* per event */}
