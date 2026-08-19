@@ -157,14 +157,28 @@ export type MonthSync = { month: string; rows: number; pages: number; ms: number
 
 /**
  * Sweep one calendar month of the Owners ledger into guesty_owner_ledger.
- * `deadline` is an epoch ms after which the sweep stops early and the month stays 'running'
- * so a later call resumes it (skip position is not resumable, so a partial month is simply
- * re-swept from the start — upserts make that harmless).
+ * `deadline` is an epoch ms after which the sweep stops early, recording where it got to so
+ * the next call RESUMES from that skip instead of starting over.
  */
 export async function syncLedgerMonth(month: string, deadline = Date.now() + 240_000): Promise<MonthSync> {
   const sb = supabaseAdmin()
   const started = Date.now()
   const [a, b] = monthBounds(month)
+
+  // RESUME WHERE THE LAST ATTEMPT STOPPED. A busy month outgrows one invocation's budget —
+  // July 2026 crossed 20,000 journal rows and started eating the whole 240s window — and a
+  // sweep that restarts from zero every hour never finishes, which starves every month queued
+  // behind it (August sat two days stale while July re-swept its first 200 pages hourly).
+  // Rows upsert on their Guesty id, so resuming is safe; and after each COMPLETED pass the
+  // next re-sweep starts from zero again, which catches late entries that posted into the
+  // middle of the ordering between passes.
+  const { data: prior } = await sb.from('guesty_ledger_months')
+    .select('status, last_error').eq('month', month).maybeSingle()
+  const resumed = /deadline reached at skip=(\d+)/.exec(String((prior as any)?.last_error || ''))
+  const resumeAt = ((prior as any)?.status !== 'done' && resumed)
+    ? Math.max(0, parseInt(resumed[1], 10) - 100)   // one page of overlap, in case a page was mid-write
+    : 0
+
   await sb.from('guesty_ledger_months').upsert({
     month, status: 'running', last_error: null,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -178,7 +192,7 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
     let total = 0
     let pages = 0
 
-    for (let skip = 0; skip < 60000; skip += 100) {
+    for (let skip = resumeAt; skip < 60000; skip += 100) {
       if (Date.now() > deadline) throw new Error('deadline reached at skip=' + skip)
       const page = await gget('/accounting-api/journal-entries/all?limit=100&sortByDate=ASC&skip='
         + skip + '&' + cf + ledgerParam)
@@ -272,5 +286,9 @@ export async function pendingMonths(nowMonth: string): Promise<string[]> {
   for (const m of [prev, nowMonth]) {
     if (rows.some(r => String(r.month) === m) && !out.includes(m)) out.push(m)
   }
-  return Array.from(new Set(out)).sort()
+  const uniq = Array.from(new Set(out)).sort()
+  // CURRENT MONTH FIRST. The team lives in the month that is accruing; a closed month's late
+  // journal entries can wait for the leftover budget. Sweeping oldest-first let a heavy July
+  // consume every hourly invocation while August starved two days behind.
+  return uniq.includes(nowMonth) ? [nowMonth, ...uniq.filter(m => m !== nowMonth)] : uniq
 }
