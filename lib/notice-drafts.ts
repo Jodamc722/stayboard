@@ -26,7 +26,7 @@ import { elserPdfBase64 } from './elser-pdf'
 // generated form + the Slack note) and REGISTERS each draft on that watch; it never marks sent
 // itself, so Guesty is written by exactly one code path.
 import { watchSupportDraft, checkSupportDrafts } from './support-drafts'
-import { getSetting as getAppSetting } from './app-settings'
+import { getSetting as getAppSetting, setSetting as setAppSetting } from './app-settings'
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -58,11 +58,13 @@ async function loadServerJsPdf(): Promise<any> {
 }
 
 /**
- * DEFECTIVE-DRAFT REPAIR (Jon, 2026-08-19: "delete drafts you generated without them"). A draft
- * that still sits in Drafts but is missing its required form (no doc marker on an attachPdf
- * property) is defective — discard it and re-arm so the pass below re-drafts it complete.
- * SAFETY: never touch a draft that is on the support-draft WATCH list — the watch treats
- * "left Drafts" as "sent", so deleting a watched draft would falsely mark a building as told.
+ * DEFECTIVE-DRAFT REPAIR (Jon, 2026-08-19: "delete drafts you generated without them"). A notice
+ * whose draft is missing its required registration form (no doc marker on an attachPdf property)
+ * is defective — possibly TWICE, because for one morning two auto-drafters ran side by side and
+ * each filed its own PDF-less copy. The repair deletes EVERY draft tied to the notice (the one on
+ * the notice row and any on the support-draft watch), removes the watch entries IN THE SAME PASS
+ * (so "left Drafts" can never be misread as "sent"), and re-arms the notice — the drafting pass
+ * below then files exactly one complete draft, form attached, watch registered.
  */
 async function repairDefectiveDrafts(db: any, cfg: TaskAutomationCfg, props: PropertyEmail[], out: { rearmed: number; errors: string[] }) {
   const { data: rows } = await db.from('reservation_notices').select('*')
@@ -70,20 +72,41 @@ async function repairDefectiveDrafts(db: any, cfg: TaskAutomationCfg, props: Pro
     .limit(40)
   const pById: Record<string, PropertyEmail> = {}
   for (const p of props) pById[p.id] = p
-  let watched = new Set<string>()
+  let watch: any[] = []
   try {
     const w = await getAppSetting<any[]>('support_draft_watch', [])
-    watched = new Set((Array.isArray(w) ? w : []).map((x: any) => str(x?.nid)))
-  } catch { /* treat as none watched — but then do not delete anything either */ return }
-  for (const n of (rows || []) as any[]) {
+    watch = Array.isArray(w) ? w : []
+  } catch { return /* cannot read the watch — deleting anything would risk a false "sent" */ }
+
+  const defective = ((rows || []) as any[]).filter(n => {
+    const p0 = pById[str(n.property_id)]
+    return p0?.attachPdf && !str(n.doc_name) && !str(n.doc_path)
+  })
+  if (!defective.length) return
+  // UN-WATCH FIRST. The watch reads "left Drafts" as "sent", so the entries must be gone BEFORE
+  // any draft is deleted — otherwise a sweep landing between the two steps stamps a building as
+  // told when it never was. If this write fails, delete nothing.
+  const bad = new Set(defective.map(n => str(n.id)))
+  try {
+    const res = await setAppSetting('support_draft_watch', watch.filter((w: any) => !bad.has(str(w?.nid))), 'notice-drafts repair')
+    if (!res?.ok) return
+  } catch { return }
+
+  for (const n of defective) {
     try {
-      if (watched.has(str(n.id))) continue
-      const p0 = pById[str(n.property_id)]
-      if (!p0?.attachPdf || str(n.doc_name) || str(n.doc_path)) continue
-      const st = await draftStatus(cfg.noticeDrafts.fromEmail, str(n.draft_id))
-      if (st !== 'exists') continue
-      const gone = await deleteDraft(cfg.noticeDrafts.fromEmail, str(n.draft_id))
-      if (gone) { await db.from('reservation_notices').update({ draft_id: null, draft_created_at: null }).eq('id', n.id); out.rearmed++ }
+      // Every draft this notice owns, deduped: the row's own + any watch entries it had.
+      const ids = Array.from(new Set(
+        [str(n.draft_id), ...watch.filter((w: any) => str(w?.nid) === str(n.id)).map((w: any) => str(w?.draftId))].filter(Boolean)
+      ))
+      let allGone = true
+      for (const id of ids) {
+        const st = await draftStatus(cfg.noticeDrafts.fromEmail, id)
+        if (st === 'exists') { if (!(await deleteDraft(cfg.noticeDrafts.fromEmail, id))) allGone = false }
+        else if (st === 'error') allGone = false
+      }
+      if (!allGone) continue   // couldn't clear everything — unwatched now, retried next run
+      await db.from('reservation_notices').update({ draft_id: null, draft_created_at: null }).eq('id', n.id)
+      out.rearmed++
     } catch { /* next run retries */ }
   }
 }
