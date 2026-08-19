@@ -8,6 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { runNoticeDrafts } from '@/lib/notice-drafts'
+import { gmailProfileEmail } from '@/lib/gmail-send'
+import { getTaskAutomation } from '@/lib/auto-inspections'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -34,7 +36,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const out = await runNoticeDrafts({ dryRun: preview })
-    return NextResponse.json(out)
+    // The mailbox the token ACTUALLY opens (users/me/profile) — when this differs from the
+    // configured fromEmail, every draft is landing in the wrong account's Drafts folder.
+    let mailbox: string | null = null
+    try { mailbox = await gmailProfileEmail((await getTaskAutomation()).noticeDrafts.fromEmail) } catch { /* debug only */ }
+    return NextResponse.json({ ...out, mailbox })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
