@@ -5,7 +5,7 @@
 //        taken from the request body, same rule as the field-request approvals.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin, requireLevel } from '@/lib/access'
-import { decide, pendingItems, recentItems, expireStale } from '@/lib/slack-queue'
+import { decide, pendingItems, recentItems, expireStale, splitThread } from '@/lib/slack-queue'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +18,8 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     pending: pending.map(p => ({
-      id: p.id, eventKey: p.event_key, building: p.building, body: p.body,
+      id: p.id, eventKey: p.event_key, building: p.building,
+      body: splitThread(p.body).body, threadBody: splitThread(p.body).thread,
       summary: p.summary, itemCount: p.item_count, audience: p.audience,
       channelId: p.channel_id, dmUserIds: p.dm_user_ids,
       createdAt: p.created_at, expiresAt: p.expires_at,
