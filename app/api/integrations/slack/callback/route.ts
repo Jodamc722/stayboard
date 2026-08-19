@@ -47,14 +47,22 @@ export async function GET(req: NextRequest) {
     if (!j?.ok) return back(req, 'exchange_failed')
 
     const hook = j.incoming_webhook || {}
-    if (!hook.url) return back(req, 'no_webhook')
+    // The BOT TOKEN is the prize now — it is what makes per-building posting, @-mentions and DMs
+    // possible. The webhook is still stored when Slack hands one back, so the legacy postSlack()
+    // path keeps working, but its absence is no longer fatal: a bot token alone is a real install.
+    const botToken = String(j.access_token || '')
+    if (!hook.url && !botToken) return back(req, 'no_webhook')
 
     const res = await setSlackConnection({
       teamName: String(j.team?.name || 'Slack'),
-      channel: String(hook.channel || 'channel'),
-      webhookUrl: String(hook.url),
+      channel: String(hook.channel || (botToken ? 'bot' : 'channel')),
+      webhookUrl: String(hook.url || ''),
       connectedBy: access.email,
       connectedAt: new Date().toISOString(),
+      botToken: botToken || undefined,
+      botUserId: j.bot_user_id ? String(j.bot_user_id) : undefined,
+      teamId: j.team?.id ? String(j.team.id) : undefined,
+      scopes: j.scope ? String(j.scope) : undefined,
     }, access.email)
     if (!res.ok) return back(req, 'save_failed')
 
