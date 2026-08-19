@@ -17,7 +17,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 import { mergeProperties, RESERVATION_EMAILS_KEY, type PropertyEmail } from './reservation-emails'
 import { buildDraft, type Notice } from './reservation-draft'
-import { draftGmail, draftStatus, deleteDraft, foundInSent, listGmailDrafts, type GmailAttachment } from './gmail-send'
+import { draftGmail, draftStatus, deleteDraft, foundInSent, listGmailDrafts, inspectDraft, type GmailAttachment } from './gmail-send'
 import { getToken as getGuestyToken } from './guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
 import { getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
@@ -191,14 +191,44 @@ async function auditSentAndOrphans(db: any, cfg: TaskAutomationCfg, props: Prope
   } catch (e: any) { out.errors.push('orphan-sweep: ' + String(e?.message || e).slice(0, 120)) }
 }
 
+/**
+ * TRASHED-DRAFT RECOVERY (2026-08-19). Discovered live: drafts the engine filed were sitting in
+ * support@'s TRASH — created fine, then swept there by a hand or a shared-inbox tool. A trashed
+ * draft still answers drafts.get, so every "does it exist" check passed while the desk stared at
+ * an empty folder. Any watched draft wearing the TRASH label gets permanently deleted, its notice
+ * stripped back (draft columns + doc marker), and its watch entry dropped — the passes below then
+ * file a fresh, visible copy in the same run.
+ */
+async function recreateTrashedDrafts(db: any, cfg: TaskAutomationCfg, out: { trashedRecreated: number; errors: string[] }) {
+  let watch: any[] = []
+  try {
+    const w = await getAppSetting<any[]>('support_draft_watch', [])
+    watch = Array.isArray(w) ? w : []
+  } catch { return }
+  if (!watch.length) return
+  const keep: any[] = []
+  let changed = false
+  for (const w of watch) {
+    try {
+      const info = await inspectDraft(cfg.noticeDrafts.fromEmail, str(w?.draftId))
+      if (!info || !info.labelIds.includes('TRASH')) { keep.push(w); continue }
+      changed = true
+      await deleteDraft(cfg.noticeDrafts.fromEmail, str(w.draftId))
+      await db.from('reservation_notices').update({ draft_id: null, draft_created_at: null, doc_name: null, doc_path: null }).eq('id', str(w.nid))
+      out.trashedRecreated++
+    } catch (e: any) { keep.push(w); out.errors.push('trash-recovery: ' + String(e?.message || e).slice(0, 100)) }
+  }
+  if (changed) { try { await setAppSetting('support_draft_watch', keep, 'notice-drafts trash-recovery') } catch { /* next run */ } }
+}
+
 export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled: boolean; today: string; due: number; drafted: number; skipped: number; failed: number
   sentDetected: number; rearmed: number; reopened: number; confirmedSentNoForm: number; orphansDeleted: number
-  safetyDrafted: number; errors: string[]
+  safetyDrafted: number; trashedRecreated: number; errors: string[]
 }> {
   const cfg = await getTaskAutomation()
   const today = ymdET(new Date())
-  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, safetyDrafted: 0, errors: [] as string[] }
+  const base = { ok: true, enabled: cfg.noticeDrafts.enabled, today, due: 0, drafted: 0, skipped: 0, failed: 0, sentDetected: 0, rearmed: 0, reopened: 0, confirmedSentNoForm: 0, orphansDeleted: 0, safetyDrafted: 0, trashedRecreated: 0, errors: [] as string[] }
   if (!cfg.noticeDrafts.enabled && !opts.dryRun) return base
 
   const db = supabaseAdmin()
@@ -210,6 +240,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   // everything that still owes the building a complete email.
   const safety: any[] = []
   if (!opts.dryRun) {
+    try { await recreateTrashedDrafts(db, cfg, base) } catch { /* drafting still runs */ }
     try { const sw = await checkSupportDrafts(); base.sentDetected = sw.markedSent } catch { /* drafting still runs */ }
     try { await repairDefectiveDrafts(db, cfg, props, base) } catch { /* drafting still runs */ }
     try { await auditSentAndOrphans(db, cfg, props, today, base, safety) } catch { /* drafting still runs */ }
