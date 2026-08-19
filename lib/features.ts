@@ -25,7 +25,7 @@ export const FEATURES: Feature[] = [
   { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls', group: 'Guests' },
   { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
   { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
-  { key: 'faq',           label: 'FAQ & How-To',      path: '/faq', group: 'Guests' },
+  { key: 'faq',           label: 'Property FAQ',       path: '/faq', group: 'Guests' },
   // Guests directory + profiles (2026-08-18, Jon): "a tab where we have all guest info, create a
   // guest profile as well." Aggregated from reservations; VIP on a profile feeds auto-inspections.
   { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Guests' },
@@ -127,7 +127,12 @@ export function isOpenPath(path: string): boolean {
 }
 // Login-required pages that deliberately have NO per-role setting:
 // /users gates itself (admin console).
-export const UNGATED_PAGES = ['/users']
+// /stay-window gates itself too (2026-08-17): every mutation on it goes through
+// requireLevel('revenue','full'), so a non-revenue user who finds the URL sees the screen and can
+// do nothing with it. Kept out of FEATURES so it adds no nav entry without Jon's say-so.
+// RESTORED 2026-08-19: it was dropped from this list while app/stay-window/page.tsx still exists,
+// which fails scripts/check-tabs.mjs at config load and takes the whole build down.
+export const UNGATED_PAGES = ['/users', '/stay-window']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
