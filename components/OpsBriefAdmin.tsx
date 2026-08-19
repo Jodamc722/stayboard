@@ -12,7 +12,7 @@ type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: 
 // The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
 // on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
 const DIGESTS: { key: 'trueup' | 'salato'; label: string; blurb: string }[] = [
-  { key: 'trueup', label: 'Labor true-up · daily 9am ET', blurb: '30-day labor economics, what settled since yesterday. Skips the day rather than send on partial payroll.' },
+  { key: 'trueup', label: 'Daily Labor · 7:45am ET', blurb: "One email: today's staffing plan, yesterday's labor, and the settled 30/45-day economics. Skips the day rather than send on partial payroll." },
   { key: 'salato', label: 'Salato front desk · daily 7am ET', blurb: 'Reservations only: arriving, departing, in-house, upcoming — hotel-related flags highlighted.' },
 ]
 
