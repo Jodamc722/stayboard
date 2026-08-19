@@ -1,38 +1,53 @@
-// Eve — Stay Hospitality's GM brain. A TOOL-USING agent: she gets a light headline snapshot for instant
-// situational awareness, plus read tools to query ANY live data on demand (reviews, reservations,
-// listings, conversations, field work, revenue, full listing detail). She loops, pulling whatever she
-// needs, then answers. Logged-in users only. Model: claude-opus-4-8.
+// Eve — Stay Hospitality's operating brain. A TOOL-USING agent with progressive tool loading,
+// a durable memory, and every exchange logged so she can be corrected and get better.
+//
+// WHAT CHANGED IN v2 (2026-08-19):
+//   ACCESS  — the hardcoded `email !== jon@` check is gone. Eve is now a real feature key, so she is
+//             owner + admin by default and can be switched on for any role from /users -> Roles
+//             without a code change.
+//   REACH   — 13 tools over 6 tables became 48 tools over ~38, split into five domains that load on
+//             demand (lib/eve/registry.ts explains why that beats handing her all 48 at once).
+//   MEMORY  — what she learns survives the conversation (lib/eve/memory.ts).
+//   LOGGING — every exchange lands in eve_chats with the tools she used, so a thumbs-down can be
+//             turned into a correction instead of evaporating.
+//   BUDGET  — maxDuration 60 -> 300 (ten other routes in this app already run at 300) and the loop
+//             cap 10 -> 16, because a real investigation now chains more calls.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess, canSeeMoney, isSuperadmin } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getToken } from '@/lib/guesty'
+import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from '@/lib/eve/ctx'
+import { wireTools, runTool, DOMAIN_KEYS } from '@/lib/eve/registry'
+import { loadMemories, renderMemories, touchMemories, scopesForText } from '@/lib/eve/memory'
+import { buildSystem, getVoiceProfile } from '@/lib/eve/prompt'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
-const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+export const maxDuration = 300
 
-function rollupBuilding(raw: any): string {
-  const s = String(raw || '').toLowerCase()
-  if (!s) return 'Unknown'
-  if (s.includes('botanica')) return 'Botanica'
-  if (s.includes('arya')) return 'Arya'
-  if (s.includes('oasis') || /mahogany|royal\s*palm|bougainvillea|bamboo|sapodilla|jasmine/.test(s)) return 'Oasis'
-  return String(raw)
+const MODEL = 'claude-opus-4-8'
+const MAX_TURNS = 16
+const TOOL_RESULT_CHARS = 9000
+
+/** Eve is owner + admin by default; a role can be granted `eve` explicitly from /users. */
+export async function eveGate() {
+  const access = await getAccess()
+  if (!access.user) return { ok: false as const, res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }), access }
+  if (!access.allowed) return { ok: false as const, res: NextResponse.json({ error: 'no-access' }, { status: 403 }), access }
+  // Owner, anyone with role=admin, or a DB role that has been explicitly granted `eve`.
+  // Deliberately NOT the legacy workspace path: a legacy "gm" workspace resolves every page to
+  // full, which would hand Eve to people Jon has not switched on. An explicit accessRole is required.
+  const byRole = !!access.accessRole && atLeast(access.levels?.eve, 'view')
+  const allowed = isSuperadmin(access.email) || access.role === 'admin' || byRole
+  if (!allowed) {
+    return { ok: false as const, res: NextResponse.json({ error: 'forbidden', message: 'Eve is available to admins. Ask Jon to switch her on for your role.' }, { status: 403 }), access }
+  }
+  return { ok: true as const, access }
 }
-function todayET() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
-function daysAgoISO(n: number) { return new Date(Date.now() - n * 86400000).toISOString() }
-function clampLimit(n: any, def = 25, max = 50) { const x = Number(n); return Math.min(Math.max(Number.isFinite(x) ? x : def, 1), max) }
-
-const DEAD = /inactive|disabled|archived|deleted/i
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  // Eve is restricted to the owner for now.
-  if (String(user.email || '').toLowerCase() !== 'jon@stay-hospitality.com') {
-    return NextResponse.json({ error: 'Eve is available to Jon only right now.' }, { status: 403 })
-  }
+  const gate = await eveGate()
+  if (!gate.ok) return gate.res
+  const access = gate.access
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured - add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
@@ -41,298 +56,77 @@ export async function POST(req: NextRequest) {
   const messages = Array.isArray(body?.messages) ? body.messages.filter((m: any) => m && m.role && m.content).slice(-12) : []
   if (!messages.length) return NextResponse.json({ error: 'no messages' }, { status: 400 })
 
+  const startedAt = Date.now()
+  const canMoney = canSeeMoney(access)
+  const ctx = await buildCtx(access, canMoney)
   const db = supabaseAdmin()
   const today = todayET()
 
-  // Listing id -> {name, status, building} map for joins / friendly names.
-  const listingMeta: Record<string, { name: string; status: string; building: string }> = {}
-  try {
-    const { data } = await db.from('guesty_listings').select('id,nickname,title,status,building')
-    for (const l of (data || [])) listingMeta[String((l as any).id)] = { name: (l as any).nickname || (l as any).title || '', status: String((l as any).status || '').toLowerCase(), building: String((l as any).building || '') }
-  } catch { /* table may be empty */ }
-  const nameOf = (lid: any) => listingMeta[String(lid)]?.name || 'Unknown'
-  const buildingOf = (lid: any) => rollupBuilding(listingMeta[String(lid)]?.building)
-  const reviewable = (lid: any) => { const m = listingMeta[String(lid)]; return !!m && !DEAD.test(m.status) && m.building.toLowerCase() !== 'waves' }
-  // Ratings come on MIXED scales (Airbnb /5, Booking & Vrbo /10). Normalize EVERY rating to a 5-star scale before use.
-  const normStar = (n: any): number | null => { const v = Number(n); if (!Number.isFinite(v) || v <= 0) return null; return Math.round((v <= 5 ? v : v / 2) * 100) / 100 }
-
-  const safe = async <T>(p: PromiseLike<T>, fb: T): Promise<T> => { try { return await p } catch { return fb } }
-  const cnt = async (q: any) => { const r = await safe(q, { count: 0 } as any); return (r as any).count || 0 }
-
-  // --- Light headline snapshot (cheap counts) for instant awareness ---
+  // --- Light headline snapshot: cheap counts, for instant situational awareness only. ---
   const cutoff60 = daysAgoISO(60)
-  const [unansweredRows, unreadCount, checkinCount, checkoutCount, inhouseCount, openFW, apprFW, activeListings] = await Promise.all([
-    safe(db.from('guesty_reviews').select('listing_id').eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', cutoff60).limit(500), { data: [] } as any),
+  const [unansweredRows, unreadCount, checkinCount, checkoutCount, inhouseCount, openFW, apprFW] = await Promise.all([
+    safe(db.from('guesty_reviews').select('listing_id').eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', cutoff60).order('id').limit(500), { data: [] } as any),
     cnt(db.from('guesty_conversations').select('*', { count: 'exact', head: true }).gt('unread_count', 0)),
     cnt(db.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_in', today)),
     cnt(db.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_out', today)),
     cnt(db.from('guesty_reservations').select('*', { count: 'exact', head: true }).lte('check_in', today).gt('check_out', today)),
     cnt(db.from('field_requests').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress'])),
     cnt(db.from('field_requests').select('*', { count: 'exact', head: true }).eq('approval_required', true).neq('approval_status', 'approved')),
-    cnt(db.from('guesty_listings').select('*', { count: 'exact', head: true })),
   ])
-  const unansweredActionable = (unansweredRows.data || []).filter((r: any) => reviewable(r.listing_id)).length
-  const headline = { today, unanswered_reviews_60d: unansweredActionable, unread_guest_threads: unreadCount, checkins_today: checkinCount, checkouts_today: checkoutCount, in_house_now: inhouseCount, open_field_work: openFW, approvals_waiting: apprFW, listings_total: activeListings }
-
-  // --- Tool implementations (read-only queries over the live data) ---
-  async function runTool(name: string, input: any): Promise<any> {
-    try {
-      if (name === 'search_reviews') {
-        let q = db.from('guesty_reviews').select('listing_id,rating,content,channel,guest_name,created_at,has_reply').eq('excluded_from_score', false).order('created_at', { ascending: false }).limit(clampLimit(input?.limit))
-        if (input?.answered === 'unanswered') q = q.eq('has_reply', false)
-        if (input?.answered === 'answered') q = q.eq('has_reply', true)
-        if (input?.days) q = q.gte('created_at', daysAgoISO(Number(input.days)))
-        if (input?.min_rating != null) q = q.gte('rating', Number(input.min_rating))
-        if (input?.max_rating != null) q = q.lte('rating', Number(input.max_rating))
-        const { data } = await q
-        let rows = (data || []).filter((r: any) => reviewable(r.listing_id)).map((r: any) => ({ property: nameOf(r.listing_id), building: buildingOf(r.listing_id), rating: normStar(r.rating), rating_scale: '/5', channel: r.channel, guest: r.guest_name, answered: !!r.has_reply, date: String(r.created_at).slice(0, 10), text: String(r.content || '').slice(0, 280) }))
-        if (input?.building) rows = rows.filter((x: any) => x.building.toLowerCase().includes(String(input.building).toLowerCase()))
-        return { count: rows.length, reviews: rows.slice(0, clampLimit(input?.limit)) }
-      }
-      if (name === 'review_summary') {
-        // Pull ALL reviews (no row cap) so building/portfolio counts are complete. Count = every review on
-        // the matched units; the AVERAGE uses only score-eligible (non-excluded) reviews.
-        const { data } = await db.from('guesty_reviews').select('listing_id,rating,has_reply,excluded_from_score').limit(10000)
-        let rows = (data || []).filter((r: any) => reviewable(r.listing_id))
-        if (input?.building) rows = rows.filter((r: any) => buildingOf(r.listing_id).toLowerCase().includes(String(input.building).toLowerCase()))
-        if (input?.id) rows = rows.filter((r: any) => String(r.listing_id) === String(input.id))
-        else if (input?.name) rows = rows.filter((r: any) => nameOf(r.listing_id).toLowerCase().includes(String(input.name).toLowerCase()))
-        const scored = rows.filter((r: any) => r.excluded_from_score !== true)
-        const vals = scored.map((r: any) => normStar(r.rating)).filter((v: any): v is number => v != null)
-        const dist: Record<string, number> = { '5': 0, '4': 0, '3': 0, '2': 0, '1': 0 }
-        vals.forEach(v => { const bk = Math.max(1, Math.min(5, Math.round(v))); dist[String(bk)]++ })
-        const byUnit: Record<string, { name: string; count: number; sum: number; rated: number }> = {}
-        rows.forEach((r: any) => { const k = String(r.listing_id); if (!byUnit[k]) byUnit[k] = { name: nameOf(r.listing_id), count: 0, sum: 0, rated: 0 }; byUnit[k].count++; if (r.excluded_from_score !== true) { const v = normStar(r.rating); if (v != null) { byUnit[k].rated++; byUnit[k].sum += v } } })
-        const units = Object.values(byUnit).map(u => ({ name: u.name, reviews: u.count, avg: u.rated ? Math.round((u.sum / u.rated) * 100) / 100 : null })).sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
-        return {
-          scope: input?.building ? `building: ${input.building}` : (input?.name ? `unit: ${input.name}` : (input?.id ? `unit id: ${input.id}` : 'whole portfolio')),
-          rating_scale: '/5 (Airbnb /5; Booking & Vrbo normalized from /10)',
-          review_count: rows.length,
-          rated_count: vals.length,
-          avg_rating: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null,
-          distribution_by_star: dist,
-          unanswered: rows.filter((r: any) => !r.has_reply).length,
-          units_covered: units.length,
-          lowest_units: units.slice(0, 8),
-        }
-      }
-      if (name === 'search_reservations') {
-        let q = db.from('guesty_reservations').select('guest_name,listing_id,listing_name,nights,money_total,status,source,check_in,check_out').limit(clampLimit(input?.limit, 30))
-        const t = input?.type
-        if (t === 'checkin') q = q.eq('check_in', input?.date || today)
-        else if (t === 'checkout') q = q.eq('check_out', input?.date || today)
-        else if (t === 'inhouse') q = q.lte('check_in', today).gt('check_out', today)
-        else { if (input?.from) q = q.gte('check_in', input.from); if (input?.to) q = q.lte('check_in', input.to); q = q.order('check_in') }
-        if (input?.status) q = q.ilike('status', `%${input.status}%`)
-        const { data } = await q
-        let rows = (data || [])
-        if (input?.building) rows = rows.filter((r: any) => String(r.listing_name || '').toLowerCase().includes(String(input.building).toLowerCase()))
-        // Scope to ONE unit when an id or name is given (so unit-occupancy questions are listing-specific).
-        if (input?.id) rows = rows.filter((r: any) => String(r.listing_id) === String(input.id))
-        else if (input?.name) rows = rows.filter((r: any) => String(r.listing_name || '').toLowerCase().includes(String(input.name).toLowerCase()) || nameOf(r.listing_id).toLowerCase().includes(String(input.name).toLowerCase()))
-        return { count: rows.length, scopedToListing: input?.id || input?.name || null, reservations: rows.slice(0, clampLimit(input?.limit, 30)) }
-      }
-      if (name === 'search_listings') {
-        const { data } = await db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_city')
-        let rows = (data || []).map((l: any) => ({ id: l.id, name: l.nickname || l.title, building: rollupBuilding(l.building), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city }))
-        if (input?.building) rows = rows.filter((x: any) => x.building.toLowerCase().includes(String(input.building).toLowerCase()))
-        if (input?.status) rows = rows.filter((x: any) => String(x.status || '').toLowerCase().includes(String(input.status).toLowerCase()))
-        if (input?.query) rows = rows.filter((x: any) => String(x.name || '').toLowerCase().includes(String(input.query).toLowerCase()))
-        return { count: rows.length, listings: rows.slice(0, clampLimit(input?.limit, 50)) }
-      }
-      if (name === 'listing_detail') {
-        let q = db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_city,amenities,pictures,raw,last_optimized')
-        if (input?.id) q = q.eq('id', input.id)
-        else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
-        const { data } = await q.limit(1)
-        const l: any = (data || [])[0]
-        if (!l) return { error: 'listing not found' }
-        const raw = l.raw || {}; const pub = raw.publicDescription || {}
-        const { data: revs } = await db.from('guesty_reviews').select('rating').eq('listing_id', l.id).eq('excluded_from_score', false)
-        const rr = (revs || []).map((x: any) => normStar(x.rating)).filter((v: any): v is number => v != null)
-        return { name: l.nickname || l.title, building: rollupBuilding(l.building), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city, amenities_count: Array.isArray(l.amenities) ? l.amenities.length : (Array.isArray(raw.amenities) ? raw.amenities.length : 0), photo_count: Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(raw.pictures) ? raw.pictures.length : 0), has_title: !!l.title, description_sections_filled: Object.keys(pub).filter(k => pub[k]), review_count: rr.length, avg_rating: rr.length ? Math.round((rr.reduce((a, b) => a + b, 0) / rr.length) * 100) / 100 : null, rating_scale: '/5', last_optimized: l.last_optimized || raw._lastOptimized || null }
-      }
-      if (name === 'unread_conversations') {
-        const { data } = await db.from('guesty_conversations').select('guest_name,channel,unread_count,last_message_preview,last_message_at').gt('unread_count', 0).order('last_message_at', { ascending: false }).limit(clampLimit(input?.limit, 40))
-        return { count: (data || []).length, threads: data || [] }
-      }
-      if (name === 'field_work') {
-        let q = db.from('field_requests').select('title,type,priority,building,status,due_at,vendor,amount_usd,assignee_email,approval_required,approval_status').limit(clampLimit(input?.limit, 50))
-        if (input?.status) q = q.eq('status', input.status); else q = q.in('status', ['open', 'in_progress'])
-        if (input?.approval_only) q = q.eq('approval_required', true)
-        q = q.order('due_at', { ascending: true, nullsFirst: false })
-        const { data } = await q
-        let rows = (data || [])
-        if (input?.building) rows = rows.filter((r: any) => String(r.building || '').toLowerCase().includes(String(input.building).toLowerCase()))
-        return { count: rows.length, field_work: rows }
-      }
-      if (name === 'revenue') {
-        let q = db.from('guesty_reservations').select('money_total,nights,status,check_in,listing_name')
-        if (input?.from) q = q.gte('check_in', input.from)
-        if (input?.to) q = q.lte('check_in', input.to)
-        const { data } = await q.limit(5000)
-        let rows = (data || []).filter((r: any) => !/cancel|declin/i.test(String(r.status || '')))
-        if (input?.building) rows = rows.filter((r: any) => String(r.listing_name || '').toLowerCase().includes(String(input.building).toLowerCase()))
-        const rev = rows.reduce((s: number, r: any) => s + (Number(r.money_total) || 0), 0)
-        const nights = rows.reduce((s: number, r: any) => s + (Number(r.nights) || 0), 0)
-        return { reservations: rows.length, revenue: Math.round(rev), nights, adr: nights ? Math.round(rev / nights) : null }
-      }
-      if (name === 'guesty_config') {
-        let q = db.from('guesty_listings').select('id,nickname,title,building,raw').limit(1)
-        if (input?.id) q = q.eq('id', input.id); else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
-        const { data } = await q
-        const l: any = (data || [])[0]; if (!l) return { error: 'listing not found' }
-        const raw = l.raw || {}; const terms = raw.terms || {}; const ints = Array.isArray(raw.integrations) ? raw.integrations : []
-        const intField = (k: string) => { for (const it of ints) { for (const key of Object.keys(it || {})) { const v: any = (it as any)[key]; if (v && typeof v === 'object' && v[k] != null) return v[k] } } return null }
-        return {
-          name: l.nickname || l.title, building: rollupBuilding(l.building),
-          check_in_time: raw.defaultCheckInTime || raw.checkInTime || null,
-          check_out_time: raw.defaultCheckOutTime || raw.checkOutTime || null,
-          min_nights: terms.minNights ?? raw.defaultListingMinNights ?? null,
-          max_nights: terms.maxNights ?? null,
-          instant_book: raw.instantBookable ?? raw.instantBook ?? intField('instantBookingAllowedCategory') ?? null,
-          cancellation: terms.cancellation ?? intField('cancellationPolicy') ?? raw?.prices?.guestyCancellationPolicy ?? null,
-          property_type: raw.propertyType || null, room_type: raw.roomType || null,
-          tags: Array.isArray(raw.tags) ? raw.tags : [],
-          address: raw?.address?.full || l.address_city || null,
-          has_checkin_instructions: !!(raw.checkInInstructions || raw?.publicDescription?.access),
-          house_rules: String(raw?.publicDescription?.houseRules || '').slice(0, 400),
-          custom_fields: Array.isArray(raw.customFields) ? raw.customFields.map((c: any) => ({ name: c?.fieldId?.name || c?.name, value: typeof c?.value === 'string' ? c.value.slice(0, 160) : c?.value })).slice(0, 40) : [],
-        }
-      }
-      if (name === 'portfolio') {
-        const { data } = await db.from('guesty_listings').select('status,building')
-        const byBuilding: Record<string, number> = {}; const byStatus: Record<string, number> = {}
-        for (const l of (data || [])) { const b = rollupBuilding((l as any).building); byBuilding[b] = (byBuilding[b] || 0) + 1; const st = String((l as any).status || 'unknown').toLowerCase(); byStatus[st] = (byStatus[st] || 0) + 1 }
-        return { total: (data || []).length, by_building: byBuilding, by_status: byStatus }
-      }
-      if (name === 'welcome_calls') {
-        const win = Math.min(Math.max(Number(input?.days) || 7, 1), 30)
-        const toDate = new Date(Date.now() + win * 86400000).toISOString().slice(0, 10)
-        const { data } = await db.from('guesty_reservations').select('guest_name,listing_name,check_in,status,custom_fields').gte('check_in', today).lte('check_in', toDate).order('check_in').limit(300)
-        let rows = (data || []).filter((r: any) => !/cancel|declin/i.test(String(r.status || '')))
-        if (input?.building) rows = rows.filter((r: any) => String(r.listing_name || '').toLowerCase().includes(String(input.building).toLowerCase()))
-        const fieldVal = (cf: any, kw: string) => { if (!Array.isArray(cf)) return undefined; const ff = cf.find((c: any) => String(c?.fieldName || c?.name || c?.fieldId?.name || '').toLowerCase().includes(kw)); return ff ? ff.value : undefined }
-        const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
-        const list = rows.map((r: any) => ({ guest: r.guest_name, listing: r.listing_name, building: rollupBuilding(r.listing_name), check_in: String(r.check_in).slice(0, 10), welcome_call_done: truthy(fieldVal(r.custom_fields, 'welcome')), sensitive_guest: truthy(fieldVal(r.custom_fields, 'sensitive')) }))
-        const pending = list.filter((x: any) => !x.welcome_call_done)
-        const mode = input?.status
-        const out = mode === 'pending' ? pending : mode === 'done' ? list.filter((x: any) => x.welcome_call_done) : list
-        return { window_days: win, total: list.length, welcome_done: list.length - pending.length, welcome_pending: pending.length, sensitive_upcoming: list.filter((x: any) => x.sensitive_guest).length, reservations: out.slice(0, 100) }
-      }
-      if (name === 'knowledge_search') {
-        let q = db.from('eve_knowledge').select('type, scope, title, content, evidence_count, updated_at').order('evidence_count', { ascending: false }).limit(clampLimit(input?.limit, 40))
-        if (input?.type) q = q.eq('type', input.type)
-        const { data, error } = await q
-        if (error) return { error: 'Knowledge base not set up yet - run migration 008 and POST /api/eve/learn.' }
-        let rows = (data || [])
-        if (input?.query) rows = rows.filter((r: any) => String(r.title + ' ' + (r.content || '') + ' ' + r.scope).toLowerCase().includes(String(input.query).toLowerCase()))
-        if (input?.building) rows = rows.filter((r: any) => String(r.scope).toLowerCase().includes(String(input.building).toLowerCase()) || r.scope === 'portfolio')
-        return { count: rows.length, knowledge: rows.slice(0, clampLimit(input?.limit, 40)) }
-      }
-      if (name === 'unit_status') {
-        // Is THIS unit occupied/vacant? Scope strictly to the listing id; never infer vacant from absence.
-        const qId = String(input?.id || '').trim()
-        const qName = String(input?.name || '').trim().toLowerCase()
-        if (!qId && !qName) return { error: 'Provide the unit name or id.' }
-        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,status,building,raw')
-        const matches = (ls || []).filter((l: any) => qId ? String(l.id) === qId : (String(l.nickname || '').toLowerCase().includes(qName) || String(l.title || '').toLowerCase().includes(qName)))
-        if (!matches.length) return { resolved: false, note: `No listing matches "${input?.id || input?.name}". This is INCONCLUSIVE - ask Jon for the exact unit name, a guest name, or a confirmation code.` }
-        const isActive = (l: any) => !/inactive|disabled|archived|deleted|pending/i.test(String(l.status || '').toLowerCase())
-        const primary = matches.filter(isActive)[0] || matches[0]
-        const others = matches.filter((l: any) => String(l.id) !== String(primary.id)).map((l: any) => ({ id: l.id, name: l.nickname || l.title, status: l.status }))
-        const { data: rv } = await db.from('guesty_reservations').select('guest_name,listing_id,check_in,check_out,status,nights,source').eq('listing_id', primary.id).order('check_out', { ascending: false }).limit(60)
-        const live = (rv || []).filter((r: any) => !/cancel|declin|inquir/i.test(String(r.status || '')))
-        const inHouse = live.find((r: any) => String(r.check_in).slice(0, 10) <= today && today < String(r.check_out).slice(0, 10)) || null
-        const upcoming = live.filter((r: any) => String(r.check_in).slice(0, 10) > today).sort((a: any, b: any) => String(a.check_in).localeCompare(String(b.check_in)))[0] || null
-        const lastOut = live.filter((r: any) => String(r.check_out).slice(0, 10) <= today).sort((a: any, b: any) => String(b.check_out).localeCompare(String(a.check_out)))[0] || null
-        let cleaningStatus: string | null = (primary.raw && (primary.raw.cleaningStatus || primary.raw?.pms?.cleaningStatus)) || null
-        try { const token = await getToken(); if (token) { const lr = await fetch(`${GBASE}/listings/${encodeURIComponent(String(primary.id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' }); if (lr.ok) { const lj: any = await lr.json().catch(() => ({})); cleaningStatus = lj?.cleaningStatus || lj?.pms?.cleaningStatus || cleaningStatus } } } catch { /* keep cached */ }
-        const bld = rollupBuilding(primary.building)
-        const { count: openWork } = await db.from('field_requests').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress']).ilike('building', `%${bld}%`)
-        const recentCheckout = !!lastOut && (Date.now() - new Date(String(lastOut.check_out).slice(0, 10) + 'T00:00:00').getTime()) <= 2 * 86400000
-        const dirty = String(cleaningStatus || '').toLowerCase() === 'dirty'
-        let occupancy = 'inconclusive'; let note = ''
-        if (inHouse) { occupancy = 'OCCUPIED — guest in-house'; note = `${inHouse.guest_name || 'Guest'}: ${String(inHouse.check_in).slice(0, 10)} -> ${String(inHouse.check_out).slice(0, 10)}.` }
-        else if (dirty || recentCheckout) { occupancy = 'NOT clearly vacant — recently occupied'; note = `No in-house reservation, but ${[dirty ? 'cleaningStatus is DIRTY' : '', recentCheckout ? `last checkout ${String(lastOut.check_out).slice(0, 10)}` : ''].filter(Boolean).join(' and ')}. Do NOT call this vacant — confirm first.` }
-        else if (live.length === 0) { occupancy = 'no reservation on file for this listing'; note = `No reservation scoped to listing ${primary.id}. This is INCONCLUSIVE, not a confirmed vacancy. Verify with guesty_live or ask for a guest name / confirmation code before saying vacant.` }
-        else { occupancy = 'likely vacant'; note = `No in-house reservation, clean status ${cleaningStatus || 'unknown'}, no recent checkout, ${openWork || 0} open field tasks.` }
-        return { resolved: true, listing: { id: primary.id, name: primary.nickname || primary.title, status: primary.status, building: bld, active: isActive(primary) }, otherMatchingListings: others, scopedToListingId: primary.id, occupancy, inHouse: inHouse ? { guest: inHouse.guest_name, check_in: String(inHouse.check_in).slice(0, 10), check_out: String(inHouse.check_out).slice(0, 10) } : null, nextArrival: upcoming ? { guest: upcoming.guest_name, check_in: String(upcoming.check_in).slice(0, 10) } : null, lastCheckout: lastOut ? String(lastOut.check_out).slice(0, 10) : null, cleaningStatus, openFieldWork: openWork || 0, note }
-      }
-      if (name === 'guesty_live') {
-        let token: string | null = null
-        try { token = await getToken() } catch { token = null }
-        if (!token) return { error: 'Guesty token unavailable right now.' }
-        const kind = String(input?.kind || '').toLowerCase()
-        const id = String(input?.id || '').trim()
-        let url = ''
-        if (kind === 'reservation' && id) url = `${GBASE}/reservations/${encodeURIComponent(id)}`
-        else if (kind === 'listing' && id) url = `${GBASE}/listings/${encodeURIComponent(id)}`
-        else if (kind === 'path' && input?.path) url = `${GBASE}/${String(input.path).replace(/^\//, '')}`
-        else return { error: 'Provide kind=reservation|listing|path with id (reservation/listing) or path (raw Guesty GET path).' }
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' })
-        const txt = await r.text().catch(() => '')
-        if (!r.ok) return { error: `Guesty ${r.status}: ${txt.slice(0, 200)}` }
-        try { return { kind, id, source: 'live Guesty', data: JSON.parse(txt) } } catch { return { kind, id, source: 'live Guesty', raw: txt.slice(0, 4000) } }
-      }
-      return { error: `unknown tool ${name}` }
-    } catch (e: any) { return { error: String(e?.message || e).slice(0, 160) } }
+  const headline = {
+    today,
+    unanswered_reviews_60d: ((unansweredRows as any).data || []).filter((r: any) => ctx.reviewable(r.listing_id)).length,
+    unread_guest_threads: unreadCount, checkins_today: checkinCount, checkouts_today: checkoutCount,
+    in_house_now: inhouseCount, open_field_work: openFW, approvals_waiting: apprFW,
+    listings_total: Object.keys(ctx.listingMeta).length,
   }
 
-  const tools = [
-    { name: 'search_reviews', description: 'Search guest reviews. Filter by answered ("answered"|"unanswered"|"all"), days (lookback), min_rating, max_rating, building. Returns property, rating, channel, guest, text, answered.', input_schema: { type: 'object', properties: { answered: { type: 'string' }, days: { type: 'number' }, min_rating: { type: 'number' }, max_rating: { type: 'number' }, building: { type: 'string' }, limit: { type: 'number' } } } },
-    { name: 'review_summary', description: 'Aggregate review score for a BUILDING, a unit (name/id), or the whole portfolio (no args = portfolio). Returns avg_rating on a 5-STAR scale (Airbnb /5; Booking & Vrbo normalized from /10), review_count, star distribution, unanswered count, and the lowest-rated units. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.', input_schema: { type: 'object', properties: { building: { type: 'string' }, name: { type: 'string' }, id: { type: 'string' } } } },
-    { name: 'search_reservations', description: 'Search reservations. type: "checkin"|"checkout"|"inhouse"|"range". For range use from/to (YYYY-MM-DD on check_in). Filter by building, status, or scope to ONE unit with id (listing id) or name. Returns guest, listing, nights, money_total, dates.', input_schema: { type: 'object', properties: { type: { type: 'string' }, date: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, building: { type: 'string' }, status: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, limit: { type: 'number' } } } },
-    { name: 'unit_status', description: 'Is a SPECIFIC unit occupied or vacant RIGHT NOW? Pass the unit name or listing id. Scopes reservations to that listing id, resolves active vs inactive listings, and cross-checks cleaningStatus + last checkout + open field work. NEVER infers vacant from missing data - returns occupancy as OCCUPIED / likely vacant / not-clearly-vacant / inconclusive with a note. Use this for any "is X vacant/occupied/available" question instead of an unscoped reservation search.', input_schema: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'string' } } } },
-    { name: 'search_listings', description: 'List/search listings (units). Filter by building, status, query (name match). Returns id, name, building, status, beds/baths/sleeps, city.', input_schema: { type: 'object', properties: { building: { type: 'string' }, status: { type: 'string' }, query: { type: 'string' }, limit: { type: 'number' } } } },
-    { name: 'listing_detail', description: 'Full detail for ONE listing by name or id: amenities count, photo count, description sections filled, review count + avg rating, last optimized.', input_schema: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'string' } } } },
-    { name: 'unread_conversations', description: 'Guest message threads with unread messages.', input_schema: { type: 'object', properties: { limit: { type: 'number' } } } },
-    { name: 'field_work', description: 'Field work / maintenance requests. Filter by status (default open+in_progress), building, approval_only.', input_schema: { type: 'object', properties: { status: { type: 'string' }, building: { type: 'string' }, approval_only: { type: 'boolean' }, limit: { type: 'number' } } } },
-    { name: 'revenue', description: 'Revenue summary over reservations in a check-in date range (from/to YYYY-MM-DD), optional building. Returns reservations, revenue, nights, ADR.', input_schema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, building: { type: 'string' } } } },
-    { name: 'guesty_config', description: 'Deep Guesty operational config for ONE listing (by name or id): check-in/out times, min/max nights, instant book, cancellation policy, property/room type, tags, address, house rules, whether check-in instructions exist, and CUSTOM FIELDS (door/access codes often live here). Use this to answer anything about how a unit is set up in Guesty.', input_schema: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'string' } } } },
-    { name: 'portfolio', description: 'Portfolio-wide awareness: total units and counts broken down by building and by status. Use for "how many", "across the portfolio", coverage questions.', input_schema: { type: 'object', properties: {} } },
-    { name: 'knowledge_search', description: 'Eve LEARNED-KNOWLEDGE base, auto-mined from guest messages, reviews and complaints: top FAQs guests ask (with the fix to pre-empt them) and recurring complaint categories (portfolio + per building). Filter by type ("faq"|"complaint"|"insight"|"fact"), query, building. Use it for "what do guests ask most", "biggest complaint drivers", or to ground any recommendation in real patterns.', input_schema: { type: 'object', properties: { type: { type: 'string' }, query: { type: 'string' }, building: { type: 'string' }, limit: { type: 'number' } } } },
-    { name: 'guesty_live', description: 'Go DIRECTLY to the live Guesty API when the synced data is missing or you need the freshest record. kind: "reservation"|"listing" with id, OR "path" with a raw Guesty GET path (e.g. path="reservations?limit=5&sort=-createdAt"). Read-only. Use this to be resourceful when the cached tools do not have what you need.', input_schema: { type: 'object', properties: { kind: { type: 'string' }, id: { type: 'string' }, path: { type: 'string' } } } },
-    { name: 'welcome_calls', description: 'Pre-arrival WELCOME CALL tracker. Lists upcoming check-ins (default next 7 days; set days up to 30) and whether each guest\'s welcome call is done (from the welcome_call custom field), plus a sensitive-guest flag. status: "pending"|"done"|"all" (default all). Optional building. Returns counts (welcome_done, welcome_pending, sensitive_upcoming) and the reservations. Use this whenever asked who needs a welcome call or about pre-arrival prep.', input_schema: { type: 'object', properties: { days: { type: 'number' }, status: { type: 'string' }, building: { type: 'string' } } } },
-  ]
+  // --- Memory, scoped to what this question is actually about. ---
+  const lastUser = String([...messages].reverse().find((m: any) => m.role === 'user')?.content || '')
+  const wholeThread = messages.map((m: any) => String(m.content || '')).join(' \n ')
+  const scopes = scopesForText(wholeThread, ctx.listingMeta)
+  const memories = await loadMemories(scopes, ctx.email)
+  const voice = await safe(getVoiceProfile(), '')
 
-  const SYSTEM = `You are Eve — the operating brain for Stay Hospitality, a ~235-unit South Florida short-term-rental manager. You work directly with Jon (owner / GM) as his sharp, trusted right hand. Right now you work for Jon ALONE.
+  const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
 
-Talk like a real, smart operator — the way an excellent chief of staff actually talks: natural, direct, plain English. Short sentences. Say what matters and get to the point. NO flowery hotel-concierge language, no corporate filler, no "I'd be delighted to," no "rest assured." You're a person who's great at this job, not a brochure. Drop the customer-service voice entirely - no "I'd be delighted to," "rest assured," "I hope this helps," "Certainly!" GOOD: "Three units are dragging Oasis down - 1102, 1107, 1206, all with unanswered 2-star cleaning reviews. I'd post replies today and flag a deep clean for Miami." BAD: "I would be delighted to help you review your portfolio!"
+  // Domains stay open for the whole exchange once Eve opens them. A caller may pre-open some
+  // (the /eve page does this when you click into a board) so she does not spend a turn on it.
+  const open: string[] = []
+  const preOpen = Array.isArray(body?.domains) ? body.domains : []
+  for (const d of preOpen) { const k = lc(d); if (DOMAIN_KEYS.indexOf(k) >= 0 && open.indexOf(k) < 0) open.push(k) }
 
-Be genuinely smart: interpret data, don't just repeat it. Find what matters, reason about WHY, connect signals across reviews, messages, field work and revenue, and tell Jon what you'd do and why.
-
-YOU HAVE LIVE DATA TOOLS. Use them. The headline snapshot below is only a starting glance — whenever Jon asks about anything specific (a building, a unit, a date range, revenue, a guest, low reviews, who's arriving, what's overdue), CALL THE TOOLS to pull the real records before answering. Chain several tool calls if needed. NEVER say you don't have access to something without trying a tool first. Cite the real figures you pull. REVIEW RATINGS are on a 5-STAR scale (Airbnb is /5; Booking.com and Vrbo are /10 and are normalized to /5) - an average rating is ALWAYS between 1.0 and 5.0, NEVER sum ratings; for ANY \"average review score/rating\" question (a building, a unit, or the portfolio) call review_summary and quote its avg_rating instead of averaging numbers yourself. If a tool returns empty, say that data isn't synced rather than guessing. You know Guesty COLD: you also have guesty_config (per-unit check-in/out times, min/max nights, instant book, cancellation, house rules, and custom fields incl. door/access codes) and portfolio (portfolio-wide counts). Chain as many tool calls as you need to dig in - think of it as sending yourself in to investigate. WELCOME CALLS are a priority pre-arrival workflow: a welcome_call custom field tracks whether each guest got their call before arrival - use the welcome_calls tool to surface who still needs one (and flag any sensitive-guest stays), and bring it up proactively when Jon asks about upcoming arrivals. You also LEARN from the data: knowledge_search is your auto-mined knowledge base (top guest FAQs + the fix, recurring complaint categories per building) - use it for FAQ / complaint-pattern questions and to ground recommendations in real patterns. And you can reach the LIVE Guesty API directly via guesty_live when the synced data is missing or you need the freshest record - be resourceful and go get it rather than saying you don't have it.\n\nUNIT OCCUPANCY / "IS IT VACANT?": when Jon asks whether a SPECIFIC unit is vacant/occupied/available, call unit_status (by name or id) - it scopes reservations to that listing's id, resolves active vs inactive listings, and checks cleaningStatus + last checkout + open field work. HARD RULES: (1) NEVER call a unit "vacant" just because a search returned nothing - "no reservations" is INCONCLUSIVE, not vacant. (2) A cleaningStatus of "dirty", a recent checkout, or open field work CONTRADICTS vacant - surface that conflict, don't ignore it. (3) If a unit has both an active and an inactive listing (e.g. "Suite" vs "STU"), confirm which listing id you checked and default to the ACTIVE one. (4) If you can't scope to a listing id, or signals conflict, say so FAST and ask Jon for a guest name or confirmation code - do NOT repeat the same confident answer twice.
-
-TEAMS: work is run by three teams — CCS, Miami, Broward. Organize dispatched actions by team. Refer to buildings by rolled-up name (Botanica, Oasis, Arya).
-
-HEADLINE SNAPSHOT (a glance, not the whole picture — use tools for depth):
-${JSON.stringify(headline)}
-
-REVIEW-REPLY SAFETY (when drafting any guest-facing reply/message): ALWAYS reply in English regardless of the guest's language; never admit fault; never mention unit numbers; never affirm/name bed bugs, pests, break-ins, intrusion or anyone "walking in" — thank the guest and note the team is looking into it; keep it gracious and brief; redirect serious claims to a private channel.
-
-STYLE: human and natural, short sentences, lead with the answer or the call, bullets only when they truly help. Make Jon's next decision obvious.`
-
-  // --- Tool-use loop ---
   const convo: any[] = messages.map((m: any) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 8000) }))
+  const toolsUsed: string[] = []
+
   try {
     let finalText = ''
-    for (let turn = 0; turn < 10; turn++) {
+    let turns = 0
+    for (let turn = 0; turn < MAX_TURNS; turn++) {
+      turns = turn + 1
+      const system = buildSystem({ headline, memories: renderMemories(memories), openDomains: open, voice, userName, canMoney })
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 4096, system: SYSTEM, tools, messages: convo }),
+        body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: wireTools(open), messages: convo }),
       })
       const d: any = await r.json()
-      if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
+      if (!r.ok) {
+        const msg = (d?.error?.message || JSON.stringify(d)).slice(0, 240)
+        // A 429 here is almost always the org tokens-per-minute ceiling, not a bug. Say so.
+        const hint = r.status === 429 ? ' — that is the Anthropic rate limit, not a failure. Give it a minute and ask again.' : ''
+        return NextResponse.json({ error: `Anthropic ${r.status}: ${msg}${hint}` }, { status: 502 })
+      }
       convo.push({ role: 'assistant', content: d.content })
+
       if (d.stop_reason === 'tool_use') {
         const results: any[] = []
         for (const block of (d.content || [])) {
-          if (block?.type === 'tool_use') {
-            const out = await runTool(block.name, block.input || {})
-            results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(out).slice(0, 7000) })
-          }
+          if (block?.type !== 'tool_use') continue
+          toolsUsed.push(block.name)
+          const { output, opened } = await runTool(block.name, block.input || {}, ctx, open)
+          if (opened && open.indexOf(opened) < 0) open.push(opened)
+          results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output).slice(0, TOOL_RESULT_CHARS) })
         }
         convo.push({ role: 'user', content: results })
         continue
@@ -340,7 +134,32 @@ STYLE: human and natural, short sentences, lead with the answer or the call, bul
       finalText = (d.content || []).filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim()
       break
     }
-    return NextResponse.json({ reply: finalText || '(no response)' })
+
+    if (!finalText) finalText = 'I ran out of steps before I got to an answer. Ask me again and narrow it a little — a building, a date range, or one unit.'
+
+    // Log the exchange. This is the substrate the improvement loop runs on; without it a thumbs-down
+    // is just a feeling. Never let a logging failure break the answer.
+    let chatId: string | null = null
+    try {
+      const { data } = await db.from('eve_chats').insert({
+        user_email: ctx.email,
+        question: lastUser.slice(0, 4000),
+        answer: finalText.slice(0, 8000),
+        tools_used: toolsUsed,
+        domains_opened: open,
+        turns,
+        ms: Date.now() - startedAt,
+      }).select('id').maybeSingle()
+      chatId = (data as any)?.id || null
+    } catch { /* migration 045 may not be run yet */ }
+
+    touchMemories(memories.map(m => m.id)).catch(() => {})
+
+    return NextResponse.json({
+      reply: finalText,
+      chatId,
+      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney },
+    })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
   }
