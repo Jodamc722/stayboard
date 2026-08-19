@@ -43,6 +43,7 @@ export async function PUT(req: NextRequest) {
       enabled: c.noticeDrafts?.enabled === true,
       fromEmail: typeof c.noticeDrafts?.fromEmail === 'string' && /@/.test(c.noticeDrafts.fromEmail)
         ? c.noticeDrafts.fromEmail.trim().toLowerCase() : d.noticeDrafts.fromEmail,
+      slackChannel: typeof c.noticeDrafts?.slackChannel === 'string' ? c.noticeDrafts.slackChannel.trim().slice(0, 40) : d.noticeDrafts.slackChannel,
     },
   }
   const res = await setSetting(TASK_AUTOMATION_KEY, config, access.email)
