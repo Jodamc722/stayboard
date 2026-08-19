@@ -52,9 +52,12 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// 'clear' is the engine's own word for "nothing found here" — it is computed per row and must
-// never arrive from a click, or approving a row would be indistinguishable from never looking.
-const STATUSES: AuditStatus[] = WRITABLE_STATUSES
+// 'clear' is the engine's own word for "nothing found here" — a click can never MAKE a row clear.
+// But it is accepted as input with a precise meaning: BACK TO AUTOMATIC. The reader ignores any
+// stored status outside WRITABLE_STATUSES and falls through to the computed default, so storing
+// 'clear' un-marks the row (an accidental Action press toggles off) without ever counting a human
+// click as "nothing was ever wrong".
+const STATUSES: AuditStatus[] = [...WRITABLE_STATUSES, 'clear']
 
 export async function POST(req: NextRequest) {
   const who = await whoAmI()
