@@ -79,6 +79,10 @@
     {
       "path": "/api/cron/guest-comms",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/sentiment/scan",
+      "schedule": "10,40 * * * *"
     }
   ]
 }
