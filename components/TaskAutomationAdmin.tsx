@@ -18,6 +18,7 @@ type Cfg = {
   vip: boolean; ownerStays: boolean; daysAhead: number
   assignAlways: string
   supervisors: { Miami: string; Broward: string; North: string }
+  noticeDrafts: { enabled: boolean; fromEmail: string }
 }
 
 export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
@@ -121,6 +122,32 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
             </div>
           ))}
           <p className="text-[11px] text-muted">Names are matched against Breezeway's people list when each task is created.</p>
+        </div>
+      </div>
+
+      {/* ── AUTOMATION 2: arrival-day Gmail drafts for front-desk notices ─────────────────── */}
+      <div className="border-t border-line pt-3 mt-1">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <Zap size={14} className={cfg.noticeDrafts?.enabled ? 'text-amber-500' : 'text-muted'} />
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!cfg.noticeDrafts?.enabled}
+              onChange={e => set({ noticeDrafts: { ...cfg.noticeDrafts, enabled: e.target.checked } })} disabled={!isOwner} />
+            <span className="text-[13px] font-bold text-ink">Draft front-desk notices on arrival morning</span>
+          </label>
+          <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (cfg.noticeDrafts?.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-500')}>
+            {cfg.noticeDrafts?.enabled ? 'On' : 'Off'}
+          </span>
+        </div>
+        <p className="text-[12px] text-muted mt-1">
+          Every morning at 6:30, each of today&apos;s unsent building notices becomes a ready-to-send
+          Gmail draft — addressed, subject and body filled — in the mailbox below. A human reviews and
+          presses send; nothing goes out on its own.
+        </p>
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-[12.5px] text-muted shrink-0">Drafts appear in</span>
+          <input value={cfg.noticeDrafts?.fromEmail || ''}
+            onChange={e => set({ noticeDrafts: { ...cfg.noticeDrafts, fromEmail: e.target.value } })}
+            className={box + ' max-w-[280px]'} disabled={!isOwner} placeholder="mailbox with Google connected" />
         </div>
       </div>
 
