@@ -1645,6 +1645,14 @@ export async function buildGmBrief(): Promise<OpsBrief> {
         return totalF > 0 && unclosed / totalF > 0.1
           ? `<tr><td colspan="2" style="${S.td};background:#fffbeb"><span style="${S.amber}">${money0(unclosed)} of this window's fees sit on cleans not yet closed in Breezeway</span> <span style="${S.muted}">— cost per clean reads high and settles DOWN as that paperwork lands. The Daily Labor email's settled 30-day figure is the one to manage on.</span></td></tr>`
           : ''
+      })() +
+      // 17WEST pays $100k/yr toward George Paz + Yoslenis (Jon, 2026-08-20) — the engine already
+      // deducted this window's share from the supervisor and maintenance lines above; say so.
+      (() => {
+        const W7: any = (ec7.kpi as any).seventeenWest
+        return W7 && W7.covered > 0
+          ? `<tr><td colspan="2" style="${S.td}"><span style="${S.muted}">17WEST covers ${money0(W7.covered)} of George Paz + Yoslenis's wages this window ($100k/yr, pro-rated) — the lines above are Stay's share only, and 17WEST tasks are unbilled by design.</span></td></tr>`
+          : ''
       })()
   })()
   const moneyRows = laborRows + `
