@@ -1,0 +1,78 @@
+# Lighthouse guard rail.
+#
+# Two jobs, one purpose: nothing lands on main that does not type-check and build, and twice a
+# day someone checks that the deployed app is still answering the way it is supposed to.
+#
+# This is deliberately conservative. It never writes to the repo and never touches production —
+# it only tells the truth about what it found. The fixing happens in review, by a person or by
+# the Claude auditor opening a pull request.
+
+name: Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 06:20 and 18:20 America/New_York (UTC-4 in summer). GitHub cron is UTC.
+    - cron: '20 10 * * *'
+    - cron: '20 22 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The gate. A red here means main is broken — this is the check that must never be skipped.
+  build:
+    name: Type-check and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Build
+        # next.config.mjs runs scripts/check-tabs.mjs here, so a page added without a
+        # features.ts entry fails the build rather than shipping ungated.
+        run: npx next build
+
+  # The sweep. Static checks always run; the live probes only run on a schedule, so pull
+  # requests are not slowed down by 20 network round trips.
+  audit:
+    name: Self-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Run audit
+        run: |
+          node scripts/audit/run.mjs \
+            ${{ github.event_name == 'schedule' && '--base https://stayboard-three.vercel.app' || '--no-live' }} \
+            --json audit.json --md audit.md
+      - name: Summary
+        if: always()
+        run: cat audit.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audit-report
+          path: |
+            audit.json
+            audit.md
+      # Reports a NEW red finding without failing the run. Six reds are open as of
+      # 2026-08-20 (two crons that never fire, an unauthenticated cron that writes to the
+      # database, three pages shipping with no navigation) and a permanently red X teaches
+      # people to ignore the X. Drop `continue-on-error` once that list is clear and this
+      # becomes a real gate.
+      - name: Report a NEW red finding
+        continue-on-error: true
+        run: node scripts/audit/run.mjs --no-live --strict
