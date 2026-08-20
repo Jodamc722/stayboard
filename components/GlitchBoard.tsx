@@ -8,6 +8,9 @@ import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
+import { Sheet } from './Sheet'
+import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
+import { ImageDrop } from './ImageDrop'
 
 type Glitch = {
   id: string; status: string; glitch_type: string | null; category: string | null
@@ -59,6 +62,42 @@ const CATS = [
 ]
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso || ''; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 function money(n: number | null) { return n == null ? null : '$' + Math.round(n).toLocaleString() }
+function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
+
+// Stored photos used to be public bucket URLs. New ones are PRIVATE storage paths read back
+// through a signed-url route (see app/api/glitches/photo/route.ts). Old rows keep working because
+// anything that already looks like a URL is passed straight through.
+function glitchPhotoSrc(u: string): string {
+  const v = String(u || '')
+  if (!v) return ''
+  if (/^https?:\/\//i.test(v) || v.indexOf('data:') === 0) return v
+  return '/api/glitches/photo?path=' + encodeURIComponent(v)
+}
+
+// The chips shown on the New-issue sheet. Short labels for a phone; the VALUES are the existing
+// Asana categories verbatim, because `deptFor(category)` routes the Breezeway task off them and
+// every historic glitch is filed under them. The first seven show by default, the rest behind
+// "More categories" — a dropdown hides every option until you open it, chips do not.
+const CAT_CHIPS: { value: string; label: string }[] = [
+  { value: 'Maintenance - HVAC/Temperature', label: 'Temperature / AC' },
+  { value: 'Maintenance - Water Heater', label: 'Hot water' },
+  { value: 'Cleanliness - Inadequate Cleaning', label: 'Cleanliness' },
+  { value: 'Maintenance - Plumbing', label: 'Plumbing' },
+  { value: 'Maintenance - Appliances', label: 'Appliance' },
+  { value: 'Maintenance - Electrical', label: 'Electrical' },
+  { value: 'Pests/Bed Bugs', label: 'Pests' },
+  { value: 'Maintenance - Building/Common Areas', label: 'Building / common areas' },
+  { value: 'Safety/Security Concern', label: 'Safety / security' },
+  { value: 'Parking/Vehicle', label: 'Parking' },
+  { value: 'Other', label: 'Something else' },
+]
+
+// The order of the phone call, not the order of the table.
+const STEPS: Step[] = [
+  { key: 'who', label: 'Who' },
+  { key: 'what', label: 'What happened' },
+  { key: 'send', label: 'Send it' },
+]
 function SentimentChip({ s }: { s: { band?: string; dissatisfied?: boolean; topIssue?: string | null } | null }) {
   if (!s || !s.band) return null
   const bad = s.dissatisfied || /neg|bad|angry|upset/i.test(String(s.band))
@@ -114,7 +153,7 @@ export function GlitchBoard() {
   return (
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-4">
-        <button onClick={() => setShowNew(!showNew)} className="text-sm font-medium px-3 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1.5"><Plus size={14} /> New glitch</button>
+        <button onClick={() => setShowNew(true)} className="text-sm font-medium px-3 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1.5"><Plus size={14} /> New glitch</button>
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
@@ -175,7 +214,7 @@ export function GlitchBoard() {
                           {g.reservation_notes && <div className="text-[11px] text-muted">Reservation notes: {g.reservation_notes.slice(0, 200)}</div>}
                           {g.sentiment && g.sentiment.excerpt && <div className="text-[11px] text-muted">Guest said: &ldquo;{String(g.sentiment.excerpt).slice(0, 180)}&rdquo;</div>}
                           {(g.photos || []).length > 0 && (
-                            <div className="flex gap-1 flex-wrap">{(g.photos || []).map((u, i) => <a key={i} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" className="w-12 h-12 object-cover rounded border border-line" /></a>)}</div>
+                            <div className="flex gap-1 flex-wrap">{(g.photos || []).map((u, i) => <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer"><img src={glitchPhotoSrc(u)} alt="" className="w-12 h-12 object-cover rounded border border-line" /></a>)}</div>
                           )}
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {ci > 0 && <button onClick={() => act(g.id, { action: 'move', status: COLS[ci - 1].key })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">&larr; {COLS[ci - 1].label}</button>}
@@ -220,14 +259,26 @@ export function GlitchBoard() {
   )
 }
 
+// ── NEW GLITCH ───────────────────────────────────────────────────────────────────────────────
+// A POP-UP, in three steps (Jon, 2026-08-20). It used to be an inline panel that opened
+// full-width above the kanban and pushed the whole board off the bottom of the screen — which is
+// why it read as "a page". Now the board stays exactly where it was, behind the sheet.
+//
+// The three steps follow the phone call, not the database: WHO is calling, WHAT went wrong, then
+// the bookkeeping nobody has at minute one. Step 1 auto-fills unit, market, channel, dates, phone,
+// email, reservation total and the guest's current sentiment, so step 2 is the only real typing.
 function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [step, setStep] = useState(0)
+  const [furthest, setFurthest] = useState(0)
   const [q, setQ] = useState('')
   const [matches, setMatches] = useState<ResMatch[]>([])
   const [searching, setSearching] = useState(false)
   const [res, setRes] = useState<ResMatch | null>(null)
+  const [noRes, setNoRes] = useState(false)
   const [glitchType, setGlitchType] = useState(TYPES[0])
   const [category, setCategory] = useState('')
-  const [incidentDate, setIncidentDate] = useState('')
+  const [moreCats, setMoreCats] = useState(false)
+  const [incidentDate, setIncidentDate] = useState(todayET())
   const [overview, setOverview] = useState('')
   const [recovery, setRecovery] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
@@ -253,25 +304,10 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     setSearching(false)
   }
   const stayTag = (m: ResMatch) => {
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    const today = todayET()
     if (m.checkIn && m.checkIn <= today && m.checkOut && m.checkOut >= today) return { label: 'In-house', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
     if (m.checkIn && m.checkIn > today) return { label: 'Upcoming', cls: 'bg-sky-50 text-sky-700 border-sky-200' }
     return { label: 'Past stay', cls: 'bg-app text-muted border-line' }
-  }
-
-  const addPhoto = async (f: File) => {
-    setErr('')
-    try {
-      const buf = await f.arrayBuffer()
-      let bin = ''
-      const bytes = new Uint8Array(buf)
-      for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 8192)))
-      const b64 = btoa(bin)
-      const r = await fetch('/api/glitches/photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ b64, filename: f.name, contentType: f.type || 'image/jpeg' }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setErr(j.error || 'Upload failed'); return }
-      setPhotos(prev => prev.concat([j.url]))
-    } catch (e: any) { setErr(String(e?.message || e)) }
   }
 
   const create = async () => {
@@ -289,76 +325,173 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     setBusy(false)
   }
 
+  // Why each step will not advance — shown next to the button, never a silent grey control.
+  const blockedAt = (i: number): string => {
+    if (i === 0) return (res || noRes) ? '' : 'Pick the stay, or choose "no reservation"'
+    if (i === 1) {
+      if (!category) return 'Pick a category'
+      if (!overview.trim()) return 'Add a short description'
+      if (!incidentDate) return 'Set the incident date'
+    }
+    return ''
+  }
+  const blocked = blockedAt(step)
+  const go = (i: number) => { setStep(i); if (i > furthest) setFurthest(i) }
+  const next = () => { if (step >= STEPS.length - 1) { create(); return } go(step + 1) }
+
+  const catChips = (moreCats ? CAT_CHIPS : CAT_CHIPS.slice(0, 7))
+  const stayLine = res
+    ? res.unit + ' · ' + fmtShort(res.checkIn) + ' → ' + fmtShort(res.checkOut) + (res.channel ? ' · ' + res.channel : '')
+    : 'No reservation attached'
+
   return (
-    <div className="rounded-2xl border border-line bg-white p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-semibold text-ink">New glitch</div>
-        <button onClick={onCancel} className="text-xs font-medium px-2 py-1 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1 text-muted"><X size={12} /> Cancel</button>
-      </div>
-      {!res && (
-        <div className="mb-3">
-          <div className="flex gap-2 max-w-md">
-            <span className="relative flex-1">
-              <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-              <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder="Search guest name…" className="w-full text-sm border border-line rounded-lg pl-7 pr-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
-            </span>
-            <button onClick={() => search()} disabled={searching || !q.trim()} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{searching ? 'Searching…' : 'Find reservation'}</button>
-            <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shrink-0">
-              <button onClick={() => search('active')} className={'text-[12px] font-medium px-2.5 py-2 ' + (scope === 'active' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>In-house now</button>
-              <button onClick={() => search('all')} className={'text-[12px] font-medium px-2.5 py-2 ' + (scope === 'all' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>All stays</button>
-            </span>
+    <Sheet
+      open
+      onClose={onCancel}
+      title="New guest issue"
+      subtitle={<StepDots steps={STEPS} current={step} furthest={furthest} onGo={go} />}
+      footer={
+        <div>
+          <StepBar
+            current={step} total={STEPS.length} blocked={blocked} busy={busy}
+            onBack={() => go(Math.max(0, step - 1))} onNext={next}
+            nextLabel="Next" finishLabel="Create issue"
+          />
+          {err ? <p className="text-[11.5px] text-rose-700 font-semibold mt-2">{err}</p> : null}
+        </div>
+      }
+    >
+      {/* ── STEP 1 · WHO ───────────────────────────────────────────────────────────────── */}
+      {step === 0 && (
+        <div>
+          {!res ? (
+            <div>
+              <Field label="Which guest?" hint="Everything else — unit, market, channel, dates, phone, email, stay value — fills itself in from the booking.">
+                <div className="flex gap-2">
+                  <span className="relative flex-1">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                    <input value={q} autoFocus onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }}
+                      placeholder="Guest name…" className="w-full text-[13.5px] border border-line rounded-xl pl-8 pr-2.5 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  </span>
+                  <button type="button" onClick={() => search()} disabled={searching || !q.trim()}
+                    className="text-[12.5px] font-bold px-3.5 py-2.5 rounded-xl bg-ink text-white disabled:bg-line disabled:text-faint shrink-0">
+                    {searching ? 'Searching…' : 'Find'}
+                  </button>
+                </div>
+                <div className="flex gap-1.5 mt-2">
+                  <button type="button" onClick={() => search('active')} className={'text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (scope === 'active' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>In-house now</button>
+                  <button type="button" onClick={() => search('all')} className={'text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (scope === 'all' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>All stays</button>
+                </div>
+              </Field>
+
+              {matches.length > 0 && (
+                <div className="space-y-1.5 mb-4">
+                  {matches.map(m => (
+                    <button type="button" key={m.reservationId} onClick={() => { setRes(m); setNoRes(false); if (m.guestEmail) setGuestEmail(m.guestEmail); go(1) }}
+                      className="w-full text-left border border-line rounded-xl px-3 py-2.5 bg-white hover:border-ink/30 hover:bg-app/50">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13.5px] font-bold text-ink">{m.guestName}</span>
+                        {(() => { const t = stayTag(m); return <span className={'text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded border ' + t.cls}>{t.label}</span> })()}
+                        <SentimentChip s={m.sentiment} />
+                      </div>
+                      <div className="text-[11.5px] text-muted mt-0.5">{m.unit} · {fmtShort(m.checkIn)} &rarr; {fmtShort(m.checkOut)}{m.channel ? ' · ' + m.channel : ''}{m.total ? ' · ' + money(m.total) : ''}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {searched && !searching && matches.length === 0 && scope === 'active' && q.trim() !== '' && (
+                <p className="text-[12.5px] text-muted mb-4">
+                  Nobody in-house matches &ldquo;{q.trim()}&rdquo;.{' '}
+                  <button type="button" onClick={() => search('all')} className="font-bold text-ink underline">Search past &amp; upcoming stays</button>
+                </p>
+              )}
+              {searched && !searching && matches.length === 0 && scope === 'all' && (
+                <p className="text-[12.5px] text-muted mb-4">No booked reservation matches &ldquo;{q.trim()}&rdquo;. Inquiries and canceled bookings never show here.</p>
+              )}
+
+              <button type="button" onClick={() => { setNoRes(true); go(1) }}
+                className={'w-full text-left rounded-xl border px-3 py-2.5 ' + (noRes ? 'border-ink bg-app' : 'border-line bg-white hover:border-ink/30')}>
+                <p className="text-[13px] font-bold text-ink">No reservation &mdash; log it anyway</p>
+                <p className="text-[11.5px] text-muted mt-0.5">For a building or common-area problem that is not tied to one stay.</p>
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-line bg-app/60 px-3.5 py-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[14px] font-bold text-ink">{res.guestName}</span>
+                <SentimentChip s={res.sentiment} />
+                <button type="button" onClick={() => { setRes(null); setMatches([]); setSearched(false) }} className="ml-auto text-[11.5px] font-semibold text-muted hover:text-ink underline">change</button>
+              </div>
+              <p className="text-[12px] text-muted mt-1">
+                {res.unit} · {res.market} · {fmtShort(res.checkIn)} &rarr; {fmtShort(res.checkOut)}
+                {res.channel ? ' · ' + res.channel : ''}{res.total ? ' · ' + money(res.total) : ''}
+              </p>
+              {res.guestPhone || res.guestEmail ? <p className="text-[11.5px] text-muted mt-0.5">{[res.guestPhone, res.guestEmail].filter(Boolean).join(' · ')}</p> : null}
+              <a href={res.guestyUrl} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-600 hover:underline inline-block mt-1.5">Open in Guesty &#8599;</a>
+              {res.notes ? <p className="text-[11.5px] text-muted mt-1.5">Reservation notes: {res.notes.slice(0, 220)}</p> : null}
+              {res.sentiment && res.sentiment.excerpt ? <p className="text-[11.5px] text-muted mt-1">Guest said: &ldquo;{String(res.sentiment.excerpt).slice(0, 180)}&rdquo;</p> : null}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── STEP 2 · WHAT ──────────────────────────────────────────────────────────────── */}
+      {step === 1 && (
+        <div>
+          <p className="text-[12px] text-muted mb-3.5">{stayLine}</p>
+
+          <Field label="What kind of issue">
+            <Chips options={TYPES.map(t => ({ value: t, label: t.replace(/\s*\(.*\)$/, '') }))} value={glitchType} onChange={v => setGlitchType(v || TYPES[0])} />
+          </Field>
+
+          <Field label="Category" hint={!moreCats ? <button type="button" onClick={() => setMoreCats(true)} className="font-semibold text-ink underline">More categories</button> : null}>
+            <Chips options={catChips} value={category} onChange={setCategory} />
+          </Field>
+
+          <Field label="What happened">
+            <textarea value={overview} onChange={e => setOverview(e.target.value)} rows={3}
+              placeholder="One or two sentences. The team and Breezeway will read this."
+              className="w-full text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          </Field>
+
+          <Field label="Proof" hint="Screenshot the guest's message and paste it straight in.">
+            <ImageDrop items={photos} onChange={setPhotos} endpoint="/api/glitches/photo" srcFor={glitchPhotoSrc} label="Add a photo or screenshot" />
+          </Field>
+
+          <Field label="When it happened">
+            <input type="date" value={incidentDate} onChange={e => setIncidentDate(e.target.value)}
+              className="text-[13px] border border-line rounded-xl px-3 py-2 bg-white" />
+          </Field>
+        </div>
+      )}
+
+      {/* ── STEP 3 · SEND ──────────────────────────────────────────────────────────────── */}
+      {step === 2 && (
+        <div>
+          <div className="rounded-xl border border-line bg-app/60 px-3.5 py-3 mb-4">
+            <p className="text-[13px] font-bold text-ink">{res ? res.guestName : 'No reservation'}</p>
+            <p className="text-[11.5px] text-muted mt-0.5">{stayLine}</p>
+            <p className="text-[12.5px] text-ink mt-2">{(CAT_CHIPS.filter(c => c.value === category)[0] || { label: category }).label}{overview ? ' — ' + overview.slice(0, 160) : ''}</p>
+            <p className="text-[11.5px] text-muted mt-1">{incidentDate}{photos.length ? ' · ' + photos.length + (photos.length === 1 ? ' photo' : ' photos') : ' · no photo'}</p>
           </div>
-          {matches.length > 0 && (
-            <div className="mt-2 space-y-1 max-w-xl">
-              {matches.map(m => (
-                <button key={m.reservationId} onClick={() => { setRes(m); if (m.guestEmail) setGuestEmail(m.guestEmail) }} className="w-full text-left text-sm border border-line rounded-lg px-3 py-2 bg-white hover:bg-app flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-ink">{m.guestName}</span>
-                  <span className="text-xs text-muted">{m.unit} · {fmtShort(m.checkIn)} &rarr; {fmtShort(m.checkOut)}{m.channel ? ' · ' + m.channel : ''}{m.total ? ' · ' + money(m.total) : ''}</span>
-                  {(() => { const t = stayTag(m); return <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + t.cls}>{t.label}</span> })()}
-                  <SentimentChip s={m.sentiment} />
-                </button>
-              ))}
-            </div>
-          )}
-          {searched && !searching && matches.length === 0 && scope === 'active' && q.trim() !== '' && (
-            <div className="mt-2 text-sm text-muted flex items-center gap-2 flex-wrap">
-              No guest in-house matches &ldquo;{q.trim()}&rdquo;.
-              <button onClick={() => search('all')} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app text-ink">Search past &amp; upcoming stays</button>
-            </div>
-          )}
-          {searched && !searching && matches.length === 0 && scope === 'all' && <div className="mt-2 text-sm text-muted">No booked reservation matches &ldquo;{q.trim()}&rdquo; (inquiries and canceled bookings never show).</div>}
-          <div className="text-[11px] text-muted mt-1.5">Or skip the reservation and just describe the glitch below.</div>
+
+          <Field label="Who reported it" hint="The person who took the call, so the next reader knows who to ask.">
+            <input value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="e.g. CCS, Amna"
+              className="w-full text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white" />
+          </Field>
+
+          <Field label="Guest email" hint="Prefilled from the booking when there is one.">
+            <input value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="optional"
+              className="w-full text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white" />
+          </Field>
+
+          <Field label="Recovery cost" hint="What this already cost us to put right. Not a refund &mdash; that decision happens on the card.">
+            <input value={recovery} onChange={e => setRecovery(e.target.value)} placeholder="0"
+              className="w-28 text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white" />
+          </Field>
         </div>
       )}
-      {res && (
-        <div className="mb-3 text-sm bg-app border border-line rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-ink">{res.guestName}</span>
-          <span className="text-xs text-muted">{res.unit} · {res.market} · {fmtShort(res.checkIn)} &rarr; {fmtShort(res.checkOut)}{res.channel ? ' · ' + res.channel : ''}{res.total ? ' · ' + money(res.total) : ''}{res.guestPhone ? ' · ' + res.guestPhone : ''}{res.guestEmail ? ' · ' + res.guestEmail : ''}</span>
-          <a href={res.guestyUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline">Open in Guesty ↗</a>
-          <SentimentChip s={res.sentiment} />
-          {res.notes && <span className="text-[11px] text-muted w-full">Reservation notes: {res.notes.slice(0, 200)}</span>}
-          {res.sentiment && res.sentiment.excerpt && <span className="text-[11px] text-muted w-full">Guest said: &ldquo;{String(res.sentiment.excerpt).slice(0, 180)}&rdquo;</span>}
-          <button onClick={() => setRes(null)} className="ml-auto text-xs text-muted hover:text-ink">change</button>
-        </div>
-      )}
-      <div className="flex gap-2 flex-wrap items-center mb-2">
-        <select value={glitchType} onChange={e => setGlitchType(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-2 bg-white">{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
-        <select value={category} onChange={e => setCategory(e.target.value)} className={'text-sm border rounded-lg px-2 py-2 bg-white ' + (category ? 'border-line' : 'border-amber-300')}><option value="">Category * …</option>{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
-        <label className="text-sm text-muted inline-flex items-center gap-1.5">Incident date * <input type="date" value={incidentDate} onChange={e => setIncidentDate(e.target.value)} className={'text-sm border rounded-lg px-2 py-1.5 bg-white ' + (incidentDate ? 'border-line' : 'border-amber-300')} /></label>
-        <label className="text-sm text-muted inline-flex items-center gap-1.5">Recovery $ <input value={recovery} onChange={e => setRecovery(e.target.value)} placeholder="0" className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-20" /></label>
-      </div>
-      <div className="flex gap-2 flex-wrap items-center mb-2">
-        <input value={reportedBy} onChange={e => setReportedBy(e.target.value)} placeholder="Who called / reported (e.g. CCS, Amna)" className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-64" />
-        <input value={guestEmail} onChange={e => setGuestEmail(e.target.value)} placeholder="Guest email (optional)" className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-64" />
-      </div>
-      <textarea value={overview} onChange={e => setOverview(e.target.value)} rows={3} placeholder="What happened? * (overview the team + Breezeway will see)" className="w-full text-sm border border-line rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
-      <div className="flex items-center gap-2 flex-wrap mt-2">
-        <label className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line cursor-pointer hover:bg-app"><Camera size={13} /> Add photo<input type="file" accept="image/*" multiple className="hidden" onChange={e => { const fs = Array.from(e.target.files || []); fs.forEach(addPhoto); e.currentTarget.value = '' }} /></label>
-        {photos.map((u, i) => <span key={i} className="relative inline-block"><img src={u} alt="" className="w-10 h-10 object-cover rounded border border-line" /><button onClick={() => setPhotos(photos.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-0.5"><X size={9} /></button></span>)}
-        <button onClick={create} disabled={busy || !overview.trim() || !category || !incidentDate} className="ml-auto text-sm font-medium px-4 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Creating…' : 'Create glitch'}</button>
-      </div>
-      {err && <div className="text-xs text-rose-700 mt-2">{err}</div>}
-    </div>
+    </Sheet>
   )
 }
 
