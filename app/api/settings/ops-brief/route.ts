@@ -36,6 +36,9 @@ export async function GET() {
   // can set, or blank for automatic (settled 30-day HK margin + 3, computed by the planner).
   const lp = await getSetting<any>('labor_plan', null).catch(() => null)
   const lpTarget = Number(lp?.targetMarginPct)
+  // Maintenance briefs (Jon, 2026-08-20): one Miami, one Broward, each with its own list.
+  const mb = await getSetting<any>('maint_brief', null).catch(() => null)
+  const mbo = mb && typeof mb === 'object' ? mb : {}
   return NextResponse.json({
     ok: true,
     config: {
@@ -45,6 +48,7 @@ export async function GET() {
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       trueup, salato,
       laborPlan: { targetMarginPct: Number.isFinite(lpTarget) && lpTarget > 0 ? Math.round(lpTarget) : null },
+      maint: { enabled: mbo.enabled !== false, miamiTo: cleanEmails(mbo.miamiTo), browardTo: cleanEmails(mbo.browardTo) },
     },
   })
 }
@@ -93,5 +97,13 @@ export async function PUT(req: NextRequest) {
     await setSetting('labor_plan', { ...base, targetMarginPct: target }, access.email).catch(() => null)
     laborPlan = { targetMarginPct: target }
   }
-  return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan } })
+  // Maintenance briefs: merge-save to their own key so the cron keeps reading what it reads.
+  let maint: { enabled: boolean; miamiTo: string[]; browardTo: string[] } | null = null
+  if (c.maint && typeof c.maint === 'object') {
+    const cur = await getSetting<any>('maint_brief', null).catch(() => null)
+    const base = cur && typeof cur === 'object' ? cur : {}
+    maint = { enabled: c.maint.enabled !== false, miamiTo: cleanEmails(c.maint.miamiTo), browardTo: cleanEmails(c.maint.browardTo) }
+    await setSetting('maint_brief', { ...base, ...maint }, access.email).catch(() => null)
+  }
+  return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan, maint } })
 }
