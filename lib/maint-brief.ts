@@ -19,7 +19,8 @@ import { supabaseAdmin } from './supabase-admin'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf } from './segments'
-import { kindOfTask } from './labor-econ'
+import { kindOfTask, SEVENTEEN_WEST_PAIR, seventeenWestCoverage } from './labor-econ'
+import { nameMatches } from './homebase'
 import { laborAmount } from './billing'
 import { buildDaySheet } from './daysheet'
 import { getCrew } from './crew'
@@ -183,9 +184,19 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     const crew = await getCrew()
     const cards = await getTimecards(d30, yd)
     const mine = cards.filter(c => crew.deptOf(c.name, (c as any).role) === 'maintenance')
-    const sum = (from: string, to: string) => round2(mine.filter(c => c.date != null && c.date >= from && c.date <= to).reduce((a, c) => a + (c.laborCost ?? 0), 0))
+    // 17WEST pays $100k/yr toward George Paz + Yoslenis (Jon, 2026-08-20), so the wage line
+    // carries only STAY'S share of George — same coverage math as the labor engine, so this
+    // brief and the Daily Labor email can never disagree about what maintenance costs.
+    const pair = cards.filter(c => SEVENTEEN_WEST_PAIR.some(n => nameMatches(c.name, n)))
+    const george = cards.filter(c => nameMatches(c.name, SEVENTEEN_WEST_PAIR[0]))
+    const sumOf = (list: typeof cards, from: string, to: string) =>
+      round2(list.filter(c => c.date != null && c.date >= from && c.date <= to).reduce((a, c) => a + (c.laborCost ?? 0), 0))
+    const stayWage = (from: string, to: string, days: number) => {
+      const cov = seventeenWestCoverage(sumOf(pair, from, to), days)
+      return round2(Math.max(0, sumOf(mine, from, to) - sumOf(george, from, to) * cov.ratio))
+    }
     wages = {
-      yd: sum(yd, yd), d7: sum(d7, yd), d30: sum(d30, yd),
+      yd: stayWage(yd, yd, 1), d7: stayWage(d7, yd, 7), d30: stayWage(d30, yd, 30),
       names: Array.from(new Set(mine.map(c => c.name))).slice(0, 8),
     }
   } catch { /* wages line shows a dash rather than a guess */ }
@@ -256,7 +267,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
       : '<p style="margin:0;font-size:13px"><span style="' + S.green + '">No unit needed maintenance 3+ times this month.</span></p>') +
     '</div>'
 
-  const wagesNote = 'Wages are the declared maintenance crew&rsquo;s Homebase timecards, portfolio-wide — Homebase is one location with no market on a timecard, so the SAME wage line appears on both market briefs. Billable is measured per market, because a task knows its unit.'
+  const wagesNote = 'Wages are the declared maintenance crew&rsquo;s Homebase timecards, portfolio-wide — Homebase is one location with no market on a timecard, so the SAME wage line appears on both market briefs. Billable is measured per market, because a task knows its unit. 17WEST pays $100k/yr toward George Paz + Yoslenis, so the wage column carries only Stay&rsquo;s share of George.'
   const moneyCard = '<div style="' + cardStyle + '">' +
     secTitle('Billable vs wages', market + ' billable · portfolio wages') +
     '<table width="100%" cellspacing="0" cellpadding="0">' +
