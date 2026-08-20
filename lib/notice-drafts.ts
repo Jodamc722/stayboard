@@ -366,10 +366,10 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       // ETA AND GUEST COUNT ARE NOT OPTIONAL ON THE ELSER FORM (Jon, 2026-08-20: "we need to make
       // sure that we include the number of guests and the ETA on those forms, extremely
       // important" — unit 1809 went out with both blank). Order: what the desk already filed →
-      // what Guesty says live → the building's standard check-in, LABELLED as standard so nobody
-      // reads it as a guest-confirmed time. A guest count is never invented: if it is genuinely
-      // unknown the draft carries a red line telling the desk to write it in before sending.
-      const stdEta = p.attachPdf ? '3:00 PM (standard check-in)' : ''
+      // what Guesty says live → 4:00 PM, the arrival hour the desk has always written by hand on
+      // these forms. A guest count is never invented: if it is genuinely unknown the draft carries
+      // a red line telling the desk to write it in before sending.
+      const stdEta = p.attachPdf ? '4:00 PM' : ''   // Jon, 2026-08-20: "put 4pm" — the hour the desk writes by hand
       const n: any = {
         ...n0,
         eta: str(n0.eta) || live?.eta || stdEta || null,
@@ -483,4 +483,9 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
     } catch (e: any) { base.errors.push('slack notify: ' + String(e?.message || e).slice(0, 120)) }
   }
   return base
+}
+
+/** Debug hook: what Guesty returns for the fields the Elser form needs. Used by ?probe= only. */
+export async function probeLiveReservation(resId: string): Promise<LiveRes | null> {
+  return fetchLiveReservation(resId)
 }

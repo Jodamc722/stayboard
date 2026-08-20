@@ -70,8 +70,15 @@ function guestSplit(raw: any): { adults: number | null; children: number | null 
   if (gc && typeof gc === 'object') {
     return { adults: intOrNull(gc.adults), children: intOrNull(gc.children) }
   }
-  const adults = intOrNull(raw?.adults ?? (typeof gc === 'number' ? gc : null))
-  return { adults, children: intOrNull(raw?.children) }
+  // Guesty spells the guest count four different ways depending on channel and API version, and
+  // the building's form needs A NUMBER (Jon, 2026-08-20). Probe every shape rather than betting on
+  // one; a bare total lands as the adult count, which is what the desk writes by hand anyway.
+  const nog = raw?.numberOfGuests && typeof raw.numberOfGuests === 'object' ? raw.numberOfGuests : null
+  const g = raw?.guests && typeof raw.guests === 'object' ? raw.guests : null
+  const adults = intOrNull(g?.adults) ?? intOrNull(nog?.numberOfAdults) ?? intOrNull(raw?.adults)
+    ?? intOrNull(typeof gc === 'number' ? gc : null) ?? intOrNull(typeof raw?.numberOfGuests === 'number' ? raw.numberOfGuests : null)
+  const children = intOrNull(g?.children) ?? intOrNull(nog?.numberOfChildren) ?? intOrNull(raw?.children)
+  return { adults, children }
 }
 
 /** Has Guesty already been told this one went out? Mirrors the "reservation email sent" custom field. */
@@ -199,7 +206,7 @@ export async function pullNotices(days = 30): Promise<PullResult> {
       // created, which the PDF stamps at build time — storing the reservation's creation date here
       // only invited someone to print the wrong thing.
       booking_date: null,
-      eta: trimmed(raw.plannedArrival, 40),
+      eta: trimmed(raw.plannedArrival || raw.checkInTime || raw?.listing?.defaultCheckInTime, 40),
       adults, children,
       confirmation_code: trimmed(r.confirmation_code, 60),
       channel: trimmed(r.source, 60),
