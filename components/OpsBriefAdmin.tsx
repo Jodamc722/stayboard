@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
 type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null } }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null }; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[] } }
 
 // The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
 // on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
@@ -50,6 +50,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
     d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '),
     lp_target: c.laborPlan?.targetMarginPct != null ? String(c.laborPlan.targetMarginPct) : '',
+    m_miami: (c.maint?.miamiTo || []).join(', '), m_broward: (c.maint?.browardTo || []).join(', '),
   })
   const load = useCallback(async () => {
     try {
@@ -57,13 +58,13 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok) {
         const c = j.config || {}
-        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true }))
+        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false }))
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
   useEffect(() => { load(); loadMailboxes() }, [load, loadMailboxes])
 
-  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true }) !== saved
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, dm: cfg.maint?.enabled !== false }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
@@ -80,11 +81,12 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           const n = Number(t)
           return { targetMarginPct: t && Number.isFinite(n) ? n : null }
         })(),
+        maint: { enabled: cfg.maint?.enabled !== false, miamiTo: parse(raw.m_miami || ''), browardTo: parse(raw.m_broward || '') },
       }
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
-      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true }))
+      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false }))
       const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
@@ -98,6 +100,16 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error((j.results || []).map((x: any) => x.error).filter(Boolean)[0] || j.error || 'Test failed.')
       setMsg({ tone: 'ok', text: `Test sent — all three variants are in ${j.to}'s inbox.` })
+    } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
+  }
+
+  async function sendMaintTest() {
+    setBusy('mtest'); setMsg(null)
+    try {
+      const r = await fetch('/api/cron/maint-brief?test=1', { cache: 'no-store' })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Test failed.')
+      setMsg({ tone: 'ok', text: `Test sent — both maintenance briefs are in ${j.to}'s inbox.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
@@ -163,6 +175,42 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
         </div>
 
+        {/* MAINTENANCE BRIEFS (Jon, 2026-08-20): one per market — task completion, carryover,
+            glitches, vacant units, recurring issues, billable labor. 17 WEST excluded from both
+            (its own brief comes later). */}
+        <div className="rounded-xl border border-line p-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12px] font-bold text-ink">Maintenance briefs · 7:15am ET</span>
+            <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
+              <input type="checkbox" disabled={!isOwner} checked={cfg.maint?.enabled !== false}
+                onChange={e => setCfg(x => ({ ...x, maint: { ...(x.maint || {}), enabled: e.target.checked } }))} />
+              sending
+            </label>
+            <button onClick={sendMaintTest} disabled={busy !== null}
+              className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-40">
+              {busy === 'mtest' ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send both to me
+            </button>
+          </div>
+          <div className="text-[11px] text-muted mt-0.5 mb-1.5">
+            One per market: yesterday&apos;s task completion, carryover not finished, open glitches, vacant units worth
+            preventive work, recurring-issue units, and billable labor (yesterday / 7d / 30d) priced exactly like the invoices.
+            17 WEST is excluded from both — it gets its own brief.
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {([['m_miami', 'Miami', 'miami'], ['m_broward', 'Broward', 'broward']] as [string, string, string][]).map(([rk, label, pk]) => (
+              <div key={rk}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-ink">{label}</span>
+                  <a href={`/api/cron/maint-brief?preview=${pk}`} target="_blank" rel="noreferrer"
+                    className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview</a>
+                </div>
+                <textarea rows={2} disabled={!isOwner} value={raw[rk] ?? ''} onChange={e => setRaw(x => ({ ...x, [rk]: e.target.value }))}
+                  placeholder="emails, comma separated"
+                  className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* STAFFING PLANNER TARGET (Jon, 2026-08-18): the margin the Weekly planner's hours
             budget protects. Blank = automatic — the settled 30-day HK margin plus 3 points. */}
