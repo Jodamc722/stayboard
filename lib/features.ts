@@ -137,7 +137,10 @@ export function isOpenPath(path: string): boolean {
 // do nothing with it. Kept out of FEATURES so it adds no nav entry without Jon's say-so.
 // RESTORED 2026-08-19: it was dropped from this list while app/stay-window/page.tsx still exists,
 // which fails scripts/check-tabs.mjs at config load and takes the whole build down.
-export const UNGATED_PAGES = ['/users', '/stay-window']
+// /welcome/password is where a magic link lands someone who has no password yet (2026-08-20).
+// Login-required by definition — they have just been authenticated — and it is a one-screen
+// detour, not a tab, so it deliberately has no role setting.
+export const UNGATED_PAGES = ['/users', '/stay-window', '/welcome/password']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
