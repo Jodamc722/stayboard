@@ -40,6 +40,7 @@ export const FEATURES: Feature[] = [
   // before the role gate in middleware.
   { key: 'salato',        label: 'Salato Front Desk', path: '/salato', group: 'Guests' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
+  { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
   { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
   { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast', group: 'Operations' },
   { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Operations' },
