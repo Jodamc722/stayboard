@@ -5,108 +5,108 @@
   "installCommand": "npm install",
   "crons": [
     {
-      "path": "/api/sync/guesty",
-      "schedule": "0 */2 * * *"
-    },
-    {
       "path": "/api/cron/reservations",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/reservations?full=1",
-      "schedule": "35 9 * * *"
-    },
-    {
-      "path": "/api/eve/learn",
-      "schedule": "0 5,11,17,23 * * *"
-    },
-    {
-      "path": "/api/schedule/sync",
-      "schedule": "0 10 * * *"
-    },
-    {
-      "path": "/api/schedule/sync",
-      "schedule": "0 16 * * *"
-    },
-    {
-      "path": "/api/cron/breezeway-tasks",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/cron/reservation-notices",
-      "schedule": "*/20 * * * *"
-    },
-    {
-      "path": "/api/sync/owner-statements",
-      "schedule": "20 * * * *"
-    },
-    {
-      "path": "/api/cron/watchdog",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/cron/claims",
-      "schedule": "0 12 * * *"
-    },
-    {
-      "path": "/api/cron/ops-brief",
-      "schedule": "0 11 * * *"
-    },
-    {
-      "path": "/api/cron/guide-activations?slugs=garden",
-      "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/labor-trueup",
-      "schedule": "45 11 * * *"
-    },
-    {
-      "path": "/api/cron/maint-brief",
-      "schedule": "15 11 * * *"
-    },
-    {
-      "path": "/api/cron/billing-detail",
-      "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/salato-daily",
-      "schedule": "0 11 * * *"
-    },
-    {
-      "path": "/api/cron/stay-window",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/auto-inspections",
-      "schedule": "0 10,14,18,22 * * *"
-    },
-    {
-      "path": "/api/cron/notice-drafts",
-      "schedule": "0 11-23 * * *"
-    },
-    {
-      "path": "/api/cron/notice-drafts",
-      "schedule": "0 0-4 * * *"
+      "schedule": "2-57/5 * * * *"
     },
     {
       "path": "/api/cron/guest-comms",
-      "schedule": "*/15 * * * *"
+      "schedule": "9,24,39,54 * * * *"
     },
     {
-      "path": "/api/sentiment/scan",
-      "schedule": "10,40 * * * *"
+      "path": "/api/cron/reservation-notices",
+      "schedule": "13,33,53 * * * *"
+    },
+    {
+      "path": "/api/cron/breezeway-tasks",
+      "schedule": "4,34 * * * *"
     },
     {
       "path": "/api/cron/slack",
-      "schedule": "*/30 * * * *"
+      "schedule": "19,49 * * * *"
+    },
+    {
+      "path": "/api/cron/watchdog",
+      "schedule": "26,56 * * * *"
+    },
+    {
+      "path": "/api/sentiment/scan",
+      "schedule": "11,41 * * * *"
+    },
+    {
+      "path": "/api/sync/owner-statements",
+      "schedule": "44 * * * *"
+    },
+    {
+      "path": "/api/cron/stay-window",
+      "schedule": "36 * * * *"
+    },
+    {
+      "path": "/api/cron/notice-drafts",
+      "schedule": "6 11-23 * * *"
+    },
+    {
+      "path": "/api/cron/notice-drafts",
+      "schedule": "6 0-4 * * *"
+    },
+    {
+      "path": "/api/sync/guesty",
+      "schedule": "21 */2 * * *"
+    },
+    {
+      "path": "/api/cron/auto-inspections",
+      "schedule": "28 10,14,18,22 * * *"
+    },
+    {
+      "path": "/api/eve/learn",
+      "schedule": "47 5,11,17,23 * * *"
+    },
+    {
+      "path": "/api/cron/ops-brief",
+      "schedule": "1 11 * * *"
+    },
+    {
+      "path": "/api/cron/salato-daily",
+      "schedule": "16 11 * * *"
     },
     {
       "path": "/api/cron/slack-digest",
-      "schedule": "0 11 * * *"
+      "schedule": "31 11 * * *"
+    },
+    {
+      "path": "/api/cron/maint-brief",
+      "schedule": "46 11 * * *"
+    },
+    {
+      "path": "/api/cron/labor-trueup",
+      "schedule": "58 11 * * *"
+    },
+    {
+      "path": "/api/cron/billing-detail",
+      "schedule": "3 9 * * *"
+    },
+    {
+      "path": "/api/cron/guide-activations",
+      "schedule": "18 9 * * *"
+    },
+    {
+      "path": "/api/cron/reservations-full",
+      "schedule": "35 9 * * *"
     },
     {
       "path": "/api/cron/eve-metrics",
-      "schedule": "40 7 * * *"
+      "schedule": "43 7 * * *"
+    },
+    {
+      "path": "/api/cron/claims",
+      "schedule": "8 12 * * *"
+    },
+    {
+      "path": "/api/schedule/sync",
+      "schedule": "23 10 * * *"
+    },
+    {
+      "path": "/api/schedule/sync",
+      "schedule": "23 16 * * *"
     }
   ]
 }
