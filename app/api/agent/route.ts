@@ -18,7 +18,8 @@ import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from '@/lib/eve/ctx'
 import { wireTools, runTool, DOMAIN_KEYS } from '@/lib/eve/registry'
-import { loadMemories, renderMemories, touchMemories, scopesForText } from '@/lib/eve/memory'
+import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory } from '@/lib/eve/memory'
+import { appAtlas } from '@/lib/eve/atlas'
 import { buildSystem, getVoiceProfile } from '@/lib/eve/prompt'
 
 export const dynamic = 'force-dynamic'
@@ -106,7 +107,10 @@ export async function POST(req: NextRequest) {
     let turns = 0
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       turns = turn + 1
-      const system = buildSystem({ headline, memories: renderMemories(memories), openDomains: open, voice, userName, canMoney })
+      // The atlas rides with the memories: what every page of the app is for, and a live census of
+      // her own tool domains — so "where do I…" questions get a real answer, and a tool added in
+      // code is in her head on the next deploy without anyone re-teaching her.
+      const system = buildSystem({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice, userName, canMoney })
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -156,6 +160,23 @@ export async function POST(req: NextRequest) {
     } catch { /* migration 045 may not be run yet */ }
 
     touchMemories(memories.map(m => m.id)).catch(() => {})
+
+    // CONSTANT LEARNING, ZERO CEREMONY (Jon, 2026-08-19: "read and learn and update constantly").
+    // When the user speaks in standing-instruction form — always / never / from now on / stop
+    // doing / make sure — that sentence IS a preference, whether or not anyone clicks "teach her".
+    // Saved at modest weight with the chat as evidence; the dedupe in saveMemory absorbs repeats,
+    // and everything captured is visible and deletable in Settings → Eve. Deterministic on purpose:
+    // no second model call on the hot path, no guessing.
+    try {
+      const directive = /\b(always|never|from now on|going forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it))\b/i
+      if (directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
+        const kind = /\b(always|never)\b/i.test(lastUser) ? 'rule' : 'preference'
+        saveMemory({
+          text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, source: 'eve',
+          why: 'said in chat — auto-captured', evidence: chatId ? { chatId } : null, created_by: ctx.email || null,
+        }).catch(() => {})
+      }
+    } catch { /* learning is never worth breaking an answer */ }
 
     return NextResponse.json({
       reply: finalText,
