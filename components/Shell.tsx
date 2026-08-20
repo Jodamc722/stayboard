@@ -253,10 +253,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
     for (let j = 0; j < items.length; j++) if (isActive(items[j].to)) { activeGroup = sections[i].title; break }
   }
 
+  // Jon, 2026-08-20: "can everything stay open" — groups now default OPEN. Collapsing is still
+  // there for anyone who wants it (the choice sticks per device), but nobody has to click a
+  // header just to see their tabs.
   const isGroupOpen = (title: string) => {
-    if (!openGroups) return title === activeGroup
+    if (!openGroups) return true
     if (openGroups[title] != null) return !!openGroups[title]
-    return title === activeGroup
+    return true
   }
   const toggleGroup = (title: string) => {
     const next: Record<string, boolean> = {}
@@ -318,13 +321,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
         // YOUR TABS (Jon, 2026-08-19: "revamp the tabs on the side… a star section, called
         // something, maybe Your tabs"). The personal band gets its own softly-tinted card so it
         // reads as YOURS at a glance, a plain-English name, and the same star/drag mechanics.
-        <div className="rounded-xl bg-amber-50/60 border border-amber-100 p-1.5 mb-2">
-          <div className="px-2 pt-1 pb-1.5 text-[10px] uppercase tracking-wider font-bold text-amber-800 flex items-center gap-1.5">
-            <Star size={11} className="fill-amber-400 text-amber-500" /> Your tabs
-            <span className="ml-auto font-semibold normal-case tracking-normal text-[10px] text-amber-700/60">drag to reorder</span>
+        <div className="rounded-xl bg-app/70 border border-line p-1.5 mb-2">
+          <div className="px-2 pt-1 pb-1.5 text-[10px] uppercase tracking-wider font-bold text-ink/50 flex items-center gap-1.5">
+            <Star size={11} className="fill-brand-200 text-brand-400" /> Your tabs
+            <span className="ml-auto font-semibold normal-case tracking-normal text-[10px] text-muted/50">drag to reorder</span>
           </div>
           {pinned.length === 0 && (
-            <p className="px-2 pb-1.5 text-[11px] text-amber-800/70">Star any tab below and it moves up here — your own order, front and center.</p>
+            <p className="px-2 pb-1.5 text-[11px] text-muted/70">Star any tab below and it moves up here — your own order, front and center.</p>
           )}
           {pinned.map(({ to, label, Icon }, idx) => {
             const active = isActive(to)
@@ -341,8 +344,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   <span className="truncate">{label}</span>
                 </Link>
                 <button type="button" title="Remove from Your tabs" aria-label={'Remove ' + label + ' from Your tabs'}
-                  onClick={() => togglePin(to)} className="flex-shrink-0 text-amber-500 hover:text-amber-600">
-                  <Star size={14} className="fill-amber-400" />
+                  onClick={() => togglePin(to)} className="flex-shrink-0 text-brand-400 hover:text-brand-600">
+                  <Star size={14} className="fill-brand-200" />
                 </button>
               </div>
             )

@@ -4,7 +4,7 @@
 // Levels per tab: Off (hidden) · View (read-only, server rejects writes) · Edit (day-to-day
 // actions) · Full (destructive + settings actions on that tab).
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Copy, Trash2, Check, AlertTriangle, ShieldCheck, Users, Save } from 'lucide-react'
+import { Loader2, Plus, Copy, Trash2, Check, AlertTriangle, ShieldCheck, Users, Save, Eye, X, Star } from 'lucide-react'
 import { FEATURES, GROUP_ORDER, type Level } from '@/lib/features'
 
 type RoleRow = { key: string; label: string; blurb: string; landing: string; perms: Record<string, string>; is_system: boolean; sort: number }
@@ -48,6 +48,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
   const [dPerms, setDPerms] = useState<Record<string, string>>({})
   const [dLanding, setDLanding] = useState('/')
   const [dLabel, setDLabel] = useState('')
+  const [preview, setPreview] = useState(false)
 
   async function load(keep?: string) {
     setLoading(true); setError(null)
@@ -170,6 +171,9 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
                 </select>
               </div>
               <div className="ml-auto flex items-center gap-2">
+                <button onClick={() => setPreview(true)}
+                  title="See exactly what someone on this role sees — including unsaved changes"
+                  className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-2.5 py-1.5 hover:bg-brand-100"><Eye size={13} /> Preview</button>
                 {isOwner && !role.is_system && (
                   <>
                     <button onClick={() => createRole(role.key)} disabled={busy} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><Copy size={13} /> Duplicate</button>
@@ -242,6 +246,59 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
           </div>
         )}
       </div>
+
+      {/* ROLE PREVIEW (Jon, 2026-08-20: "when I designate a person to a role and give visibility,
+          can I preview it?"). A faithful mock of the sidebar as THIS role sees it, built from the
+          draft permissions — so you can preview before you even save. Off tabs are simply absent,
+          exactly as they are for the real person; each visible tab carries its level. */}
+      {preview && role && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setPreview(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+              <Eye size={15} className="text-brand-600" />
+              <div>
+                <p className="text-sm font-bold text-ink">What {dLabel || role.label} sees</p>
+                <p className="text-[11px] text-muted">Lands on {FEATURES.find(f => f.path === dLanding)?.label || dLanding}{dirty ? ' · previewing unsaved changes' : ''}</p>
+              </div>
+              <button onClick={() => setPreview(false)} className="ml-auto p-1.5 rounded-lg text-muted hover:text-ink"><X size={16} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 bg-app/50">
+              <div className="rounded-xl bg-white border border-line p-2">
+                <div className="rounded-lg bg-app/70 border border-line p-1.5 mb-2">
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wider font-bold text-ink/50 flex items-center gap-1.5">
+                    <Star size={10} className="fill-brand-200 text-brand-400" /> Your tabs
+                  </div>
+                  <p className="px-2 pb-1 text-[11px] text-muted/70">Starts with the standard six — they arrange their own from there.</p>
+                </div>
+                {GROUPS.map(g => {
+                  const vis = g.keys.filter(k => (dPerms[k] || 'off') !== 'off')
+                  if (!vis.length) return null
+                  return (
+                    <div key={'pv-' + g.title} className="mb-2">
+                      <div className="px-2 py-1 text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60">{g.title}</div>
+                      {vis.map(k => {
+                        const lv = dPerms[k] as string
+                        return (
+                          <div key={'pv-' + k} className="flex items-center gap-2 px-2.5 py-[6px] rounded-lg text-[13px] font-medium text-ink/80">
+                            <span className="flex-1 truncate">{label(k)}</span>
+                            <span className={`text-[9px] font-bold uppercase tracking-wide px-1.5 py-px rounded ${lv === 'view' ? 'bg-sky-50 text-sky-700 border border-sky-200' : lv === 'edit' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-brand-50 text-brand-700 border border-brand-200'}`}>{lv}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+                {GROUPS.every(g => g.keys.every(k => (dPerms[k] || 'off') === 'off')) && (
+                  <p className="px-2 py-4 text-[13px] text-muted text-center">Every tab is off — this role would see an empty app.</p>
+                )}
+              </div>
+            </div>
+            <div className="px-4 py-2.5 border-t border-line text-[11px] text-muted">
+              View is read-only · Edit allows day-to-day actions · Full adds delete &amp; settings. The Eve bubble shows only if Eve is on for the role.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
