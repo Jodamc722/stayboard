@@ -94,7 +94,11 @@ export async function POST(req: NextRequest) {
       const token = tok?.access_token
       if (!token) return NextResponse.json({ error: 'no token' }, { status: 503 })
       const CONFIRMED = ['confirmed', 'checked_in', 'checked_out']
-      const fields = encodeURIComponent('guest checkIn checkOut checkInDateLocalized checkOutDateLocalized status source')
+      // guestsCount + plannedArrival added 2026-08-20 (Jon: "make sure it adds number of guests, find
+      // where that is populated"). Without them the stored reservation had no guest count and no
+      // arrival time, so the Elser registration form printed both blank — unit 1809 went to the
+      // building incomplete. Asking for them here fixes it at the source for every future notice.
+      const fields = encodeURIComponent('guest checkIn checkOut checkInDateLocalized checkOutDateLocalized status source guestsCount plannedArrival numberOfGuests')
       const pull = async (field: string) => {
         const filters = encodeURIComponent(JSON.stringify([{ field, operator: '$gte', value: `${day}T00:00:00.000Z` }]))
         const all: any[] = []
@@ -129,7 +133,7 @@ export async function POST(req: NextRequest) {
       const token = tok?.access_token
       if (!token) return NextResponse.json({ error: 'no token' }, { status: 503 })
       const filters = encodeURIComponent(JSON.stringify([{ field: 'checkOut', operator: '$gte', value: `${day}T00:00:00.000Z` }]))
-      const fields = encodeURIComponent('guest checkIn checkOut checkOutDateLocalized status source confirmationCode')
+      const fields = encodeURIComponent('guest checkIn checkOut checkOutDateLocalized status source confirmationCode guestsCount plannedArrival numberOfGuests')
       const all: any[] = []
       let pages = 0
       for (let p = 0; p < 8; p++) {
