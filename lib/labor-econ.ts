@@ -102,6 +102,31 @@ export function kindOfTask(t: { name?: any; type_department?: any }): TaskKind {
   return 'other'
 }
 
+// ── THE 17WEST ARRANGEMENT (Jon, 2026-08-20) ────────────────────────────────
+// "17west we do not charge any billables because they pay for George Paz... Yoslenis as well is
+// paid by 17west too, they pay 100k for both, we pay the difference."
+//
+// Two consequences, both handled here so every surface inherits them:
+//   1. 17WEST tasks are unbilled BY DESIGN — never counted as "tasks with no charge entered".
+//   2. Up to $100k/yr of George Paz + Yoslenis's COMBINED wages is 17WEST's money, not Stay's
+//      labor cost. A window's pro-rated share of that credit comes off each person's own
+//      department (maintenance for George, supervision for Yoslenis), split by their share of
+//      the pair's wages; anything above the credit — "we pay the difference" — stays in.
+// George's jobs OUTSIDE 17WEST still bill owners ("if he does work in other buildings we would
+// try and bill"); that revenue lands wherever the task lands, untouched.
+export const SEVENTEEN_WEST_PAIR = ['George Paz', 'Yoslenis Rodiguez']  // Homebase spellings; matching is fuzzy
+export const SEVENTEEN_WEST_ANNUAL = 100000
+export function seventeenWestCoverage(combinedWages: number, windowDays: number) {
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  const credit = r2((SEVENTEEN_WEST_ANNUAL * windowDays) / 365)
+  const covered = r2(Math.min(Math.max(0, combinedWages), credit))
+  return {
+    combined: r2(combinedWages), credit, covered,
+    ratio: combinedWages > 0 ? covered / combinedWages : 0,
+    stayPays: r2(Math.max(0, combinedWages - covered)),
+  }
+}
+
 /** Owner-billable total of a Breezeway line-item array. Guest-billed lines are not our revenue. */
 function ownerTotal(arr: any, kind: 'cost' | 'supply'): number {
   return (Array.isArray(arr) ? arr : []).reduce((a: number, x: any) => {
@@ -253,11 +278,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   ])
   const timecards = tcAudit.cards
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-  const lmap: Record<string, { market: string; name: string; vendor: boolean }> = {}
+  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean }> = {}
   for (const l of listingRows) {
     const name = l.nickname || l.title || 'Unit'
     const vendor = VENDOR_RE.test(String(l.building || '')) || VENDOR_RE.test(String(name))
-    lmap[String(l.id)] = { market: vendor ? 'vendor' : marketOf(l.building, l.address_city, name).toLowerCase(), name, vendor }
+    // 17WEST is flagged because its tasks are UNBILLED BY DESIGN (Jon, 2026-08-20: "17west we do
+    // not charge any billables because they pay for George Paz") — a $0 task there is the deal
+    // working, not paperwork missing, so it never counts in tasksNoCharge.
+    const is17 = /17\s*west/i.test(String(l.building || '')) || /17\s*west/i.test(String(name))
+    lmap[String(l.id)] = { market: vendor ? 'vendor' : marketOf(l.building, l.address_city, name).toLowerCase(), name, vendor, is17 }
   }
   const inMarketListing = (id: any) => market === 'all' || lmap[String(id)]?.market === market
 
@@ -590,6 +619,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const kind = kindOfTask(t)
     if (kind === 'clean') p.cleans++
     const ch = chargeOf(t)
+    const li = lmap[String(t.reference_property_id)]
     // A charged CLEANING task is cleaning revenue (counted via cleanRecs below), not a billable —
     // otherwise the same $25 linen refresh would show up in both columns.
     const isChargedClean = chargedCleanIds[String(t.id)]
@@ -597,11 +627,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       p.billableRevenue = round2(p.billableRevenue + ch.billable)
       p.materials = round2(p.materials + ch.materials)
       if (ch.billable > 0) p.billableTasks++
-      else if (kind !== 'clean') p.tasksNoCharge++
+      // 17WEST tasks are unbilled BY DESIGN (they pay for George + Yoslenis instead), so a $0
+      // there is not a coverage gap and never inflates the "tasks with no charge entered" line.
+      else if (kind !== 'clean' && !(li && li.is17)) p.tasksNoCharge++
     } else {
       p.cleans++          // a revenue-generating clean, even though it is not a departure clean
     }
-    const li = lmap[String(t.reference_property_id)]
     if (li) { const mk = li.vendor ? 'vendor' : li.market; p._mk[mk] = (p._mk[mk] || 0) + 1 }
   }
   for (const t of timecards) {
@@ -667,6 +698,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     d.materials = round2(d.materials + p.materials)
     d.billableTasks += p.billableTasks
     d.tasksNoCharge += p.tasksNoCharge
+  }
+  // 17WEST's $100k/yr toward George + Yoslenis comes off their departments HERE, before margins —
+  // so maintenance, supervisors, the loaded clean cost and all-in all carry only Stay's share.
+  // Per-person rows keep real wages (nobody vanishes); kpi.seventeenWest is the receipt.
+  const w17pair = people.filter(p => SEVENTEEN_WEST_PAIR.some(n => nameMatches(p.name, n)))
+  const w17days = Math.max(1, Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 864e5) + 1)
+  const w17 = seventeenWestCoverage(round2(w17pair.reduce((a, p) => a + p.payroll, 0)), w17days)
+  if (w17.ratio > 0) for (const p of w17pair) {
+    const d = byDept[p.dept]
+    if (d) d.payroll = round2(Math.max(0, d.payroll - p.payroll * w17.ratio))
   }
   for (const d of DEPTS) {
     const x = byDept[d]
@@ -1003,6 +1044,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       managementFee: round2(managementFee),
       pctOfManagementFee: pct(sup.payroll, managementFee),
       note: 'fixed cost — carried regardless of revenue',
+    },
+    // THE 17WEST RECEIPT. Every payroll line above already carries only Stay's share of George
+    // Paz + Yoslenis — this names what was taken off and why, so the deduction is auditable.
+    seventeenWest: {
+      names: w17pair.map(p => p.name),
+      wages: w17.combined,          // the pair's real Homebase wages in this window
+      credit: w17.credit,           // this window's share of 17WEST's $100k/yr
+      covered: w17.covered,         // what 17WEST actually absorbs (min of the two)
+      stayPays: w17.stayPays,       // "we pay the difference" — still inside the lines above
+      windowDays: w17days,
+      note: '17WEST pays $100k/yr toward George Paz + Yoslenis; their tasks there are unbilled by design',
     },
     // The whole labor line including the fixed layer, for the one number that hides nothing.
     allIn: {
