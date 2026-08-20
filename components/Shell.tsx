@@ -359,16 +359,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
         // a group with nothing left drops out of the list rather than sitting there empty.
         const rest = section.items.filter(it => !isPinned(it.to))
         if (rest.length === 0) return null
-        const open = isGroupOpen(section.title)
+        // Jon, 2026-08-20: "keep all tabs open, preferable" — groups no longer fold at all. The
+        // header is just a label; every tab is always visible.
         return (
           <div key={section.title}>
-            <button type="button" onClick={() => toggleGroup(section.title)}
-              className="w-full mt-3.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60 hover:text-ink transition-all">
+            <div className="mt-3.5 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60">
               {section.title}
-              <ChevronRight size={11} className={'text-muted/50 transition-transform ' + (open ? 'rotate-90' : '')} />
-              {!open && <span className="ml-auto text-[10px] font-semibold tracking-normal text-muted/50">{rest.length}</span>}
-            </button>
-            {open && rest.map(({ to, label, Icon }) => {
+            </div>
+            {rest.map(({ to, label, Icon }) => {
               const active = isActive(to)
               const on = isPinned(to)
               return (
