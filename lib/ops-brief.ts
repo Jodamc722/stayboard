@@ -1635,7 +1635,17 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <tr><td style="${S.td};border-top:2px solid #111827"><b>Maintenance</b> <span style="${S.muted}">separate department — never inside cost per clean</span></td>
       <td style="${S.td};border-top:2px solid #111827;text-align:right">${money0(M7.revenue)} billed vs ${money0(M7.payroll)} wages · <b style="${(M7.margin || 0) >= 0 ? S.green : S.red}">${money0(M7.margin)}</b>${M7.tasksNoCharge ? ` <span style="${S.amber}">· ${M7.tasksNoCharge} tasks with no charge entered</span>` : ''}</td></tr>
     <tr><td style="${S.td}">All in <span style="${S.muted}">HK + maintenance + supervisors</span></td>
-      <td style="${S.td};text-align:right">${money0(K7.allIn.revenue)} rev vs ${money0(K7.allIn.payroll)} labor · <b style="${(K7.allIn.margin || 0) >= 0 ? S.green : S.red}">${money0(K7.allIn.margin)}${K7.allIn.marginPct != null ? ' (' + pct1(K7.allIn.marginPct) + ')' : ''}</b></td></tr>`
+      <td style="${S.td};text-align:right">${money0(K7.allIn.revenue)} rev vs ${money0(K7.allIn.payroll)} labor · <b style="${(K7.allIn.margin || 0) >= 0 ? S.green : S.red}">${money0(K7.allIn.margin)}${K7.allIn.marginPct != null ? ' (' + pct1(K7.allIn.marginPct) + ')' : ''}</b></td></tr>` +
+      // A young window always reads expensive: recent cleans have not all been closed in
+      // Breezeway yet, so their fees exist but earn nobody credit. Name the size of that gap.
+      (() => {
+        const A7: any = ec7.feeAudit || {}
+        const unclosed = Number(A7.cleanNotClosed) || 0
+        const totalF = unclosed + (Number(A7.credited) || 0) + (Number(A7.noCleanFound) || 0) + (Number(A7.cleanNoAssignee) || 0)
+        return totalF > 0 && unclosed / totalF > 0.1
+          ? `<tr><td colspan="2" style="${S.td};background:#fffbeb"><span style="${S.amber}">${money0(unclosed)} of this window's fees sit on cleans not yet closed in Breezeway</span> <span style="${S.muted}">— cost per clean reads high and settles DOWN as that paperwork lands. The Daily Labor email's settled 30-day figure is the one to manage on.</span></td></tr>`
+          : ''
+      })()
   })()
   const moneyRows = laborRows + `
     <tr><td style="${S.td}">Departure cleans closed in Breezeway <span style="${S.muted}">paperwork drives every number above</span></td>
