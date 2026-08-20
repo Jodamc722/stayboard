@@ -4,7 +4,12 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { runSyncAlert } from '@/lib/slack-alerts'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 30
+// 2026-08-20: this was 30 — the LOWEST maxDuration of any cron in the app, set back when the
+// route did two trivial queries. On 08-19 it gained the review-content pulse and the Slack
+// outbox path, and every run since has hit FUNCTION_INVOCATION_TIMEOUT. The one job whose
+// entire purpose is to notice a dead feed was itself dead, silently, and by design nothing was
+// watching it. 60 matches the other Slack-posting crons.
+export const maxDuration = 60
 
 // SYNC WATCHDOG.
 //
@@ -34,6 +39,17 @@ function minsSince(iso: any): number | null {
   return Number.isFinite(t) ? Math.round((Date.now() - t) / 60000) : null
 }
 function human(m: number | null): string { return m == null ? 'never' : m < 90 ? m + ' min' : Math.round(m / 60) + ' h' }
+
+// A health check must never die because the thing it notifies is slow. Slack gets a hard budget;
+// if it overruns, the feed verdict below still comes back and the response says Slack was the
+// part that failed. Losing the alert is bad. Losing the diagnosis as well is how you end up not
+// knowing anything is wrong for a day.
+const SLACK_BUDGET_MS = 20_000
+function withBudget<T>(work: Promise<T>, ms: number, whenLate: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const late = new Promise<T>(resolve => { timer = setTimeout(() => resolve(whenLate), ms) })
+  return Promise.race([work, late]).finally(() => clearTimeout(timer))
+}
 
 
 async function run(req: NextRequest) {
@@ -95,7 +111,11 @@ async function run(req: NextRequest) {
   // approval — a dead feed is not a judgement call (lib/slack-rules, events.sync.approval=false).
   let slack: any = 'not-needed'
   if (alerts.length || recovered.length) {
-    slack = await runSyncAlert(alerts, recovered).catch((e: any) => ({ error: String(e && e.message) }))
+    slack = await withBudget(
+      runSyncAlert(alerts, recovered).catch((e: any) => ({ error: String(e && e.message) })),
+      SLACK_BUDGET_MS,
+      { error: 'slack did not answer within ' + (SLACK_BUDGET_MS / 1000) + 's — the feed verdict below is still accurate' },
+    )
   }
   try { await setSetting(ALERT_KEY, next, 'watchdog') } catch {}
 
