@@ -4,6 +4,7 @@
 // Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { runSweep } from '@/lib/eve/sweep'
+import { pruneStaleMemories } from '@/lib/eve/memory'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -50,6 +51,12 @@ export async function POST(req: NextRequest) {
   let sweep: any = null
   try { sweep = await runSweep(Math.min(days, 90)) }
   catch (e: any) { sweep = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
+  // Forget on the same clock as learning: stale self-learned trivia (never used, low weight,
+  // 60+ days untouched) is expired so the prompt budget stays spent on what actually earns it.
+  let pruned = 0
+  try { pruned = await pruneStaleMemories() } catch { /* hygiene must never block learning */ }
+  if (sweep && typeof sweep === 'object') sweep.pruned = pruned
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ ok: true, sweep, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
