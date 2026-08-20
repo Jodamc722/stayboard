@@ -7,7 +7,7 @@
 // row; pulling them moved 30-day maintenance revenue from $6,855 to $8,140 (+19%) with zero code
 // changes. So this cron retrieves whatever the current month is missing, every night, gently and
 // resumably — the same logic as the manual POST /api/billing/detail, without needing a human.
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { retrieveBreezewayTask, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { monthTasks } from '@/lib/billing'
@@ -17,7 +17,16 @@ export const maxDuration = 300
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-export async function GET() {
+// Auth matches every other cron in this app: enforce the bearer token when CRON_SECRET is set.
+// Until 2026-08-20 this route had no check of any kind — no session, no secret — while running
+// for up to five minutes, hammering the Breezeway API and writing to two tables. Anyone who
+// knew the URL could run it on a loop.
+export async function GET(req: NextRequest) {
+  const secret = process.env.CRON_SECRET
+  if (secret) {
+    const auth = req.headers.get('authorization') || ''
+    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   if (!breezewayConfigured()) return NextResponse.json({ ok: false, error: 'Breezeway not configured' })
   const db = supabaseAdmin()
   const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
