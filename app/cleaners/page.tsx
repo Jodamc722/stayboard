@@ -1,6 +1,7 @@
 // Cleaner performance board - computed from the live Breezeway task mirror (webhooks keep it
 // current). Rolling 90 days: cleans, pace, same-day completion per cleaner; top hubs; units with
 // recurring maintenance. Feeds the QC ladder (95%+ spot-check / 85-94% inspect / <85% retrain).
+import { Shell } from '@/components/Shell'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { unstable_cache } from 'next/cache'
@@ -74,60 +75,63 @@ const getData = unstable_cache(async () => {
   return { cleaners, issues, totals, since }
 }, ['cleaner-kpis-v1'], { tags: ['cleaner-kpis'], revalidate: 600 })
 
+// Wrapped in <Shell> 2026-08-20 — the cleaner KPI board had no navigation on it.
 export default async function CleanersPage() {
   const { cleaners, issues, totals, since } = await getData()
   return (
-    <div className="space-y-6">
-      <div>
-        <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 inline-flex items-center gap-1.5"><Sparkles size={13} /> Team</div>
-        <h1 className="text-3xl font-extrabold text-ink mt-1">Cleaner KPIs</h1>
-        <p className="text-sm text-muted mt-1">Rolling 90 days from live Breezeway tasks (since {since}). Multi-assigned cleans count for every person on the task. <b className="text-ink">QC status</b> is the on-time (same-day) completion tier: ≥95% spot-check · 85–94% inspect · &lt;85% retrain.</p>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Cleans (90d)</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleans}</div></div>
-        <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Users size={12} /> Active cleaners</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleaners}</div></div>
-        <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Timer size={12} /> Avg time / clean</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.avgMin}m</div></div>
-        <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Same-day finish</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.sameDayPct}%</div></div>
-      </div>
-      <div className="overflow-x-auto rounded-2xl border border-line bg-white">
-        <table className="w-full text-[13px] border-collapse">
-          <thead>
-            <tr className="bg-app/60 text-muted text-[10px] uppercase tracking-wider text-left">
-              <th className="px-3 py-2.5 font-semibold">Cleaner</th>
-              <th className="px-3 py-2.5 font-semibold text-right">Cleans</th>
-              <th className="px-3 py-2.5 font-semibold text-right">Per day</th>
-              <th className="px-3 py-2.5 font-semibold text-right">Avg time</th>
-              <th className="px-3 py-2.5 font-semibold text-right">Same-day</th>
-              <th className="px-3 py-2.5 font-semibold" title="QC ladder by same-day completion — ≥95% spot-check · 85–94% inspect · <85% retrain">QC status</th>
-              <th className="px-3 py-2.5 font-semibold">Hubs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cleaners.map(c => (
-              <tr key={c.name} className="border-t border-line">
-                <td className="px-3 py-2 font-semibold text-ink">{c.name}</td>
-                <td className="px-3 py-2 text-right text-ink">{c.cleans}</td>
-                <td className="px-3 py-2 text-right text-muted">{c.perDay}</td>
-                <td className="px-3 py-2 text-right text-muted">{c.avgMin != null ? c.avgMin + 'm' : String.fromCharCode(8212)}</td>
-                <td className="px-3 py-2 text-right">{c.sameDayPct != null ? <span className={c.sameDayPct >= 95 ? 'text-emerald-700 font-semibold' : c.sameDayPct >= 85 ? 'text-amber-700 font-semibold' : 'text-rose-700 font-semibold'}>{c.sameDayPct}%</span> : <span className="text-muted">{String.fromCharCode(8212)}</span>}</td>
-                <td className="px-3 py-2">{c.sameDayPct == null ? <span className="text-muted">{String.fromCharCode(8212)}</span> : (() => { const t = c.sameDayPct >= 95 ? { l: 'Spot-check', k: 'bg-emerald-50 text-emerald-700 border-emerald-200' } : c.sameDayPct >= 85 ? { l: 'Inspect', k: 'bg-amber-50 text-amber-700 border-amber-200' } : { l: 'Retrain', k: 'bg-rose-50 text-rose-700 border-rose-200' }; return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${t.k}`}>{t.l}</span> })()}</td>
-                <td className="px-3 py-2 text-muted">{c.topHubs}</td>
+    <Shell>
+      <div className="space-y-6">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 inline-flex items-center gap-1.5"><Sparkles size={13} /> Team</div>
+          <h1 className="text-3xl font-extrabold text-ink mt-1">Cleaner KPIs</h1>
+          <p className="text-sm text-muted mt-1">Rolling 90 days from live Breezeway tasks (since {since}). Multi-assigned cleans count for every person on the task. <b className="text-ink">QC status</b> is the on-time (same-day) completion tier: ≥95% spot-check · 85–94% inspect · &lt;85% retrain.</p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Cleans (90d)</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleans}</div></div>
+          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Users size={12} /> Active cleaners</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleaners}</div></div>
+          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Timer size={12} /> Avg time / clean</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.avgMin}m</div></div>
+          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Same-day finish</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.sameDayPct}%</div></div>
+        </div>
+        <div className="overflow-x-auto rounded-2xl border border-line bg-white">
+          <table className="w-full text-[13px] border-collapse">
+            <thead>
+              <tr className="bg-app/60 text-muted text-[10px] uppercase tracking-wider text-left">
+                <th className="px-3 py-2.5 font-semibold">Cleaner</th>
+                <th className="px-3 py-2.5 font-semibold text-right">Cleans</th>
+                <th className="px-3 py-2.5 font-semibold text-right">Per day</th>
+                <th className="px-3 py-2.5 font-semibold text-right">Avg time</th>
+                <th className="px-3 py-2.5 font-semibold text-right">Same-day</th>
+                <th className="px-3 py-2.5 font-semibold" title="QC ladder by same-day completion — ≥95% spot-check · 85–94% inspect · <85% retrain">QC status</th>
+                <th className="px-3 py-2.5 font-semibold">Hubs</th>
               </tr>
+            </thead>
+            <tbody>
+              {cleaners.map(c => (
+                <tr key={c.name} className="border-t border-line">
+                  <td className="px-3 py-2 font-semibold text-ink">{c.name}</td>
+                  <td className="px-3 py-2 text-right text-ink">{c.cleans}</td>
+                  <td className="px-3 py-2 text-right text-muted">{c.perDay}</td>
+                  <td className="px-3 py-2 text-right text-muted">{c.avgMin != null ? c.avgMin + 'm' : String.fromCharCode(8212)}</td>
+                  <td className="px-3 py-2 text-right">{c.sameDayPct != null ? <span className={c.sameDayPct >= 95 ? 'text-emerald-700 font-semibold' : c.sameDayPct >= 85 ? 'text-amber-700 font-semibold' : 'text-rose-700 font-semibold'}>{c.sameDayPct}%</span> : <span className="text-muted">{String.fromCharCode(8212)}</span>}</td>
+                  <td className="px-3 py-2">{c.sameDayPct == null ? <span className="text-muted">{String.fromCharCode(8212)}</span> : (() => { const t = c.sameDayPct >= 95 ? { l: 'Spot-check', k: 'bg-emerald-50 text-emerald-700 border-emerald-200' } : c.sameDayPct >= 85 ? { l: 'Inspect', k: 'bg-amber-50 text-amber-700 border-amber-200' } : { l: 'Retrain', k: 'bg-rose-50 text-rose-700 border-rose-200' }; return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${t.k}`}>{t.l}</span> })()}</td>
+                  <td className="px-3 py-2 text-muted">{c.topHubs}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="rounded-2xl border border-line bg-white p-4">
+          <div className="text-sm font-bold text-ink inline-flex items-center gap-1.5 mb-2"><Wrench size={14} className="text-amber-600" /> Units with the most maintenance (90d)</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {issues.map(i => (
+              <div key={i.unit} className="rounded-xl border border-line px-3 py-2 flex items-center justify-between gap-2">
+                <span className="text-[13px] font-medium text-ink truncate">{i.unit}</span>
+                <span className="text-[12px] text-muted shrink-0">{i.n} tasks{i.open ? ' - ' + i.open + ' open' : ''}</span>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="rounded-2xl border border-line bg-white p-4">
-        <div className="text-sm font-bold text-ink inline-flex items-center gap-1.5 mb-2"><Wrench size={14} className="text-amber-600" /> Units with the most maintenance (90d)</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {issues.map(i => (
-            <div key={i.unit} className="rounded-xl border border-line px-3 py-2 flex items-center justify-between gap-2">
-              <span className="text-[13px] font-medium text-ink truncate">{i.unit}</span>
-              <span className="text-[12px] text-muted shrink-0">{i.n} tasks{i.open ? ' - ' + i.open + ' open' : ''}</span>
-            </div>
-          ))}
+          </div>
         </div>
       </div>
-    </div>
+    </Shell>
   )
 }
