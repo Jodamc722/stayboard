@@ -8,7 +8,7 @@ import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from 
 import { EveFloat } from '@/components/EveFloat'
 import {
   Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
-  ListChecks, Sliders, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
+  ListChecks, Sliders, Wrench, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
   ChevronRight, Search, Menu, X, Contact, Share2 } from 'lucide-react'
 
@@ -51,6 +51,8 @@ const SECTIONS: NavSection[] = [
       // the everyday verbs first, then field work, then the periodic audit/purchasing layer.
       { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
       { to: '/schedule', label: 'Scheduler', Icon: CalendarRange },  // Jon 2026-08-19: his word for it
+      { to: '/maintenance', label: 'Maintenance', Icon: Wrench },  // Jon 2026-08-20: "maintenance is
+      // a big one, we don't always have a good grip" — the command view over W.O.s, tasks, glitches
       { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },   // Jon 2026-08-19: back to Glitches
       { to: '/requests', label: 'Work Orders', Icon: ClipboardList },
       { to: '/projects', label: 'Projects', Icon: KanbanSquare },
