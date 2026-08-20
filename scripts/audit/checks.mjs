@@ -97,13 +97,17 @@ function cronAuth() {
 // <Shell> ships with zero navigation and is effectively invisible — that is how /links and
 // /guests shipped unnoticed. Ground truth for "should have Shell" is lib/features.ts.
 // ─────────────────────────────────────────────────────────────────────────────
+// Pages that are correctly navigation-free. Each one needs a reason, because the cost of a
+// wrong entry here is a real bug going unreported forever — and the cost of leaving one out is
+// a false alarm, which is worse than useless: it teaches whoever reads the report to skim it.
 const SHELL_EXEMPT = [
-  'app/guidebooks/[id]/page.tsx', // documented: intentionally outside Shell for print/PDF
-  'app/plan/print/page.tsx',      // print view
-  'app/reports/complaints/page.tsx',
-  // Public standalone pages whose route is not itself an OPEN_PREFIX entry.
-  'app/salato/page.tsx',            // Salato front-desk board, own link
+  'app/guidebooks/[id]/page.tsx',      // documented in-file: outside Shell so print/PDF is clean
+  'app/plan/print/page.tsx',           // print view
+  'app/reports/complaints/page.tsx',   // print-oriented owner report
+  'app/salato/page.tsx',               // Salato front-desk board, reached by its own link
   'app/audits/review/[code]/page.tsx', // share-code review page — the link IS the key
+  'app/welcome/password/page.tsx',     // where a magic link lands someone with no password yet;
+                                       // mid-auth there is nothing to navigate to
 ]
 function shellCompliance() {
   const out = []
