@@ -219,6 +219,16 @@ export async function GET(req: NextRequest) {
         (bits.length ? ' &middot; ' + bits.join(' &middot; ') : ' &middot; <span style="color:#047857">no schedule flags</span>') + '</p>'
     } catch { /* flags are additive */ }
     const yHL = KY.housekeepingLoaded || null
+    // YESTERDAY IS ALWAYS A FIRST DRAFT. The morning after, a chunk of yesterday's fees sit on
+    // cleans nobody has closed in Breezeway yet — so cost/clean reads HIGH and settles down as
+    // paperwork lands. Say it out loud whenever the unclosed share is material, and point at the
+    // settled figure as the one to manage on.
+    const yA: any = ecY.feeAudit || {}
+    const yUnclosed = Number(yA.cleanNotClosed) || 0
+    const yTotalFees = yUnclosed + (Number(yA.credited) || 0) + (Number(yA.noCleanFound) || 0) + (Number(yA.cleanNoAssignee) || 0)
+    const maturityLine = yTotalFees > 0 && yUnclosed / yTotalFees > 0.1
+      ? '<p style="margin:6px 0 0;font-size:12px;color:#b45309"><b>' + money(yUnclosed) + ' of yesterday&rsquo;s cleaning fees sit on cleans not yet closed in Breezeway</b> — cost/clean reads high until that paperwork lands. Manage on the settled 30-day figure below; yesterday trues up in it automatically.</p>'
+      : ''
     const yesterdayCard = '<div style="' + cardStyle + '">' +
       secTitle('Yesterday', niceDay(to) + ' &middot; net of channel cut') +
       '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
@@ -228,7 +238,7 @@ export async function GET(req: NextRequest) {
       tile(pctTxt(KY.housekeeping.marginPct), 'HK margin', money(KY.housekeeping.margin) + ' kept', mTone(KY.housekeeping.margin)) +
       (yHL ? tile(pctTxt(yHL.marginPct), '+ Supervisors', money(yHL.costPerClean) + ' loaded / clean', mTone(yHL.margin)) : '') +
       tile(money(KY.maintenance.revenue), 'Maint billed', 'vs ' + money(KY.maintenance.payroll) + ' wages &middot; separate dept', mTone(KY.maintenance.margin)) +
-      '</tr></table>' + flagsLine + '</div>'
+      '</tr></table>' + maturityLine + flagsLine + '</div>'
 
     // ── 3. SETTLED — HK 30d, maintenance 45d ──────────────────────────────
     const prev = await getSetting<Snap | null>('labor_trueup_snapshot', null).catch(() => null)
