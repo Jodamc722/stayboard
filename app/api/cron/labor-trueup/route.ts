@@ -357,6 +357,17 @@ export async function GET(req: NextRequest) {
       '<td style="' + td + ';background:#fafaf9;text-align:right">' + money(K.supervisors.payroll) + '</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td>' +
       '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td></tr>' +
+      // THE 17WEST RECEIPT (Jon, 2026-08-20): they pay $100k/yr toward George Paz + Yoslenis, so
+      // every payroll line above already carries only Stay's share — this row shows the deduction
+      // so the numbers stay auditable instead of quietly smaller.
+      (() => {
+        const W: any = (K as any).seventeenWest
+        return W && W.covered > 0
+          ? '<tr><td colspan="5" style="' + td + ';font-size:11.5px;color:#6b7280">17WEST covers <b>' + money(W.covered) +
+            '</b> of George Paz + Yoslenis&rsquo;s ' + money(W.wages) + ' wages this window ($100k/yr, pro-rated) &mdash; Stay pays ' +
+            money(W.stayPays) + '. Maintenance and supervisor lines above are Stay&rsquo;s share only; 17WEST tasks are unbilled by design.</td></tr>'
+          : ''
+      })() +
       '</table></div>' +
       '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">One email, every morning: today&rsquo;s staffing plan, yesterday&rsquo;s labor, and the settled economics &mdash; HK over the trailing 30 days, maintenance over the trailing 45 (charges land late). Full detail on the Labor board and the Weekly planner.</p>' +
       '</div></body></html>'
