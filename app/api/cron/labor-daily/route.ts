@@ -18,6 +18,7 @@ import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
 import { buildLaborReport, ymdET, shiftDay, type LaborReport, type Dept } from '@/lib/labor-report'
+import { buildTodayProjection, type TodayProjection } from '@/lib/labor-today'
 import { quoteBanner } from '@/lib/ops-brief'
 
 export const dynamic = 'force-dynamic'
@@ -75,11 +76,46 @@ const tile = (label: string, value: string, sub: string, tone?: string) =>
 const table = (heads: string[], rows: string) =>
   `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
 
-function render(r: LaborReport): { subject: string; html: string } {
+function render(r: LaborReport, t: TodayProjection | null): { subject: string; html: string } {
   const reds = r.flags.filter(f => f.level === 'red').length
   const bandTone = r.band === 'over' ? '#dc2626' : r.band === 'watch' ? '#d97706' : '#047857'
 
-  // WHAT LOOKS OFF LEADS. A daily report that opens with totals gets read once and skimmed after.
+  // ── THE ONE-LINE VERDICT ────────────────────────────────────────────────────────────────────
+  // Jon, 2026-08-20: "make it simple to look at". Whatever else gets skimmed, this sentence is
+  // read — so it carries the whole day: what yesterday cost, and what today is about to cost.
+  const verdict = reds
+    ? `<b style="color:#dc2626">${reds} thing${reds === 1 ? '' : 's'} to action</b> from ${esc(r.label)}.`
+    : r.flags.length
+      ? `<b style="color:#d97706">${r.flags.length} to watch</b> from ${esc(r.label)}, nothing urgent.`
+      : `<b style="color:#047857">Yesterday came in clean.</b>`
+
+  // ── TODAY — the only part still in your hands ───────────────────────────────────────────────
+  const todayCard = !t ? '' : (() => {
+    const perClean = t.projectedCostPerClean != null ? money(t.projectedCostPerClean) : '&mdash;'
+    const vsYesterday = (t.projectedCostPerClean != null && r.costPerClean != null)
+      ? (t.projectedCostPerClean > r.costPerClean
+          ? `<span style="color:#d97706">${money(t.projectedCostPerClean - r.costPerClean)} above yesterday</span>`
+          : `<span style="color:#047857">${money(r.costPerClean - t.projectedCostPerClean)} below yesterday</span>`)
+      : 'vs yesterday &mdash;'
+    const rows = t.people.map(p => `
+      <tr><td style="${S.td}"><b>${esc(p.name)}</b>${p.role ? `<div style="font-size:10.5px;color:#9ca3af">${esc(p.role)}</div>` : ''}</td>
+        <td style="${S.td};text-align:right">${p.hours}h</td>
+        <td style="${S.td};color:#6b7280">${esc(p.label)}</td>
+        <td style="${S.td};text-align:right">${p.cost == null ? '<span style="color:#d1d5db">&mdash;</span>' : money(p.cost)}</td></tr>`).join('')
+    return card('Today &middot; what is booked',
+      `<table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:12px"><tr>
+        ${tile('Scheduled', t.scheduledHours + 'h', t.people.length + ' on &middot; ' + t.checkoutsDue + ' cleans due')}
+        ${tile('Projected payroll', t.scheduledCost == null ? '&mdash;' : money(t.scheduledCost), t.arrivals + ' arrivals today')}
+        ${tile('Projected / clean', perClean, vsYesterday, t.projectedCostPerClean != null && r.costPerClean != null && t.projectedCostPerClean > r.costPerClean ? '#d97706' : undefined)}
+      </tr></table>
+      ${t.openShifts ? `<p style="margin:0 0 10px;font-size:12.5px;color:#b45309"><b>${t.openShifts} open shift${t.openShifts === 1 ? '' : 's'}</b> still unfilled on today's schedule.</p>` : ''}
+      ${rows ? table(['On today', 'Hours', 'Shift', 'Cost'], rows) : '<p style="margin:0;font-size:13px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>'}
+      ${t.note ? `<p style="margin:8px 0 0;font-size:11.5px;color:#9ca3af">${esc(t.note)}</p>` : ''}`,
+      '#0f766e',
+      'The day you can still change — staffing against the cleans actually on the board.')
+  })()
+
+  // ── WHAT TO LOOK FOR ────────────────────────────────────────────────────────────────────────
   const flagRows = r.flags.map(f => `
     <div style="border-left:3px solid ${f.level === 'red' ? '#dc2626' : '#d97706'};background:${f.level === 'red' ? '#fef2f2' : '#fffbeb'};border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px">
       <p style="margin:0;font-size:13.5px;font-weight:700;color:#0b1220">${esc(f.title)}</p>
@@ -95,84 +131,46 @@ function render(r: LaborReport): { subject: string; html: string } {
         <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${r.totals.hours}h</b></td>
         <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${money(r.totals.payroll)}</b></td></tr>`
 
-  const mixRows = Object.keys(MIX_LABEL).filter(k => r.mix[k] && r.mix[k].tasks > 0).map(k => `
-    <tr><td style="${S.td}"><b>${MIX_LABEL[k]}</b></td>
-      <td style="${S.td};text-align:right">${r.mix[k].tasks}</td>
-      <td style="${S.td};text-align:right">${r.mix[k].hours}h</td>
-      <td style="${S.td};text-align:right">${r.mix[k].materials ? money(r.mix[k].materials) : '<span style="color:#d1d5db">&mdash;</span>'}</td></tr>`).join('')
-
-  // Everyone who was on the clock. This is a payroll report — a name missing from it is the
-  // whole point, so nobody is truncated away.
-  const peopleRows = r.people.map(p => `
-    <tr><td style="${S.td}"><b>${esc(p.name)}</b>${p.role ? `<div style="font-size:10.5px;color:#9ca3af">${esc(p.role)}</div>` : ''}</td>
-      <td style="${S.td};text-align:right">${p.hours}h${p.overtime ? ` <span style="color:#d97706">+${p.overtime} OT</span>` : ''}</td>
-      <td style="${S.td};text-align:right">${money(p.payroll)}</td>
-      <td style="${S.td};text-align:right">${p.cleans || '<span style="color:#d1d5db">&mdash;</span>'}</td>
-      <td style="${S.td};text-align:right">${p.tasks || '<span style="color:#d1d5db">&mdash;</span>'}</td>
-      <td style="${S.td};text-align:right">${p.coveragePct != null ? p.coveragePct + '%' : '<span style="color:#d1d5db">&mdash;</span>'}</td>
-      <td style="${S.td};text-align:right">${money(p.costPerClean)}</td></tr>`).join('')
-
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="background:#111827;border-radius:12px;padding:18px 20px;margin-bottom:10px">
     <p style="margin:0;color:#9ca3af;font-size:10px;letter-spacing:.18em;font-weight:700">S T A Y &nbsp; H O S P I T A L I T Y</p>
-    <p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Daily labor report</p>
-    <p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">${esc(r.label)} &middot; Homebase payroll, Breezeway work, Guesty checkouts</p>
+    <p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Daily labor</p>
+    <p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">${esc(r.label)} actual &middot; ${t ? esc(t.date) : 'today'} scheduled</p>
   </div>
-  ${quoteBanner(r.to)}
 
-  <table width="100%" cellspacing="0" cellpadding="0" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin:10px 0 14px"><tr>
-    ${tile('Payroll', money(r.totals.payroll), r.totals.hours + 'h &middot; ' + r.totals.people + ' people')}
-    ${tile('Cost / clean', money(r.costPerClean), r.checkouts + ' checkouts')}
-    ${tile('Time / clean', r.hoursPerClean != null ? r.hoursPerClean + 'h' : '&mdash;', 'housekeeping hours')}
-  </tr><tr>
-    ${tile('Cleaning revenue', money(r.cleaningRevenue), r.feePerClean != null ? money(r.feePerClean) + ' per turn' : 'guest fees')}
-    ${tile('Cleaning margin', money(r.cleaningMargin), r.cleaningMarginPct != null ? r.cleaningMarginPct + '% of fees' : '',
-      (r.cleaningMargin ?? 0) < 0 ? '#dc2626' : '#047857')}
-    ${tile('Labor % of rev', r.laborPctOfRevenue != null ? r.laborPctOfRevenue + '%' : '&mdash;',
-      'goal &le; ' + r.settings.pct_good + '%', bandTone)}
-  </tr></table>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;margin-bottom:14px">
+    <p style="margin:0;font-size:14px;line-height:1.6;color:#0b1220">${verdict}
+      Yesterday cost <b>${money(r.totals.payroll)}</b> across ${r.totals.hours}h${r.costPerClean != null ? ` &mdash; <b>${money(r.costPerClean)}</b> per clean` : ''}.${t && t.scheduledCost != null ? ` Today is booked at <b>${money(t.scheduledCost)}</b> for ${t.checkoutsDue} cleans.` : ''}</p>
+  </div>
+
+  ${todayCard}
+
+  ${r.flags.length
+    ? card(`What to look for &middot; ${r.flags.length}`, flagRows, reds ? '#dc2626' : '#d97706')
+    : card('What to look for', `<p style="margin:0;font-size:13px;color:#047857"><b>Nothing.</b> <span style="${S.muted}">Schedule, hours and closures all line up for ${esc(r.label)}.</span></p>`, '#059669')}
+
+  ${card('Yesterday &middot; what it cost',
+    `<table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:12px"><tr>
+      ${tile('Payroll', money(r.totals.payroll), r.totals.hours + 'h &middot; ' + r.totals.people + ' people')}
+      ${tile('Cost / clean', money(r.costPerClean), r.checkouts + ' checkouts')}
+      ${tile('Labor % of rev', r.laborPctOfRevenue != null ? r.laborPctOfRevenue + '%' : '&mdash;', 'goal &le; ' + r.settings.pct_good + '%', bandTone)}
+    </tr></table>
+    ${table(['Department', 'Hours', 'Payroll'], deptRows)}
+    <p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Cleaning fees brought in ${money(r.cleaningRevenue)}${r.cleaningMargin != null ? `, leaving <b style="color:${r.cleaningMargin < 0 ? '#dc2626' : '#047857'}">${money(r.cleaningMargin)}</b> after the cleaning payroll` : ''}. Every name, task and billable sits on the dashboard and in the 30-day true-up.</p>`,
+    '#4338ca')}
 
   <table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 14px"><tr><td>
     <a href="${APP_URL}/labor/dashboard" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">
       Open the live labor dashboard &rarr;
-      <span style="display:block;font-weight:400;font-size:11.5px;color:#9ca3af;margin-top:2px">Day, week or month &middot; per person &middot; updates on its own</span>
+      <span style="display:block;font-weight:400;font-size:11.5px;color:#9ca3af;margin-top:2px">Every person, task and billable &middot; day, week or month</span>
     </a>
   </td></tr></table>
 
-  ${r.flags.length
-    ? card(`What looks off &middot; ${r.flags.length}`, flagRows, reds ? '#dc2626' : '#d97706')
-    : card('What looks off', `<p style="margin:0;font-size:13px;color:#047857"><b>Nothing.</b> <span style="${S.muted}">Schedule, hours and closures all line up for ${esc(r.label)}.</span></p>`, '#059669')}
-
-  ${card('Payroll by department', table(['Department', 'Hours', 'Payroll'], deptRows), '#4338ca')}
-
-  ${card('Work completed', table(['Kind of work', 'Tasks', 'Hours', 'Billed'], mixRows)
-    + `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">${r.checkouts} in-house checkouts owed a clean and ${r.departureClosed} departure cleans were closed in Breezeway.
-      ${r.departureClosed < r.checkouts
-        ? 'Cost per clean counts the checkouts, not the closed tasks — a guest leaving is proof the unit needed cleaning, whether or not the paperwork followed.'
-        : 'Closures are keeping up with checkouts.'}
-      ${r.vendorCheckouts ? ' A further ' + r.vendorCheckouts + ' checkouts belong to vendor-cleaned buildings and carry none of our payroll.' : ''}</p>`, '#0891b2')}
-
-  ${card('Billable work', `<table width="100%" cellspacing="0" cellpadding="0">
-      <tr><td style="${S.td}">Billed to owners <span style="${S.muted}">the cost entered on each task</span></td><td style="${S.td};text-align:right"><b>${money(r.billable.billed)}</b></td></tr>
-      <tr><td style="${S.td}">Tasks carrying a cost</td><td style="${S.td};text-align:right"><b>${r.billable.tasksWithBilling}</b> <span style="${S.muted}">of ${r.billable.tasks}</span></td></tr>
-      <tr><td style="${S.td}">Maintenance payroll <span style="${S.muted}">clocked wages</span></td><td style="${S.td};text-align:right">${money(r.billable.maintenancePayroll)}</td></tr>
-      <tr><td style="${S.td};border-top:2px solid #111827"><b>Margin</b></td><td style="${S.td};text-align:right;border-top:2px solid #111827"><b style="color:${r.billable.margin < 0 ? '#dc2626' : '#047857'}">${money(r.billable.margin)}</b></td></tr>
-    </table>
-    <p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Only <b>${r.billable.tasksWithBilling}</b> of ${r.billable.tasks} maintenance and inspection tasks have an amount entered against them, so the margin above is a floor, not a verdict.${r.billable.tasksMissingDetail ? ` <b>${r.billable.tasksMissingDetail}</b> still have no billing detail pulled from Breezeway at all.` : ''}</p>`,
-    '#7c3aed',
-    `The amount actually entered on the task in Breezeway &mdash; nothing priced or estimated. Rolling ${r.billable.days} days (${r.billable.from} to ${r.billable.to}), not just yesterday, because owner billing gets edited after the fact and this re-reads the whole window every morning.`)}
-
-  ${card('Everyone on the clock', table(['Person', 'Hours', 'Payroll', 'Cleans', 'Tasks', 'On task', 'Cost/clean'], peopleRows)
-    + `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">&ldquo;On task&rdquo; is time logged against Breezeway tasks as a share of clocked time &mdash; a low number means work happening off the task list, not someone idle. Cleans credit both the assignee and whoever closed the task.</p>`)}
-
-  <div style="border-top:1px solid #e5e7eb;margin-top:4px;padding-top:14px;text-align:center">
-    <p style="margin:0;font-size:12.5px;color:#374151"><b>Thank you for everything you do.</b></p>
-  </div>
-  <p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically by Lighthouse every morning. Live view: ${APP_URL}/labor/dashboard</p>
+  <p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically by Lighthouse every morning. The 30-day true-up comes separately.</p>
   </div></body></html>`
 
-  const subject = 'Labor ' + r.from + ': ' + money(r.totals.payroll) + ' payroll, '
-    + (r.costPerClean != null ? money(r.costPerClean) + '/clean' : r.checkouts + ' cleans')
+  const subject = 'Labor ' + r.from + ': ' + money(r.totals.payroll) + ' yesterday'
+    + (t && t.scheduledCost != null ? ', ' + money(t.scheduledCost) + ' booked today' : '')
     + (reds ? ' — ' + reds + ' to action' : r.flags.length ? ' — ' + r.flags.length + ' to watch' : ' — all clear')
 
   return { subject, html }
@@ -195,7 +193,10 @@ export async function GET(req: NextRequest) {
     const day = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : shiftDay(ymdET(new Date()), -1)
 
     const report = await buildLaborReport(day, day)
-    const { subject, html } = render(report)
+    // The forward look is for the day AFTER the one being reported — normally today. Never let a
+    // Homebase hiccup cost the whole email: the projection degrades to null and the rest still sends.
+    const todayProj = await buildTodayProjection(shiftDay(day, 1)).catch(() => null)
+    const { subject, html } = render(report, todayProj)
 
     if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     if (test) {
