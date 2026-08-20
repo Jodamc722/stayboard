@@ -234,3 +234,26 @@ export async function touchMemories(ids: string[]): Promise<void> {
     try { await db.from('eve_memory').update({ last_used_at: new Date().toISOString() }).in('id', ids) } catch { /* never break a turn over telemetry */ }
   }
 }
+
+/**
+ * MEMORY HYGIENE (Jon, 2026-08-19: "update constantly"). Learning forever means accumulating
+ * forever unless something forgets. Every learning pass retires self-learned insights that have
+ * EARNED retirement: source 'eve', never once loaded into a prompt (use_count 0), low weight, and
+ * untouched for 60+ days. They are expired, not deleted — visible under include_superseded-style
+ * review, recoverable by editing, and gone from every future prompt. Anything Jon taught her
+ * (source 'jon') is never touched by this: humans retire human knowledge.
+ */
+export async function pruneStaleMemories(): Promise<number> {
+  const db = supabaseAdmin()
+  try {
+    const cutoff = new Date(Date.now() - 60 * 864e5).toISOString()
+    const today = new Date().toISOString().slice(0, 10)
+    const { data } = await db.from('eve_memory')
+      .update({ expires_on: today, updated_at: new Date().toISOString() })
+      .eq('source', 'eve').eq('use_count', 0).lte('weight', 4)
+      .is('superseded_by', null).is('expires_on', null)
+      .lt('updated_at', cutoff)
+      .select('id')
+    return (data || []).length
+  } catch { return 0 }
+}
