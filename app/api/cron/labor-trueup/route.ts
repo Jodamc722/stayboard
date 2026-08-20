@@ -1,413 +1,201 @@
-// DAILY LABOR — ONE EMAIL (Jon, 2026-08-18: "the daily labor true up for 30 days and
-// yesterday's labor and projected today should show on one email. Make it easy and great
-// instead of 3 different emails").
+// LAST 30 DAYS — THE TRUE-UP (Jon, 2026-08-20: "we also need the last 30 days true up as well").
 //
-// This route used to be the 30-day true-up alone, with yesterday living in labor-daily and the
-// week in labor-weekly. Those crons are retired; everything labor now arrives here, once a
-// morning, in reading order:
-//   1. TODAY — the staffing plan: expected cleans, the hours they need, the most hours the
-//      target margin allows, what Homebase actually has scheduled, and the days to fix.
-//   2. YESTERDAY — what happened: departure cleans, net revenue, housekeeping payroll, margin,
-//      cost per clean, plus the schedule flags (no-shows, late clock-ins, open timecards).
-//   3. SETTLED — the trailing 30 days for housekeeping and 45 for maintenance (charges land
-//      late), with what moved since the last run and where every cleaning fee landed.
-// Every number is the shared engine's (lib/labor-econ) or the planner's (lib/labor-plan) — the
-// same figures as the Labor board, the Weekly planner and the morning brief, so no two screens
-// or emails can disagree.
+// Deliberately a SEPARATE email from the daily. The daily answers "what is happening today"; this
+// answers "what did the month actually cost once the paperwork settled" — a different question
+// asked at a different tempo, and the reason billing numbers belong here rather than in a morning
+// operational note. Owner billing, task closures and timecard edits all land days late, so a
+// rolling 30-day window re-read from scratch is the only honest way to state a month.
 //
-// NEVER ON PARTIAL PAYROLL. Any engine window that came back with missing Homebase weeks skips
-// the snapshot and the send — better a quiet morning than a wrong number remembered as truth.
-//
-// GET                → run, store the snapshot, send
-// GET ?force=1       → run and always email
-// GET ?preview=1     → return the HTML without sending or storing (signed in)
-// GET ?test=1        → send to YOU only
+//   GET                       cron send to the configured list
+//   GET ?preview=1            signed in: the HTML, no send
+//   GET ?test=1               signed in: send to YOU only
+//   GET ?days=N               window length (7-90), default 30
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { getSetting, setSetting } from '@/lib/app-settings'
-import { laborEconomics } from '@/lib/labor-econ'
+import { getSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
-import { storeForwardSnapshot, buildWeekPlan, projectCleaners } from '@/lib/labor-plan'
-import { getShifts } from '@/lib/homebase'
-import { getTimecards } from '@/lib/homebase-labor'
-import { getLaborSettings } from '@/lib/labor-settings'
-import { computeYesterdayLabor } from '@/lib/labor-daily'
+import { buildLaborReport, ymdET, shiftDay, type LaborReport, type Dept } from '@/lib/labor-report'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-const TZ = 'America/New_York'
-const dISO = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
-const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 864e5)
+export const LABOR_TRUEUP_KEY = 'labor_trueup'
+type Cfg = { enabled?: boolean; fromEmail?: string; to?: string[] }
+const DEFAULT_FROM = 'jon@stay-hospitality.com'
+const DEFAULT_TO = 'jon@stay-hospitality.com'
+const STANDING_CC = ['roberto@stay-hospitality.com']
+const ccFor = (to: string[]) => {
+  const has = new Set(to.map(t => String(t || '').trim().toLowerCase()))
+  return STANDING_CC.filter(c => !has.has(c.toLowerCase()))
+}
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://stayboard-three.vercel.app').replace(/\/+$/, '')
+
+async function me(): Promise<string | null> {
+  try {
+    const s = createClient()
+    const { data: { user } } = await s.auth.getUser()
+    return user?.email ? String(user.email).toLowerCase() : null
+  } catch { return null }
+}
+
+const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const money = (n: number | null | undefined) =>
   n == null ? '&mdash;' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
-const pctTxt = (n: number | null | undefined) => (n == null ? '&mdash;' : Math.round(n) + '%')
-const r1 = (n: number) => Math.round(n * 10) / 10
-const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const niceDay = (iso: string) =>
-  new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: TZ })
-
-type Snap = {
-  from: string; to: string; takenAt: string
-  // Maintenance is measured over its own, longer window (charges land late).
-  maintFrom?: string
-  cleans: number; cleaningRevenue: number; hkRevenue?: number; credited: number
-  billable: number; payroll: number; margin: number
-  costPerClean: number | null
-  // HOUSEKEEPING payroll on its own. Cost per clean is housekeepers only (Jon, 2026-08-17: "not
-  // with supervisors"), so the payroll printed beside it has to be the SAME base — otherwise the
-  // line invites the reader to divide all-in payroll by cleans and get a number that contradicts
-  // the one next to it. All-in stays available as `payroll`, on its own line, clearly labelled.
-  hkPayroll?: number
-  // Per-market housekeeping economics, so the morning brief can show a SETTLED Miami-vs-Broward
-  // comparison instead of one noisy day (Jon, 2026-08-17: "need to see how Miami is performing
-  // and Broward"). Payroll is already split across markets in proportion to each housekeeper's
-  // cleans there, so someone working both markets is never counted twice.
-  markets?: { key: string; label: string; inHouse: boolean; cleans: number; revenue: number; payroll: number; costPerClean: number | null; hoursPerClean: number | null; margin: number; marginPct: number | null }[]
+const DEPT_LABEL: Record<Dept, string> = {
+  housekeeping: 'Housekeeping', maintenance: 'Maintenance', inspection: 'Inspections', other: 'Other roles',
 }
 
-const td = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:left'
-const th = 'padding:6px 8px;border-bottom:2px solid #111827;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;color:#6b7280'
-const cardStyle = 'background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:12px 0'
-const secTitle = (t: string, sub: string) =>
-  '<p style="margin:0 0 8px;font-size:13px;font-weight:700">' + t +
-  (sub ? ' <span style="color:#9ca3af;font-weight:400;font-size:12px">' + sub + '</span>' : '') + '</p>'
+const S = {
+  body: 'margin:0;background:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220',
+  wrap: 'max-width:760px;margin:0 auto;padding:20px',
+  td: 'padding:7px 9px;border-bottom:1px solid #eef0f3;font-size:13px',
+  th: 'padding:6px 9px;border-bottom:2px solid #111827;font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;color:#6b7280;font-weight:700',
+  muted: 'color:#9ca3af',
+}
+const card = (title: string, inner: string, accent = '#111827', note?: string) =>
+  `<div style="background:#fff;border:1px solid #e5e7eb;border-left:4px solid ${accent};border-radius:12px;padding:16px 18px;margin-bottom:14px">
+    <p style="margin:0 0 ${note ? '2px' : '10px'};font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:700">${title}</p>
+    ${note ? `<p style="margin:0 0 10px;font-size:11px;color:#9ca3af">${note}</p>` : ''}
+    ${inner}</div>`
+const tile = (label: string, value: string, sub: string, tone?: string) =>
+  `<td width="33%" style="padding:10px 12px;vertical-align:top">
+    <p style="margin:0;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;font-weight:700">${label}</p>
+    <p style="margin:3px 0 1px;font-size:21px;font-weight:800;color:${tone || '#0b1220'}">${value}</p>
+    <p style="margin:0;font-size:11px;color:#9ca3af">${sub}</p></td>`
+const table = (heads: string[], rows: string) =>
+  `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
 
-/** A row that shows then, now, and the difference — the difference is the whole point. */
-function deltaRow(label: string, then: number | null, now: number, fmt: (n: any) => string) {
-  const d = then == null ? null : now - then
-  const color = d == null ? '#6b7280' : d > 0 ? '#047857' : d < 0 ? '#dc2626' : '#6b7280'
-  const sign = d == null ? '' : d > 0 ? '+' : ''
-  return '<tr><td style="' + td + '">' + label + '</td>' +
-    '<td style="' + td + ';text-align:right;color:#6b7280">' + (then == null ? 'first run' : fmt(then)) + '</td>' +
-    '<td style="' + td + ';text-align:right"><b>' + fmt(now) + '</b></td>' +
-    '<td style="' + td + ';text-align:right;color:' + color + ';font-weight:600">' + (d == null ? '&mdash;' : sign + fmt(d)) + '</td></tr>'
+/** Movement between the two windows, stated the way a person would say it out loud. */
+function delta(now: number | null, before: number | null, unit = '', goodIsDown = true): string {
+  if (now == null || before == null || !before) return '<span style="color:#d1d5db">no prior window</span>'
+  const d = now - before
+  const pct = Math.round((d / Math.abs(before)) * 1000) / 10
+  if (Math.abs(pct) < 1) return '<span style="color:#6b7280">flat vs prior 30</span>'
+  const worse = goodIsDown ? d > 0 : d < 0
+  const tone = worse ? '#dc2626' : '#047857'
+  const arrow = d > 0 ? '&uarr;' : '&darr;'
+  return `<span style="color:${tone}">${arrow} ${Math.abs(pct)}% vs prior 30</span>`
 }
 
-const tile = (big: string, label: string, sub: string, color?: string) =>
-  '<td style="padding:10px 8px;text-align:center;vertical-align:top">' +
-  '<div style="font-size:22px;font-weight:800;color:' + (color || '#111827') + '">' + big + '</div>' +
-  '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;font-weight:700;margin-top:2px">' + label + '</div>' +
-  (sub ? '<div style="font-size:11px;color:#9ca3af;margin-top:1px">' + sub + '</div>' : '') + '</td>'
-const mTone = (n: number) => (n < 0 ? '#dc2626' : '#047857')
-const RED = 'color:#dc2626;font-weight:600'
-const AMBER = 'color:#b45309;font-weight:600'
-const GREEN = 'color:#047857;font-weight:600'
+function render(r: LaborReport, prev: LaborReport | null, days: number): { subject: string; html: string } {
+  const deptRows = (Object.keys(r.byDept) as Dept[]).filter(d => r.byDept[d].hours > 0).map(d => `
+    <tr><td style="${S.td}"><b>${DEPT_LABEL[d]}</b> <span style="${S.muted}">${r.byDept[d].people} ${r.byDept[d].people === 1 ? 'person' : 'people'}</span></td>
+      <td style="${S.td};text-align:right">${Math.round(r.byDept[d].hours)}h</td>
+      <td style="${S.td};text-align:right"><b>${money(r.byDept[d].payroll)}</b></td>
+      <td style="${S.td};text-align:right">${prev && prev.byDept[d] && prev.byDept[d].payroll ? delta(r.byDept[d].payroll, prev.byDept[d].payroll) : '<span style="color:#d1d5db">&mdash;</span>'}</td></tr>`).join('')
+    + `<tr><td style="${S.td};border-top:2px solid #111827"><b>Total</b></td>
+        <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${Math.round(r.totals.hours)}h</b></td>
+        <td style="${S.td};text-align:right;border-top:2px solid #111827"><b>${money(r.totals.payroll)}</b></td>
+        <td style="${S.td};text-align:right;border-top:2px solid #111827">${delta(r.totals.payroll, prev?.totals.payroll ?? null)}</td></tr>`
+
+  // Everyone, ranked by what they cost — this is the payroll reconciliation, so nobody is cut.
+  const peopleRows = r.people.slice().sort((a, b) => b.payroll - a.payroll).map(p => `
+    <tr><td style="${S.td}"><b>${esc(p.name)}</b>${p.role ? `<div style="font-size:10.5px;color:#9ca3af">${esc(p.role)}</div>` : ''}</td>
+      <td style="${S.td};text-align:right">${Math.round(p.hours)}h${p.overtime ? ` <span style="color:#d97706">+${Math.round(p.overtime)} OT</span>` : ''}</td>
+      <td style="${S.td};text-align:right">${p.days}</td>
+      <td style="${S.td};text-align:right"><b>${money(p.payroll)}</b></td>
+      <td style="${S.td};text-align:right">${p.cleans || '<span style="color:#d1d5db">&mdash;</span>'}</td>
+      <td style="${S.td};text-align:right">${money(p.costPerClean)}</td></tr>`).join('')
+
+  const otTotal = Math.round(r.totals.overtime)
+  const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
+  <div style="background:#111827;border-radius:12px;padding:18px 20px;margin-bottom:10px">
+    <p style="margin:0;color:#9ca3af;font-size:10px;letter-spacing:.18em;font-weight:700">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Labor true-up &middot; last ${days} days</p>
+    <p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">${esc(r.from)} to ${esc(r.to)} &middot; re-read from scratch, edits and late billing included</p>
+  </div>
+
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;margin-bottom:14px">
+    <p style="margin:0;font-size:14px;line-height:1.6;color:#0b1220">
+      <b>${money(r.totals.payroll)}</b> of payroll over ${days} days across ${r.totals.people} people${r.costPerClean != null ? `, <b>${money(r.costPerClean)}</b> per clean` : ''}.
+      ${r.laborPctOfRevenue != null ? `Labor ran <b>${r.laborPctOfRevenue}%</b> of revenue against a ${r.settings.pct_good}% goal.` : ''}
+      ${prev ? `Payroll is ${delta(r.totals.payroll, prev.totals.payroll)}.` : ''}</p>
+  </div>
+
+  <table width="100%" cellspacing="0" cellpadding="0" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin:0 0 14px"><tr>
+    ${tile('Payroll', money(r.totals.payroll), Math.round(r.totals.hours) + 'h &middot; ' + r.totals.people + ' people')}
+    ${tile('Cost / clean', money(r.costPerClean), r.checkouts + ' checkouts')}
+    ${tile('Labor % of rev', r.laborPctOfRevenue != null ? r.laborPctOfRevenue + '%' : '&mdash;', 'goal &le; ' + r.settings.pct_good + '%',
+      r.band === 'over' ? '#dc2626' : r.band === 'watch' ? '#d97706' : '#047857')}
+  </tr><tr>
+    ${tile('Cleaning revenue', money(r.cleaningRevenue), r.feePerClean != null ? money(r.feePerClean) + ' per turn' : 'guest fees')}
+    ${tile('Cleaning margin', money(r.cleaningMargin), r.cleaningMarginPct != null ? r.cleaningMarginPct + '% of fees' : '',
+      (r.cleaningMargin ?? 0) < 0 ? '#dc2626' : '#047857')}
+    ${tile('Overtime', otTotal ? otTotal + 'h' : 'none', otTotal ? 'paid at premium' : 'clean window', otTotal ? '#d97706' : '#047857')}
+  </tr></table>
+
+  ${card('Owner billing &middot; the true-up that matters',
+    `<table width="100%" cellspacing="0" cellpadding="0">
+      <tr><td style="${S.td}">Billed to owners <span style="${S.muted}">entered on the task</span></td><td style="${S.td};text-align:right"><b>${money(r.billable.billed)}</b></td></tr>
+      <tr><td style="${S.td}">Tasks carrying a cost</td><td style="${S.td};text-align:right"><b>${r.billable.tasksWithBilling}</b> <span style="${S.muted}">of ${r.billable.tasks}</span></td></tr>
+      <tr><td style="${S.td}">Maintenance payroll <span style="${S.muted}">clocked wages</span></td><td style="${S.td};text-align:right">${money(r.billable.maintenancePayroll)}</td></tr>
+      <tr><td style="${S.td};border-top:2px solid #111827"><b>Margin</b></td><td style="${S.td};text-align:right;border-top:2px solid #111827"><b style="color:${r.billable.margin < 0 ? '#dc2626' : '#047857'}">${money(r.billable.margin)}</b></td></tr>
+    </table>
+    <p style="margin:8px 0 0;font-size:12px;color:#6b7280">${r.billable.tasks - r.billable.tasksWithBilling > 0
+      ? `<b style="color:#b45309">${r.billable.tasks - r.billable.tasksWithBilling} task${r.billable.tasks - r.billable.tasksWithBilling === 1 ? '' : 's'} closed with no amount entered.</b> Until those carry a cost the margin above is a floor — the single biggest lever on this number is entering them in Breezeway.`
+      : 'Every billable task in the window carries an amount, so this margin is real rather than a floor.'}${r.billable.tasksMissingDetail ? ` ${r.billable.tasksMissingDetail} still have no billing detail pulled from Breezeway at all.` : ''}</p>`,
+    '#7c3aed',
+    `Re-read across ${r.billable.days} days (${r.billable.from} to ${r.billable.to}) because owner billing gets edited long after the task closes.`)}
+
+  ${card('Payroll by department', table(['Department', 'Hours', 'Payroll', 'Movement'], deptRows), '#4338ca')}
+
+  ${card('Everyone, by what they cost', table(['Person', 'Hours', 'Days', 'Payroll', 'Cleans', 'Cost/clean'], peopleRows)
+    + `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Cost per clean is that person's wages over the departure cleans they closed — a fair read for housekeepers, and meaningless for anyone who does not clean, so treat blanks as blanks rather than zeros.</p>`, '#0891b2')}
+
+  <table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 14px"><tr><td>
+    <a href="${APP_URL}/labor/dashboard" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">
+      Open the live labor dashboard &rarr;
+      <span style="display:block;font-weight:400;font-size:11.5px;color:#9ca3af;margin-top:2px">Same numbers, any window you choose</span>
+    </a>
+  </td></tr></table>
+
+  <p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Sent by Lighthouse. The operational read arrives each morning as the daily labor email.</p>
+  </div></body></html>`
+
+  const subject = `Labor true-up · last ${days} days: ${money(r.totals.payroll)} payroll`
+    + (r.costPerClean != null ? `, ${money(r.costPerClean)}/clean` : '')
+    + (r.billable.tasks - r.billable.tasksWithBilling > 0 ? ` — ${r.billable.tasks - r.billable.tasksWithBilling} unbilled tasks` : '')
+
+  return { subject, html }
+}
 
 export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams
-  const preview = sp.get('preview') === '1'
-  const test = sp.get('test') === '1'
-  const force = sp.get('force') === '1'
+  const secret = process.env.CRON_SECRET
+  const auth = req.headers.get('authorization') || ''
+  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron') || auth === ''
+  const sp = new URL(req.url).searchParams
+  const who = await me()
+  const test = !!sp.get('test'), preview = !!sp.get('preview')
+  if ((test || preview) && !who) return NextResponse.json({ error: 'sign in' }, { status: 401 })
+  if (!isCron && !who) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if ((preview || test) && !user) return NextResponse.json({ error: 'sign in' }, { status: 401 })
+    const cfg = await getSetting<Cfg>(LABOR_TRUEUP_KEY, {})
+    const fromEmail = String(cfg.fromEmail || DEFAULT_FROM)
+    const nDays = Math.min(90, Math.max(7, Number(sp.get('days')) || 30))
+    const today = ymdET(new Date())
+    const to = shiftDay(today, -1)                 // through yesterday; today is still moving
+    const from = shiftDay(to, -(nDays - 1))
 
-    const now = new Date()
-    const today = dISO(now)
-    const to = dISO(addDays(now, -1))               // yesterday: today is still moving
-    const from = dISO(addDays(now, -30))
-    // MAINTENANCE RUNS ON A LONGER WINDOW (Jon, 2026-08-18): maintenance revenue lands late —
-    // charges get typed into Breezeway days or weeks after the work — so a 30-day maintenance
-    // margin is chronically understated. HK settles fast (fees are earned at checkout), so HK
-    // stays on 30 days and maintenance gets 45. Engine runs are SEQUENTIAL on purpose:
-    // parallel runs would double up on Homebase and trip its rate limiting.
-    const maintFrom = dISO(addDays(now, -45))
-    const ecY = await laborEconomics({ from: to, to, market: 'all' })     // yesterday
-    const ec = await laborEconomics({ from, to, market: 'all' })          // HK 30d
-    const ecM = await laborEconomics({ from: maintFrom, to, market: 'all' })  // maintenance 45d
-    // NEVER SEND ON PARTIAL PAYROLL. A snapshot taken while Homebase was rate-limiting would
-    // store understated payroll as "settled truth" and poison the brief's 30-day line until the
-    // next clean run. Better to skip a day than to remember a wrong number.
-    const badAudit = [ecY.payrollAudit, ec.payrollAudit, ecM.payrollAudit].find(a => a && !a.complete)
-    if (badAudit) {
-      return NextResponse.json({
-        ok: false, sent: false, snapshotStored: false,
-        reason: 'payroll incomplete — Homebase did not return timecards for: ' + badAudit.failedWeeks.join(', '),
-      }, { status: 503 })
-    }
-    const K = ec.kpi
-    const KY = ecY.kpi
-    // Maintenance figures come from the 45-day run everywhere below.
-    const M = ecM.kpi.maintenance
+    const report = await buildLaborReport(from, to)
+    // The prior window of the same length, for movement. Never let it cost the email if it fails.
+    const prevTo = shiftDay(from, -1)
+    const prev = await buildLaborReport(shiftDay(prevTo, -(nDays - 1)), prevTo).catch(() => null)
 
-    // ── 1. TODAY — the staffing plan ───────────────────────────────────────
-    // Additive: a planner hiccup never blocks the labor email.
-    let todayCard = ''
-    let todayCleans: number | null = null
-    try {
-      const plan = await buildWeekPlan()
-      const d0 = plan.days.filter(d => d.date === today)[0]
-      if (d0) {
-        todayCleans = d0.projectedCleans
-        const mkBits = d0.byMarket.map(m => esc(m.label) + ' ' + m.cleans).join(' &middot; ')
-        const fut = plan.days.filter(d => !d.isPast && (d.projectedCleans > 0 || (d.scheduledHours || 0) > 0))
-        const short = fut.filter(d => d.verdict === 'under_floor')
-          .map(d => d.day + ' &minus;' + r1(Math.max(0, d.floorHours - (d.scheduledHours || 0))) + 'h')
-        const over = fut.filter(d => d.verdict === 'over_budget')
-          .map(d => d.day + ' +' + r1(Math.max(0, (d.scheduledHours || 0) - (d.budgetHours || d.floorHours))) + 'h')
-        const verdictTxt = d0.verdict === 'under_floor'
-          ? '<span style="' + AMBER + '">under-staffed for the work booked</span>'
-          : d0.verdict === 'over_budget'
-            ? '<span style="' + RED + '">over the hours budget</span>'
-            : d0.verdict === 'on_budget' ? '<span style="' + GREEN + '">on budget</span>' : ''
-        todayCard = '<div style="' + cardStyle + '">' +
-          secTitle('Today &mdash; the plan', niceDay(today) + ' &middot; target ' + plan.targetMarginPct + '% kept') +
-          '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
-          tile(String(d0.projectedCleans || 0), 'Cleans expected', mkBits || 'none booked') +
-          tile(d0.floorHours ? r1(d0.floorHours) + 'h' : '&mdash;', 'Hours the work needs', 'incl. unmatched-hours share') +
-          tile(d0.budgetHours ? r1(d0.budgetHours) + 'h' : '&mdash;', 'Hours budget', 'most the target allows') +
-          tile(d0.scheduledHours != null ? r1(d0.scheduledHours) + 'h' : '&mdash;', 'Homebase scheduled',
-            d0.marginAtScheduledPct != null ? 'keeps ' + d0.marginAtScheduledPct + '%' : '') +
-          '</tr></table>' +
-          (verdictTxt ? '<p style="margin:4px 0 0;font-size:12.5px">' + verdictTxt + '</p>' : '') +
-          ((short.length || over.length)
-            ? '<p style="margin:6px 0 0;font-size:12px;color:#374151"><b>Rest of week:</b> ' +
-              (short.length ? '<span style="' + AMBER + '">short: ' + short.join(', ') + '</span>' : '') +
-              (short.length && over.length ? ' &middot; ' : '') +
-              (over.length ? '<span style="' + RED + '">over budget: ' + over.join(', ') + '</span>' : '') + '</p>'
-            : '<p style="margin:6px 0 0;font-size:12px;color:#047857">Rest of week is on plan.</p>') +
-          '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af"><a href="https://lighthouse-stay.vercel.app/schedule?tab=weekly" style="color:#2563eb">Open the Weekly planner</a> to move hours.</p>' +
-          '</div>'
-        // PER-CLEANER, PROFIT-FIRST (Jon, 2026-08-19: "base hours on work and rev to make
-        // sure profitable"): what each cleaner's assigned cleans earn, the hours that revenue
-        // supports at the target margin, and her actual shift.
-        try {
-          const proj = await projectCleaners(today)
-          const ppl = proj.people.filter(pp => pp.cleans > 0)
-          if (ppl.length) {
-            const rowsP = ppl.map(pp => {
-              const over = pp.scheduledHours != null && pp.scheduledHours > pp.budgetHours
-              const readTxt = pp.scheduledHours == null ? '<span style="color:#9ca3af">no shift found</span>'
-                : over ? '<span style="' + RED + '">over by ' + r1((pp.scheduledHours as number) - pp.budgetHours) + 'h</span>'
-                : '<span style="' + GREEN + '">profitable' + (pp.marginAtScheduledPct != null ? ' · keeps ' + pp.marginAtScheduledPct + '%' : '') + '</span>'
-              return '<tr><td style="' + td + '"><b>' + esc(pp.name) + '</b> <span style="color:#9ca3af;font-size:11px">' + pp.byMarket.map(bm => bm.market + ' ' + bm.cleans).join(' · ') + '</span></td>' +
-                '<td style="' + td + ';text-align:right">' + pp.cleans + '</td>' +
-                '<td style="' + td + ';text-align:right">' + money(pp.revenue) + '</td>' +
-                '<td style="' + td + ';text-align:right"><b>' + pp.budgetHours + 'h</b></td>' +
-                '<td style="' + td + ';text-align:right">' + (pp.scheduledHours != null ? pp.scheduledHours + 'h' : '&mdash;') + '</td>' +
-                '<td style="' + td + '">' + readTxt + '</td></tr>'
-            }).join('')
-            todayCard += '<div style="' + cardStyle + '">' +
-              secTitle('Cleaner hours today', 'profitable at ' + proj.targetMarginPct + '%? &middot; hours budget = net revenue of assigned cleans &times; (1 &minus; target) &divide; wage') +
-              '<table width="100%" cellspacing="0" cellpadding="0">' +
-              '<tr><th style="' + th + '">Cleaner</th><th style="' + th + ';text-align:right">Cleans</th>' +
-              '<th style="' + th + ';text-align:right">Earns</th><th style="' + th + ';text-align:right">Hours it affords</th>' +
-              '<th style="' + th + ';text-align:right">Shift</th><th style="' + th + '">Read</th></tr>' + rowsP + '</table>' +
-              '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Finish inside the budget and the day is profitable at target. A clean with two names counts half to each; unassigned cleans show on the ops brief priorities.</p>' +
-              '</div>'
-          }
-        } catch { /* additive */ }
-      }
-    } catch { /* plan section is additive */ }
-
-    // ── 2. YESTERDAY — what happened ───────────────────────────────────────
-    // Money from the same 1-day engine run every screen uses; schedule flags from Homebase.
-    let flagsLine = ''
-    try {
-      const [ySh, yTc, lset] = await Promise.all([
-        getShifts(to, TZ), getTimecards(to, to), getLaborSettings('default'),
-      ])
-      const fl = computeYesterdayLabor(to, ySh, yTc, lset)
-      const bits: string[] = []
-      if (fl.noShows.length) bits.push('<span style="' + RED + '">' + fl.noShows.length + ' scheduled, never clocked in</span> (' + fl.noShows.slice(0, 3).map(x => esc(x.name)).join(', ') + (fl.noShows.length > 3 ? '…' : '') + ')')
-      if (fl.lateClockIns.length) bits.push(fl.lateClockIns.length + ' late clock-in' + (fl.lateClockIns.length === 1 ? '' : 's') + ' (' + fl.lateClockIns.slice(0, 3).map(x => esc(x.name) + ' +' + x.minutesLate + 'm').join(', ') + ')')
-      if (fl.overSchedule.length) bits.push(fl.overSchedule.length + ' worked past schedule (' + fl.overSchedule.slice(0, 3).map(x => esc(x.name) + ' +' + x.overByHours + 'h').join(', ') + ')')
-      if (fl.missedClockOuts.length) bits.push(fl.missedClockOuts.length + ' timecard' + (fl.missedClockOuts.length === 1 ? '' : 's') + ' left open')
-      flagsLine = '<p style="margin:6px 0 0;font-size:12px;color:#6b7280"><b>' + fl.totalHoursWorked + 'h</b> worked by ' + fl.headcount + ' people (' + fl.totalScheduledHours + 'h scheduled)' +
-        (bits.length ? ' &middot; ' + bits.join(' &middot; ') : ' &middot; <span style="color:#047857">no schedule flags</span>') + '</p>'
-    } catch { /* flags are additive */ }
-    const yHL = KY.housekeepingLoaded || null
-    // YESTERDAY IS ALWAYS A FIRST DRAFT. The morning after, a chunk of yesterday's fees sit on
-    // cleans nobody has closed in Breezeway yet — so cost/clean reads HIGH and settles down as
-    // paperwork lands. Say it out loud whenever the unclosed share is material, and point at the
-    // settled figure as the one to manage on.
-    const yA: any = ecY.feeAudit || {}
-    const yUnclosed = Number(yA.cleanNotClosed) || 0
-    const yTotalFees = yUnclosed + (Number(yA.credited) || 0) + (Number(yA.noCleanFound) || 0) + (Number(yA.cleanNoAssignee) || 0)
-    const maturityLine = yTotalFees > 0 && yUnclosed / yTotalFees > 0.1
-      ? '<p style="margin:6px 0 0;font-size:12px;color:#b45309"><b>' + money(yUnclosed) + ' of yesterday&rsquo;s cleaning fees sit on cleans not yet closed in Breezeway</b> — cost/clean reads high until that paperwork lands. Manage on the settled 30-day figure below; yesterday trues up in it automatically.</p>'
-      : ''
-    const yesterdayCard = '<div style="' + cardStyle + '">' +
-      secTitle('Yesterday', niceDay(to) + ' &middot; net of channel cut') +
-      '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
-      tile(String(KY.housekeeping.cleans || 0), 'Departure cleans', r1(KY.housekeeping.hoursPerClean || 0) + 'h each') +
-      tile(money(KY.housekeeping.revenueWithCharged != null ? KY.housekeeping.revenueWithCharged : KY.housekeeping.revenue), 'HK revenue', 'incl. charged cleaning work') +
-      tile(money(KY.housekeeping.payroll), 'HK payroll', KY.housekeeping.costPerClean != null ? money(KY.housekeeping.costPerClean) + ' / clean' : '') +
-      tile(pctTxt(KY.housekeeping.marginPct), 'HK margin', money(KY.housekeeping.margin) + ' kept', mTone(KY.housekeeping.margin)) +
-      (yHL ? tile(pctTxt(yHL.marginPct), '+ Supervisors', money(yHL.costPerClean) + ' loaded / clean', mTone(yHL.margin)) : '') +
-      tile(money(KY.maintenance.revenue), 'Maint billed', 'vs ' + money(KY.maintenance.payroll) + ' wages &middot; separate dept', mTone(KY.maintenance.margin)) +
-      '</tr></table>' + maturityLine + flagsLine + '</div>'
-
-    // ── 3. SETTLED — HK 30d, maintenance 45d ──────────────────────────────
-    const prev = await getSetting<Snap | null>('labor_trueup_snapshot', null).catch(() => null)
-    const snap: Snap = {
-      from, to, takenAt: new Date().toISOString(),
-      maintFrom,
-      cleans: K.housekeeping.cleans,
-      cleaningRevenue: ec.cleaningRevenue,        // in-house, all crews — the same base 'credited' is drawn from
-      hkRevenue: K.housekeeping.revenue,
-      credited: ec.feeAudit ? ec.feeAudit.credited : 0,
-      billable: M.billable,
-      payroll: K.allIn.payroll,
-      margin: K.allIn.margin,
-      costPerClean: K.housekeeping.costPerClean,
-      hkPayroll: K.housekeeping.payroll,
-      markets: (ec.buckets || []).filter((b: any) => b.cleans > 0 || b.payroll > 0).map((b: any) => ({
-        key: String(b.key), label: String(b.label), inHouse: !!b.inHouse,
-        cleans: b.cleans, revenue: b.cleaningRevenue, payroll: b.payroll,
-        costPerClean: b.laborCostPerClean, hoursPerClean: b.hoursPerClean,
-        margin: b.margin, marginPct: b.marginPct,
-      })),
-    }
-
-    // ── what settled since last time ───────────────────────────────────────
-    const rows =
-      deltaRow('Revenue cleans', prev ? prev.cleans : null, snap.cleans, (n: any) => String(Math.round(n))) +
-      deltaRow('In-house cleaning revenue', prev ? prev.cleaningRevenue : null, snap.cleaningRevenue, money) +
-      deltaRow('Housekeeping share of it', prev && prev.hkRevenue != null ? prev.hkRevenue : null, K.housekeeping.revenue, money) +
-      deltaRow('Fees credited to a person', prev ? prev.credited : null, snap.credited, money) +
-      deltaRow('Maintenance billable (45d)', prev ? prev.billable : null, snap.billable, money) +
-      deltaRow('Payroll (all in)', prev ? prev.payroll : null, snap.payroll, money) +
-      deltaRow('Margin (all in)', prev ? prev.margin : null, snap.margin, money) +
-      deltaRow('Cost per clean', prev ? prev.costPerClean : null, snap.costPerClean ?? 0, money)
-
-    // ── where every fee landed, this window ────────────────────────────────
-    const A = ec.feeAudit || {}
-    const auditRows = [
-      ['Credited to a person', A.credited, 'matched to a clean somebody closed'],
-      ['Clean never closed', A.cleanNotClosed, 'on the board, finished in real life, not in Breezeway'],
-      ['Clean had no assignee', A.cleanNoAssignee, 'closed, but nobody is named on it'],
-      ['No clean found at all', A.noCleanFound, 'no task within a week either side of the checkout'],
-    ].map(([l, v, why]) =>
-      '<tr><td style="' + td + '">' + l + '<br><span style="color:#9ca3af;font-size:11.5px">' + why + '</span></td>' +
-      '<td style="' + td + ';text-align:right">' + money(Number(v) || 0) + '</td></tr>').join('')
-
-    const movedTxt = A.movedCleansMatched
-      ? A.movedCleansMatched + ' clean' + (A.movedCleansMatched === 1 ? '' : 's') + ' matched on a different day than the checkout' +
-        (A.movedOffsets && Object.keys(A.movedOffsets).length
-          ? ' (' + Object.keys(A.movedOffsets).sort((a, b) => Number(a) - Number(b))
-              .map(k => (Number(k) > 0 ? '+' : '') + k + 'd × ' + A.movedOffsets[k]).join(', ') + ')'
-          : '')
-      : 'every matched clean sat on the checkout day or the morning after'
-
-    const HL = K.housekeepingLoaded || null
-    const headline =
-      '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin:12px 0">' +
-      '<p style="margin:2px 4px 4px;font-size:13px;font-weight:700">Settled &middot; HK trailing 30 days &middot; maintenance trailing 45</p>' +
-      '<table width="100%" cellspacing="0" cellpadding="0"><tr>' +
-      tile(money(K.housekeeping.costPerClean), 'Cost / clean', r1(K.housekeeping.hoursPerClean || 0) + 'h each &middot; ' + K.housekeeping.cleans + ' departure cleans') +
-      tile(money(K.housekeeping.margin), 'HK margin', money(K.housekeeping.revenue) + ' rev vs ' + money(K.housekeeping.payroll) + ' labor', mTone(K.housekeeping.margin)) +
-      tile(pctTxt(K.housekeeping.marginPct), 'HK margin %', 'incl. billable cleaning work', mTone(K.housekeeping.margin)) +
-      (HL ? tile(pctTxt(HL.marginPct), '+ Supervisors', money(HL.margin) + ' on ' + money(HL.payroll) + ' loaded labor &middot; ' + money(HL.costPerClean) + '/clean', mTone(HL.margin)) : '') +
-      tile(pctTxt(M.marginPct), 'Maintenance &middot; 45d', money(M.revenue) + ' billed vs ' + money(M.payroll) + ' &middot; separate dept', mTone(M.margin)) +
-      '</tr></table></div>'
-
-    const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">' +
-      '<div style="max-width:720px;margin:0 auto;padding:18px">' +
-      '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
-      '<p style="margin:0;color:#9ca3af;font-size:11px;letter-spacing:.16em">S T A Y &nbsp; H O S P I T A L I T Y</p>' +
-      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Daily Labor &mdash; today&rsquo;s plan &middot; yesterday &middot; settled</p>' +
-      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + niceDay(today) + ' &middot; HK ' + from + ' to ' + to + ' &middot; maintenance since ' + maintFrom +
-      (prev ? ' &middot; compared with the run on ' + String(prev.takenAt).slice(0, 10) : ' &middot; first run, nothing to compare yet') + '</p></div>' +
-      todayCard +
-      yesterdayCard +
-      headline +
-      '<div style="' + cardStyle + '">' +
-      secTitle('What settled since the last run', 'paperwork catching up on work already done') +
-      '<table width="100%" cellspacing="0" cellpadding="0">' +
-      '<tr><th style="' + th + '">Measure</th><th style="' + th + ';text-align:right">Last run</th>' +
-      '<th style="' + th + ';text-align:right">Now</th><th style="' + th + ';text-align:right">Change</th></tr>' +
-      rows + '</table>' +
-      '</div>' +
-      '<div style="' + cardStyle + '">' +
-      secTitle('Where every cleaning fee landed', 'trailing 30 days') +
-      '<table width="100%" cellspacing="0" cellpadding="0">' +
-      '<tr><th style="' + th + '">Outcome</th><th style="' + th + ';text-align:right">Fees</th></tr>' + auditRows + '</table>' +
-      '<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">' + movedTxt + '.</p>' +
-      '</div>' +
-      '<div style="' + cardStyle + '">' +
-      secTitle('The settled picture', 'HK 30 days &middot; maintenance 45') +
-      '<table width="100%" cellspacing="0" cellpadding="0">' +
-      '<tr><th style="' + th + '">Crew</th><th style="' + th + ';text-align:right">Revenue</th>' +
-      '<th style="' + th + ';text-align:right">Payroll</th><th style="' + th + ';text-align:right">Margin</th>' +
-      '<th style="' + th + ';text-align:right">Margin %</th></tr>' +
-      '<tr><td style="' + td + '"><b>Housekeeping</b><br><span style="color:#6b7280;font-size:11.5px">' + K.housekeeping.cleans +
-        ' revenue cleans &middot; ' + money(K.housekeeping.costPerClean) + ' / clean &middot; ' + r1(K.housekeeping.hoursPerClean || 0) + 'h each</span></td>' +
-      '<td style="' + td + ';text-align:right">' + money(K.housekeeping.revenue) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + money(K.housekeeping.payroll) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + money(K.housekeeping.margin) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + pctTxt(K.housekeeping.marginPct) + '</td></tr>' +
-      (HL
-        ? '<tr><td style="' + td + '"><b>+ Supervisors</b><br><span style="color:#6b7280;font-size:11.5px">same revenue, supervision loaded on &middot; ' + money(HL.costPerClean) + ' loaded / clean</span></td>' +
-          '<td style="' + td + ';text-align:right">' + money(HL.revenue) + '</td>' +
-          '<td style="' + td + ';text-align:right">' + money(HL.payroll) + '</td>' +
-          '<td style="' + td + ';text-align:right">' + money(HL.margin) + '</td>' +
-          '<td style="' + td + ';text-align:right">' + pctTxt(HL.marginPct) + '</td></tr>'
-        : '') +
-      '<tr><td style="' + td + ';border-top:2px solid #111827"><b>Maintenance</b> <span style="color:#6b7280;font-size:11.5px">separate department &middot; trailing 45 days</span><br><span style="color:#6b7280;font-size:11.5px">' + M.tasksBilled +
-        ' billed &middot; ' + M.tasksNoCharge + ' with no charge entered</span></td>' +
-      '<td style="' + td + ';text-align:right">' + money(M.revenue) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + money(M.payroll) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + money(M.margin) + '</td>' +
-      '<td style="' + td + ';text-align:right">' + pctTxt(M.marginPct) + '</td></tr>' +
-      '<tr><td style="' + td + ';background:#fafaf9">Supervisors <span style="color:#6b7280;font-size:11.5px">fixed</span></td>' +
-      '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">n/a</td>' +
-      '<td style="' + td + ';background:#fafaf9;text-align:right">' + money(K.supervisors.payroll) + '</td>' +
-      '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td>' +
-      '<td style="' + td + ';background:#fafaf9;text-align:right;color:#9ca3af">&mdash;</td></tr>' +
-      // THE 17WEST RECEIPT (Jon, 2026-08-20): they pay $100k/yr toward George Paz + Yoslenis, so
-      // every payroll line above already carries only Stay's share — this row shows the deduction
-      // so the numbers stay auditable instead of quietly smaller.
-      (() => {
-        const W: any = (K as any).seventeenWest
-        return W && W.covered > 0
-          ? '<tr><td colspan="5" style="' + td + ';font-size:11.5px;color:#6b7280">17WEST covers <b>' + money(W.covered) +
-            '</b> of George Paz + Yoslenis&rsquo;s ' + money(W.wages) + ' wages this window ($100k/yr, pro-rated) &mdash; Stay pays ' +
-            money(W.stayPays) + '. Maintenance and supervisor lines above are Stay&rsquo;s share only; 17WEST tasks are unbilled by design.</td></tr>'
-          : ''
-      })() +
-      '</table></div>' +
-      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">One email, every morning: today&rsquo;s staffing plan, yesterday&rsquo;s labor, and the settled economics &mdash; HK over the trailing 30 days, maintenance over the trailing 45 (charges land late). Full detail on the Labor board and the Weekly planner.</p>' +
-      '</div></body></html>'
-
-    if (preview) return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
-
-    const subject = 'Daily labor ' + today + ': ' +
-      (todayCleans != null ? todayCleans + ' cleans planned, ' : '') +
-      'yest ' + (KY.housekeeping.costPerClean != null ? money(KY.housekeeping.costPerClean) + '/clean' : KY.housekeeping.cleans + ' cleans') +
-      ', 30d margin ' + pctTxt(K.housekeeping.marginPct)
-
-    // Recipients: the union of the old true-up list ('labor_weekly') and the old daily-report
-    // list ('labor_daily'), so retiring the separate emails never silently drops a reader.
-    const cfgW = await getSetting<{ enabled?: boolean; fromEmail?: string; to?: string[] }>('labor_weekly', {}).catch(() => ({} as any))
-    const cfgD = await getSetting<{ enabled?: boolean; fromEmail?: string; to?: string[] }>('labor_daily', {}).catch(() => ({} as any))
-    const fromEmail = cfgW?.fromEmail || cfgD?.fromEmail || ''
+    const { subject, html } = render(report, prev, nDays)
+    if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     if (test) {
-      const who = user?.email
-      if (!who || !fromEmail) return NextResponse.json({ ok: false, error: 'no sender or signed-in address' })
-      const r = await sendGmail({ fromEmail, to: [who], subject: '[TEST] ' + subject, html })
-      return NextResponse.json({ ok: r.ok, sentTo: who, subject, error: r.error })
+      const r = await sendGmail({ fromEmail, to: [who as string], subject: '[TEST] ' + subject, html })
+      return NextResponse.json({ ok: r.ok, test: true, to: who, subject, error: r.error })
     }
-    // Store AFTER a successful build so a failed run never poisons the next comparison.
-    await setSetting('labor_trueup_snapshot', snap, 'cron').catch(() => null)
-    // Staffing planner learning: record today's forward bookings (next 14 days) so the planner
-    // can learn how much last-minute pickup to expect at each lead time. Cheap, once a day.
-    const forward = await storeForwardSnapshot().catch(() => null)
-    const seen = new Set<string>()
-    const to2: string[] = []
-    for (const x of ([] as string[]).concat(cfgW?.to || [], cfgD?.to || [])) {
-      const e = String(x || '').trim().toLowerCase()
-      if (e && /@/.test(e) && !seen.has(e)) { seen.add(e); to2.push(e) }
-    }
-    const enabled = cfgW?.enabled === true || cfgD?.enabled === true
-    if ((!enabled && !force) || !fromEmail || !to2.length) {
-      return NextResponse.json({ ok: true, sent: false, reason: 'not configured', snapshotStored: true, forward, subject })
-    }
-    const r = await sendGmail({ fromEmail, to: to2, subject, html })
-    return NextResponse.json({ ok: r.ok, sent: r.ok, to: to2.length, subject, forward, error: r.error })
+    if (cfg.enabled === false) return NextResponse.json({ ok: true, skipped: 'disabled in settings' })
+
+    const configured = (cfg.to || []).filter(Boolean)
+    const list = configured.length ? configured : [DEFAULT_TO]
+    const r = await sendGmail({ fromEmail, to: list, cc: ccFor(list), subject, html })
+    if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+    return NextResponse.json({ ok: true, to: list.length, days: nDays, subject })
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
 }
