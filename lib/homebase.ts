@@ -222,8 +222,13 @@ function fmt(t: string | null, tz: string): string {
   } catch { return '?' }
 }
 
-/** All shifts for one calendar day (YYYY-MM-DD), sorted by start time. */
+/** All shifts for one calendar day (YYYY-MM-DD), sorted by start time.
+ * Memoised for 4 minutes: one morning run asks for the same day's shifts from four briefs,
+ * the planner and the cleaner projection — refetching each time wasted the cron's time budget. */
+const shiftCache: Map<string, { at: number; shifts: Shift[] }> = new Map()
 export async function getShifts(date: string, tz = 'America/New_York'): Promise<Shift[]> {
+  const cHit = shiftCache.get(date + '|' + tz)
+  if (cHit && Date.now() - cHit.at < 4 * 60 * 1000) return cHit.shifts
   const loc = await getLocationUuid()
   const raw = arr(await hb(
     `/locations/${loc}/shifts?start_date=${date}&end_date=${date}&with_note=true`
@@ -250,7 +255,9 @@ export async function getShifts(date: string, tz = 'America/New_York'): Promise<
       scheduledCost: s.labor && Number.isFinite(Number((s.labor as any).scheduled_costs)) ? Number((s.labor as any).scheduled_costs) : null,
     }
   })
-  return shifts.sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
+  const sorted = shifts.sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
+  shiftCache.set(date + '|' + tz, { at: Date.now(), shifts: sorted })
+  return sorted
 }
 
 // ---------------------------------------------------------------------------
