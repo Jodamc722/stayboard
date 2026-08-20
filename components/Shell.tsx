@@ -314,11 +314,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border border-line bg-white text-muted">⌘K</span>
       </button>
 
-      {pinned.length > 0 && (
-        <div>
-          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider font-bold text-amber-700 flex items-center gap-1.5">
-            <Star size={11} className="fill-amber-400 text-amber-500" /> Daily
+      {(
+        // YOUR TABS (Jon, 2026-08-19: "revamp the tabs on the side… a star section, called
+        // something, maybe Your tabs"). The personal band gets its own softly-tinted card so it
+        // reads as YOURS at a glance, a plain-English name, and the same star/drag mechanics.
+        <div className="rounded-xl bg-amber-50/60 border border-amber-100 p-1.5 mb-2">
+          <div className="px-2 pt-1 pb-1.5 text-[10px] uppercase tracking-wider font-bold text-amber-800 flex items-center gap-1.5">
+            <Star size={11} className="fill-amber-400 text-amber-500" /> Your tabs
+            <span className="ml-auto font-semibold normal-case tracking-normal text-[10px] text-amber-700/60">drag to reorder</span>
           </div>
+          {pinned.length === 0 && (
+            <p className="px-2 pb-1.5 text-[11px] text-amber-800/70">Star any tab below and it moves up here — your own order, front and center.</p>
+          )}
           {pinned.map(({ to, label, Icon }, idx) => {
             const active = isActive(to)
             return (
@@ -328,12 +335,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 onDrop={e => { e.preventDefault(); if (dragFrom.current != null) movePin(dragFrom.current, idx); dragFrom.current = null }}
                 onDragEnd={() => { dragFrom.current = null }}
                 title="Drag to reorder"
-                className={`group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all cursor-grab active:cursor-grabbing ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                className={`group flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-sm font-medium transition-all cursor-grab active:cursor-grabbing ${active ? 'bg-white shadow-sm text-brand-700' : 'text-ink/70 hover:bg-white/70 hover:text-ink'}`}>
                 <Link href={to} prefetch={false} draggable={false} onClick={onNavigate} className="flex items-center gap-3 flex-1 min-w-0">
                   <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
                   <span className="truncate">{label}</span>
                 </Link>
-                <button type="button" title="Unpin from Daily" aria-label={'Unpin ' + label}
+                <button type="button" title="Remove from Your tabs" aria-label={'Remove ' + label + ' from Your tabs'}
                   onClick={() => togglePin(to)} className="flex-shrink-0 text-amber-500 hover:text-amber-600">
                   <Star size={14} className="fill-amber-400" />
                 </button>
@@ -353,21 +360,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
         return (
           <div key={section.title}>
             <button type="button" onClick={() => toggleGroup(section.title)}
-              className="w-full mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold text-muted/70 hover:bg-app hover:text-ink transition-all">
-              <ChevronRight size={12} className={'transition-transform ' + (open ? 'rotate-90' : '')} />
+              className="w-full mt-3.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60 hover:text-ink transition-all">
               {section.title}
-              <span className="ml-auto text-[10px] font-bold tracking-normal px-1.5 rounded-full border border-line bg-app text-muted">{rest.length}</span>
+              <ChevronRight size={11} className={'text-muted/50 transition-transform ' + (open ? 'rotate-90' : '')} />
+              {!open && <span className="ml-auto text-[10px] font-semibold tracking-normal text-muted/50">{rest.length}</span>}
             </button>
             {open && rest.map(({ to, label, Icon }) => {
               const active = isActive(to)
               const on = isPinned(to)
               return (
-                <div key={to} className={`group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                <div key={to} className={`group flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
                   <Link href={to} prefetch={false} onClick={onNavigate} className="flex items-center gap-3 flex-1 min-w-0">
                     <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
                     <span className="truncate">{label}</span>
                   </Link>
-                  <button type="button" title={on ? 'Unpin from Daily' : 'Pin to Daily'} aria-label={(on ? 'Unpin ' : 'Pin ') + label}
+                  <button type="button" title={on ? 'Remove from Your tabs' : 'Add to Your tabs'} aria-label={(on ? 'Remove ' : 'Add ') + label}
                     onClick={() => togglePin(to)}
                     className={'flex-shrink-0 transition-opacity ' + (on ? 'text-amber-500' : 'text-muted/40 opacity-0 group-hover:opacity-100 hover:text-amber-500')}>
                     <Star size={14} className={on ? 'fill-amber-400' : ''} />
