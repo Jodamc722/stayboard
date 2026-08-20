@@ -32,6 +32,7 @@ import { getShifts } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
+import { weeklyKpiCard } from '@/lib/kpi-week'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -240,6 +241,11 @@ export async function GET(req: NextRequest) {
       tile(money(KY.maintenance.revenue), 'Maint billed', 'vs ' + money(KY.maintenance.payroll) + ' wages &middot; separate dept', mTone(KY.maintenance.margin)) +
       '</tr></table>' + maturityLine + flagsLine + '</div>'
 
+    // ── 2b. WEEKLY KPI REVIEW (Jon, 2026-08-20: "Need a weekly kpi review in the brief. The
+    // KPI weeks are Sunday - Saturday. This can be included in the labor brief"). Built by
+    // lib/kpi-week on the KPI board's own engine; returns '' on any failure — additive.
+    const weekCard = await weeklyKpiCard()
+
     // ── 3. SETTLED — HK 30d, maintenance 45d ──────────────────────────────
     const prev = await getSetting<Snap | null>('labor_trueup_snapshot', null).catch(() => null)
     const snap: Snap = {
@@ -313,6 +319,7 @@ export async function GET(req: NextRequest) {
       (prev ? ' &middot; compared with the run on ' + String(prev.takenAt).slice(0, 10) : ' &middot; first run, nothing to compare yet') + '</p></div>' +
       todayCard +
       yesterdayCard +
+      weekCard +
       headline +
       '<div style="' + cardStyle + '">' +
       secTitle('What settled since the last run', 'paperwork catching up on work already done') +
