@@ -50,6 +50,14 @@ function friendlyAuthError(e: any): string {
   if (/error sending|unexpected_failure|503/i.test(raw)) {
     return 'We could not send the email — the mail service rejected it. Sign in with your password instead.'
   }
+  // supabase-js retries a 5xx and then surfaces the browser's own "Failed to fetch". Seen from the
+  // outside that is indistinguishable from being offline, so ask the browser which one it is.
+  if (/failed to fetch|load failed|network|fetch failed/i.test(raw)) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return 'You appear to be offline. Reconnect and try again.'
+    }
+    return 'The email service did not respond — this project has no mail provider configured yet. Sign in with your password instead.'
+  }
   if (/rate limit|only request this after|too many/i.test(raw)) {
     return 'Too many link requests. The built-in email service allows only a couple an hour — wait, or sign in with your password.'
   }
