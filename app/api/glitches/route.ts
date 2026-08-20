@@ -48,12 +48,15 @@ export async function GET(req: NextRequest) {
         .order('check_in', { ascending: false })
         .limit(12)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      // message sentiment for these reservations (guest_sentiment scan results) — best effort
+      // Message sentiment for these reservations. 2026-08-20 FIX: this read `guest_sentiment`,
+      // which does not exist — the scan (/api/sentiment/scan) writes `guesty_conversation_sentiment`.
+      // Because the whole block is a best-effort try/catch it failed SILENTLY on every search, so
+      // the sentiment chip on the new-glitch reservation picker was always blank.
       const smap: Record<string, any> = {}
       try {
         const rids = ((rows || []) as any[]).map(r => String(r.id))
         if (rids.length) {
-          const { data: sr } = await db.from('guest_sentiment').select('reservation_id,score,band,dissatisfied,top_issue,guest_excerpt').in('reservation_id', rids)
+          const { data: sr } = await db.from('guesty_conversation_sentiment').select('reservation_id,score,band,dissatisfied,top_issue,guest_excerpt').in('reservation_id', rids)
           for (const x of (sr || []) as any[]) if (x.reservation_id) smap[String(x.reservation_id)] = { score: x.score, band: x.band, dissatisfied: !!x.dissatisfied, topIssue: x.top_issue || null, excerpt: x.guest_excerpt || null }
         }
       } catch { /* sentiment table optional */ }
