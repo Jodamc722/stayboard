@@ -104,6 +104,8 @@ export default async function RequestsPage() {
     !isClosed(r.status) && !!r.due_at && new Date(r.due_at).getTime() < now
 
   const overdue = requests.filter(isOverdue)
+  // Unassigned open work is the leak Jon named — nobody owns it, so nobody closes it.
+  const unassigned = active.filter(r => !r.assignee_email)
   const outstanding = active.reduce((sum, r) => sum + (Number(r.amount_usd) || 0), 0)
 
   // Group active work into status columns; closed work shown last.
@@ -141,9 +143,16 @@ export default async function RequestsPage() {
       </header>
 
       {/* KPI band */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <Kpi label="Open" value={open.length} Icon={ClipboardList} dot="bg-rose-500" />
         <Kpi label="In progress" value={inProgress.length} Icon={Wrench} dot="bg-amber-500" />
+        <Kpi
+          label="Unassigned"
+          value={unassigned.length}
+          Icon={User}
+          dot="bg-rose-500"
+          accent={unassigned.length > 0}
+        />
         <Kpi
           label="Overdue"
           value={overdue.length}
@@ -200,6 +209,12 @@ export default async function RequestsPage() {
                     const due = fmtDate(r.due_at)
                     const amount = fmtMoney(r.amount_usd)
                     const assignee = r.assignee_email?.split('@')[0] || null
+                    // Age = the grip metric. Overdue needs a due date somebody remembered to set;
+                    // age needs nothing — every request has a birthday, so every request escalates.
+                    const age = r.created_at ? Math.max(0, Math.floor((now - new Date(r.created_at).getTime()) / 86400000)) : null
+                    const ageCls = age == null ? '' : age >= 7 && key !== 'done' ? 'bg-rose-50 text-rose-700 ring-rose-200'
+                      : age >= 3 && key !== 'done' ? 'bg-amber-50 text-amber-700 ring-amber-200'
+                      : 'bg-slate-100 text-slate-500 ring-slate-200'
                     return (
                       <div
                         key={r.id}
@@ -207,8 +222,11 @@ export default async function RequestsPage() {
                       >
                         {/* Title + type */}
                         <div className="col-span-2 lg:col-span-1 min-w-0">
-                          <div className="font-medium text-ink text-sm truncate">
-                            {r.title || 'Untitled request'}
+                          <div className="font-medium text-ink text-sm truncate flex items-center gap-2">
+                            {age != null && key !== 'done' && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ring-1 ring-inset tabular-nums flex-shrink-0 ${ageCls}`}>{age}d</span>
+                            )}
+                            <span className="truncate">{r.title || 'Untitled request'}</span>
                           </div>
                           {r.type && (
                             <div className="text-[11px] text-muted truncate inline-flex items-center gap-1 mt-0.5">
