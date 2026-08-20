@@ -108,8 +108,10 @@ export async function runLateCleanAlert(): Promise<any> {
     }))
     const vendor = !!(bucket.group && bucket.group.vendor)
     const audience = audienceFor(rules, bucket.group, items.map(i => i.assigneeSlackId))
+    // @here on EVERY clean message, not just vendor areas (Jon, 2026-08-20: "The slack messages
+    // needs to tag @Here + the housekeeper") — the assigned cleaners are already in `audience`.
     const { body: en, summary } = lateCleansMessage({
-      area: bucket.label, items, audience, date: b.date, here: vendor,
+      area: bucket.label, items, audience, date: b.date, here: true,
     })
     // Field crews are Spanish-first (Jon, 2026-08-19). Vendor areas stay English — those are
     // outside companies with their own office staff, not our crews.
@@ -484,11 +486,14 @@ export async function runWalkInRiskAlert(): Promise<any> {
   const buckets = bucketBy(rules, risks, r => r.unit, () => 'housekeeping' as Dept)
   const results: any[] = []
   for (const bucket of buckets) {
-    const vendor = !!(bucket.group && bucket.group.vendor)
-    const audience = audienceFor(rules, bucket.group, [])
+    // Tag @here + the cleaners on the scheduled cleans (Jon, 2026-08-20: "tag @Here + the
+    // housekeeper... the cleaners that are scheduled for the clean"). audienceFor still drops
+    // personal ids for vendor areas — those crews are not in this workspace.
+    const audience = audienceFor(rules, bucket.group,
+      bucket.rows.flatMap(r => (r.assignees || []).map(n => resolveSlackId(n, users, rules))))
     const { body, summary } = walkInRiskMessage({
       items: bucket.rows.map(r => ({ unit: r.unit, at: r.at, problems: r.problems, unassigned: r.unassigned })),
-      audience, here: vendor,
+      audience, here: true,
     })
     // The group key carries the unit list, so a NEW unit going at-risk raises a fresh message
     // rather than silently updating one nobody looked at again.
@@ -513,7 +518,7 @@ export async function runWalkInRiskAlert(): Promise<any> {
  * everything is ready, because "all ready" at 3pm is genuinely the news.
  */
 export async function runReadinessCheck(): Promise<any> {
-  const { rules } = await ctx()
+  const { rules, users } = await ctx()
   const rule = rules.events.readiness_3pm
   if (!rule.enabled) return { skipped: 'disabled' }
 
@@ -528,7 +533,10 @@ export async function runReadinessCheck(): Promise<any> {
     // so every unit there reads as "no clean scheduled" — seven of them did on the first run.
     // We cannot see their readiness, so we do not claim to.
     if (vendor) { results.push({ area: bucket.label, skipped: 'vendor-run — no clean data' }); continue }
-    const audience = audienceFor(rules, bucket.group, [])
+    // @here + the cleaners named on today's cleans (Jon, 2026-08-20: "tag @Here + the
+    // housekeeper... the cleaners that are scheduled for the clean").
+    const audience = audienceFor(rules, bucket.group,
+      bucket.rows.flatMap(u => (u.assignees || []).map(n => resolveSlackId(n, users, rules))))
     const { body, threadBody, summary } = readinessMessage({
       area: bucket.label,
       items: bucket.rows.map(u => ({
@@ -538,6 +546,7 @@ export async function runReadinessCheck(): Promise<any> {
       })),
       audience,
       spanish: rules.bilingualFieldChannels,
+      here: true,
     })
     const res = await draft({
       eventKey: 'readiness_3pm',

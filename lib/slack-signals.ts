@@ -402,6 +402,9 @@ export type WalkInRisk = {
   problems: string[]
   /** true when nobody is even assigned to the clean */
   unassigned: boolean
+  /** cleaners on the scheduled clean, when the board names them — so the alert can @ them
+   *  (Jon, 2026-08-20: "make sure to tag the cleaners that are scheduled for the clean") */
+  assignees: string[]
 }
 
 export async function findWalkInRisks(): Promise<WalkInRisk[]> {
@@ -434,7 +437,7 @@ export async function findWalkInRisks(): Promise<WalkInRisk[]> {
     if (!risks[unit]) {
       risks[unit] = {
         unit, building: buildingOf(null, unit), market: null,
-        at: at || arrivingToday[unit] || null, problems: [], unassigned: false,
+        at: at || arrivingToday[unit] || null, problems: [], unassigned: false, assignees: [],
       }
     }
     if (risks[unit].problems.indexOf(problem) < 0) risks[unit].problems.push(problem)
@@ -455,6 +458,7 @@ export async function findWalkInRisks(): Promise<WalkInRisk[]> {
       if (!u.arrivingAt) continue
       add(u.unit, u.arrivingAt, u.assignee ? 'clean not started yet' : 'clean not started and nobody assigned', !u.assignee)
       if (u.market) risks[u.unit].market = u.market
+      if (u.assignee && risks[u.unit].assignees.indexOf(u.assignee) < 0) risks[u.unit].assignees.push(u.assignee)
     }
   }
 
