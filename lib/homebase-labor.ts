@@ -74,6 +74,18 @@ export type TimecardAudit = { cards: Timecard[]; weeks: number; failedWeeks: str
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+// WEEK-LEVEL MEMO (2026-08-20). The Daily Labor email runs three engine windows (yesterday /
+// 30d / 45d) and the morning brief adds more — all over OVERLAPPING Homebase weeks, so the same
+// week was being fetched up to six times per morning. That both risked 429s and blew the cron's
+// time budget (the true-up silently stopped storing on Aug 18 because the run timed out).
+// A week that already ended gets a 15-minute cache; the current week (still accruing punches)
+// only 4 minutes, so the Right-now strip never reads stale by more than that.
+const weekCache: Map<string, { at: number; page: Json[] }> = new Map()
+const weekTtl = (weekEnd: string) => {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  return weekEnd < today ? 15 * 60 * 1000 : 4 * 60 * 1000
+}
+
 export async function getTimecardsAudited(startDate: string, endDate: string): Promise<TimecardAudit> {
   const loc = await getLocationUuid()
   const spans: Array<[string, string]> = []
@@ -88,6 +100,9 @@ export async function getTimecardsAudited(startDate: string, endDate: string): P
   const pages: Json[][] = []
   const failedWeeks: string[] = []
   for (const [a, b] of spans) {
+    const ck = a + '..' + b
+    const hit = weekCache.get(ck)
+    if (hit && Date.now() - hit.at < weekTtl(b)) { pages.push(hit.page); continue }
     let got: Json[] | null = null
     for (let attempt = 0; attempt < 3 && got == null; attempt++) {
       try {
@@ -98,7 +113,7 @@ export async function getTimecardsAudited(startDate: string, endDate: string): P
       }
     }
     if (got == null) { failedWeeks.push(`${a}..${b}`); pages.push([]) }
-    else pages.push(got)
+    else { pages.push(got); weekCache.set(ck, { at: Date.now(), page: got }) }
     await sleep(150)   // breathe between weeks; sequential + spaced is what keeps 429s away
   }
   const cards = mergeTimecards(pages)
