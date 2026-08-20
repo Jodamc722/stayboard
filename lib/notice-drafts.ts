@@ -71,23 +71,41 @@ async function fetchLiveReservation(resId: string): Promise<LiveRes | null> {
     const token = await getGuestyToken().catch(() => '')
     if (!token || !resId) return null
     const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
-    const r = await fetch(BASE + '/reservations/' + encodeURIComponent(resId)
-      + '?fields=' + encodeURIComponent('status money.balanceDue money.isFullyPaid guestsCount numberOfGuests plannedArrival'),
+    // NO `fields` PARAM (2026-08-20). It was space-separated, Guesty wants commas, and a
+    // mis-parsed list came back as a trimmed object with no guest count and no planned arrival —
+    // which is exactly why unit 1809's Elser form printed blank ETA and blank guest numbers.
+    // Fetch the whole reservation and probe for the fields; a few extra KB beats a blank form
+    // that the building will reject.
+    const r = await fetch(BASE + '/reservations/' + encodeURIComponent(resId),
       { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }, cache: 'no-store' })
     if (!r.ok) return null
     const j: any = await r.json().catch(() => null)
     if (!j || typeof j !== 'object') return null
     const int = (v: any) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 && n < 100 ? n : null }
-    const nog = j.numberOfGuests && typeof j.numberOfGuests === 'object' ? j.numberOfGuests : null
     const money = j.money && typeof j.money === 'object' ? j.money : {}
     const due = Number(money.balanceDue)
+
+    // GUEST COUNT lives under a different key depending on channel and Guesty API version, so
+    // probe every shape we have actually seen rather than betting on one.
+    const G = j.guests && typeof j.guests === 'object' ? j.guests : null
+    const NOG = j.numberOfGuests && typeof j.numberOfGuests === 'object' ? j.numberOfGuests : null
+    const GD = j.guestsDetails && typeof j.guestsDetails === 'object' ? j.guestsDetails : null
+    const adults = int(G?.adults) ?? int(NOG?.numberOfAdults) ?? int(GD?.adults)
+      ?? int(j.adults) ?? int(j.guestsCount) ?? int(j.numberOfGuests) ?? int(GD?.numberOfGuests)
+    const children = int(G?.children) ?? int(NOG?.numberOfChildren) ?? int(GD?.children) ?? int(j.children)
+
+    // ETA: Guesty's plannedArrival, else the channel's check-in time, else the listing default.
+    const etaRaw = j.plannedArrival || j.checkInTime || j.plannedArrivalTime
+      || j?.listing?.defaultCheckInTime || j?.integration?.plannedArrival || ''
+    const eta = String(etaRaw || '').trim().slice(0, 40) || null
+
     return {
       status: String(j.status || ''),
       fullyPaid: typeof money.isFullyPaid === 'boolean' ? money.isFullyPaid : null,
       balanceDue: Number.isFinite(due) ? Math.round(due * 100) / 100 : null,
-      eta: typeof j.plannedArrival === 'string' && j.plannedArrival.trim() ? j.plannedArrival.trim().slice(0, 40) : null,
-      adults: int(nog?.numberOfAdults) ?? int(j.guestsCount),
-      children: int(nog?.numberOfChildren),
+      eta,
+      adults,
+      children,
     }
   } catch { return null }
 }
@@ -327,7 +345,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
 
   const pById: Record<string, PropertyEmail> = {}
   for (const p of props) pById[p.id] = p
-  const draftedList: { unit: string; guest: string; property: string; form: boolean; safety: boolean }[] = []
+  const draftedList: { unit: string; guest: string; property: string; form: boolean; safety: boolean; missing: string }[] = []
 
   // jsPDF for the server, loaded lazily on first use (see loadServerJsPdf below — npm first,
   // CDN UMD as the fallback, and a real error message if both fail).
@@ -345,14 +363,24 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
         ? (liveById.get(str(n0.reservation_id)) || (opts.dryRun ? null : await fetchLiveReservation(str(n0.reservation_id))))
         : null
       if (live && !isLiveStatus(live.status)) { base.skipped++; continue }
+      // ETA AND GUEST COUNT ARE NOT OPTIONAL ON THE ELSER FORM (Jon, 2026-08-20: "we need to make
+      // sure that we include the number of guests and the ETA on those forms, extremely
+      // important" — unit 1809 went out with both blank). Order: what the desk already filed →
+      // what Guesty says live → the building's standard check-in, LABELLED as standard so nobody
+      // reads it as a guest-confirmed time. A guest count is never invented: if it is genuinely
+      // unknown the draft carries a red line telling the desk to write it in before sending.
+      const stdEta = p.attachPdf ? '3:00 PM (standard check-in)' : ''
       const n: any = {
         ...n0,
-        eta: str(n0.eta) || live?.eta || null,
+        eta: str(n0.eta) || live?.eta || stdEta || null,
         adults: (n0 as any).adults ?? live?.adults ?? null,
         children: (n0 as any).children ?? live?.children ?? null,
       }
+      const missingOnForm: string[] = []
+      if (p.attachPdf && n.adults == null) missingOnForm.push('number of guests')
+      if (p.attachPdf && !str(n.eta)) missingOnForm.push('ETA')
       const enrich: Record<string, any> = {}
-      if (!str(n0.eta) && n.eta) enrich.eta = n.eta
+      if (!str(n0.eta) && n.eta && n.eta !== stdEta) enrich.eta = n.eta
       if ((n0 as any).adults == null && n.adults != null) enrich.adults = n.adults
       if ((n0 as any).children == null && n.children != null) enrich.children = n.children
       const unpaidDue = live && live.fullyPaid === false && (live.balanceDue ?? 0) > 0 ? live.balanceDue : null
@@ -391,10 +419,13 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       }
 
       const isSafety = !!(n as any)._safety
+      const missingLine = missingOnForm.length
+        ? `<p style="color:#b91c1c;font-weight:bold">&#9888; The registration form has no ${esc(missingOnForm.join(' and '))} — Guesty holds no value for it. Write it on the form before sending. (Delete this line.)</p>`
+        : ''
       const unpaidLine = unpaidDue != null
         ? `<p style="color:#b91c1c;font-weight:bold">&#9888; UNPAID — Guesty shows a balance due of $${unpaidDue.toFixed(2)} on this reservation. Confirm payment before sending. (Delete this line.)</p>`
         : ''
-      const reminder = unpaidLine + (attachFailed
+      const reminder = missingLine + unpaidLine + (attachFailed
         ? `<p style="color:#b91c1c;font-weight:bold">⚠ The form could not be generated automatically — attach ${esc(d.attachName)} before sending. (Delete this line.)</p>`
         : '')
         + (isSafety
@@ -429,7 +460,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       }
       base.drafted++
       if (isSafety) base.safetyDrafted++
-      draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments, safety: isSafety })
+      draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments, safety: isSafety, missing: missingOnForm.join(' and ') })
     } catch (e: any) {
       base.failed++
       if (base.errors.length < 5) base.errors.push(str(n0.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
@@ -443,7 +474,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
     try {
       const { postToChannel } = await import('./slack')
       const lines = draftedList.map(x =>
-        `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})${x.safety ? ' — _safety copy: marked sent but unconfirmed; discard if the building already got it_' : ''}`)
+        `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})${x.missing ? ` — :warning: *form missing the ${x.missing}* — fill it in before sending` : ''}${x.safety ? ' — _safety copy: marked sent but unconfirmed; discard if the building already got it_' : ''}`)
       const msg = `📬 *Front-desk notice draft${base.drafted === 1 ? '' : 's'} ready* — ${base.drafted} new in ${cfg.noticeDrafts.fromEmail}'s Gmail Drafts for today's arrivals:\n`
         + lines.join('\n')
         + `\nReview and send to the building${base.drafted === 1 ? '' : 's'}.`

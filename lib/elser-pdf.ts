@@ -140,14 +140,18 @@ export async function buildElserPdf(n: Notice, agent: AgentDetails = DEFAULT_AGE
   doc.setDrawColor(150, 150, 150); doc.setLineWidth(2); doc.line(M - 6, y - 8, W - M + 6, y - 8); y += 8
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5)
   fld('UNIT NO.:', n.unit_no, M, 120, true); y += 22
-  fld('Booking Date:', prettyDate(letterDate), M, 160); fld('ETA:', n.eta || '', M + 270, 150); y += 22
+  fld('Booking Date:', prettyDate(letterDate), M, 160); fld('ETA:', n.eta || '', M + 270, 150, true); y += 22
   fld('Arrival Date:', fmt(n.arrival_date), M, 160); fld('Departure Date:', fmt(n.departure_date), M + 270, 130); y += 16
   doc.setDrawColor(40, 40, 40); doc.setLineWidth(2.4); doc.line(M - 6, y - 6, W - M + 6, y - 6); y += 12
   fld('GUEST NAME:', n.guest_name, M, CW - 90, true); y += 22
   fld('Phone:', n.guest_phone || '', M, 175); fld('Email:', n.guest_email || '', M + 270, 160); y += 22
-  // Guesty reports a guest TOTAL far more often than an adult/child split, so a blank line here is
-  // normal and correct — never guess a number onto a building's form.
-  fld('Number of Adults:', n.adults != null ? String(n.adults) : '', M, 115)
+  // GUEST COUNT IS REQUIRED BY THE BUILDING (Jon, 2026-08-20: unit 1809 went out blank). Guesty
+  // reports a guest TOTAL far more often than an adult/child split, so when only a total is known
+  // it prints as the adult count — that is what the desk writes by hand anyway. A number is never
+  // invented: with nothing known the label goes BOLD so the blank is impossible to miss on a
+  // printed form, and the covering email carries a red line naming what to fill in.
+  const adultsKnown = n.adults != null
+  fld('Number of Adults:', adultsKnown ? String(n.adults) : '', M, 115, !adultsKnown)
   fld('Number of Children:', n.children != null ? String(n.children) : '', M + 270, 105); y += 22
   fld('Pet(s):', n.pets || '', M, 175); fld('Breed:', n.pet_breed || '', M + 270, 160); y += 10
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(60, 60, 60)
