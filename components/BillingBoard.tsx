@@ -678,6 +678,10 @@ export function BillingBoard() {
   // Review workflow (Jon): marking a task ✓ MOVES it from "To review" to "Reviewed" — the board
   // is a daily/weekly worklist, not a month-end audit. Default = the work that still needs eyes.
   const [reviewFilter, setReviewFilter] = useState<'todo' | 'done' | 'all'>('todo')
+  // NEEDS A PRICE (Jon, 2026-08-21: "easy and effective"). The coverage gap — completed work
+  // billing the owner $0 — used to be a sentence in the amber banner; this makes it one click:
+  // the chip filters straight to those rows so someone can price them and move on.
+  const [needsPrice, setNeedsPrice] = useState(false)
   const [translating, setTranslating] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [openOwners, setOpenOwners] = useState<Record<string, boolean>>({})
@@ -746,6 +750,16 @@ export function BillingBoard() {
     if (!data) return [] as Task[]
     const needle = q.trim().toLowerCase()
     return data.tasks.filter(t => {
+      // Needs-a-price mode: finished work billing $0 — overrides the billable/review filters
+      // (which would otherwise hide exactly the rows it exists to surface).
+      if (needsPrice) {
+        if (t.excluded) return false
+        if (!(/complet|close|approv|finish/.test(t.status) || t.finishedAt)) return false
+        if (t.billedAmount > 0) return false
+        if (dept !== 'all' && t.department !== dept) return false
+        const hay0 = (t.name + ' ' + t.unit + ' ' + (t.building || '') + ' ' + t.ownerName + ' ' + t.assignees.map(a => a.name).join(' ')).toLowerCase()
+        return !needle || hay0.indexOf(needle) >= 0
+      }
       if (!showExcluded && t.excluded) return false
       // Completed-only keeps manually billed tasks (override set) — an added flat fee is a
       // deliberate billable even while its Breezeway task is still open.
@@ -762,7 +776,22 @@ export function BillingBoard() {
       }
       return true
     })
-  }, [data, dept, billableOnly, completedOnly, showExcluded, reviewFilter, q])
+  }, [data, dept, billableOnly, completedOnly, showExcluded, reviewFilter, q, needsPrice])
+
+  // The chip's count: finished, not excluded, billing $0 — dept-scoped so the number matches
+  // what clicking it will show.
+  const needsPriceCount = useMemo(() => {
+    if (!data) return 0
+    let n = 0
+    for (const t of data.tasks) {
+      if (t.excluded) continue
+      if (!(/complet|close|approv|finish/.test(t.status) || t.finishedAt)) continue
+      if (t.billedAmount > 0) continue
+      if (dept !== 'all' && t.department !== dept) continue
+      n++
+    }
+    return n
+  }, [data, dept])
 
   // Counts for the To review / Reviewed switch — same filters, ignoring the review split itself.
   const reviewCounts = useMemo(() => {
@@ -991,7 +1020,8 @@ export function BillingBoard() {
           <div className="rounded-xl border border-line bg-white px-4 py-3">
             {(noTime > 0 || (pct != null && pct < 90)) && (
               <div className="mb-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                {mp.tasks > mp.tasksWithBilling ? <><b>{mp.tasks - mp.tasksWithBilling}</b> of {mp.tasks} maintenance tasks have no cost entered in Breezeway, so they bill the owner nothing. </> : null}
+                {mp.tasks > mp.tasksWithBilling ? <><b>{mp.tasks - mp.tasksWithBilling}</b> of {mp.tasks} maintenance tasks have no cost entered in Breezeway, so they bill the owner nothing.{' '}
+                  <button onClick={() => { setDept('maintenance'); setNeedsPrice(true); setView('all') }} className="font-bold underline decoration-dotted underline-offset-2">Show them</button>. </> : null}
                 {pct != null ? <>Only <b>{mp.hoursOnTask}h</b> of the crew&apos;s <b>{mp.hours}h</b> clocked ({pct}%) landed on a task {'\u2014'} read the margin above as a floor, not a verdict.</> : null}
               </div>
             )}
@@ -1036,7 +1066,8 @@ export function BillingBoard() {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-line bg-white shadow-soft px-3 py-2.5 flex flex-wrap items-center gap-2">
+      {/* Sticky so the view switch, filters and search stay in reach on a long month. */}
+      <div className="sticky top-2 z-20 rounded-2xl border border-line bg-white/95 backdrop-blur shadow-soft px-3 py-2.5 flex flex-wrap items-center gap-2">
         <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden">
           {(['owner', 'all', 'labor'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
@@ -1062,6 +1093,13 @@ export function BillingBoard() {
             <label className="flex items-center gap-1.5 text-[12px] text-muted">
               <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} /> Show excluded
             </label>
+            {needsPriceCount > 0 || needsPrice ? (
+              <button onClick={() => setNeedsPrice(v => !v)}
+                title="Finished tasks billing the owner $0 — click to see just those, price them, click again to go back"
+                className={'rounded-full px-3 py-1 text-[12px] font-bold ring-1 ring-inset ' + (needsPrice ? 'bg-rose-600 text-white ring-rose-600' : 'bg-rose-50 text-rose-700 ring-rose-200 hover:bg-rose-100')}>
+                Needs a price · {needsPriceCount}
+              </button>
+            ) : null}
             <span className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden" title="Marking a task ✓ moves it from To review into Reviewed">
               <button onClick={() => setReviewFilter('todo')}
                 className={'px-2.5 py-1 text-[12px] font-semibold ' + (reviewFilter === 'todo' ? 'bg-amber-500 text-white' : 'text-muted hover:text-ink')}>
