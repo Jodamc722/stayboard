@@ -1,4 +1,5 @@
 'use client'
+import { LaborWeekly } from '@/components/LaborWeekly'
 // components/LaborPanel.tsx (v4) — live labor dashboard for /labor.
 // v4: custom day/range picker, payroll vs revenue with banding, today strip
 // for in-day decisions, click-a-person task drill-down (Breezeway).
@@ -181,6 +182,37 @@ export function LaborPanel() {
         </div>
       </div>
 
+      {/* THE ROSTER HOLES, PRICED. Both blocks come from lib/labor-econ and are computed across
+          every market, so the number does not move with the tab. Named, not hinted at: a gap you
+          can see beats a number quietly filled in. */}
+      {(econ?.unrostered?.people > 0 || econ?.unassignedMarket?.people > 0) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 space-y-2">
+          {econ?.unrostered?.people > 0 && (
+            <p className="text-[12.5px] text-amber-900 flex items-start gap-2">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                <b>{econ.unrostered.people} on payroll are on nobody&apos;s crew</b> — {econ.unrostered.hours}h
+                {!hideMoney && <> and {fmt$(econ.unrostered.payroll)} of wages</> } sitting in Other instead of a margin:{' '}
+                <span className="font-medium">{(econ.unrostered.names || []).join(', ')}</span>.{' '}
+                <a href="/users?tab=settings" className="underline font-semibold">Place them in Crew &amp; roles →</a>
+              </span>
+            </p>
+          )}
+          {econ?.unassignedMarket?.people > 0 && (
+            <p className="text-[12.5px] text-amber-900 flex items-start gap-2">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                <b>{econ.unassignedMarket.people} on payroll have no area set</b> — {econ.unassignedMarket.hours}h
+                {!hideMoney && <> and {fmt$(econ.unassignedMarket.payroll)} of wages</> } left out of <em>every</em> market tab
+                rather than counted on all of them:{' '}
+                <span className="font-medium">{(econ.unassignedMarket.names || []).join(', ')}</span>.{' '}
+                <a href="/users?tab=settings" className="underline font-semibold">Set their area in Staffing →</a>
+              </span>
+            </p>
+          )}
+        </div>
+      )}
+
       {/* DEPARTMENTS: housekeeping economics + maintenance utilization */}
       {/* DEPARTMENT ECONOMICS — each crew judged on what it actually earns.
           Jon, 2026-08-12: housekeeping is housekeepers only; supervisors are their own category
@@ -204,7 +236,6 @@ export function LaborPanel() {
                 <Stat label="Labor cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} sub={(d.departments.housekeeping.departureCleans ?? 0) + ' departure cleans'} />
                 <Stat label="Time / clean" value={loading ? '…' : (d.departments.housekeeping.hoursPerClean != null ? d.departments.housekeeping.hoursPerClean + 'h' : '—')} sub="housekeeper hours ÷ cleans" />
                 <Stat label="Fee / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.feePerClean)} />
-                <Stat label="Vendor revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.vendorRevenue)} sub="cleaned by vendors" />
                 <Stat label="Labor %" value={loading ? '…' : (d.departments.housekeeping.laborPct != null ? d.departments.housekeeping.laborPct + '%' : '—')} />
               </>}
             </div>
@@ -247,6 +278,30 @@ export function LaborPanel() {
                 tone={(d.departments.maintenance.tasksNoCharge ?? 0) > 0 ? 'warn' : undefined} sub="finished, nothing billed" />
             </div>
           </div>
+          {/* VENDOR CLEANS — their own section (Jon, 2026-08-21). They used to hang off the
+              housekeeping card, which invited reading vendor revenue as part of our crew's margin.
+              A vendor turn costs us no Homebase hour, so it has no cost per clean and says so. */}
+          {(() => {
+            const vb = (econ?.buckets || []).filter((b: any) => b && b.inHouse === false)[0]
+            const vendorRev = vb?.cleaningRevenue ?? d.departments.housekeeping?.vendorRevenue ?? 0
+            const vendorCleans = vb?.cleans ?? 0
+            if (!vendorRev && !vendorCleans) return null
+            return (
+              <div className="rounded-xl border border-line bg-white px-3 py-4">
+                <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Vendor cleans <span className="normal-case font-normal">· not our labor</span></p>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-3">
+                  {!hideMoney && <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(vendorRev)} sub="vendor-cleaned units" />}
+                  <Stat label="Cleans" value={loading ? '…' : String(vendorCleans || '—')} sub="turned by a vendor" />
+                  {!hideMoney && vendorCleans > 0 && <Stat label="Fee / clean" value={loading ? '…' : fmt$(vb?.feePerClean)} />}
+                  <Stat label="Our hours" value={loading ? '…' : '0h'} sub="no Homebase cost against these" />
+                </div>
+                <p className="text-[10.5px] text-muted px-2 mt-2 leading-snug">
+                  Kept out of the housekeeping margin and out of cost per clean — otherwise a vendor turn
+                  makes our own crew look cheaper than it is.
+                </p>
+              </div>
+            )
+          })()}
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Inspections</p>
             <div className="grid grid-cols-2 gap-x-2 gap-y-3">
@@ -259,6 +314,10 @@ export function LaborPanel() {
           </div>
         </div>
       )}
+
+      {/* WEEK BY WEEK — the trend Jon asked for: cleans against the hours and payroll that turned
+          them, revenue and HK payroll leading. Its own endpoint so the board is not held up by it. */}
+      <LaborWeekly market={market} />
 
       {/* REVENUE OVER PAYROLL, THREE WAYS — the same table the daily brief leads with.
           Supervisors sit below the line: a fixed cost, never divided into revenue. */}

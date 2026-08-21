@@ -13,6 +13,7 @@ import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
 import { OpsBriefAdmin } from '@/components/OpsBriefAdmin'
 import { TaskAutomationAdmin } from '@/components/TaskAutomationAdmin'
 import { StaffingAdmin } from '@/components/StaffingAdmin'
+import { CrewRolesAdmin } from '@/components/CrewRolesAdmin'
 import { ParAdmin } from '@/components/ParAdmin'
 import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
 import { SlackRulesAdmin } from '@/components/SlackRulesAdmin'
@@ -61,6 +62,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
           <Fold title="Today-in-Ops presets" defaultOpen><OpsPresetsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Morning Ops Brief" defaultOpen><OpsBriefAdmin isOwner={isOwner} /></Fold>
           <Fold title="Task automation" defaultOpen><TaskAutomationAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Crew &amp; roles" defaultOpen><CrewRolesAdmin isOwner={isOwner} /></Fold>
           <Fold title="Staffing & agencies"><StaffingAdmin isOwner={isOwner} /></Fold>
           <Fold title="PAR levels (restock)"><ParAdmin isOwner={isOwner} /></Fold>
           <Fold title="Slack alerts &amp; rules" defaultOpen><SlackRulesAdmin isOwner={isOwner} /></Fold>
