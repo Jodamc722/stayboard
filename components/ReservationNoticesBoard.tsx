@@ -199,7 +199,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
         try { if (await makePdf(r, true)) built++ } catch { /* row-level, keep going */ }
       }
       autoRunning.current = false
-      if (built) { setMsg('Built ' + built + " form" + (built === 1 ? '' : 's') + " for today's arrivals — downloaded and filed."); load() }
+      if (built) { setMsg('Built ' + built + " form" + (built === 1 ? '' : 's') + " for today's arrivals — filed, and attached to the email drafts by the pipeline."); load() }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [today])
@@ -321,7 +321,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       // Settings owns the filename (property docName). elserPdfName is only the safety net for a
       // row whose building fell out of the config and therefore has no draft.
       const name = (r.draft && r.draft.attachName) || mod.elserPdfName(r as any)
-      doc.save(name)
+      // Download ONLY on a deliberate click. The auto-build on page load used to save too, so
+      // just opening the board dumped PDFs into the desk's Downloads — but those forms are
+      // already attached to the Gmail drafts by the pipeline (Jon, 2026-08-21: "it automatically
+      // requested me to download the files generated... there's no need to do that").
+      if (!silent) doc.save(name)
       const raw = String(doc.output('datauristring'))
       const b64 = raw.slice(raw.indexOf(',') + 1)
       const res = await fetch('/api/reservation-notices/document', {
@@ -329,8 +333,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
         body: JSON.stringify({ id: r.id, name, pdfBase64: b64 }),
       })
       const j = await res.json()
-      // The download already happened, so a failed FILING must not read as total failure.
-      if (!j.ok) { setErr('Form downloaded, but it could not be filed: ' + (j.error || 'unknown error')); return }
+      // On a manual click the download already happened, so a failed FILING must not read as
+      // total failure.
+      if (!j.ok) { setErr('Form ' + (silent ? 'built' : 'downloaded') + ', but it could not be filed: ' + (j.error || 'unknown error')); return }
       if (!silent) setMsg('Form downloaded and filed. Attach it to the email before sending.')
       return true
     } catch (e: any) {
@@ -625,7 +630,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
                           ) : (
                             <span>
                               <strong>Attach {attachName}</strong> before sending — a mail link can&apos;t carry the file.
-                              {r.doc_path ? ' It is filed and in your downloads.' : ' Hit Build form first.'}
+                              {r.doc_path
+                                ? <> It&apos;s already on the Gmail draft; if you need a copy,<button onClick={() => openFiled(r)} className="ml-1 font-semibold underline decoration-dotted underline-offset-2">open the filed form</button>.</>
+                                : ' Hit Build form first.'}
                             </span>
                           )}
                         </div>
