@@ -70,11 +70,16 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
   const presets = await getOpsPresets()
   const auditDueDays = Math.max(30, Number((presets as any)?.timing?.auditDueDays) || 365)
 
-  const [tasksRes, reqRes, glitchRes, listRes] = await Promise.all([
+  const [tasksRes, auditRes, reqRes, glitchRes, listRes] = await Promise.all([
     // Audit / inspection / deep-clean history, by the same name rule the audits-due route uses.
     db.from('breezeway_tasks_sync')
       .select('reference_property_id,name,status,finished_at,scheduled_date')
       .in('reference_property_id', ids).limit(5000),
+    // AND the app's OWN audit records. An audit done through the walk engine never creates a
+    // Breezeway task called "audit", so counting only those said "never audited" for units that
+    // were audited last month. Both sources, newest wins.
+    db.from('property_audits').select('listing_id,status,created_at,updated_at')
+      .in('listing_id', ids).limit(3000),
     db.from('field_requests').select('id,listing_id,status,priority,title')
       .in('status', ['open', 'in_progress']).limit(2000),
     db.from('glitches').select('id,listing_id,status,overview')
@@ -99,6 +104,15 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
     if (/audit/.test(nm)) { if (finished) put(lastAudit); else openAudit.add(id) }
     else if (/inspect|walk[- ]?through|unit check/.test(nm)) { if (finished) put(lastInspection); else openInspection.add(id) }
     else if (/deep clean|deep-clean|detail clean/.test(nm)) { if (finished) put(lastDeep) }
+  }
+
+  for (const a of (auditRes.data || []) as any[]) {
+    const id = String(a.listing_id); if (!idSet.has(id)) continue
+    const st = str(a.status).toLowerCase()
+    if (st === 'open') { openAudit.add(id); continue }
+    if (st !== 'completed') continue
+    const when = dOf(a.updated_at || a.created_at)
+    if (when && (!lastAudit[id] || when > lastAudit[id])) lastAudit[id] = when
   }
 
   const openReq: Record<string, { n: number; urgent: number; first: string }> = {}
