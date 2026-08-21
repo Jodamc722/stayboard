@@ -25,6 +25,7 @@ import { laborAmount } from './billing'
 import { blockedUnits, type BlockedRun } from './blocked-units'
 import { laborEconomics } from './labor-econ'
 import { upcomingAutoInspections } from './auto-inspections'
+import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -542,6 +543,10 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   // verify", and drops manual blocks from this section entirely.
   const ownerStays: any[] = (sheet.ownerStays || []).filter((o: any) => str(o.ownerFlag) !== 'manual / block')
   const vacants: any[] = sheet.vacants || []
+  // WHAT TO PUT IN THE EMPTY UNITS (Jon, 2026-08-21). Ranked per unit and filtered to what actually
+  // fits the gap — see lib/vacant-work. Best-effort: a failure here must never take the brief down.
+  let vacWork: VacantWork[] = []
+  try { vacWork = await vacantWork(vacants as any, d.today) } catch { vacWork = [] }
   const glitches: any[] = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)))
   const highExceptions: any[] = (sheet.exceptions || []).filter((e: any) => e.severity === 'high').slice(0, 6)
   const walkIns = arrivals.filter(a => a.bookedToday || a.bookedAfterSync)
@@ -640,6 +645,24 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     `<b>${vacants.length}</b> vacant tonight` +
     (vacSoon.length ? ` — <span style="${S.amber}">${vacSoon.length} with a guest arriving within 3 days</span> (${vacSoon.slice(0, 8).map((v: any) => esc(str(v.unit))).join(', ')}${vacSoon.length > 8 ? ` +${vacSoon.length - 8} more` : ''}) — make sure these are guest-ready first` : '') +
     (vacIdle.length ? ` · ${vacIdle.length} with <b>no future booking</b> — inspection & photo opportunities` : '')
+
+  // ── VACANT UNITS: THE WORKLIST ────────────────────────────────────────────────────────────────
+  // A count of empty units is a fact nobody can act on. This is the same list with the highest-value
+  // job for each window attached, so the empty night gets used instead of noticed.
+  const windowLabel = (v: VacantWork) =>
+    v.daysUntilArrival == null ? 'no future booking'
+      : v.daysUntilArrival === 0 ? 'guest arriving today'
+        : `${v.daysUntilArrival} clear ${v.daysUntilArrival === 1 ? 'day' : 'days'}`
+  const workRows = vacWork.filter(v => v.top).slice(0, 12).map(v => {
+    const t = v.top!
+    const extra = v.suggestions.length - 1
+    const urgent = t.priority === 1
+    return `
+    <tr><td style="${S.td};white-space:nowrap"><b>${esc(str(v.unit))}</b><br><span style="${S.muted};font-size:12px">${esc(windowLabel(v))}${v.idleDays != null && v.idleDays >= 7 ? ` · idle ${v.idleDays}d` : ''}</span></td>
+    <td style="${S.td}"><b style="${urgent ? S.amber : ''}">${esc(t.label)}</b><br><span style="${S.muted};font-size:12px">${esc(t.why)}${extra > 0 ? ` · +${extra} more worth doing` : ''}</span></td></tr>`
+  }).join('')
+  const vacWorkCount = vacWork.filter(v => v.top).length
+  const vacUrgent = vacWork.filter(v => v.top && v.top.priority === 1).length
 
   const inspectRows = d.inspect.map(i => `
     <tr><td style="${S.td}"><b>${esc(i.unit)}</b><br><span style="color:#6b7280">guest feedback: ${esc(i.why)}</span></td>
@@ -1117,7 +1140,14 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         : `Last checked ${niceDay(d.today)}`) : ''}
   ${d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${variant === 'full' ? blockedCard(fullBlocked, { showMarket: true, limit: 10, linked: fullBlockedLinked }) : ''}
-  ${card('Vacant units', vacants.length, `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`)}
+  ${card('Vacant units — what to slot in', vacants.length,
+      `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
+      + (workRows
+        ? `<p style="font-size:12px;margin:10px 0 2px;color:#6b7280">${esc(vacantWorkSummary(vacWork))}. An empty unit is the only window some of this work has.</p>`
+          + table(['Unit · window', 'Best use of it'], workRows)
+          + (vacWorkCount > 12 ? `<p style="font-size:12px;margin:8px 0 0;color:#6b7280">+${vacWorkCount - 12} more empty ${vacWorkCount - 12 === 1 ? 'unit has' : 'units have'} work outstanding — not listed here.</p>` : '')
+        : (vacants.length ? `<p style="font-size:12px;margin:10px 0 2px;color:#059669">Nothing outstanding on any of them — audits, inspections and open work are all current.</p>` : '')),
+      vacUrgent ? '#d97706' : '#6366f1')}
   ${d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
   ${card('Reputation — last 30 days', w30.lowTotal || null,
       repHeadline + (low30Rows ? table(['Unit', 'What they said']  , low30Rows) : '') + moreLow + repeatLine + themeLine,

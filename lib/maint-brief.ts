@@ -23,6 +23,7 @@ import { kindOfTask, SEVENTEEN_WEST_PAIR, seventeenWestCoverage } from './labor-
 import { nameMatches } from './homebase'
 import { laborAmount } from './billing'
 import { buildDaySheet } from './daysheet'
+import { vacantWork, type VacantWork } from './vacant-work'
 import { getCrew } from './crew'
 import { getTimecards } from './homebase-labor'
 import { quoteBanner } from './ops-brief'
@@ -204,6 +205,9 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   // ── Vacants + open glitches, straight off the daysheet (same engine as the ops boards) ──────
   let vacIdle: { unit: string }[] = []
   let vacSoon: { unit: string; next: string }[] = []
+  // The ranked "what to actually do in this empty unit" list — see lib/vacant-work. Jon,
+  // 2026-08-21: PM audit / inspection suggestions off the back of the vacants, not just names.
+  let vacWork: VacantWork[] = []
   let glitches: { unit: string; overview: string; at: string }[] = []
   try {
     const sheet: any = await buildDaySheet(today, market)
@@ -212,6 +216,8 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     vacSoon = (sheet.vacants || []).filter((v: any) => v.arrivingSoon && !notOurs(v)).map((v: any) => ({ unit: str(v.unit), next: str(v.nextArrival).slice(5, 10) }))
     glitches = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)) && !notOurs(g))
       .slice(0, 12).map((g: any) => ({ unit: str(g.unit), overview: str(g.overview).replace(/\s+/g, ' ').slice(0, 110), at: str(g.at || g.created_at).slice(5, 10) }))
+    const ours = (sheet.vacants || []).filter((v: any) => !notOurs(v))
+    try { vacWork = await vacantWork(ours as any, today) } catch { vacWork = [] }
   } catch { /* daysheet unavailable — the brief still sends */ }
 
   // ── Render ──────────────────────────────────────────────────────────────────────────────────
@@ -252,9 +258,24 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     (vacSoon.length ? '<p style="margin:0 0 6px;font-size:12.5px"><span style="' + S.amber + '">Guest arriving within 3 days:</span> ' +
       vacSoon.slice(0, 10).map(v => esc(v.unit) + ' <span style="' + S.muted + '">(' + esc(v.next) + ')</span>').join(' · ') +
       ' — finish any open work in these FIRST.</p>' : '') +
-    (vacIdle.length ? '<p style="margin:0;font-size:12.5px"><b>' + vacIdle.length + ' with no future booking</b> — preventive-work window: ' +
-      vacIdle.slice(0, 14).map(v => esc(v.unit)).join(', ') + (vacIdle.length > 14 ? ' +' + (vacIdle.length - 14) + ' more' : '') + '</p>'
-      : (!vacSoon.length ? '<p style="margin:0;font-size:13px;color:#6b7280">No vacants tonight.</p>' : '')) +
+    (vacIdle.length ? '<p style="margin:0 0 6px;font-size:12.5px"><b>' + vacIdle.length + ' with no future booking</b> — the widest preventive-work window you will get.</p>' : '') +
+    // Named work, ranked, and filtered to what fits the gap — a list of empty units nobody can act
+    // on is why these windows kept closing unused.
+    (vacWork.filter(v => v.top).length
+      ? '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + S.th + '">Unit · window</th><th style="' + S.th + '">Best use of it</th></tr>' +
+        vacWork.filter(v => v.top).slice(0, 14).map(v => {
+          const t = v.top!
+          const win = v.daysUntilArrival == null ? 'no future booking'
+            : v.daysUntilArrival === 0 ? 'guest arriving today'
+              : v.daysUntilArrival + ' clear ' + (v.daysUntilArrival === 1 ? 'day' : 'days')
+          const extra = v.suggestions.length - 1
+          return '<tr><td style="' + S.td + ';white-space:nowrap"><b>' + esc(str(v.unit)) + '</b><br><span style="' + S.muted + ';font-size:12px">' + esc(win) + '</span></td>' +
+            '<td style="' + S.td + '"><b' + (t.priority === 1 ? ' style="' + S.amber + '"' : '') + '>' + esc(t.label) + '</b><br><span style="' + S.muted + ';font-size:12px">' + esc(t.why) + (extra > 0 ? ' · +' + extra + ' more worth doing' : '') + '</span></td></tr>'
+        }).join('') + '</table>' +
+        (vacWork.filter(v => v.top).length > 14 ? '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">+' + (vacWork.filter(v => v.top).length - 14) + ' more empty units with work outstanding</p>' : '')
+      : (vacIdle.length || vacSoon.length
+        ? '<p style="margin:0;font-size:13px"><span style="' + S.green + '">Nothing outstanding on the empty ones</span> <span style="' + S.muted + '">— audits, inspections and open work are all current.</span></p>'
+        : '<p style="margin:0;font-size:13px;color:#6b7280">No vacants tonight.</p>')) +
     '</div>'
 
   const recurCard = '<div style="' + cardStyle + '">' +
