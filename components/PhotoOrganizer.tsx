@@ -2,7 +2,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw } from 'lucide-react'
 
-type Photo = { _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string }
+type Photo = {
+  _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string
+  // 2026-08-21: the analyst now names the SPECIFIC room ("bedroom-1"), which is what keeps every
+  // photo of one room together, and picks a named enhance preset with a reason.
+  room?: string; enhance?: string; enhanceWhy?: string
+  mirrorUrl?: string | null   // the untouched original we mirrored — makes "revert" possible
+}
+type Preset = { key: string; name: string; when: string }
 type Result = {
   heroId: string
   proposedOrder: string[]
@@ -11,6 +18,8 @@ type Result = {
   assessment?: { quality: number | null; coverage: string; notes: string[] } | null
   recommendRemove?: { _id: string; reason: string }[]
   overflow?: number
+  presets?: Preset[]
+  orderRule?: string
 }
 
 const CAT_COLORS: Record<string, string> = {
@@ -44,6 +53,15 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [enhanced, setEnhanced] = useState<Record<string, string>>({})
   const [useEnhanced, setUseEnhanced] = useState<Set<string>>(new Set())
   const [enhancing, setEnhancing] = useState(false)
+  // Named enhance presets + which one applies to each photo. The AI proposes one per photo; this is
+  // the human's override. Nothing here can exceed the hard caps enforced server-side.
+  const [presets, setPresets] = useState<Preset[]>([])
+  const [presetPick, setPresetPick] = useState<Record<string, string>>({})
+  const [orderRule, setOrderRule] = useState<string>('')
+  // Press-and-hold compare: shows the OTHER version of the photo while held.
+  const [peek, setPeek] = useState<string | null>(null)
+  // Photos to put back to their mirrored original on push.
+  const [revert, setRevert] = useState<Set<string>>(new Set())
   // UPLOADS: brand-new photos added by the host. uploads[id].orig = mirrored original URL.
   // They live in `photos`/`order` like any other photo and are pushed via photo-order's adds map.
   const [uploads, setUploads] = useState<Record<string, { orig: string }>>({})
@@ -79,32 +97,70 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       const fullOrder = [...j.proposedOrder, ...upIds.filter((id: string) => !j.proposedOrder.includes(id))]
       setPhotos(map); setHeroId(j.heroId); setOrder(fullOrder); setProposed(fullOrder)
       setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
+      if (Array.isArray(j.presets)) setPresets(j.presets)
+      if (typeof j.orderRule === 'string') setOrderRule(j.orderRule)
+      // Seed each photo's preset from the AI's verdict; the dropdown on the card overrides it.
+      const picks: Record<string, string> = {}
+      ;(j.photos || []).forEach((ph: Photo) => { if (ph.enhance) picks[ph._id] = ph.enhance })
+      setPresetPick(prev => ({ ...picks, ...prev }))
       return j.proposedOrder as string[]
     } catch (e: any) { setError(e.message || String(e)); return null } finally { setBusy(false) }
   }
 
   // Enhance (and mirror) the photos: gentle brightness/saturation/contrast + sharpen, hosted on our
   // storage. Defaults every successfully enhanced photo to "use enhanced" — each card can opt out.
-  async function enhance(ids?: string[]) {
+  // `overrides` exists because a preset change calls this immediately: React state has not
+  // committed yet, so the new pick has to be passed in rather than read from the closure.
+  async function enhance(ids?: string[], overrides?: Record<string, string>) {
     setOpen(true); setEnhancing(true); setError(null); setPushedMsg(null)
     try {
       const r = await fetch('/api/photo-enhance', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, ...(ids && ids.length ? { photoIds: ids } : {}) }),
+        body: JSON.stringify({ listingId, ...(ids && ids.length ? { photoIds: ids } : {}), ...((() => { const m = { ...presetPick, ...(overrides || {}) }; return Object.keys(m).length ? { presets: m } : {} })()) }),
       })
       const raw = await r.text()
       let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (!r.ok || !j) throw new Error((j && j.error) || (r.status === 504 ? 'Enhancing timed out - try again (results so far are saved).' : 'Failed to enhance photos. Please try again.'))
       const map: Record<string, string> = {}
-      ;(j.photos || []).forEach((p: { _id: string; enhancedUrl: string }) => { if (p._id && p.enhancedUrl) map[p._id] = p.enhancedUrl })
+      const usedPreset: Record<string, string> = {}
+      ;(j.photos || []).forEach((p: { _id: string; enhancedUrl?: string; mirroredUrl?: string; preset?: string }) => {
+        if (p._id && p.enhancedUrl) map[p._id] = p.enhancedUrl
+        if (p._id && p.preset) usedPreset[p._id] = p.preset
+      })
+      if (Array.isArray(j.presets)) setPresets(j.presets)
+      setPresetPick(prev => ({ ...prev, ...usedPreset }))
       setEnhanced(prev => ({ ...prev, ...map }))
-      setUseEnhanced(prev => { const n = new Set(prev); Object.keys(map).forEach(id => n.add(id)); return n })
+      // 2026-08-21: enhanced versions are SHOWN, not pre-approved. They used to be ticked to push
+      // automatically, so "enhance" quietly decided what went live. Compare, then tick.
+      const made = Object.keys(map).length
+      const skipped = Number(j.skippedNone) || 0
+      setPushedMsg(made
+        ? `${made} photo${made === 1 ? '' : 's'} enhanced${skipped ? `, ${skipped} left alone (already good)` : ''} — press and hold the compare button on a card to see before/after, then tick the ones to use.`
+        : `Nothing needed enhancing${skipped ? ` — the AI judged ${skipped} photo${skipped === 1 ? '' : 's'} already good.` : '.'}`)
       if (j.failedCount > 0) setError(`${j.failedCount} photo(s) could not be enhanced — the rest are ready below.`)
     } catch (e: any) { setError(e.message || String(e)) } finally { setEnhancing(false) }
   }
 
   function toggleEnhanced(id: string) {
     setUseEnhanced(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function useAllEnhanced() {
+    setUseEnhanced(new Set(Object.keys(enhanced)))
+  }
+  function toggleRevert(id: string) {
+    setRevert(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+    // Reverting and using the enhanced version are contradictory — reverting wins, so untick.
+    setUseEnhanced(prev => { const n = new Set(prev); n.delete(id); return n })
+  }
+  // Change one photo's preset and re-run just that photo, so before/after is immediate.
+  function pickPreset(id: string, key: string) {
+    setPresetPick(prev => ({ ...prev, [id]: key }))
+    if (key === 'none') {
+      setEnhanced(prev => { const n = { ...prev }; delete n[id]; return n })
+      setUseEnhanced(prev => { const n = new Set(prev); n.delete(id); return n })
+      return
+    }
+    enhance([id], { [id]: key })
   }
 
   // MIRROR ONLY: back up every original to Stay storage — no filter, no changes, nothing pushed.
@@ -285,6 +341,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       const adds: Record<string, { url: string; caption: string }> = {}
       order.forEach(id => {
         if (uploads[id]) { adds[id] = { url: (useEnhanced.has(id) && enhanced[id]) ? enhanced[id] : uploads[id].orig, caption: photos[id]?.caption || '' }; return }
+        // Revert wins over everything: put the untouched mirrored original back on the listing.
+        if (revert.has(id) && photos[id]?.mirrorUrl) { urls[id] = photos[id].mirrorUrl as string; return }
         if (replaced[id]) { urls[id] = (useEnhanced.has(id) && enhanced[id]) ? enhanced[id] : replaced[id].orig; return }
         if (useEnhanced.has(id) && enhanced[id]) urls[id] = enhanced[id]
       })
@@ -331,7 +389,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             {mirroring ? 'Mirroring\u2026' : 'Mirror'}
           </button>
           <button onClick={() => enhance(order.length > 0 ? order : undefined)} disabled={enhancing || busy || pushing}
-            title="Mirror every photo to Stay storage and create a gently enhanced version (brightness, color, sharpness) — you approve before anything goes live"
+            title="Back up every original, then create a corrected version using the preset the AI picked per photo (exposure, contrast, colour, sharpness — never a repaint). You compare and tick before anything goes live."
             className="inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white text-brand-700 px-3.5 py-2.5 text-sm font-semibold hover:bg-brand-50 disabled:opacity-50">
             {enhancing ? <Sparkles size={15} className="animate-pulse" /> : <Sun size={15} />}
             {enhancing ? 'Enhancing…' : 'Enhance photos'}
@@ -406,6 +464,25 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 </div>
               </div>
 
+              {/* The ordering rule, printed. It used to be a black box: the model proposed an order
+                  and the server then regrouped it, and nothing on screen said how. */}
+              {orderRule && (
+                <div className="rounded-xl border border-line bg-app/40 px-3 py-2 text-[11.5px] text-muted">
+                  <b className="text-ink">How this order is built:</b> {orderRule}
+                </div>
+              )}
+
+              {Object.keys(enhanced).length > 0 && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5 flex items-center gap-2 flex-wrap text-[12px] text-emerald-900">
+                  <Sun size={14} className="shrink-0" />
+                  <span><b>{useEnhanced.size}</b> of {Object.keys(enhanced).length} enhanced photos ticked to go live. Hold <b>A/B</b> on a card to compare.</span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button onClick={useAllEnhanced} className="rounded-lg border border-emerald-300 bg-white px-2 py-0.5 text-[11.5px] font-semibold text-emerald-800">Use all</button>
+                    <button onClick={() => setUseEnhanced(new Set())} className="rounded-lg border border-emerald-300 bg-white px-2 py-0.5 text-[11.5px] font-semibold text-emerald-800">Use none</button>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-xl border border-brand-200 bg-brand-50/40 px-3 py-2.5 flex items-center gap-2 flex-wrap">
                 <Wand2 size={14} className="text-brand-600 shrink-0" />
                 <input value={guidance} onChange={e => setGuidance(e.target.value)}
@@ -437,20 +514,59 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         {removeList.some(r => r._id === id) && !toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Trash2 size={10} /> Suggest</span>}
                         {toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Removing</span>}
                       </div>
+                      {/* Held A/B always shows the OTHER version, so the comparison is honest. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={enhanced[id] && useEnhanced.has(id) ? enhanced[id] : p.url} alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
-                      {enhanced[id] && (
-                        <button onClick={() => toggleEnhanced(id)}
-                          title={useEnhanced.has(id) ? 'Showing the enhanced version — click to keep the original instead' : 'Showing the original — click to use the enhanced version'}
-                          className={`absolute top-1.5 right-1.5 z-10 text-[10px] font-semibold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 ${useEnhanced.has(id) ? 'bg-emerald-500 text-white' : 'bg-white/90 text-zinc-600 border border-line'}`}>
-                          <Sun size={10} /> {useEnhanced.has(id) ? 'Enhanced' : 'Original'}
-                        </button>
-                      )}
+                      <img
+                        src={(() => {
+                          const showEnhanced = !!enhanced[id] && useEnhanced.has(id) && !revert.has(id)
+                          const flipped = peek === id ? !showEnhanced : showEnhanced
+                          if (revert.has(id) && p.mirrorUrl && peek !== id) return p.mirrorUrl
+                          return flipped && enhanced[id] ? enhanced[id] : p.url
+                        })()}
+                        alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                      <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-1">
+                        {enhanced[id] && (
+                          <button
+                            onMouseDown={() => setPeek(id)} onMouseUp={() => setPeek(null)} onMouseLeave={() => setPeek(null)}
+                            onTouchStart={() => setPeek(id)} onTouchEnd={() => setPeek(null)}
+                            title="Hold to compare before / after"
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-white/90 text-zinc-700 border border-line select-none">A/B</button>
+                        )}
+                        {enhanced[id] && (
+                          <button onClick={() => toggleEnhanced(id)}
+                            title={useEnhanced.has(id) ? 'The enhanced version will go live — click to keep the original instead' : 'The original will stay live — click to use the enhanced version'}
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 ${useEnhanced.has(id) ? 'bg-emerald-500 text-white' : 'bg-white/90 text-zinc-600 border border-line'}`}>
+                            <Sun size={10} /> {useEnhanced.has(id) ? 'Enhanced' : 'Original'}
+                          </button>
+                        )}
+                        {p.mirrorUrl && !uploads[id] && (
+                          <button onClick={() => toggleRevert(id)}
+                            title={revert.has(id) ? 'Will restore the untouched original on push — click to cancel' : 'Restore the untouched original we backed up before any enhancement'}
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 ${revert.has(id) ? 'bg-violet-600 text-white' : 'bg-white/90 text-zinc-600 border border-line'}`}>
+                            <RotateCcw size={10} /> {revert.has(id) ? 'Reverting' : 'Revert'}
+                          </button>
+                        )}
+                      </div>
                       <div className="p-2 space-y-1">
                         <select value={p.category || 'other'} onChange={e => setCategory(id, e.target.value)} title="Photo category — correct the AI's tag" className={`text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300 ${CAT_COLORS[p.category || 'other'] || CAT_COLORS.other}`}>
                           {CATS.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        {p.room && <span className="text-[10px] font-medium text-muted ml-1">{p.room.replace(/-/g, ' ')}</span>}
                         {p.reason && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
+                        {presets.length > 0 && !uploads[id] && (
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={presetPick[id] || 'none'}
+                              onChange={e => pickPreset(id, e.target.value)}
+                              disabled={enhancing}
+                              title="How this photo is corrected. The AI proposes one; you decide."
+                              className="text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border border-line bg-white text-ink cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300 disabled:opacity-50">
+                              <option value="none">No correction</option>
+                              {presets.map(pr => <option key={pr.key} value={pr.key}>{pr.name}</option>)}
+                            </select>
+                            {p.enhanceWhy && <span className="text-[10px] text-muted truncate" title={p.enhanceWhy}>{p.enhanceWhy}</span>}
+                          </div>
+                        )}
                         <input value={p.caption || ''} onChange={e => setCaption(id, e.target.value)} placeholder="Add a description…" title="Guest-facing photo description — pushed to Guesty" className="w-full text-[11px] rounded border border-line bg-white px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-200" />
                         <div className="flex items-center gap-1 pt-0.5">
                           {!isHero && <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>}

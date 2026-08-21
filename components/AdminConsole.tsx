@@ -21,6 +21,7 @@ import { ReservationEmailsAdmin } from '@/components/ReservationEmailsAdmin'
 import { ShareLinksCard } from '@/components/ShareLinksCard'
 import { SalatoVerifyEmailAdmin } from '@/components/SalatoVerifyEmailAdmin'
 import { EveAdmin } from '@/components/EveAdmin'
+import { ListingAiAdmin } from '@/components/ListingAiAdmin'
 
 type Tab = 'people' | 'roles' | 'settings'
 
@@ -64,6 +65,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
           <Fold title="PAR levels (restock)"><ParAdmin isOwner={isOwner} /></Fold>
           <Fold title="Slack alerts &amp; rules" defaultOpen><SlackRulesAdmin isOwner={isOwner} /></Fold>
           <Fold title="Approval limits"><ApprovalLimitsAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Listing &amp; photo AI"><ListingAiAdmin isOwner={isOwner} /></Fold>
           <Fold title="Review-reply AI voice"><ReviewVoiceAdmin /></Fold>
           <Fold title="Front-desk notices"><ReservationEmailsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Salato verification email"><SalatoVerifyEmailAdmin /></Fold>
