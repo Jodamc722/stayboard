@@ -299,7 +299,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
       {/* ── THE WORK — folded, each header carrying its own headline ───────────────────────── */}
       <div className="space-y-3">
         <CollapsePanel
-          id="content" Icon={FileText} defaultOpen
+          id="content" icon="file" defaultOpen
           title="Content"
           sub={`Title ${name.length} chars · ${res.description.sections.length} of 6 description sections filled`}
           badge={`${res.description.score}`} tone={res.description.score >= 80 ? 'good' : res.description.score >= 60 ? 'warn' : 'bad'}
@@ -326,7 +326,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </CollapsePanel>
 
         <CollapsePanel
-          id="photos" Icon={ImageIcon}
+          id="photos" icon="image"
           title="Photos"
           sub={photoSub}
           badge={`${res.photos.score}`} tone={res.photos.score >= 80 ? 'good' : res.photos.score >= 60 ? 'warn' : 'bad'}
@@ -335,7 +335,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </CollapsePanel>
 
         <CollapsePanel
-          id="amenities" Icon={PlusCircle}
+          id="amenities" icon="amenity"
           title="Amenities"
           sub={`${amenities.length} listed${recommendedAdds.length ? ` · ${recommendedAdds.length} recommended to add` : ' · fully covered'}`}
           badge={`${res.amenities.score}`} tone={res.amenities.mustFix.length ? 'bad' : res.amenities.score >= 80 ? 'good' : 'warn'}
@@ -344,7 +344,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </CollapsePanel>
 
         <CollapsePanel
-          id="reviews" Icon={MessageSquare}
+          id="reviews" icon="reviews"
           title="Reviews"
           sub={`${reviews.length} pulled${avgRating != null ? ` · ${avgRating}/5 average` : ''}${awaitingReply ? ` · ${awaitingReply} awaiting a reply` : ''}`}
           badge={awaitingReply ? `${awaitingReply} to reply` : 'all replied'} tone={awaitingReply ? 'warn' : 'good'}
@@ -356,7 +356,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         </CollapsePanel>
 
         <CollapsePanel
-          id="ops" Icon={ClipboardList}
+          id="ops" icon="ops"
           title="Ops"
           sub="Open work, the last property audit, guest FAQs, the guidebook and the hero collage"
         >
