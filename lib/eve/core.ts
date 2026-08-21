@@ -18,6 +18,7 @@ import { METRICS, METRIC_BY_KEY } from './metrics'
 import { computeTrend, anomalyScan } from './trends'
 import { createRecommendation, scorecard } from './recommendations'
 import { upcomingEvents, stormRisk } from './signals'
+import { runCheck as doorCodeCheck } from './door-code'
 
 const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
@@ -271,6 +272,18 @@ export const CORE_TOOLS: EveTool[] = [
         wantWx ? stormRisk() : Promise.resolve(null),
       ])
       return { events: ev, weather: wx }
+    },
+  },
+
+  {
+    name: 'door_code_check',
+    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now, and — if there is — did the guest actually give permission to enter. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence. If the verdict is blocked_occupied or blocked_inconclusive, say NO plainly and say why; do not soften it and do not look for another route to the code. If it clears, tell the person the check passed and that an admin has to tap to release it. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
+    input_schema: obj({ unit: S.str, listingId: S.str, reason: S.str }),
+    run: async (input) => {
+      const c: any = await doorCodeCheck({ unit: input?.unit, listingId: input?.listingId, reason: input?.reason })
+      // Belt and braces: strip anything code-shaped before it can reach the model.
+      const { codeHint, ...rest } = c
+      return { ...rest, code_visible_to_you: false, code_on_file: c.hasCode ? codeHint : 'none', release: 'An admin releases it from /eve or the Slack link — you cannot, and neither can I show it to you.' }
     },
   },
 
