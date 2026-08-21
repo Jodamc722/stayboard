@@ -90,22 +90,130 @@ export function LaborPanel() {
   const hideMoney = d?.moneyHidden === true
   const peopleCols = hideMoney ? 7 : 11
 
+  // THE PERSON'S DAYS, NOT JUST THEIR TASKS (Jon, 2026-08-23: "the labor KPI dashboard needs
+  // to show all the color"). Each day is a ledger line — cleans and the net fees they earned,
+  // charges on other work, hours, loaded wages, hops, margin — with that day's Breezeway task
+  // story underneath. The engine's personDays is the money; personTasks is the narrative.
   const TaskList = ({ name }: { name: string }) => {
     const rows = personTasks[name] || []
-    if (!rows.length) return <div className="px-6 py-3 text-[12px] text-muted">No Breezeway tasks recorded for {name} in this range.</div>
+    const ledger: any[] = ((econ?.personDays || {})[name] || []).slice().reverse()
+    if (!rows.length && !ledger.length) return <div className="px-6 py-3 text-[12px] text-muted">No Breezeway tasks or punches recorded for {name} in this range.</div>
+    const byDay: Record<string, any[]> = {}
+    for (const t of rows) (byDay[t.date] = byDay[t.date] || []).push(t)
+    const days = ledger.length ? ledger.map((l: any) => l.d) : Object.keys(byDay).sort().reverse()
+    const ledBy: Record<string, any> = {}
+    for (const l of ledger) ledBy[l.d] = l
     return (
       <div className="px-6 py-2 bg-app/60">
-        {rows.map((t: any, i: number) => (
-          <div key={i} className="flex items-center gap-2 text-[12.5px] py-1 border-b border-line/40 last:border-0">
-            <span className="text-muted tabular-nums w-20 shrink-0">{String(t.date).slice(5)}</span>
-            <span className={'text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ' +
-              (t.kind === 'clean' ? 'bg-indigo-100 text-indigo-700' : t.kind === 'inspection' ? 'bg-sky-100 text-sky-700' : t.kind === 'maintenance' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-muted')}>{t.kind}</span>
-            <span className="text-ink font-medium truncate">{t.unit}</span>
-            <span className="text-muted truncate hidden sm:inline">· {t.task}</span>
-            <span className="ml-auto text-muted tabular-nums shrink-0">{t.minutes != null ? t.minutes + 'm' : ''}</span>
-            <span className="text-ink tabular-nums w-14 text-right shrink-0">{t.pay != null && t.pay > 0 ? fmt$(t.pay) : ''}</span>
+        {days.map((d: string) => {
+          const L = ledBy[d]
+          return (
+            <div key={d} className="py-1">
+              <div className="flex items-center gap-2 text-[11.5px] py-1 font-semibold text-ink border-b border-line/60">
+                <span className="tabular-nums">{String(d).slice(5)}</span>
+                {L && <>
+                  <span className="text-muted font-normal">· {L.cleans} clean{L.cleans === 1 ? '' : 's'} · {L.hours}h{L.hops ? ` · ${L.hops} hop${L.hops === 1 ? '' : 's'}` : ''}</span>
+                  {!hideMoney && <span className="ml-auto tabular-nums font-normal text-muted">
+                    {L.fee > 0 && <span className="mr-2">fees {fmt$(L.fee)}</span>}
+                    {L.billable > 0 && <span className="mr-2">billables {fmt$(L.billable)}</span>}
+                    <span className="mr-2">wages {fmt$(L.wages)}</span>
+                    <span className={'font-semibold ' + (L.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{L.margin >= 0 ? '+' : ''}{fmt$(L.margin)}</span>
+                  </span>}
+                </>}
+              </div>
+              {(byDay[d] || []).map((t: any, i: number) => (
+                <div key={i} className="flex items-center gap-2 text-[12.5px] py-1 border-b border-line/40 last:border-0">
+                  <span className="w-20 shrink-0" />
+                  <span className={'text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ' +
+                    (t.kind === 'clean' ? 'bg-indigo-100 text-indigo-700' : t.kind === 'inspection' ? 'bg-sky-100 text-sky-700' : t.kind === 'maintenance' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-muted')}>{t.kind}</span>
+                  <span className="text-ink font-medium truncate">{t.unit}</span>
+                  <span className="text-muted truncate hidden sm:inline">· {t.task}</span>
+                  <span className="ml-auto text-muted tabular-nums shrink-0">{t.minutes != null ? t.minutes + 'm' : ''}</span>
+                  <span className="text-ink tabular-nums w-14 text-right shrink-0">{t.pay != null && t.pay > 0 ? fmt$(t.pay) : ''}</span>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // TREND — cost per clean and HK margin over the selected window. Two measures of different
+  // scale = two panels with one axis each (never a dual-axis chart). Weekly buckets once the
+  // window is 3+ weeks (a single day is noisy — paperwork lag), daily below that. Single series
+  // per panel, so the title carries identity and no legend is needed.
+  const TrendCard = () => {
+    const daily: any[] = (econ?.daily || [])
+    const [tip, setTip] = useState<{ x: number; y: number; lines: string[] } | null>(null)
+    if (hideMoney || daily.length < 7) return null
+    const weekly = daily.length >= 21
+    const keyOf = (d: string) => {
+      if (!weekly) return d
+      const dt = new Date(d + 'T12:00:00Z'); const dow = dt.getUTCDay()
+      return new Date(dt.getTime() - dow * 864e5).toISOString().slice(0, 10)
+    }
+    const idx: Record<string, number> = {}
+    const buckets: { label: string; cleans: number; fee: number; wages: number }[] = []
+    for (const r of daily) {
+      const k = keyOf(r.d)
+      if (!(k in idx)) { idx[k] = buckets.length; buckets.push({ label: k, cleans: 0, fee: 0, wages: 0 }) }
+      const b = buckets[idx[k]]
+      b.cleans += r.cleans; b.fee += r.fee; b.wages += r.hkWages
+    }
+    const rows = buckets.filter(b => b.cleans > 0).map(b => ({
+      label: b.label, cleans: b.cleans,
+      cpc: Math.round((b.wages / b.cleans) * 100) / 100,
+      marginPct: b.fee > 0 ? Math.round(((b.fee - b.wages) / b.fee) * 1000) / 10 : null,
+      fee: Math.round(b.fee), wages: Math.round(b.wages),
+    }))
+    if (rows.length < 2) return null
+    const H = 96, W = 100 / rows.length
+    const Panel = ({ title, sub, val, fmtV, color }: { title: string; sub: string; val: (r: any) => number | null; fmtV: (n: number) => string; color: (v: number) => string }) => {
+      const vals = rows.map(val).filter((v): v is number => v != null)
+      if (!vals.length) return null
+      const max = Math.max(...vals, 0), min = Math.min(...vals, 0)
+      const span = max - min || 1
+      const y = (v: number) => H - ((v - min) / span) * (H - 14)
+      const zero = y(0)
+      return (
+        <div className="flex-1 min-w-[260px]">
+          <p className="text-[11px] font-bold text-ink">{title} <span className="font-normal text-muted">· {sub}</span></p>
+          <svg viewBox={`0 0 100 ${H + 16}`} preserveAspectRatio="none" className="w-full h-28 mt-1">
+            <line x1="0" x2="100" y1={zero} y2={zero} stroke="#e5e7eb" strokeWidth="0.5" />
+            {rows.map((r, i) => {
+              const v = val(r)
+              if (v == null) return null
+              const yy = y(v)
+              const top = Math.min(yy, zero), h = Math.max(1.5, Math.abs(zero - yy))
+              return (
+                <rect key={i} x={i * W + W * 0.18} width={W * 0.64} y={top} height={h} rx="1" fill={color(v)}
+                  onMouseEnter={e => setTip({ x: (e as any).clientX, y: (e as any).clientY, lines: [(weekly ? 'wk of ' : '') + r.label.slice(5), `${fmtV(v)} · ${r.cleans} cleans`, `fees $${r.fee.toLocaleString()} · wages $${r.wages.toLocaleString()}`] })}
+                  onMouseLeave={() => setTip(null)} />
+              )
+            })}
+          </svg>
+          <div className="flex justify-between text-[10px] text-muted tabular-nums">
+            <span>{(weekly ? 'wk ' : '') + rows[0].label.slice(5)}</span>
+            <span className="font-semibold text-ink">{(() => { const v = val(rows[rows.length - 1]); return v != null ? fmtV(v) + ' latest' : '' })()}</span>
+            <span>{(weekly ? 'wk ' : '') + rows[rows.length - 1].label.slice(5)}</span>
           </div>
-        ))}
+        </div>
+      )
+    }
+    return (
+      <div className="rounded-xl border border-line bg-white px-4 py-3 relative">
+        <p className="text-[10px] uppercase tracking-wide text-muted font-bold mb-2">Trend <span className="normal-case font-normal">· {weekly ? 'by week (Sun–Sat)' : 'by day'} · housekeepers only, engine numbers — hover any bar</span></p>
+        <div className="flex flex-wrap gap-6">
+          <Panel title="Cost per clean" sub="loaded HK wages ÷ credited cleans — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
+          <Panel title="HK margin %" sub="net fees kept after loaded wages" val={r => r.marginPct} fmtV={n => n.toFixed(0) + '%'} color={v => (v >= 0 ? '#059669' : '#e11d48')} />
+        </div>
+        {tip && (
+          <div style={{ position: 'fixed', left: tip.x + 10, top: tip.y - 10, zIndex: 50 }} className="pointer-events-none rounded-lg border border-line bg-white shadow-md px-2.5 py-1.5">
+            {tip.lines.map((l, i) => <div key={i} className={'text-[11px] ' + (i === 0 ? 'text-muted' : i === 1 ? 'font-semibold text-ink' : 'text-muted')}>{l}</div>)}
+          </div>
+        )}
+        <p className="text-[10.5px] text-muted mt-1.5">Young buckets read expensive until cleans are closed in Breezeway — the latest {weekly ? 'week' : 'days'} settle down as paperwork lands.</p>
       </div>
     )
   }
@@ -219,6 +327,9 @@ export function LaborPanel() {
           )}
         </div>
       )}
+
+      {/* TREND — the direction of cost/clean and margin across the selected window */}
+      <TrendCard />
 
       {/* DEPARTMENTS: housekeeping economics + maintenance utilization */}
       {/* DEPARTMENT ECONOMICS — each crew judged on what it actually earns.
