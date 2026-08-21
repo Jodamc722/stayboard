@@ -21,6 +21,7 @@ export const maxDuration = 60
 // back, so a broken sync cannot turn into background noise people learn to ignore.
 
 type Feed = { key: string; label: string; maxMin: number }
+type Ages = Record<string, { age: number | null; error: string | null }>
 const FEEDS: Feed[] = [
   { key: 'reservations', label: 'Bookings (Guesty)', maxMin: 20 },   // pulls every 5 min
   { key: 'listings', label: 'Listings (Guesty)', maxMin: 24 * 60 },
@@ -39,6 +40,63 @@ function minsSince(iso: any): number | null {
   return Number.isFinite(t) ? Math.round((Date.now() - t) / 60000) : null
 }
 function human(m: number | null): string { return m == null ? 'never' : m < 90 ? m + ' min' : Math.round(m / 60) + ' h' }
+
+
+// PER-CHANNEL REVIEW FRESHNESS — because a portfolio-wide pulse cannot see one channel die.
+//
+// 2026-08-21: Airbnb, which is 78% of every review this portfolio has ever received, stopped on
+// Aug 14. This route reported "healthy" for the whole week, because Booking.com trickled in one
+// review every few days and that kept the portfolio-wide newest-review date inside its 4-day
+// window. An aggregate is exactly the wrong statistic for spotting one channel going dark: the
+// bigger the dead channel, the longer the survivors can hide it.
+//
+// Each channel is judged against its OWN rate. Roughly: speak up once about six reviews' worth
+// of time has passed in silence, never sooner than 3 days and never later than 14. So Airbnb at
+// ~10/day is called after 3 quiet days, Vrbo at ~0.5/day gets 11, and a channel too sparse to
+// have a rhythm is not guessed about at all.
+function staleLimitDays(perDay: number): number {
+  return Math.min(14, Math.max(3, Math.ceil(6 / perDay)))
+}
+
+async function reviewChannelFeeds(db: any): Promise<{ feeds: Feed[]; ages: Ages }> {
+  const feeds: Feed[] = []
+  const ages: Ages = {}
+  const since = new Date(Date.now() - 90 * 86400_000).toISOString()
+  let rows: any[] = []
+  for (let i = 0; i < 4; i++) {   // PostgREST caps ANY single request at 1000 rows — page it.
+    const { data, error } = await db.from('guesty_reviews')
+      .select('channel,created_at')
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .range(i * 1000, i * 1000 + 999)
+    if (error) return { feeds, ages }
+    rows = rows.concat(data || [])
+    if (!data || data.length < 1000) break
+  }
+  const by: Record<string, { n: number; newest: string }> = {}
+  for (const r of rows) {
+    const c = String(r.channel || '').trim()
+    if (!c) continue
+    const at = String(r.created_at || '')
+    const cur = (by[c] ||= { n: 0, newest: '' })
+    cur.n++
+    if (at > cur.newest) cur.newest = at
+  }
+  for (const [channel, v] of Object.entries(by)) {
+    const perDay = v.n / 90
+    if (perDay < 0.2) continue    // fewer than one a fortnight: no rhythm to miss
+    const limitDays = staleLimitDays(perDay)
+    const key = 'reviews_channel:' + channel
+    feeds.push({
+      key,
+      maxMin: limitDays * 24 * 60,
+      label: channel + ' reviews have stopped arriving (normally ~' + perDay.toFixed(1) +
+             '/day) — the sync is fine, so check that channel\u2019s connection inside Guesty',
+    })
+    ages[key] = { age: minsSince(v.newest), error: null }
+  }
+  return { feeds, ages }
+}
 
 // A health check must never die because the thing it notifies is slow. Slack gets a hard budget;
 // if it overruns, the feed verdict below still comes back and the response says Slack was the
@@ -63,7 +121,7 @@ async function run(req: NextRequest) {
     db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(50),
     db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1),
   ])
-  const ages: Record<string, { age: number | null; error: string | null }> = {}
+  const ages: Ages = {}
   for (const r of ((gs.data || []) as any[])) {
     ages[String(r.entity)] = { age: minsSince(r.last_sync_at), error: String(r.last_error || '') || null }
   }
@@ -80,6 +138,10 @@ async function run(req: NextRequest) {
     ages['reviews_content'] = { age: minsSince(((nr || []) as any[])[0]?.created_at), error: null }
   } catch { ages['reviews_content'] = { age: null, error: null } }
 
+  // ...and the same question asked once per channel, which is the version that actually works.
+  const perChannel = await reviewChannelFeeds(db).catch(() => ({ feeds: [] as Feed[], ages: {} as Ages }))
+  Object.assign(ages, perChannel.ages)
+
   const state = await getSetting<Record<string, { since: string; alertedAt: string }>>(ALERT_KEY, {})
   const next: Record<string, { since: string; alertedAt: string }> = {}
   const nowIso = new Date().toISOString()
@@ -87,7 +149,7 @@ async function run(req: NextRequest) {
   const recovered: string[] = []
   const report: any[] = []
 
-  for (const f of FEEDS) {
+  for (const f of FEEDS.concat(perChannel.feeds)) {
     const a = ages[f.key] || { age: null, error: null }
     const bad = a.age == null || a.age > f.maxMin || !!a.error
     report.push({ feed: f.key, ageMin: a.age, limit: f.maxMin, error: a.error, healthy: !bad })
