@@ -36,10 +36,15 @@ export async function GET(req: NextRequest) {
     const VENDOR_RE = vendorRegex(presets.vendorBuildings)
     const db = supabaseAdmin()
     const today = ymd(new Date())
-    const [lRes, aRes] = await Promise.all([
+    const [lRes, aRes, paRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,status'),
       // audit-named tasks only — select REAL mirror columns (no created_at column exists!)
       db.from('breezeway_tasks_sync').select('reference_property_id,name,status,finished_at,scheduled_date').ilike('name', '%audit%').limit(5000),
+      // 2026-08-21: AND the app's own audit records. An audit completed in the walk engine never
+      // creates a Breezeway task named "audit", so this board was listing units as due that had
+      // been audited weeks earlier — and the new vacant-unit worklist in the briefs made that
+      // visible by telling everyone they had "never" been audited. Both sources now, newest wins.
+      db.from('property_audits').select('listing_id,status,created_at,updated_at').limit(3000),
     ])
     const lastDone: Record<string, string> = {}
     const hasOpen: Record<string, boolean> = {}
@@ -54,6 +59,15 @@ export async function GET(req: NextRequest) {
         hasOpen[id] = true
       }
     }
+    for (const a of ((paRes.data || []) as any[])) {
+      const id = String(a.listing_id)
+      const st = str(a.status).toLowerCase()
+      if (st === 'open') { hasOpen[id] = true; continue }
+      if (st !== 'completed') continue
+      const when = str(a.updated_at || a.created_at).slice(0, 10)
+      if (when && (!lastDone[id] || when > lastDone[id])) lastDone[id] = when
+    }
+
     const geoOf = (l: any, nm: string) => marketOf(l.building, l.address_city, nm)
     const isVendorUnit = (l: any, nm: string) => VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(nm)
     // Which geographies still have units WE clean. A vendor unit is also listed under its
