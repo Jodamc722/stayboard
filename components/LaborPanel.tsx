@@ -13,15 +13,20 @@ const fmt$ = (n: number | null | undefined) =>
 const pct = (n: number | null | undefined) => n == null ? '—' : Math.round(Number(n) * 10) / 10 + '%'
 const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
-// A grid item defaults to min-width:auto, so it refuses to shrink below its content — a $13,398 at
-// 22px simply overflowed its column and, with no horizontal gap, printed on top of the next tile.
-// `min-w-0` lets the track constrain it and `break-words` guarantees it wraps instead of colliding,
-// whatever the number turns out to be. (Fixed 2026-08-21 from Jon's screenshot of /labor.)
+// Fixed 2026-08-21 from Jon's screenshot of /labor, in two passes.
+//   1. A grid item defaults to min-width:auto, so it refuses to shrink below its content — $13,393
+//      at 22px overflowed its column and, with no horizontal gap, printed on top of the next tile.
+//      `min-w-0` is what lets the track constrain it.
+//   2. Wrapping is the wrong safety net for MONEY: "$13,39 / 3" on two lines reads as two numbers.
+//      So the value stays `whitespace-nowrap` and is sized to fit the narrowest tile we render
+//      (a quarter-width department card, ~90px), with `overflow-hidden` on the root as the
+//      last-resort guarantee that nothing can ever ride over the tile beside it. Labels and subs
+//      are prose, so they still wrap.
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'warn' | 'bad' }) {
   const color = tone === 'bad' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-emerald-700' : 'text-ink'
   return (
-    <div className="min-w-0 text-center px-1">
-      <div className={'text-[19px] xl:text-[22px] font-bold tabular-nums leading-tight break-words ' + color}>{value}</div>
+    <div className="min-w-0 overflow-hidden text-center px-1">
+      <div className={'text-[18px] xl:text-[20px] font-bold tabular-nums leading-tight whitespace-nowrap ' + color}>{value}</div>
       <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-0.5 break-words">{label}</div>
       {sub && <div className="text-[10.5px] text-muted break-words">{sub}</div>}
     </div>
@@ -181,7 +186,7 @@ export function LaborPanel() {
           Jon, 2026-08-12: housekeeping is housekeepers only; supervisors are their own category
           and are carried by management fees, not by the cleaning margin. */}
       {d?.departments && (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping <span className="normal-case font-normal">· housekeepers only</span></p>
             <div className="grid grid-cols-2 gap-x-2 gap-y-3">
