@@ -11,11 +11,13 @@ const fmt$ = (n: number | null | undefined) =>
 
 function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'warn' | 'bad' }) {
   const color = tone === 'bad' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-emerald-700' : 'text-ink'
+  // See the note on Stat in components/LaborPanel: min-w-0 + break-words is what stops a wide
+  // number overflowing its grid column and printing over the tile beside it.
   return (
-    <div className="text-center px-2">
-      <div className={'text-[17px] font-bold tabular-nums ' + color}>{value}</div>
-      <div className="text-[9.5px] uppercase tracking-wide text-muted font-semibold mt-0.5">{label}</div>
-      {sub && <div className="text-[10px] text-muted">{sub}</div>}
+    <div className="min-w-0 text-center px-1">
+      <div className={'text-[16px] xl:text-[17px] font-bold tabular-nums leading-tight break-words ' + color}>{value}</div>
+      <div className="text-[9.5px] uppercase tracking-wide text-muted font-semibold mt-0.5 break-words">{label}</div>
+      {sub && <div className="text-[10px] text-muted break-words">{sub}</div>}
     </div>
   )
 }
@@ -48,7 +50,7 @@ export function LaborEconStrip({ days = 7 }: { days?: number }) {
           <DollarSign size={11} /> Labor economics - last {days}d</p>
         <a href="/labor" className="text-[11px] font-semibold text-indigo-600 hover:underline inline-flex items-center gap-0.5">Full labor board <ArrowRight size={11} /></a>
       </div>
-      <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-y-3 items-start">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-10 gap-x-2 gap-y-3 items-start">
         <Tile label="Labor $ / clean" value={v(hk?.costPerClean, fmt$)} sub="housekeepers only" />
         <Tile label="Time / clean" value={v(hk?.hoursPerClean, (n) => n + 'h')} sub="hours ÷ cleans" />
         <Tile label="Fee / clean" value={v(hk?.feePerClean, fmt$)} sub="in-house units" />

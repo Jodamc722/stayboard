@@ -13,13 +13,17 @@ const fmt$ = (n: number | null | undefined) =>
 const pct = (n: number | null | undefined) => n == null ? '—' : Math.round(Number(n) * 10) / 10 + '%'
 const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
+// A grid item defaults to min-width:auto, so it refuses to shrink below its content — a $13,398 at
+// 22px simply overflowed its column and, with no horizontal gap, printed on top of the next tile.
+// `min-w-0` lets the track constrain it and `break-words` guarantees it wraps instead of colliding,
+// whatever the number turns out to be. (Fixed 2026-08-21 from Jon's screenshot of /labor.)
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'warn' | 'bad' }) {
   const color = tone === 'bad' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-emerald-700' : 'text-ink'
   return (
-    <div className="text-center px-2">
-      <div className={'text-[22px] font-bold tabular-nums ' + color}>{value}</div>
-      <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-0.5">{label}</div>
-      {sub && <div className="text-[10.5px] text-muted">{sub}</div>}
+    <div className="min-w-0 text-center px-1">
+      <div className={'text-[19px] xl:text-[22px] font-bold tabular-nums leading-tight break-words ' + color}>{value}</div>
+      <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-0.5 break-words">{label}</div>
+      {sub && <div className="text-[10.5px] text-muted break-words">{sub}</div>}
     </div>
   )
 }
@@ -129,7 +133,7 @@ export function LaborPanel() {
           <p className="text-[10px] uppercase tracking-wide text-indigo-700 font-bold px-2 mb-2 flex items-center gap-1">
             <Zap size={11} /> Right now · {tdy.date}
           </p>
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-2 gap-y-3">
             <Stat label="Clocked in now" value={loading ? '…' : String(tdy.clockedInNow.length)}
               sub={tdy.clockedInNow.slice(0, 3).join(', ') + (tdy.clockedInNow.length > 3 ? ` +${tdy.clockedInNow.length - 3}` : '')} />
             <Stat label="Hours so far" value={loading ? '…' : String(tdy.hoursSoFar)} />
@@ -154,7 +158,7 @@ export function LaborPanel() {
             <span className="ml-auto normal-case font-semibold text-amber-700">attribution {Math.round((attr.rate || 0) * 100)}% — fix Breezeway assignees</span>
           )}
         </p>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-2 gap-y-4">
           {hideMoney ? <>
             <Stat label="Payroll vs sched" value={loading ? '…' : pct(pay.scheduledVsActualPct)} sub="100% = spent what was planned"
               tone={pay.scheduledVsActualPct != null && pay.scheduledVsActualPct > 105 ? 'warn' : undefined} />
@@ -180,7 +184,7 @@ export function LaborPanel() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping <span className="normal-case font-normal">· housekeepers only</span></p>
-            <div className="grid grid-cols-3 gap-y-3">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-3">
               {hideMoney ? <>
                 <Stat label="Labor %" value={loading ? '…' : pct(d.departments.housekeeping.laborPct)} sub="of in-house cleaning revenue" />
                 <Stat label="Margin %" value={loading ? '…' : pct(d.departments.housekeeping.marginPct)}
@@ -204,7 +208,7 @@ export function LaborPanel() {
               is the management fee on the stays they keep standards on. */}
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Supervisors <span className="normal-case font-normal">· overhead</span></p>
-            <div className="grid grid-cols-3 gap-y-3">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-3">
               <Stat label={hideMoney ? 'Share of payroll' : 'Payroll'}
                 value={loading ? '…' : (hideMoney ? pct(d.departments.supervision?.payrollSharePct) : fmt$(d.departments.supervision?.payroll))}
                 sub={(d.departments.supervision?.hours ?? 0) + 'h · ' + (d.departments.supervision?.people ?? 0) + ' people'} />
@@ -218,7 +222,7 @@ export function LaborPanel() {
           </div>
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Maintenance</p>
-            <div className="grid grid-cols-3 gap-y-3">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-3">
               {/* Payroll is Homebase, hours are Breezeway, billable is the charge typed on the
                   task — each tile says which, so no two are read as the same number. */}
               <Stat label={hideMoney ? 'Share of payroll' : 'Payroll'}
@@ -240,7 +244,7 @@ export function LaborPanel() {
           </div>
           <div className="rounded-xl border border-line bg-white px-3 py-4">
             <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Inspections</p>
-            <div className="grid grid-cols-3 gap-y-3">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-3">
               <Stat label={hideMoney ? 'Share of payroll' : 'Payroll'}
                 value={loading ? '…' : (hideMoney ? pct(d.departments.inspection?.payrollSharePct) : fmt$(d.departments.inspection?.payroll))}
                 sub={(d.departments.inspection?.hours ?? 0) + 'h · ' + (d.departments.inspection?.people ?? 0) + ' people'} />
@@ -540,7 +544,7 @@ export function LaborPanel() {
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3 flex items-center gap-1">
           <ClipboardList size={11} /> Tasks completed <span className="normal-case font-normal">· Breezeway</span>
         </p>
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-y-4">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-2 gap-y-4">
           <Stat label="Total" value={loading ? '…' : String(tasks.total ?? 0)} />
           <Stat label="Cleans" value={loading ? '…' : String(tasks.clean ?? 0)} />
           <Stat label="Inspections" value={loading ? '…' : String(tasks.inspection ?? 0)} />
