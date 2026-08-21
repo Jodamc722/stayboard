@@ -36,6 +36,7 @@ import { isLiveStay } from './stay-status'
 import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
+import { laborEconomics } from './labor-econ'
 
 export const BILLABLE_LOOKBACK_DAYS = 45
 
@@ -117,6 +118,9 @@ export type LaborReport = {
 
   // the money
   cleaningRevenue: number
+  // True when the headline economics above came from lib/labor-econ (net fees, credited
+  // departure cleans). False = the engine call failed and the old checkout arithmetic filled in.
+  engineBasis?: boolean
   costPerClean: number | null
   hoursPerClean: number | null
   feePerClean: number | null
@@ -263,12 +267,29 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     costPerClean: p.cleans > 0 && p.payroll > 0 ? r2(p.payroll / p.cleans) : null,
   })).sort((a, b) => b.payroll - a.payroll)
 
-  // ---- the cleaning money -----------------------------------------------------
-  const hkPayroll = byDept.housekeeping.payroll
+  // ---- the cleaning money — THE ENGINE'S NUMBERS (Jon, 2026-08-21: "make sure that on all
+  // interfaces everything is pulling the same level of data"). This page used to divide
+  // housekeeping payroll by CHECKOUTS and total GROSS fees — a third definition of cost per
+  // clean that quietly disagreed with the Labor board and every brief. The headline economics
+  // now come from lib/labor-econ (net fees, credited departure cleans, housekeepers only); the
+  // per-person day detail below stays local because it is punches and tasks, not economics.
+  // If the engine call fails the old arithmetic fills in, flagged by engineBasis=false.
+  let hkPayroll = byDept.housekeeping.payroll
   const hkHours = byDept.housekeeping.hours
-  const costPerClean = checkouts > 0 && hkPayroll > 0 ? r2(hkPayroll / checkouts) : null
-  const hoursPerClean = checkouts > 0 && hkHours > 0 ? r1(hkHours / checkouts) : null
-  const feePerClean = checkouts > 0 && cleaningRevenue > 0 ? r2(cleaningRevenue / checkouts) : null
+  let costPerClean = checkouts > 0 && hkPayroll > 0 ? r2(hkPayroll / checkouts) : null
+  let hoursPerClean = checkouts > 0 && hkHours > 0 ? r1(hkHours / checkouts) : null
+  let feePerClean = checkouts > 0 && cleaningRevenue > 0 ? r2(cleaningRevenue / checkouts) : null
+  let engineBasis = false
+  try {
+    const eco = await laborEconomics({ from, to, market: 'all' })
+    const H = eco.kpi.housekeeping
+    cleaningRevenue = r2(H.revenue)
+    hkPayroll = r2(H.payroll)
+    costPerClean = H.costPerClean
+    hoursPerClean = H.hoursPerClean
+    feePerClean = H.revPerClean
+    engineBasis = true
+  } catch { /* fall back to the local arithmetic rather than sink the page */ }
   const cleaningMargin = hkPayroll > 0 ? r2(cleaningRevenue - hkPayroll) : null
   const cleaningMarginPct = (cleaningMargin != null && cleaningRevenue > 0)
     ? Math.round((cleaningMargin / cleaningRevenue) * 1000) / 10 : null
@@ -421,6 +442,7 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     totals, byDept,
     checkouts, vendorCheckouts, departureClosed, mix,
     cleaningRevenue: r2(cleaningRevenue),
+    engineBasis,
     costPerClean, hoursPerClean, feePerClean, cleaningMargin, cleaningMarginPct,
     laborPctOfRevenue, band,
     billable, people, yesterday, flags, settings,
