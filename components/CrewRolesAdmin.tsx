@@ -52,7 +52,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, string>>({})
-  const [staffEdits, setStaffEdits] = useState<Record<string, { agency?: string; area?: string }>>({})
+  const [staffEdits, setStaffEdits] = useState<Record<string, { agency?: string; area?: string; role?: string }>>({})
   const [q, setQ] = useState('')
   const [onlyGaps, setOnlyGaps] = useState(false)
 
@@ -69,7 +69,8 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const deptOf = (p: Person) => (p.name in edits ? edits[p.name] : p.dept)
   const agencyOf = (p: Person) => (staffEdits[p.name]?.agency ?? (p.agency || ''))
   const areaOf = (p: Person) => (staffEdits[p.name]?.area ?? (p.area || ''))
-  const setStaff = (name: string, patch: { agency?: string; area?: string }) =>
+  const roleOf = (p: Person) => (staffEdits[p.name]?.role ?? (p.staffRole || ''))
+  const setStaff = (name: string, patch: { agency?: string; area?: string; role?: string }) =>
     setStaffEdits(s => ({ ...s, [name]: { ...s[name], ...patch } }))
   const dirty = Object.keys(edits).length > 0 || Object.keys(staffEdits).length > 0
 
@@ -168,13 +169,13 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         <table className="w-full text-[12.5px] min-w-[820px]">
           <thead>
             <tr className="border-b border-line text-left">
-              {['Person', 'Crew', 'Agency / W2', 'Market', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
-                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 4 || i === 5 ? 'text-right' : ''}`}>{h}</th>
+              {['Person', 'Crew', 'Role', 'Agency / W2', 'Market', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
+                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 5 || i === 6 ? 'text-right' : ''}`}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted">Nobody matches that.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted">Nobody matches that.</td></tr>}
             {rows.map(p => {
               const cur = deptOf(p)
               const changed = p.name in edits && edits[p.name] !== p.dept
@@ -197,6 +198,18 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                           className="ml-1 text-muted hover:text-ink align-middle"><RotateCcw size={10} /></button>
                       )}
                     </div>
+                  </td>
+                  <td className="px-2.5 py-2 align-top">
+                    <select
+                      value={roleOf(p)} disabled={!isOwner}
+                      onChange={e => setStaff(p.name, { role: e.target.value })}
+                      title="The job we call them — with Market, this is what the loaded-cost assumptions below break down by."
+                      className={`rounded-lg border bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60 ${staffEdits[p.name]?.role !== undefined ? 'border-brand-300 text-brand-700 font-semibold' : roleOf(p) ? 'border-line text-ink' : 'border-amber-300 text-amber-700'}`}>
+                      {['', 'Housekeeper', 'Maintenance', 'Handyman', 'Supervisor', 'Inspector', 'Front desk', 'Office'].map(r => (
+                        <option key={r} value={r}>{r || 'Not set'}</option>
+                      ))}
+                    </select>
+                    {!roleOf(p) && p.homebaseRole && <div className="mt-1 text-[10px] text-muted whitespace-nowrap" title="What Homebase's free-text role says — pick the real one above">HB: {p.homebaseRole}</div>}
                   </td>
                   <td className="px-2.5 py-2 align-top">
                     <select
@@ -224,7 +237,6 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                         <span className="text-[11px]"> · {p.tasks.cleans} cleans · {p.tasks.maintenance} maint · {p.tasks.inspection} insp</span>
                       </>
                     )}
-                    {p.staffRole && <div className="text-[10.5px] text-faint">Staffing role: {p.staffRole}</div>}
                   </td>
                 </tr>
               )
@@ -240,6 +252,59 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         Broward and North alike, which is why those tabs can add up to less than the company total.
         <b> Vendor</b> is deliberately its own bucket and never part of a geographic market.
       </p>
+
+      {/* LOADED-COST ASSUMPTIONS (Jon, 2026-08-23: "put the role, the agency, and their pay
+          agency fees so I can get a better assumption of labor cost based on market area and
+          role"). Average loaded $/hr — Homebase wage plus the agency's % and $/hr markup — for
+          this window's punches, sliced by the Market and Role columns above. Re-slices as you
+          edit, before you even save. */}
+      {d && (() => {
+        const feeBy: Record<string, any> = {}
+        for (const a of (d.agencies || []) as any[]) feeBy[a.key] = a
+        const cell: Record<string, Record<string, { h: number; cost: number; n: Set<string> }>> = {}
+        const areaLabels: Record<string, string> = { miami: 'Miami', broward: 'Broward', north: 'North', vendor: 'Vendor', '': 'No market set' }
+        for (const p of d.people) {
+          if (!p.hours || p.payroll == null || p.payroll <= 0) continue
+          const area = areaOf(p) || ''
+          const role = roleOf(p) || 'Not set'
+          const a = feeBy[agencyOf(p)]
+          const pct = a ? Number(a.fee_percent) || 0 : 0
+          const perH = a ? Number(a.fee_per_hour) || 0 : 0
+          const loaded = p.payroll * (1 + pct / 100) + p.hours * perH
+          const r = (cell[area] = cell[area] || {})
+          const c = (r[role] = r[role] || { h: 0, cost: 0, n: new Set<string>() })
+          c.h += p.hours; c.cost += loaded; c.n.add(p.name)
+        }
+        const areas = ['miami', 'broward', 'north', 'vendor', ''].filter(k => cell[k])
+        if (!areas.length) return null
+        const roleCols = Array.from(new Set(areas.flatMap(k => Object.keys(cell[k]))))
+        return (
+          <div className="mt-5 rounded-xl border border-line p-3 overflow-x-auto">
+            <p className="text-[12px] font-bold text-ink">Loaded cost assumptions <span className="font-normal text-[11px] text-muted">· avg $/hr by market × role — wage + agency markup, this window&apos;s punches, weighted by hours</span></p>
+            <table className="text-[12px] mt-2">
+              <thead><tr className="text-left text-[10px] uppercase tracking-wide text-muted">
+                <th className="py-1 pr-4">Market</th>{roleCols.map(r => <th key={r} className="py-1 pr-4 text-right">{r}</th>)}
+              </tr></thead>
+              <tbody>
+                {areas.map(k => (
+                  <tr key={k} className="border-t border-line">
+                    <td className="py-1.5 pr-4 font-medium text-ink whitespace-nowrap">{areaLabels[k] || k}</td>
+                    {roleCols.map(r => {
+                      const c = cell[k][r]
+                      return <td key={r} className="py-1.5 pr-4 text-right tabular-nums whitespace-nowrap">{c ? <span><b>${(c.cost / c.h).toFixed(2)}</b><span className="text-muted"> · {c.n.size}p</span></span> : <span className="text-faint">—</span>}</td>
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[10.5px] text-muted mt-1.5 max-w-[80ch]">
+              Flat weekly agency fees are excluded from this per-hour view (they still land in the engine&apos;s true totals).
+              Fill Role and Market for everyone above and these assumptions sharpen — the table re-slices as you edit, before saving.
+              An amber Role or Market above means that person is sitting in &ldquo;Not set&rdquo; here.
+            </p>
+          </div>
+        )
+      })()}
 
       <AgencyFees isOwner={isOwner} />
     </div>
