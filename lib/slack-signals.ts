@@ -24,6 +24,8 @@ import { isLiveStay } from './stay-status'
 import { loadBehind } from './ops-behind'
 import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
 import { getTimecards } from './homebase-labor'
+import { noBreezewayRegex } from './ops-presets'
+import { getOpsPresets } from './app-settings'
 
 const DAY = 86_400_000
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -573,8 +575,15 @@ export async function checkReadiness(): Promise<Readiness> {
   // A row whose listing metadata never resolved arrives as "Unknown unit" and would otherwise
   // become its own fake area named "Unknown" posted to #vr-ops. Nobody can act on that.
   const namelessRe = /^(unknown unit|unknown|unit)$/i
+  // Buildings that are not in Breezeway at all — Botanica — have no clean to read, so every
+  // checkout there would sit at "no clean scheduled" forever (Jon, 2026-08-20: "Botanica no need
+  // for it, as we do not track cleans in breezeway"). Dropped here at the signal, so no Slack
+  // routing configuration can ever bring them back.
+  const NO_BZ = noBreezewayRegex(
+    (await getOpsPresets().catch(() => ({ vendorBuildings: [] } as any))).vendorBuildings)
   const push = (unit: string, w: any) => {
     if (!unit || seen[unit] || namelessRe.test(unit.trim())) return
+    if (NO_BZ.test(unit)) return
     seen[unit] = true
     const a = arrivalByUnit[unit]
     const d = departureByUnit[unit]
