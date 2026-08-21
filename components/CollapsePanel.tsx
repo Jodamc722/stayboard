@@ -10,9 +10,19 @@
 // is a per-user convenience, never state anything depends on. Any failure to read or write it just
 // falls back to `defaultOpen`.
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import {
+  ChevronDown, ChevronRight, FileText, Image as ImageIcon, PlusCircle, MessageSquare, ClipboardList, Wrench,
+} from 'lucide-react'
 
 export type PanelTone = 'none' | 'good' | 'warn' | 'bad'
+
+// Icons are named, not passed. A lucide component is a FUNCTION, and a Server Component cannot hand
+// a function to a Client Component — doing so throws "Functions cannot be passed directly to Client
+// Components" at render time and 500s the whole page.
+export type PanelIcon = 'file' | 'image' | 'amenity' | 'reviews' | 'ops' | 'fix'
+const ICONS: Record<PanelIcon, any> = {
+  file: FileText, image: ImageIcon, amenity: PlusCircle, reviews: MessageSquare, ops: ClipboardList, fix: Wrench,
+}
 
 const TONE: Record<PanelTone, string> = {
   none: 'bg-app text-muted',
@@ -22,17 +32,18 @@ const TONE: Record<PanelTone, string> = {
 }
 
 export function CollapsePanel({
-  id, title, sub, badge, tone = 'none', Icon, defaultOpen = false, children,
+  id, title, sub, badge, tone = 'none', icon, defaultOpen = false, children,
 }: {
   id: string
   title: string
   sub?: string
   badge?: string
   tone?: PanelTone
-  Icon?: any
+  icon?: PanelIcon
   defaultOpen?: boolean
   children: React.ReactNode
 }) {
+  const Icon = icon ? ICONS[icon] : null
   const [open, setOpen] = useState(defaultOpen)
   const [ready, setReady] = useState(false)
   const storeKey = `stay:panel:${id}`
