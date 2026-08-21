@@ -7,7 +7,7 @@ import { billingRange, listingNames, monthRange } from '@/lib/billing'
 import { getTimecards } from '@/lib/homebase-labor'
 import { getCrew } from '@/lib/crew'
 import { marketOf } from '@/lib/segments'
-import { getSetting } from '@/lib/app-settings'
+import { getSetting, setSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -84,7 +84,26 @@ export async function GET(req: NextRequest) {
       // WHO IS ON THE MAINTENANCE CREW comes from the declared roster (lib/crew), not from the
       // Homebase role field. That field is blank for Ethan, George and Ronnie, so filtering on it
       // dropped most of the crew and made maintenance payroll look far smaller than it is.
-      const [tc, crew] = await Promise.all([getTimecards(win.from, win.to), getCrew()])
+      //
+      // CACHED FOR 10 MINUTES (Jon, 2026-08-21: "is it working fast"). This Homebase pull was the
+      // one slow hop on the board — and the quiet re-sync after EVERY edit re-ran it, so a person
+      // pricing twenty tasks hit Homebase twenty times a minute. Timecards for a month change on
+      // the order of hours, not seconds; a short cache makes edits feel instant without the
+      // numbers going stale. Keyed by window so month/custom ranges never share an entry.
+      const CACHE_KEY = 'billing_timecards_cache'
+      const cacheId = win.from + ':' + win.to
+      let tc: any[] | null = null
+      try {
+        const c = await getSetting<{ id: string; at: number; tc: any[] }>(CACHE_KEY, { id: '', at: 0, tc: [] })
+        if (c && c.id === cacheId && Date.now() - Number(c.at) < 10 * 60_000 && Array.isArray(c.tc)) tc = c.tc
+      } catch { /* cache miss */ }
+      const crew = await getCrew()
+      if (!tc) {
+        tc = await getTimecards(win.from, win.to)
+        // Store only what the block below reads — the full timecards are heavy.
+        const slim = (tc as any[]).map(t => ({ name: t.name, role: t.role, hours: t.hours, laborCost: t.laborCost }))
+        setSetting(CACHE_KEY, { id: cacheId, at: Date.now(), tc: slim }, 'billing-cache').catch(() => null)
+      }
       const byName: Record<string, { name: string; hours: number; cost: number }> = {}
       for (const t of (tc as any[])) {
         if (crew.deptOf(String(t.name || ''), t.role) !== 'maintenance') continue
