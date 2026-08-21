@@ -155,6 +155,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
   const [billedH, setBilledH] = useState(t.billedHours != null ? String(t.billedHours) : '')
   const [extraDesc, setExtraDesc] = useState('')
   const [extraAmt, setExtraAmt] = useState('')
+  const [extraKind, setExtraKind] = useState<'supply' | 'extra'>('supply')
   const [itemAmt, setItemAmt] = useState<Record<string, string>>({})
   // Inline row editing (Jon 2026-08-07): hours + rate editable right in the row, no expand needed.
   const [rowH, setRowH] = useState<string | null>(null)
@@ -182,21 +183,31 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
       Number.isFinite(v) ? { ratePaid: v, rateType } : undefined)
   }
   const saveAdjust = (fields: any, tag: string, optimistic?: Partial<Task>) => post({ action: 'adjust', ...fields }, tag, optimistic)
+  // OUR items are identified by key prefix, not by kind — a supplies cost we add is kind
+  // 'supply' for display but still 'extra:<i>' underneath (Jon, 2026-08-21: supplies cost as a
+  // real field). Breezeway's own supply lines have 'supply:<id>' keys and are never ours to edit.
+  const isOurs = (i: Item) => i.key.startsWith('extra:')
+  const oursPayload = () => (t.items.filter(isOurs) as any[]).map(i => ({ description: i.description, amount: i.amount, bill_to: i.bill_to || 'owner', kind: i.kind === 'supply' ? 'supply' : 'extra' }))
   const addExtra = () => {
-    const next = (t.items.filter(i => i.kind === 'extra') as any[]).map(i => ({ description: i.description, amount: i.amount, bill_to: i.bill_to || 'owner' }))
-    next.push({ description: extraDesc, amount: Number(extraAmt), bill_to: 'owner' })
-    saveAdjust({ extra_items: next }, 'extra')
+    const next = oursPayload()
+    next.push({ description: extraDesc, amount: Number(extraAmt), bill_to: 'owner', kind: extraKind })
+    // Supplies also land ON the Breezeway task as a comment — their API has no writable
+    // cost/supply line items, so the comment is how the spend shows up in Breezeway itself.
+    const bz_note = extraKind === 'supply'
+      ? 'Supplies: ' + extraDesc + ' — $' + Number(extraAmt).toFixed(2) + ' (added on the Lighthouse Billable Hours board)'
+      : undefined
+    saveAdjust(bz_note ? { extra_items: next, bz_note } : { extra_items: next }, 'extra')
     setExtraDesc(''); setExtraAmt('')
   }
   const removeExtra = (idx: number) => {
-    const cur = (t.items.filter(i => i.kind === 'extra') as any[]).map(i => ({ description: i.description, amount: i.amount, bill_to: i.bill_to || 'owner' }))
+    const cur = oursPayload()
     cur.splice(idx, 1)
     saveAdjust({ extra_items: cur }, 'extra')
   }
   // Current full override map for this task's Breezeway line items (key → dollars).
   const overrideMap = (except?: string) => {
     const ov: Record<string, number> = {}
-    for (const i of t.items) if (i.kind !== 'extra' && i.originalAmount != null && i.key !== except) ov[i.key] = i.amount
+    for (const i of t.items) if (!isOurs(i) && i.originalAmount != null && i.key !== except) ov[i.key] = i.amount
     return ov
   }
   const saveItemAmount = (it: Item) => {
@@ -204,8 +215,8 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
     if (raw == null || raw === '') return
     const v = Number(raw)
     if (!Number.isFinite(v) || v < 0 || v === it.amount) return
-    if (it.kind === 'extra') {
-      const extras2 = t.items.filter(i => i.kind === 'extra').map(i => ({ description: i.description, amount: i.key === it.key ? v : i.amount, bill_to: i.bill_to || 'owner' }))
+    if (isOurs(it)) {
+      const extras2 = t.items.filter(isOurs).map(i => ({ description: i.description, amount: i.key === it.key ? v : i.amount, bill_to: i.bill_to || 'owner', kind: i.kind === 'supply' ? 'supply' : 'extra' }))
       saveAdjust({ extra_items: extras2 }, 'item')
     } else {
       const ov = overrideMap()
@@ -274,7 +285,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
 
   const deptCls = DEPT_CLS[t.department] || 'bg-neutral-100 text-neutral-600 ring-neutral-200'
   const done = /complet|close|approv|finish/.test(t.status)
-  const extras = t.items.filter(i => i.kind === 'extra')
+  const extras = t.items.filter(isOurs)
 
   return (
     <div className={'border-t border-line hover:bg-neutral-50/60 transition-colors ' + (t.excluded ? 'opacity-50' : '')}>
@@ -406,7 +417,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-muted font-bold">Rate</span>
+            <span className="text-[11px] uppercase tracking-wide text-muted font-bold" title="What the person is paid for this task — Breezeway's rate_paid field, the one billing field their API lets us write">Labor cost</span>
             <input value={rate} onChange={e => setRate(e.target.value)} disabled={!canEdit} placeholder="0.00"
               className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums" />
             <select value={rateType} onChange={e => setRateType(e.target.value)} disabled={!canEdit}
@@ -449,7 +460,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
                         onChange={e => setItemAmt(m => ({ ...m, [it.key]: e.target.value }))}
                         onBlur={() => saveItemAmount(it)}
                         onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                        title={it.kind === 'extra' ? 'Edit this line item amount' : 'Edit the billed amount — stored as our adjustment, Breezeway keeps the original'}
+                        title={isOurs(it) ? 'Edit this line item amount' : 'Edit the billed amount — stored as our adjustment, Breezeway keeps the original'}
                         className={'w-20 rounded-lg border px-2 py-0.5 text-right text-[12.5px] tabular-nums font-semibold ' + (it.originalAmount != null ? 'border-brand-300 text-brand-700' : 'border-line')}
                       />
                     ) : (
@@ -458,7 +469,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
                     {it.originalAmount != null && canEdit ? (
                       <button onClick={() => resetItem(it)} title="Reset to the Breezeway amount" className="text-[12px] text-muted hover:text-ink font-semibold">↺</button>
                     ) : null}
-                    {it.kind === 'extra' && canEdit ? (
+                    {isOurs(it) && canEdit ? (
                       <button onClick={() => removeExtra(extras.indexOf(it))} className="text-muted hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
                     ) : null}
                   </div>
@@ -468,13 +479,25 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
               <div className="text-[12px] text-muted">{t.hasDetail ? 'No costs or supplies on this task.' : 'Billing detail not pulled yet — use Re-pull from Breezeway, or the Pull details button up top.'}</div>
             )}
             {canEdit ? (
-              <div className="flex items-center gap-2 mt-2">
-                <input value={extraDesc} onChange={e => setExtraDesc(e.target.value)} placeholder="Add a line item (ours only — not sent to Breezeway)"
-                  className="grow max-w-sm rounded-lg border border-line px-2 py-1 text-[12.5px]" />
-                <input value={extraAmt} onChange={e => setExtraAmt(e.target.value)} placeholder="0.00"
-                  className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums" />
-                <button onClick={addExtra} disabled={!extraDesc.trim() || !Number(extraAmt) || busy === 'extra'}
-                  className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">Add</button>
+              <div className="mt-2">
+                <div className="flex items-center gap-2">
+                  <select value={extraKind} onChange={e => setExtraKind(e.target.value as any)}
+                    className="rounded-lg border border-line px-2 py-1 text-[12.5px] bg-white">
+                    <option value="supply">Supplies cost</option>
+                    <option value="extra">Other line item</option>
+                  </select>
+                  <input value={extraDesc} onChange={e => setExtraDesc(e.target.value)} placeholder={extraKind === 'supply' ? 'What was bought (e.g. AC filter, caulk)' : 'Describe the line item'}
+                    className="grow max-w-sm rounded-lg border border-line px-2 py-1 text-[12.5px]" />
+                  <input value={extraAmt} onChange={e => setExtraAmt(e.target.value)} placeholder="0.00"
+                    className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] tabular-nums" />
+                  <button onClick={addExtra} disabled={!extraDesc.trim() || !Number(extraAmt) || busy === 'extra'}
+                    className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">{busy === 'extra' ? 'Adding…' : 'Add'}</button>
+                </div>
+                <p className="mt-1 text-[11px] text-muted">
+                  {extraKind === 'supply'
+                    ? 'Bills to the owner AND is posted onto the Breezeway task as a comment — their API has no writable supply line, so the comment is how it shows in Breezeway.'
+                    : 'Ours only — bills on the export, not sent to Breezeway.'}
+                </p>
               </div>
             ) : null}
           </div>
