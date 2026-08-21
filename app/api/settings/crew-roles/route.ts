@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, requireLevel, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
+import { getAgencies, upsertStaff, type Agency } from '@/lib/staffing'
 import { getCrew, DEPTS, DEPT_LABEL, SOURCE_LABEL, type Dept } from '@/lib/crew'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { nameMatchesRoster } from '@/lib/homebase'
@@ -38,6 +39,9 @@ type Person = {
   payroll: number | null
   homebaseRole: string | null
   staffRole: string | null
+  /** '' = W2, in-house. Otherwise the agency key they are contracted through. */
+  agency: string | null
+  /** miami | broward | north | vendor | '' — '' means they are in no market tab at all. */
   area: string | null
   // Breezeway, as colour only.
   tasks: { total: number; cleans: number; maintenance: number; inspection: number; other: number }
@@ -53,8 +57,9 @@ export async function GET(req: NextRequest) {
   const from = dISO(new Date(Date.now() - days * 864e5))
 
   const sb = supabaseAdmin()
-  const [crew, tc, tasksRes] = await Promise.all([
+  const [crew, agencies, tc, tasksRes] = await Promise.all([
     getCrew(),
+    getAgencies(true).catch(() => [] as Agency[]),
     getTimecardsAudited(from, to).catch(() => ({ cards: [] as any[], complete: false, failedWeeks: [] as string[], weeks: 0 })),
     sb.from('breezeway_tasks_sync')
       .select('name, type_department, assignees, scheduled_date, status')
@@ -65,7 +70,7 @@ export async function GET(req: NextRequest) {
   const byName: Record<string, Person> = {}
   const blank = (name: string): Person => ({
     name, dept: 'other', source: 'unrostered', sourceLabel: SOURCE_LABEL.unrostered, editable: true,
-    hours: 0, payroll: money ? 0 : null, homebaseRole: null, staffRole: null, area: null,
+    hours: 0, payroll: money ? 0 : null, homebaseRole: null, staffRole: null, agency: null, area: null,
     tasks: { total: 0, cleans: 0, maintenance: 0, inspection: 0, other: 0 },
   })
   for (const c of (tc.cards || [])) {
@@ -99,6 +104,7 @@ export async function GET(req: NextRequest) {
     const p = byName[n]
     const rec = crew.staff[n] || Object.values(crew.staff).find((s: any) => nameMatchesRoster(n, [s.name])) as any
     p.staffRole = rec?.role ? str(rec.role) : null
+    p.agency = rec?.agency ? str(rec.agency) : null
     p.area = rec?.area ? str(rec.area) : null
     const r = crew.deptOfDetailed(n, p.homebaseRole, null)
     p.dept = r.dept
@@ -136,6 +142,17 @@ export async function GET(req: NextRequest) {
     depts: DEPTS.map(d => ({ key: d, label: DEPT_LABEL[d] })),
     counts,
     overrides: crew.overrides,
+    // W2 is the absence of an agency, so it is offered as a real choice rather than a blank.
+    agencies: [{ key: '', label: 'W2 — in-house' }, ...agencies.map(a => ({ key: a.key, label: a.label }))],
+    // Vendor sits beside the geographic markets on purpose: a vendor-cleaned unit is its own bucket
+    // in the economics, never part of Miami or Broward.
+    areas: [
+      { key: '', label: 'Not set' },
+      { key: 'miami', label: 'Miami' },
+      { key: 'broward', label: 'Broward' },
+      { key: 'north', label: 'North' },
+      { key: 'vendor', label: 'Vendor' },
+    ],
     // The cost of the hole, in the units that matter.
     gap: {
       people: onPayrollNoCrew.length,
@@ -177,9 +194,27 @@ export async function PUT(req: NextRequest) {
     next[name] = v
   }
 
+  // Agency (or W2) and market live on the `staff` row, not in this setting — same record the
+  // Staffing screen edits, so the two can never drift apart. Partial upsert: only the fields
+  // actually sent are touched.
+  const staffEdits = (body?.staff && typeof body.staff === 'object') ? body.staff : {}
+  const staffErrors: string[] = []
+  let staffSaved = 0
+  for (const rawName of Object.keys(staffEdits)) {
+    const name = String(rawName).trim().slice(0, 120)
+    if (!name) continue
+    const e = staffEdits[rawName] || {}
+    const patch: any = { name }
+    if ('agency' in e) patch.agency = e.agency ? String(e.agency) : null
+    if ('area' in e) patch.area = e.area ? String(e.area).toLowerCase() : null
+    if (Object.keys(patch).length < 2) continue
+    const r = await upsertStaff(patch)
+    if (r.ok) staffSaved++; else staffErrors.push(`${name}: ${r.error}`)
+  }
+
   const { error } = await supabaseAdmin().from('app_settings').upsert(
     { key: KEY, value: JSON.stringify(next), updated_by: access.email, updated_at: new Date().toISOString() },
     { onConflict: 'key' })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, set, cleared, roles: next })
+  return NextResponse.json({ ok: true, set, cleared, staffSaved, staffErrors, roles: next })
 }
