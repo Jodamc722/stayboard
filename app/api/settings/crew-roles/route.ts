@@ -108,11 +108,24 @@ export async function GET(req: NextRequest) {
 
   const people = Object.values(byName).sort((a, b) => {
     // The people whose crew nobody has stated come first — they are the ones bending the numbers.
-    const rank = (p: Person) => (p.source === 'unrostered' ? 0 : p.source === 'inferred' ? 1 : 2)
+    const rank = (p: Person) => {
+      const unset = p.source === 'unrostered' || p.source === 'inferred'
+      if (unset && p.hours > 0) return 0     // real wages in the wrong place
+      if (unset) return 2                    // outside cleaner — expected
+      return 1
+    }
     return rank(a) - rank(b) || b.hours - a.hours || a.name.localeCompare(b.name)
   })
 
-  const needsAnswer = people.filter(p => p.source === 'unrostered' || p.source === 'inferred')
+  // TWO DIFFERENT KINDS OF "NOT PLACED", AND ONLY ONE OF THEM IS A PROBLEM.
+  //   • On payroll with no crew — they clocked Homebase hours, so real wages are sitting in Other
+  //     instead of a margin. This is the one worth shouting about.
+  //   • Seen in Breezeway but never clocked an hour — a vendor's cleaner or an outside contractor.
+  //     Expected, costs us no payroll, and placing them would ADD cleans with no wages behind them.
+  // Reporting them as one number said "16 people on payroll — $0 of wages", which is nonsense.
+  const unplaced = (p: Person) => p.source === 'unrostered' || p.source === 'inferred'
+  const onPayrollNoCrew = people.filter(p => unplaced(p) && p.hours > 0)
+  const breezewayOnly = people.filter(p => unplaced(p) && p.hours <= 0)
   const counts: Record<string, number> = {}
   for (const d of DEPTS) counts[d] = people.filter(p => p.dept === d).length
 
@@ -125,9 +138,15 @@ export async function GET(req: NextRequest) {
     overrides: crew.overrides,
     // The cost of the hole, in the units that matter.
     gap: {
-      people: needsAnswer.length,
-      hours: round2(needsAnswer.reduce((s, p) => s + p.hours, 0)),
-      payroll: money ? round2(needsAnswer.reduce((s, p) => s + (p.payroll || 0), 0)) : null,
+      people: onPayrollNoCrew.length,
+      hours: round2(onPayrollNoCrew.reduce((s, p) => s + p.hours, 0)),
+      payroll: money ? round2(onPayrollNoCrew.reduce((s, p) => s + (p.payroll || 0), 0)) : null,
+    },
+    // Not a problem — stated so it is obvious why they sit in Other.
+    outside: {
+      people: breezewayOnly.length,
+      names: breezewayOnly.map(p => p.name),
+      tasks: breezewayOnly.reduce((s, p) => s + p.tasks.total, 0),
     },
     // Homebase week fetches can fail; a partial roster must not read as a complete one.
     payrollComplete: (tc as any).complete !== false,
