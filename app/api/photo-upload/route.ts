@@ -5,6 +5,7 @@
 // human slots the photo into the order and pushes via /api/photo-order (adds map).
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
 
@@ -22,6 +23,11 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
 }
 
 export async function POST(req: NextRequest) {
+  // 2026-08-21: these routes write to LIVE OTA listings (photo-order PUTs the picture array to
+  // Guesty and honours a remove[] that permanently drops photos) yet only checked "is signed in",
+  // while the copy route next door required optimize/edit. Same gate on both now.
+  const gate = await requireLevel('optimize', 'edit')
+  if (!gate.ok) return gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
