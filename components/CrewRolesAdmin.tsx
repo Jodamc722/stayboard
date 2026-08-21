@@ -25,6 +25,7 @@ type Data = {
   depts: { key: string; label: string }[]
   counts: Record<string, number>
   gap: { people: number; hours: number; payroll: number | null }
+  outside: { people: number; names: string[]; tasks: number }
   from: string; to: string; days: number
   payrollComplete: boolean
 }
@@ -115,8 +116,19 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         <Note tone="bad">
           <span>
             <b>{d.gap.people} {d.gap.people === 1 ? 'person is' : 'people are'} on payroll with no crew stated</b> — {d.gap.hours.toLocaleString()}h
-            {d.gap.payroll != null && <> and {money(d.gap.payroll)} of wages</>} that the margins are either guessing at or parking in Other.
+            {d.gap.payroll != null && <> and {money(d.gap.payroll)} of wages</>} sitting in Other instead of a margin.
             They are at the top of the list. Set them and every labor number sharpens.
+          </span>
+        </Note>
+      )}
+
+      {d && d.outside.people > 0 && (
+        <Note tone="warn">
+          <span>
+            <b>{d.outside.people} names did {d.outside.tasks} tasks in Breezeway but never clocked a Homebase hour</b> — vendor
+            and outside cleaners. They cost us no payroll, so they belong in Other: placing one on a crew would add
+            its cleans to that crew&apos;s denominator with no wages behind them and quietly make every clean look cheaper.
+            They are at the bottom of the list; leave them unless one of them is actually ours.
           </span>
         </Note>
       )}
