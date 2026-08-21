@@ -18,7 +18,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
-import { noBreezewayRegex } from '@/lib/ops-presets'
+import { noBreezewayRegex, vendorRegex } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { canSeeMoney, type Access } from '@/lib/access'
 import { redactMoney } from '@/lib/money'
@@ -132,7 +132,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const resTo = addDays(to, 14)          // far enough forward for arrivals-next-7 and welcome calls
     const [reservations, tasks, sentiment, lowReviews, glitchRows, openWork, timesheets, syncRows, openGlitchRes, openTaskRes] = await Promise.all([
       pageAll((a, b) => db.from('guesty_reservations')
-        .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,money_total,custom_fields,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation')
+        .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,money_total,custom_fields,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
         .gte('check_out', resFrom).lte('check_in', resTo).order('check_out').range(a, b)),
       pageAll((a, b) => db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,type_department,scheduled_date,started_at,finished_at,total_minutes,rate_paid,assignees')
@@ -166,6 +166,42 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     // ---------------------------------------------------------------- today
     const live = reservations.filter(r => !isCancelled(r.status) && LIVE_RES.indexOf(str(r.status).toLowerCase()) >= 0 && inScope(r.listing_id))
+    // ── EXPEDIA CLEANING BACK-FILL (2026-08-20, mirrored from lib/labor-econ) ──────────────
+    // Expedia-family channels bundle the cleaning fee INTO the fare, so fareCleaning arrives 0.
+    // The old listing-fee fallback priced those turns while the fare STILL CONTAINED the bundled
+    // fee — the same clean counted twice inside total revenue. The engine's rule, applied here so
+    // the KPI board and the Labor board tell one story: rebuild the fee from the unit's OWN
+    // non-Expedia bookings (the MODAL fee, capped at the fare) and MOVE it out of the fare —
+    // totals unchanged, nothing duplicated. Listing fee only as a last resort for an Expedia
+    // unit with no history to learn from.
+    const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
+    const feePool: Record<string, Record<string, number>> = {}
+    for (const r of live) {
+      const c0 = num(r.cleaning)
+      if (c0 > 0 && !EXPEDIA_RE.test(str(r.source).toLowerCase())) {
+        const id = String(r.listing_id), k = String(Math.round(c0))
+        feePool[id] = feePool[id] || {}; feePool[id][k] = (feePool[id][k] || 0) + 1
+      }
+    }
+    const modalFee: Record<string, number> = {}
+    for (const id in feePool) { let best = 0, bn = 0; for (const k in feePool[id]) if (feePool[id][k] > bn) { bn = feePool[id][k]; best = Number(k) }; modalFee[id] = best }
+    for (const r of live) {
+      if (!EXPEDIA_RE.test(str(r.source).toLowerCase())) continue
+      if (num(r.cleaning) > 0) continue
+      const li0 = lmap[String(r.listing_id)]
+      const m = modalFee[String(r.listing_id)] || (li0 && li0.listingFee > 0 ? li0.listingFee : 0)
+      const gf = num(r.fare)
+      const take = Math.min(m, gf)
+      if (!(take > 0)) continue
+      ;(r as any).cleaning = take
+      ;(r as any).fare = gf - take        // it was inside the fare; move it, never duplicate it
+      ;(r as any).__backfilled = true
+    }
+    // Vendor-cleaned buildings — their checkouts earn a fee but no in-house hour touches them,
+    // so cleaning turns are split in-house vs vendor instead of blended.
+    const VENDOR_K = vendorRegex((await getOpsPresets()).vendorBuildings)
+    const vendorLi: Record<string, boolean> = {}
+    for (const l of all) vendorLi[l.id] = VENDOR_K.test(l.building) || VENDOR_K.test(l.name)
     const dOf = (v: any) => str(v).slice(0, 10)
     const arrivalsToday = live.filter(r => dOf(r.check_in) === today)
     const departuresToday = live.filter(r => dOf(r.check_out) === today)
@@ -194,6 +230,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const stayBlock = (a: string, b: string) => {
       const days = daysBetween(a, b)
       let nights = 0, room = 0, cleaning = 0, turns = 0, arrivals = 0, turnsFromListingFee = 0, turnsUnpriced = 0
+      let cleaningNet = 0, cleaningGrossIn = 0, cleaningNetIn = 0, turnsIn = 0, turnsVen = 0, turnsBackfilled = 0
       const byChannel: Record<string, { nights: number; revenue: number }> = {}
       const byBuilding: Record<string, { nights: number; revenue: number; cleaning: number; units: Record<string, true> }> = {}
       for (const r of live) {
@@ -217,9 +254,20 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         if (inWin(dOf(r.check_out), a, b)) {
           const charged = num(r.cleaning)
           let c = charged
+          // Expedia-bundled fees were already rebuilt OUT of the fare above, so this fallback now
+          // only prices a non-Expedia checkout that genuinely carries no fee.
           if (!c && li && li.listingFee > 0) { c = li.listingFee; turnsFromListingFee += 1 }
           else if (!c) turnsUnpriced += 1
           cleaning += c; turns += 1
+          if ((r as any).__backfilled) turnsBackfilled += 1
+          // NET of the channel's cut — the exact formula lib/labor-econ uses, so this board and
+          // the Labor board net the same way: fee − hostServiceFee × (fee / (fare + fee)).
+          const chFee = Math.max(0, num(r.channelFee))
+          const base = num(r.fare) + c
+          const netC = base > 0 && chFee > 0 ? Math.max(0, c - chFee * (c / base)) : c
+          cleaningNet += netC
+          if (li && vendorLi[li.id]) turnsVen += 1
+          else { turnsIn += 1; cleaningGrossIn += c; cleaningNetIn += netC }
           if (!byBuilding[bld]) byBuilding[bld] = { nights: 0, revenue: 0, cleaning: 0, units: {} }
           byBuilding[bld].cleaning += c
         }
@@ -228,6 +276,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       const available = unitCount * days
       return {
         days, nights, available, arrivals, turns, turnsFromListingFee, turnsUnpriced,
+        turnsInHouse: turnsIn, turnsVendor: turnsVen, turnsBackfilled,
+        cleaningNet: Math.round(cleaningNet),
+        cleaningNetInHouse: Math.round(cleaningNetIn),
+        cleaningGrossInHouse: Math.round(cleaningGrossIn),
         occupancy: available ? round((nights / available) * 100, 1) : 0,
         roomRevenue: Math.round(room),
         cleaningRevenue: Math.round(cleaning),
@@ -384,8 +436,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     // and a $0 labour cost — both worse than useless. When no pay is recorded anywhere, the money
     // side of housekeeping is reported as UNKNOWN, not as free.
     const cleaningCostKnown = work.cleaningCost > 0
-    const cleaningMargin = stays.cleaningRevenue - work.cleaningCost
-    const cleaningMarginPrev = staysPrev.cleaningRevenue - workPrev.cleaningCost
+    // Margin runs on NET IN-HOUSE revenue — what we actually keep on units our own crew turns —
+    // never on gross-including-vendor, which flattered the margin twice over.
+    const cleaningMargin = stays.cleaningNetInHouse - work.cleaningCost
+    const cleaningMarginPrev = staysPrev.cleaningNetInHouse - workPrev.cleaningCost
     const labourCost = homebase.hasData ? homebase.cost : work.cost
     const labourCostPrev = homebasePrev.hasData ? homebasePrev.cost : workPrev.cost
     const labourSource = homebase.hasData ? 'homebase' : (work.cost > 0 ? 'breezeway' : 'none')
@@ -522,11 +576,20 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       },
 
       cleaning: {
-        revenue: money(stays.cleaningRevenue), revenuePrev: money(staysPrev.cleaningRevenue),
-        revenueChange: money(pctChange(stays.cleaningRevenue, staysPrev.cleaningRevenue)),
+        // NET, IN-HOUSE, ENGINE CONVENTION (Jon, 2026-08-21: "make sure that on all interfaces
+        // everything is pulling the same level of data"). Revenue here is what we keep of the
+        // cleaning fee after the OTA's cut, on units our own crew turns. Vendor checkouts and
+        // the channel cut are broken out below instead of blended in; gross stays visible.
+        revenue: money(stays.cleaningNetInHouse), revenuePrev: money(staysPrev.cleaningNetInHouse),
+        revenueChange: money(pctChange(stays.cleaningNetInHouse, staysPrev.cleaningNetInHouse)),
+        revenueGross: money(stays.cleaningRevenue),          // every checkout, before the cut
+        revenueGrossPrev: money(staysPrev.cleaningRevenue),
+        channelCut: money(Math.max(0, stays.cleaningGrossInHouse - stays.cleaningNetInHouse)),
         turns: stays.turns, turnsPrev: staysPrev.turns,
+        turnsInHouse: stays.turnsInHouse, turnsInHousePrev: staysPrev.turnsInHouse,
+        turnsVendor: stays.turnsVendor, turnsBackfilled: stays.turnsBackfilled,
         turnsFromListingFee: stays.turnsFromListingFee, turnsUnpriced: stays.turnsUnpriced,
-        feePerTurn: money(stays.turns ? Math.round(stays.cleaningRevenue / stays.turns) : 0),
+        feePerTurn: money(stays.turnsInHouse ? Math.round(stays.cleaningNetInHouse / stays.turnsInHouse) : 0),
         costKnown: cleaningCostKnown,
         cost: cleaningCostKnown ? money(work.cleaningCost) : null,
         costPrev: cleaningCostKnown ? money(workPrev.cleaningCost) : null,
@@ -534,7 +597,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         margin: cleaningCostKnown ? money(cleaningMargin) : null,
         marginPrev: cleaningCostKnown ? money(cleaningMarginPrev) : null,
         marginChange: cleaningCostKnown ? money(pctChange(cleaningMargin, cleaningMarginPrev)) : null,
-        marginPct: cleaningCostKnown && stays.cleaningRevenue ? money(round((cleaningMargin / stays.cleaningRevenue) * 100, 1)) : null,
+        marginPct: cleaningCostKnown && stays.cleaningNetInHouse ? money(round((cleaningMargin / stays.cleaningNetInHouse) * 100, 1)) : null,
         minutesPerTurn: work.minutesPerTurn,
         costNote: cleaningCostKnown
           ? 'cost = what Breezeway records as paid on completed housekeeping tasks'
