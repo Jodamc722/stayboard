@@ -40,7 +40,7 @@ import { getOpsPresets } from './app-settings'
 import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
 import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
-import { resolveStaff } from './staffing'
+import { resolveStaff, getAgencies } from './staffing'
 import { laborAmount } from './billing'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -160,6 +160,17 @@ export type PersonEcon = {
   revenue: number              // cleaning + billable
   margin: number               // revenue - payroll
   costPerClean: number | null
+  /** Agency key ('' / null = W-2 in-house). From the merged People & agencies roster. */
+  agency?: string | null
+  agencyLabel?: string
+  /** Raw Homebase wages before the agency markup was loaded on. */
+  wagesHomebase?: number
+  /** The agency's markup share loaded onto this person for the window. */
+  agencyLoad?: number
+  /** Departure cleans by unit size — studio / 1br / 2br / 3br / 4br+. */
+  roomMix?: Record<string, number>
+  /** Same-day moves between different BUILDINGS (Rustic 1 → Rustic 2 is not a hop). */
+  travel?: { hops: number; minutes: number }
 }
 
 export type DeptEcon = {
@@ -279,14 +290,14 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const [presets, crew, listingRows, tcAudit] = await Promise.all([
     getOpsPresets(),
     getCrew(),
-    pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city').order('id', { ascending: true }).range(a, b)),
+    pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city,bedrooms').order('id', { ascending: true }).range(a, b)),
     // Audited: a week Homebase failed to return is RECORDED, never silently empty. If any week is
     // missing, every payroll-derived number below is suspect and payrollAudit.complete says so.
     getTimecardsAudited(from, to).catch((): TimecardAudit => ({ cards: [] as Timecard[], weeks: 0, failedWeeks: ['all'], complete: false })),
   ])
   const timecards = tcAudit.cards
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean }> = {}
+  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean; bot: boolean; bedrooms: number | null; travelKey: string }> = {}
   for (const l of listingRows) {
     const name = l.nickname || l.title || 'Unit'
     const vendor = VENDOR_RE.test(String(l.building || '')) || VENDOR_RE.test(String(name))
@@ -294,7 +305,22 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // not charge any billables because they pay for George Paz") — a $0 task there is the deal
     // working, not paperwork missing, so it never counts in tasksNoCharge.
     const is17 = /17\s*west/i.test(String(l.building || '')) || /17\s*west/i.test(String(name))
-    lmap[String(l.id)] = { market: vendor ? 'vendor' : marketOf(l.building, l.address_city, name).toLowerCase(), name, vendor, is17 }
+    // BOTANICA IS NOT CLEANING REVENUE (Jon, 2026-08-22: "the cleaning fee goes back into ADR.
+    // We don't even get invoiced for that. We don't pay for any cleaning. It's just part of ADR
+    // and our management agreement.") So its fee belongs in NO cleaning bucket and its building
+    // never appears in the vendor-invoice check.
+    const bot = /botanica/i.test(String(l.building || '')) || /botanica/i.test(String(name))
+    const beds = Number(l.bedrooms)
+    // Travel groups by the BUILDING'S base name: "Rustic 1" and "Rustic 2" are one property
+    // (Jon, 2026-08-22: "not Rustic one, Rustic two — it wouldn't count"), so trailing unit
+    // numbering is stripped before two tasks are compared for a commute.
+    const travelKey = String(l.building || '').trim().toLowerCase().replace(/\s*(#|no\.?\s*)?\d+$/, '').trim()
+    lmap[String(l.id)] = {
+      market: vendor ? 'vendor' : marketOf(l.building, l.address_city, name).toLowerCase(),
+      name, vendor, is17, bot,
+      bedrooms: Number.isFinite(beds) ? beds : null,
+      travelKey,
+    }
   }
   const inMarketListing = (id: any) => market === 'all' || lmap[String(id)]?.market === market
 
@@ -526,6 +552,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       // VENDOR-CLEANED UNITS ARE THEIR OWN BUCKET (Jon, 2026-08-12). A checkout there needed a
       // clean and earned a fee, but no in-house hour went into it — so it carries revenue and a
       // clean count, and never a cost per clean.
+      // BOTANICA IS THE EXCEPTION (Jon, 2026-08-22): its cleaning fee is part of ADR under the
+      // management agreement — never invoiced, never paid for. Room revenue by contract, so it
+      // stays out of every cleaning line.
+      if (li?.bot) continue
       if (inMk) { cleaningVendor += fee; if (fee > 0) vendorCleans++ }
       continue
     }
@@ -618,6 +648,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     return hit || name
   }
 
+  // Same-day building sequence per person, for the travel estimate below.
+  const tripsBy: Record<string, Record<string, { at: string; b: string }[]>> = {}
   for (const t of taskRows) {
     const w = doer(t)
     if (!w) continue
@@ -628,6 +660,19 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (kind === 'clean') p.cleans++
     const ch = chargeOf(t)
     const li = lmap[String(t.reference_property_id)]
+    // ROOM MIX (Jon, 2026-08-22: "the type of room that they cleaned — one bedrooms, studios,
+    // two bedrooms, three bedrooms"). A 3BR turn is not a studio turn; the mix says whether a
+    // cleaner's day was heavy or light, and it rides on every per-person row.
+    if (kind === 'clean' && li && li.bedrooms != null) {
+      const bb = li.bedrooms <= 0 ? 'studio' : li.bedrooms === 1 ? '1br' : li.bedrooms === 2 ? '2br' : li.bedrooms === 3 ? '3br' : '4br+'
+      p.roomMix = p.roomMix || {}
+      p.roomMix[bb] = (p.roomMix[bb] || 0) + 1
+    }
+    if (li && li.travelKey && t.finished_at) {
+      const day = String(t.finished_at).slice(0, 10)
+      const tr = (tripsBy[k] = tripsBy[k] || {})
+      ;(tr[day] = tr[day] || []).push({ at: String(t.finished_at), b: li.travelKey })
+    }
     // A charged CLEANING task is cleaning revenue (counted via cleanRecs below), not a billable —
     // otherwise the same $25 linen refresh would show up in both columns.
     const isChargedClean = chargedCleanIds[String(t.id)]
@@ -685,12 +730,72 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.declared = crew.isDeclared(p.name)
     const rec = resolveStaff(p.name, crew.staff)
     p.market = (rec?.area ? String(rec.area).toLowerCase() : '') || 'unassigned'
+    p.agency = rec && rec.agency ? String(rec.agency) : null
     p.revenue = round2(p.cleaningRevenue + p.billableRevenue)
     p.margin = round2(p.revenue - p.payroll)
     p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
   }
 
   const peopleAll = Object.keys(acc).map(k => { const { _mk, ...rest } = acc[k]; return rest as PersonEcon })
+
+  // ── TRAVEL BETWEEN BUILDINGS (Jon, 2026-08-22: "if it was Rustic and then they cleaned
+  // Hendrix, there's going to be a travel commute... Rustic one, Rustic two wouldn't count") ──
+  // Per person per day, tasks ordered by finish time; every change of building-base is one hop.
+  // STATED ASSUMPTION: 25 minutes per hop — a Miami/Broward drive plus parking and elevator.
+  // Refine per-pair from listing lat/lng later if a flat figure proves too blunt.
+  const TRAVEL_MIN_PER_HOP = 25
+  for (const p of peopleAll) {
+    const byDay = tripsBy[p.name] || {}
+    let hops = 0
+    for (const d of Object.keys(byDay)) {
+      const seq = byDay[d].sort((x, y) => x.at.localeCompare(y.at))
+      for (let i = 1; i < seq.length; i++) if (seq[i].b && seq[i - 1].b && seq[i].b !== seq[i - 1].b) hops++
+    }
+    if (hops > 0) p.travel = { hops, minutes: hops * TRAVEL_MIN_PER_HOP }
+  }
+
+  // ── AGENCY-LOADED LABOR COST (Jon, 2026-08-22: "What agency they work for, whether they're
+  // a W-2 employee, whether they're through Atlantic, City Best, Opel") ──────────────────────
+  // An agency worker costs more than the Homebase wage: the agency's contracted markup — % of
+  // wages, $ per hour, and a flat amount per weekly invoice (allocated across that agency's
+  // people by their share of hours). The models must run on what Stay ACTUALLY PAYS, so each
+  // person's payroll becomes wage + that share, and every layer downstream — cost per clean,
+  // buckets, departments, margins — inherits it. Raw Homebase wages stay on the person
+  // (wagesHomebase) and kpi.agencyLoad is the receipt. Agencies whose fees are still 0 load
+  // nothing, so this is inert until the contracts are typed into the People & agencies card.
+  const winDays = Math.max(1, Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 864e5) + 1)
+  const agenciesList = await getAgencies().catch(() => [] as Awaited<ReturnType<typeof getAgencies>>)
+  const agencyIdx: Record<string, { label: string; pct: number; perHour: number; flat: number }> = {}
+  for (const a of agenciesList) agencyIdx[a.key] = { label: a.label, pct: a.fee_percent, perHour: a.fee_per_hour, flat: a.fee_flat }
+  const byAgencyGrp: Record<string, { people: PersonEcon[]; hours: number }> = {}
+  for (const p of peopleAll) {
+    p.agencyLabel = p.agency ? (agencyIdx[p.agency]?.label || p.agency) : 'W-2'
+    p.wagesHomebase = p.payroll
+    p.agencyLoad = 0
+    if (p.agency && agencyIdx[p.agency]) {
+      const g = byAgencyGrp[p.agency] = byAgencyGrp[p.agency] || { people: [], hours: 0 }
+      g.people.push(p); g.hours += p.hours
+    }
+  }
+  const weeklyInvoices = Math.max(1, Math.ceil(winDays / 7))   // flat fees bill once per weekly invoice
+  const agencyLoad = { total: 0, byAgency: [] as { key: string; label: string; people: number; wages: number; load: number }[] }
+  for (const key of Object.keys(byAgencyGrp)) {
+    const a = agencyIdx[key], g = byAgencyGrp[key]
+    let wages = 0, load = 0
+    for (const p of g.people) {
+      const per = round2(p.payroll * (a.pct / 100) + p.hours * a.perHour + (g.hours > 0 ? (a.flat * weeklyInvoices) * (p.hours / g.hours) : 0))
+      p.agencyLoad = per
+      p.payroll = round2(p.payroll + per)
+      p.margin = round2(p.revenue - p.payroll)
+      p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
+      wages = round2(wages + (p.wagesHomebase || 0)); load = round2(load + per)
+    }
+    if (load > 0) {
+      agencyLoad.total = round2(agencyLoad.total + load)
+      agencyLoad.byAgency.push({ key, label: a.label, people: g.people.length, wages, load })
+    }
+  }
+
   let people = peopleAll.slice()
   // `|| p.market === 'unassigned'` used to live here, which counted every unplaced person's FULL
   // payroll on Miami AND Broward AND North at once. A market tab now shows only the people whose
@@ -1083,6 +1188,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       windowDays: w17days,
       note: '17WEST pays $100k/yr toward George Paz + Yoslenis; their tasks there are unbilled by design',
     },
+    // THE AGENCY RECEIPT: the contracted markup loaded onto Homebase wages for staff who work
+    // through Atlantic / CityBest / Opal — already inside every payroll line above. Empty until
+    // the agency fees are entered on the People & agencies card.
+    agencyLoad,
     // The whole labor line including the fixed layer, for the one number that hides nothing.
     allIn: {
       revenue: staffRevenue,
@@ -1130,6 +1239,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   for (const r of resRowsAll) {
     const li = lmap[String(r.listing_id)]
     if (!li || !li.vendor) continue
+    // Botanica is NEVER invoiced for cleaning (Jon, 2026-08-22: the fee is part of ADR under the
+    // management agreement) — so it has no place in an invoice-verification table.
+    if (li.bot) continue
     const b = buildingOf(li.name) || 'Other vendor'
     const row = vbFor(b)
     row.checkouts++
@@ -1139,15 +1251,19 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const li = lmap[String(t.reference_property_id)]
     if (!li || !li.vendor) continue
     const b = buildingOf(li.name) || 'Other vendor'
-    const row = vbFor(b)
+    // Botanica: no invoice check, but our own crew's work there is still OUR cost — keep the
+    // ourTasks entries, skip the owed-them counting.
+    const row = li.bot ? null : vbFor(b)
     const w = doer(t)
     const kind = kindOfTask(t)
-    if (kind === 'clean') row.vendorCleansLogged++
+    if (row && kind === 'clean') row.vendorCleansLogged++
     if (!w || !onPayrollNames[w]) continue     // the vendor's own crew — not our cost
     const ch = chargeOf(t)
-    row.ourTasks++
-    if (kind === 'clean') { row.ourCleans++; row.vendorCleansLogged-- }
-    row.ourBilled = round2(row.ourBilled + ch.billable)
+    if (row) {
+      row.ourTasks++
+      if (kind === 'clean') { row.ourCleans++; row.vendorCleansLogged-- }
+      row.ourBilled = round2(row.ourBilled + ch.billable)
+    }
     ourTasks.push({
       date: String(t.finished_at || '').slice(0, 10),
       unit: li.name, building: b, person: w, dept: deptByName[w] || 'other',
