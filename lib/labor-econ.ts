@@ -39,7 +39,7 @@ import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
-import { getCrew, type Dept, DEPTS, DEPT_LABEL } from './crew'
+import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
 import { resolveStaff } from './staffing'
 import { laborAmount } from './billing'
 
@@ -141,6 +141,8 @@ export type PersonEcon = {
   name: string
   dept: Dept
   declared: boolean            // named on the roster vs inferred
+  /** WHERE the crew came from. 'unrostered' means nobody has placed them — see lib/crew. */
+  deptSource: DeptSource
   market: string
   role: string | null
   hours: number
@@ -242,6 +244,12 @@ export type LaborEcon = {
     tasksWithNoCharge: number
     billableTasks: number
   }
+  /** On payroll but on nobody's crew — their wages sit in Other and skew nothing else. Fix in
+   *  /users → App settings → Crew & roles. */
+  unrostered: { people: number; payroll: number; hours: number; names: string[] }
+  /** On payroll with no Staffing area — excluded from every market tab, on purpose, and reported
+   *  here so the market tabs add up to less than the company total for a reason you can see. */
+  unassignedMarket: { people: number; payroll: number; hours: number; names: string[] }
 }
 
 const EMPTY_DEPT = (key: Dept): DeptEcon => ({
@@ -600,7 +608,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   type Acc = PersonEcon & { _mk: Record<string, number> }
   const acc: Record<string, Acc> = {}
   const blank = (name: string): Acc => ({
-    name, dept: 'other', declared: false, market: '', role: null,
+    name, dept: 'other', declared: false, deptSource: 'unrostered' as DeptSource, market: '', role: null,
     hours: 0, payroll: 0, wageRate: null, cleans: 0, cleaningRevenue: 0,
     billableRevenue: 0, materials: 0, tasks: 0, billableTasks: 0, tasksNoCharge: 0,
     onPayroll: false, revenue: 0, margin: 0, costPerClean: null, _mk: {},
@@ -664,15 +672,19 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // never clocks a Homebase hour is a vendor's cleaner, not our labor — counting them added
     // cleans to the denominator with no wages in the numerator, quietly making every clean look
     // cheaper. Only an explicit roster entry can put a non-payroll name on a crew.
-    let guess: Dept | null = null
-    if (p.onPayroll && (p.cleans > 0 || (cleansAllBy[p.name] || 0) > 0)) guess = 'housekeeping'
-    else if (p.onPayroll && p.billableRevenue > 0) guess = 'maintenance'
-    p.dept = crew.deptOf(p.name, p.role, guess)
+    // BREEZEWAY IS COLOUR, NOT THE RULE (Jon, 2026-08-21). Until today an unrostered person who
+    // happened to turn units in Breezeway was auto-classed as a housekeeper, so a maintenance
+    // tech's wages landed inside cost per clean; and a blank Staffing area fell back to whichever
+    // market most of their Breezeway cleans were in, so a task list decided whose payroll counted
+    // against which market's revenue. Both are gone. The roster decides the crew, Staffing decides
+    // the market, and anyone nobody has placed is REPORTED rather than guessed — see the
+    // `unrostered` and `unassignedMarket` blocks below, which the UI shows on screen.
+    const resolved = crew.deptOfDetailed(p.name, p.role, null)
+    p.dept = resolved.dept
+    p.deptSource = resolved.source
     p.declared = crew.isDeclared(p.name)
     const rec = resolveStaff(p.name, crew.staff)
-    let best = '', bn = 0
-    for (const mk of Object.keys(p._mk)) if (p._mk[mk] > bn) { best = mk; bn = p._mk[mk] }
-    p.market = (rec?.area ? String(rec.area).toLowerCase() : '') || best || 'unassigned'
+    p.market = (rec?.area ? String(rec.area).toLowerCase() : '') || 'unassigned'
     p.revenue = round2(p.cleaningRevenue + p.billableRevenue)
     p.margin = round2(p.revenue - p.payroll)
     p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
@@ -680,8 +692,23 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   const peopleAll = Object.keys(acc).map(k => { const { _mk, ...rest } = acc[k]; return rest as PersonEcon })
   let people = peopleAll.slice()
-  if (market !== 'all') people = people.filter(p => p.market === market || p.market === 'unassigned')
+  // `|| p.market === 'unassigned'` used to live here, which counted every unplaced person's FULL
+  // payroll on Miami AND Broward AND North at once. A market tab now shows only the people whose
+  // Staffing area says so; the rest surface in `unassignedMarket` as one honest line.
+  if (market !== 'all') people = people.filter(p => p.market === market)
   people.sort((a, b) => b.revenue - a.revenue || b.payroll - a.payroll)
+
+  // THE TWO HOLES IN THE ROSTER, PRICED. Both are computed across every market so the number does
+  // not change with the tab you are on, and both name names — a gap you can see is worth more than
+  // a number quietly filled in.
+  const gap = (rows: PersonEcon[]) => ({
+    people: rows.length,
+    payroll: round2(rows.reduce((s, p) => s + p.payroll, 0)),
+    hours: round2(rows.reduce((s, p) => s + p.hours, 0)),
+    names: rows.map(p => p.name).sort(),
+  })
+  const unrostered = gap(peopleAll.filter(p => p.onPayroll && p.deptSource === 'unrostered'))
+  const unassignedMarket = gap(peopleAll.filter(p => p.onPayroll && p.market === 'unassigned'))
 
   // ── departments ──────────────────────────────────────────────────────────
   const byDept: Record<string, DeptEcon> = {}
@@ -1242,5 +1269,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       tasksWithNoCharge: people.reduce((a, p) => a + p.tasksNoCharge, 0),
       billableTasks: people.reduce((a, p) => a + p.billableTasks, 0),
     },
+    unrostered,
+    unassignedMarket,
   }
 }

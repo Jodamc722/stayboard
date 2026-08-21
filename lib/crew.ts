@@ -80,13 +80,33 @@ export function deptOfRoleText(role: string | null | undefined): Dept | null {
   return null
 }
 
+/** WHERE a person's crew came from — the whole point of the roster editor is making this visible.
+ *  Anything below `staff` is a guess, and a guess is what puts a maintenance tech's wages inside
+ *  the cost per clean. */
+export type DeptSource = 'override' | 'declared' | 'staff' | 'homebase' | 'inferred' | 'unrostered'
+
+export const SOURCE_LABEL: Record<DeptSource, string> = {
+  override: 'Set here',
+  declared: 'Stay roster',
+  staff: 'Staffing role',
+  homebase: 'Homebase role text',
+  inferred: 'Guessed from their tasks',
+  unrostered: 'Nobody has said',
+}
+
 export type CrewMap = {
   /** Resolve a name (Homebase or Breezeway spelling) to its crew. */
   deptOf: (name: string, roleText?: string | null, fallback?: Dept | null) => Dept
+  /** Same, but says WHERE the answer came from. Used by the roster editor. */
+  deptOfDetailed: (name: string, roleText?: string | null, fallback?: Dept | null) => { dept: Dept; source: DeptSource }
   /** True when the person was named explicitly rather than inferred. */
   isDeclared: (name: string) => boolean
+  /** True when an operator set this person by hand in app_settings 'crew_roles'. */
+  isOverridden: (name: string) => boolean
   staff: Record<string, StaffRow>
   declared: Record<string, Dept>
+  /** Just the operator overrides, so the editor can show what has been set by hand. */
+  overrides: Record<string, Dept>
 }
 
 /**
@@ -100,11 +120,13 @@ export async function getCrew(): Promise<CrewMap> {
   ])
   const declared: Record<string, Dept> = {}
   for (const k of Object.keys(DECLARED)) declared[k] = DECLARED[k]
+  const overrides: Record<string, Dept> = {}
   for (const k of Object.keys(override || {})) {
     const v = String((override as any)[k] || '').toLowerCase() as Dept
-    if (DEPTS.indexOf(v) >= 0) declared[k] = v
+    if (DEPTS.indexOf(v) >= 0) { declared[k] = v; overrides[k] = v }
   }
   const declaredNames = Object.keys(declared)
+  const overrideNames = Object.keys(overrides)
   const cache: Record<string, Dept | null> = {}
 
   const lookupDeclared = (name: string): Dept | null => {
@@ -130,5 +152,29 @@ export async function getCrew(): Promise<CrewMap> {
     return out
   }
 
-  return { deptOf, isDeclared: (n: string) => !!lookupDeclared(n), staff, declared }
+  // Same resolution order as deptOf, reported step by step. Kept as its own function rather than
+  // threading a second return value through deptOf, which is called on every timecard row.
+  const deptOfDetailed = (name: string, roleText?: string | null, fallback?: Dept | null): { dept: Dept; source: DeptSource } => {
+    const n = String(name || '')
+    const ov = overrides[n] || (nameMatchesRoster(n, overrideNames) ? overrides[nameMatchesRoster(n, overrideNames) as string] : null)
+    if (ov) return { dept: ov, source: 'override' }
+    const byName = lookupDeclared(n)
+    if (byName) return { dept: byName, source: 'declared' }
+    const rec = resolveStaff(n, staff)
+    const byStaff = deptOfRoleText(rec?.role)
+    if (byStaff) return { dept: byStaff, source: 'staff' }
+    const byRole = deptOfRoleText(roleText)
+    if (byRole) return { dept: byRole, source: 'homebase' }
+    // No fallback offered = nobody has placed this person. Say that, rather than dressing up
+    // 'other' as an answer. Jon 2026-08-21: unrostered is flagged, never guessed.
+    if (!fallback) return { dept: 'other', source: 'unrostered' }
+    return { dept: fallback, source: 'inferred' }
+  }
+
+  return {
+    deptOf, deptOfDetailed,
+    isDeclared: (n: string) => !!lookupDeclared(n),
+    isOverridden: (n: string) => !!(overrides[String(n || '')] || nameMatchesRoster(String(n || ''), overrideNames)),
+    staff, declared, overrides,
+  }
 }
