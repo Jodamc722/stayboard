@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
+import { updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask, breezewayConfigured, createBreezewayComment } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -105,6 +105,9 @@ export async function POST(req: NextRequest) {
             description: String(x?.description || '').slice(0, 200),
             amount: num(x?.amount) || 0,
             bill_to: String(x?.bill_to || 'owner'),
+            // 'supply' marks a supplies cost added on the board (Jon, 2026-08-21) so it renders
+            // as a supply line; anything else stays a plain adjustment.
+            kind: x?.kind === 'supply' ? 'supply' : 'extra',
           })).filter((x: any) => x.description && x.amount) : [])
         : (cur.extra_items ?? []),
       // Per-task review mark (migration 029): review as you go, skim the leftovers at close-out.
@@ -119,7 +122,19 @@ export async function POST(req: NextRequest) {
     }
     const { error } = await db.from('billing_adjustments').upsert(row, { onConflict: 'task_id' })
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true })
+    // PUSH TO BREEZEWAY, the only way their API allows (Jon, 2026-08-21: "be able to add labor
+    // cost and supplies cost as a field in breezeway"). Their public API has no writable
+    // cost/supply line items — rate_paid is the single billing field it accepts — so a supplies
+    // cost added here is ALSO posted onto the Breezeway task as a comment. The dollars live in
+    // our overlay (they bill correctly on the export); the comment makes the task in Breezeway
+    // itself say what was spent. Best-effort: a comment failure never loses the saved item.
+    let commented = false
+    const bzNote = typeof body?.bz_note === 'string' ? body.bz_note.trim().slice(0, 300) : ''
+    if (bzNote && breezewayConfigured()) {
+      const c = await createBreezewayComment(taskId, bzNote).catch(() => ({ ok: false } as any))
+      commented = !!c.ok
+    }
+    return NextResponse.json({ ok: true, commented })
   }
 
   return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
