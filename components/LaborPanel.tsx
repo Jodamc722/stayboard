@@ -13,6 +13,13 @@ const fmt$ = (n: number | null | undefined) =>
   n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 const pct = (n: number | null | undefined) => n == null ? '—' : Math.round(Number(n) * 10) / 10 + '%'
 const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+// "3 studio · 2×1BR · 1×3BR" — the room-size mix of a person's departure cleans.
+const ROOM_ORDER = ['studio', '1br', '2br', '3br', '4br+']
+const ROOM_LABEL: Record<string, string> = { studio: 'studio', '1br': '1BR', '2br': '2BR', '3br': '3BR', '4br+': '4BR+' }
+const roomMixTxt = (mix: Record<string, number> | null | undefined): string => {
+  if (!mix) return ''
+  return ROOM_ORDER.filter(k => mix[k]).map(k => `${mix[k]}×${ROOM_LABEL[k]}`).join(' · ')
+}
 
 // Fixed 2026-08-21 from Jon's screenshot of /labor, in two passes.
 //   1. A grid item defaults to min-width:auto, so it refuses to shrink below its content — $13,393
@@ -468,6 +475,9 @@ export function LaborPanel() {
             {econ?.bundledFeeBackfill?.checkouts > 0 && (
               <p>Expedia bundles the cleaning fee into the fare on {econ.bundledFeeBackfill.checkouts} checkout{econ.bundledFeeBackfill.checkouts === 1 ? '' : 's'} here — {fmt$(econ.bundledFeeBackfill.amount)} rebuilt from each unit&apos;s own non-Expedia fee and moved out of the fare, never invented.</p>
             )}
+            {econ?.kpi?.agencyLoad?.total > 0 && (
+              <p>Agency markup — {econ.kpi.agencyLoad.byAgency.map((a: any) => `${a.label}: ${fmt$(a.load)} on ${fmt$(a.wages)} wages (${a.people} people)`).join(' · ')} — already inside every payroll line and cost per clean above.</p>
+            )}
             {econ?.kpi?.seventeenWest?.covered > 0 && (
               <p>17WEST covers {fmt$(econ.kpi.seventeenWest.covered)} of George Paz + Yoslenis&apos;s {fmt$(econ.kpi.seventeenWest.wages)} wages this window ($100k/yr, pro-rated) — maintenance and supervisor lines carry only Stay&apos;s share, and 17WEST tasks are unbilled by design.</p>
             )}
@@ -680,6 +690,19 @@ export function LaborPanel() {
                         className="ml-2 text-[9.5px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
                         never clocked out{p.missedClockOuts.length > 1 ? ' ×' + p.missedClockOuts.length : ''}</span>
                     )}
+                    {/* W-2 vs agency, what sizes they turned, and building hops — the person's day
+                        in one line (Jon, 2026-08-22). */}
+                    {econBy[p.name] && (
+                      <div className="text-[10px] text-muted font-normal mt-0.5 pl-4">
+                        <span className={'px-1 py-px rounded border font-semibold mr-1 ' + (econBy[p.name].agency ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-app text-muted border-line')}>
+                          {econBy[p.name].agencyLabel || 'W-2'}
+                        </span>
+                        {econBy[p.name].cleans > 0 && <span className="font-semibold text-ink">{econBy[p.name].cleans} clean{econBy[p.name].cleans === 1 ? '' : 's'}</span>}
+                        {econBy[p.name].cleans > 0 && roomMixTxt(econBy[p.name].roomMix) ? ' · ' : ''}
+                        {roomMixTxt(econBy[p.name].roomMix)}
+                        {econBy[p.name].travel ? <span> · {econBy[p.name].travel.hops} building hop{econBy[p.name].travel.hops === 1 ? '' : 's'} ≈ {econBy[p.name].travel.minutes}m travel</span> : null}
+                      </div>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-left text-[11px] text-muted">
                     {DEPT_SHORT[econBy[p.name]?.dept] || '—'}
@@ -690,7 +713,10 @@ export function LaborPanel() {
                   <td className={'px-2 py-2 text-right tabular-nums ' + (p.overtimeHours > 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{p.overtimeHours || '—'}</td>
                   {!hideMoney && <>
                     <td className="px-2 py-2 text-right tabular-nums text-ink">{(p as any).wageRate != null ? '$' + (p as any).wageRate : '—'}</td>
-                    <td className="px-2 py-2 text-right tabular-nums text-ink">{p.laborCost != null ? fmt$(p.laborCost) : '—'}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-ink" title={econBy[p.name]?.agencyLoad > 0 ? 'Homebase wages ' + fmt$(econBy[p.name].wagesHomebase) + ' + agency markup ' + fmt$(econBy[p.name].agencyLoad) : undefined}>
+                      {econBy[p.name]?.agencyLoad > 0 ? fmt$(econBy[p.name].payroll) : (p.laborCost != null ? fmt$(p.laborCost) : '—')}
+                      {econBy[p.name]?.agencyLoad > 0 && <span className="text-indigo-600">*</span>}
+                    </td>
                     <td className="px-2 py-2 text-right tabular-nums text-ink">{econBy[p.name]?.cleaningRevenue ? fmt$(econBy[p.name].cleaningRevenue) : ((d as any)?.personRevenue?.[p.name] != null ? fmt$((d as any).personRevenue[p.name]) : '—')}</td>
                     <td className="px-2 py-2 text-right tabular-nums text-ink">{econBy[p.name]?.billableRevenue ? fmt$(econBy[p.name].billableRevenue) : '—'}</td>
                     <td className={'px-2 py-2 text-right tabular-nums font-medium ' + (!econBy[p.name] ? 'text-muted' : econBy[p.name].margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{econBy[p.name] ? fmt$(econBy[p.name].margin) : '—'}</td>
