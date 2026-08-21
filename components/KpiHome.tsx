@@ -298,10 +298,11 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <Tile label="Cleaning revenue" value={canSeeMoney ? money(c.revenue) : '—'} Icon={Brush} href="/schedule"
+            <Tile label="Cleaning revenue" value={canSeeMoney ? money(c.revenue) : '—'} Icon={Brush} href="/labor"
               sub={c.turns != null
-                ? count(c.turns) + ' turns · ' + (canSeeMoney ? exact(c.feePerTurn) : '—') + ' a turn'
-                  + (c.turnsFromListingFee ? ' · ' + count(c.turnsFromListingFee) + ' at the property fee' : '')
+                ? 'net · ' + count(c.turnsInHouse ?? c.turns) + ' in-house turns · ' + (canSeeMoney ? exact(c.feePerTurn) : '—') + ' a turn'
+                  + (c.turnsVendor ? ' · ' + count(c.turnsVendor) + ' vendor' : '')
+                  + (c.turnsBackfilled ? ' · ' + count(c.turnsBackfilled) + ' Expedia rebuilt' : '')
                   + (c.turnsUnpriced ? ' · ' + count(c.turnsUnpriced) + ' with no fee on file' : '')
                 : undefined}
               delta={<Delta v={c.revenueChange} suffix="%" />} />
@@ -625,7 +626,8 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
 
       <p className="text-[11px] text-muted mt-4 leading-relaxed">
         Occupancy counts booked unit-nights against active units × days in the window. ADR includes the cleaning fee.
-        Cleaning revenue is what guests were charged on stays that departed in the window.
+        Cleaning revenue is NET of the channel&apos;s cut, on units our own crew turns (vendor checkouts counted separately);
+        Expedia-bundled fees are rebuilt from the unit&apos;s own booking history — the same rules as the Labor board.
         {c.costKnown
           ? ' Cleaning pay is what Breezeway records as paid on completed housekeeping tasks.'
           : ' Breezeway is not recording what cleaners are paid, so margin and cost per turn stay blank rather than flattering — upload a Homebase timesheet on the Labor page and they fill in with real hours and payroll.'}
