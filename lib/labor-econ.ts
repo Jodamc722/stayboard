@@ -213,6 +213,10 @@ export type LaborEcon = {
   bundledFeeBackfill: { checkouts: number; amount: number; basis: string }
   /** Timecard completeness. complete=false → payroll-derived numbers are understated; warn, don't print. */
   payrollAudit: { weeks: number; failedWeeks: string[]; complete: boolean }
+  /** Per person, day by day — the color behind every aggregate. Wages carry the day's agency share. */
+  personDays?: Record<string, { d: string; cleans: number; fee: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]>
+  /** Daily housekeeping series (credited cleans, net fees, loaded HK wages) for trend charts. */
+  daily?: { d: string; cleans: number; fee: number; hkWages: number }[]
   /** Of that, the part tied to a named person via their departure clean. */
   cleaningRevenueAttributed: number
   /** The rest: a checkout whose clean we could not match to anybody. Shown, never hidden —
@@ -650,6 +654,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   // Same-day building sequence per person, for the travel estimate below.
   const tripsBy: Record<string, Record<string, { at: string; b: string }[]>> = {}
+  // PER-DAY LEDGER accumulators (Jon, 2026-08-23: "the labor KPI dashboard needs to show all
+  // the color") — work by day per person, wages by day per person; assembled after the agency
+  // loading so every day carries its share of the markup.
+  const ledgerT: Record<string, Record<string, { cleans: number; fee: number; billable: number }>> = {}
+  const ledgerW: Record<string, Record<string, { hours: number; wages: number }>> = {}
   for (const t of taskRows) {
     const w = doer(t)
     if (!w) continue
@@ -673,6 +682,18 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       const tr = (tripsBy[k] = tripsBy[k] || {})
       ;(tr[day] = tr[day] || []).push({ at: String(t.finished_at), b: li.travelKey })
     }
+    // Day ledger: what this task contributed to this person's DAY. Departure cleans carry their
+    // matched net fee; charged cleaning work and billables carry their typed charge.
+    {
+      const day = String(t.finished_at || '').slice(0, 10)
+      if (day) {
+        const L = (ledgerT[k] = ledgerT[k] || {})
+        const e = (L[day] = L[day] || { cleans: 0, fee: 0, billable: 0 })
+        if (chargedCleanIds[String(t.id)]) { e.cleans++; e.billable = round2(e.billable + chargeOfRaw(t)) }
+        else if (kind === 'clean') { e.cleans++; e.fee = round2(e.fee + (feeByTask[String(t.id)] || 0)) }
+        else e.billable = round2(e.billable + ch.billable)
+      }
+    }
     // A charged CLEANING task is cleaning revenue (counted via cleanRecs below), not a billable —
     // otherwise the same $25 linen refresh would show up in both columns.
     const isChargedClean = chargedCleanIds[String(t.id)]
@@ -695,6 +716,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.payroll = round2(p.payroll + (t.laborCost ?? 0))
     if (t.wageRate != null) p.wageRate = Math.max(p.wageRate ?? 0, t.wageRate)
     if (!p.role && t.role) p.role = t.role
+    const day = String((t as any).date || '').slice(0, 10)
+    if (day) {
+      const L = (ledgerW[k] = ledgerW[k] || {})
+      const e = (L[day] = L[day] || { hours: 0, wages: 0 })
+      e.hours = round2(e.hours + (t.hours ?? 0)); e.wages = round2(e.wages + (t.laborCost ?? 0))
+    }
   }
   for (const k of Object.keys(revBy)) {
     const kk = keyFor(k)
@@ -795,6 +822,41 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       agencyLoad.byAgency.push({ key, label: a.label, people: g.people.length, wages, load })
     }
   }
+
+  // ── THE COLOR: per-person day ledger + daily HK series (Jon, 2026-08-23: "Daily brief can
+  // be big picture but in the labor KPI dashboard needs to show all the color") ──────────────
+  // Every aggregate above decomposes into days a reader can audit: that day's cleans and the
+  // net fees they earned, the charges typed on other work, the hours punched, the wages those
+  // hours cost WITH the day's share of the agency markup, the building hops, and the margin.
+  const personDays: Record<string, { d: string; cleans: number; fee: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]> = {}
+  for (const p of peopleAll) {
+    const tl = ledgerT[p.name] || {}
+    const wl = ledgerW[p.name] || {}
+    const daySet = Array.from(new Set(Object.keys(tl).concat(Object.keys(wl)))).sort()
+    if (!daySet.length) continue
+    personDays[p.name] = daySet.map(d => {
+      const a = tl[d] || { cleans: 0, fee: 0, billable: 0 }
+      const w = wl[d] || { hours: 0, wages: 0 }
+      let hops = 0
+      const seq = (tripsBy[p.name] && tripsBy[p.name][d] ? tripsBy[p.name][d] : []).slice().sort((x, y) => x.at.localeCompare(y.at))
+      for (let i = 1; i < seq.length; i++) if (seq[i].b && seq[i - 1].b && seq[i].b !== seq[i - 1].b) hops++
+      // The agency markup follows the wages it was computed on, day by day.
+      const load = (p.agencyLoad || 0) > 0 && (p.wagesHomebase || 0) > 0 ? round2((p.agencyLoad || 0) * (w.wages / (p.wagesHomebase || 1))) : 0
+      const wages = round2(w.wages + load)
+      return { d, cleans: a.cleans, fee: round2(a.fee), billable: round2(a.billable), hours: round2(w.hours), wages, hops, margin: round2(a.fee + a.billable - wages) }
+    })
+  }
+  // Daily housekeeping series for the trend chart: housekeepers only, credited cleans, net
+  // fees, loaded wages. A single day is noisy (paperwork lag) — the chart groups by week.
+  const dailyAcc: Record<string, { cleans: number; fee: number; hkWages: number }> = {}
+  for (const p of peopleAll) {
+    if (p.dept !== 'housekeeping') continue
+    for (const r of (personDays[p.name] || [])) {
+      const e = (dailyAcc[r.d] = dailyAcc[r.d] || { cleans: 0, fee: 0, hkWages: 0 })
+      e.cleans += r.cleans; e.fee = round2(e.fee + r.fee); e.hkWages = round2(e.hkWages + r.wages)
+    }
+  }
+  const daily = Object.keys(dailyAcc).sort().map(d => ({ d, ...dailyAcc[d] }))
 
   let people = peopleAll.slice()
   // `|| p.market === 'unassigned'` used to live here, which counted every unplaced person's FULL
@@ -1330,6 +1392,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   return {
     from, to, market,
     people,
+    personDays,
+    daily,
     departments: DEPTS.map(d => byDept[d]),
     buckets: bucketList,
     layers,
