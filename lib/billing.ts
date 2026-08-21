@@ -198,7 +198,10 @@ function detailItems(costs: any, supplies: any, extras: any, overrides: any): Bi
     const e = eArr[i]
     const amt = num(e?.amount)
     if (amt == null) continue
-    push('extra:' + i, String(e?.description || 'Adjustment'), amt, e?.bill_to ? String(e.bill_to) : 'owner', 'extra')
+    // Our line items can be typed: a supplies cost added on the board (Jon, 2026-08-21: "be able
+    // to add labor cost and supplies cost") displays as a supply. The key stays 'extra:<i>' —
+    // that prefix, not the kind, is what marks an item as OURS for editing/round-tripping.
+    push('extra:' + i, String(e?.description || 'Adjustment'), amt, e?.bill_to ? String(e.bill_to) : 'owner', e?.kind === 'supply' ? 'supply' : 'extra')
   }
   return items
 }
