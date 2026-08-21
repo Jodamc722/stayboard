@@ -239,7 +239,113 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         <b> Market</b> decides which tab their payroll counts against; an amber <em>Not set</em> leaves them out of Miami,
         Broward and North alike, which is why those tabs can add up to less than the company total.
         <b> Vendor</b> is deliberately its own bucket and never part of a geographic market.
-        These write the same record as <b>Staffing &amp; agencies</b> below, so the two can never drift.
+      </p>
+
+      <AgencyFees isOwner={isOwner} />
+    </div>
+  )
+}
+
+// ── AGENCY FEES + INVOICES — merged in from the old "Staffing & agencies" card (Jon,
+// 2026-08-22: "you have two different sections for the agencies' pay. Let's merge those two
+// sections as the real data for feeding the labor models."). One roster above, one fee table
+// here, one save path — and the labor engine reads BOTH: every agency person's wages carry
+// their agency's markup (% of wages + $ per hour + flat per weekly invoice) in every cost per
+// clean, margin and brief. Fees left at 0 load nothing.
+function AgencyFees({ isOwner }: { isOwner: boolean }) {
+  type Agency = { key: string; label: string; fee_percent: number; fee_per_hour: number; fee_flat: number; active: boolean }
+  const [agencies, setAgencies] = useState<Agency[]>([])
+  const [busy, setBusy] = useState<string | null>(null)
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const daysAgoISO = (n: number) => new Date(Date.now() - n * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const [invFrom, setInvFrom] = useState(daysAgoISO(6))
+  const [invTo, setInvTo] = useState(todayISO())
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/settings/staffing', { cache: 'no-store' })
+      const j = await r.json()
+      if (r.ok && j.ok) { setAgencies((j.agencies || []).filter((a: Agency) => a.key)); setDirty(false) }
+    } catch { /* fee table simply stays empty */ }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const patch = (key: string, p: Partial<Agency>) => {
+    setAgencies(list => list.map(a => (a.key === key ? { ...a, ...p } : a)))
+    setDirty(true)
+  }
+  const save = async () => {
+    setBusy('save'); setMsg(null)
+    try {
+      const r = await fetch('/api/settings/staffing', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agencies }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error((j.errors || []).join('; ') || j.error || 'Could not save fees.')
+      setDirty(false)
+      setMsg({ tone: 'ok', text: 'Fees saved — the labor engine loads them onto every agency person’s wages from the next refresh.' })
+    } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
+  }
+
+  return (
+    <div className="mt-5 rounded-xl border border-line p-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[12px] font-bold text-ink">Agency fees &amp; invoices</span>
+        <span className="text-[11px] text-muted">what each agency charges on top of Homebase wages — this IS the labor model’s loaded cost</span>
+        <button onClick={save} disabled={!isOwner || busy !== null || !dirty}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[11px] font-semibold hover:bg-brand-700 disabled:opacity-40">
+          {busy === 'save' ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} Save fees
+        </button>
+      </div>
+      {msg && (
+        <div className={`mt-2 rounded-lg border px-3 py-1.5 text-[12px] ${msg.tone === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>{msg.text}</div>
+      )}
+      <table className="w-full text-sm mt-2">
+        <thead>
+          <tr className="text-left text-[10.5px] uppercase tracking-wide text-muted">
+            <th className="py-1 pr-3">Agency</th>
+            <th className="py-1 pr-3 text-right">% of wages</th>
+            <th className="py-1 pr-3 text-right">$ / hour</th>
+            <th className="py-1 pr-3 text-right">Flat / weekly invoice</th>
+            <th className="py-1 pr-3">Invoice export</th>
+          </tr>
+        </thead>
+        <tbody>
+          {agencies.map(a => (
+            <tr key={a.key} className="border-t border-line">
+              <td className="py-1.5 pr-3 font-medium text-ink">{a.label}</td>
+              {(['fee_percent', 'fee_per_hour', 'fee_flat'] as const).map(f => (
+                <td key={f} className="py-1.5 pr-3 text-right">
+                  <input type="number" step="0.01" min={0} disabled={!isOwner} value={a[f] ?? 0}
+                    onChange={e => patch(a.key, { [f]: Number(e.target.value) || 0 } as any)}
+                    className="w-20 text-right text-[12px] bg-app border border-line rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+                </td>
+              ))}
+              <td className="py-1.5 pr-3 whitespace-nowrap">
+                <a className="text-[11px] font-semibold text-brand-700 hover:underline"
+                  href={`/api/labor/agency-invoice?from=${invFrom}&to=${invTo}&agency=${a.key}&format=csv`} target="_blank" rel="noreferrer">CSV</a>
+                <a className="ml-2 text-[11px] font-semibold text-brand-700 hover:underline"
+                  href={`/api/labor/agency-invoice?from=${invFrom}&to=${invTo}&agency=${a.key}`} target="_blank" rel="noreferrer">preview</a>
+              </td>
+            </tr>
+          ))}
+          {!agencies.length && <tr><td colSpan={5} className="py-2 text-[12px] text-muted">No agencies yet.</td></tr>}
+        </tbody>
+      </table>
+      <div className="flex items-center gap-2 mt-2 text-[11.5px] text-muted">
+        Invoice window:
+        <input type="date" value={invFrom} onChange={e => setInvFrom(e.target.value)} className="text-[11px] border border-line rounded px-1 py-0.5 bg-white" />
+        →
+        <input type="date" value={invTo} onChange={e => setInvTo(e.target.value)} className="text-[11px] border border-line rounded px-1 py-0.5 bg-white" />
+        <span className="ml-1">hours come live from Homebase at export time — a corrected punch changes the next export with nothing to re-sync.</span>
+      </div>
+      <p className="text-[11px] text-muted mt-2 max-w-[80ch]">
+        All three fee kinds stack and each defaults to 0. The labor engine loads them onto every assigned person’s
+        wages — the flat fee is spread across that agency’s people by their share of hours, one invoice per week —
+        so cost per clean, margins, briefs and the planner all run on what Stay actually pays, not the bare wage.
       </p>
     </div>
   )
