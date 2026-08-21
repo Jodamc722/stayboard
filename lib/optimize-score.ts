@@ -6,9 +6,15 @@ import { buildingOf as canonicalBuilding } from '@/lib/segments'
 // actually work: completeness, instant book, flexible cancellation, high-value
 // amenities, photo count, and the guest-review signal.
 //
-// Components (structural, sum to 100 before the review blend):
-//   Title 20 · Description 25 · Booking settings 30 · Amenity coverage 25
+// Components (structural, sum to 1.0 before the review blend):
+//   Title .18 · Description .22 · Photos .18 · Amenity coverage .22 · Booking settings .20
 // When review data is available, overall = round(structural * 0.86 + reviewSignal * 0.14).
+//
+// PHOTOS BECAME THEIR OWN PILLAR ON 2026-08-21. They used to be one 16-point factor INSIDE
+// Booking settings, which carried 0.30 — so photo count and AI-judged photo quality together were
+// 16 x 0.30 x 0.86 = 4.1% of a unit's score, and a six-photo listing read on screen as a *booking
+// settings* problem. For a business that converts on the photo grid that was backwards. Settings
+// keeps its four remaining factors (84 raw points, rescaled to 100).
 
 // Normalize a stored OTA rating to a 0-5 star scale. Ratings arrive mixed: Airbnb/Vrbo 0-5,
 // Booking/Expedia 0-10, occasionally 0-100. scoreReviews() below expects STARS - averaging raw
@@ -50,6 +56,7 @@ export type ScoreResult = {
   band: Band
   title: { score: number; factors: Factor[] }
   description: { score: number; factors: Factor[]; sections: { label: string; text: string }[] }
+  photos: { score: number; factors: Factor[]; count: number; aiQuality: number | null; coverageNote: string; notes: string[] }
   settings: { score: number; factors: Factor[]; meta: any }
   amenities: {
     score: number
@@ -223,7 +230,7 @@ function scoreDescription(pub: any): { score: number; factors: Factor[]; section
   return { score: Math.round(factors.reduce((s, f) => s + f.got, 0)), factors, sections }
 }
 
-function scoreSettings(raw: any, photoCount: number): { score: number; factors: Factor[]; meta: any } {
+function scoreSettings(raw: any): { score: number; factors: Factor[]; meta: any } {
   const terms = raw?.terms || {}
   const minN = terms.minNights ?? raw?.defaultListingMinNights ?? null
   const maxN = terms.maxNights ?? null
@@ -246,26 +253,57 @@ function scoreSettings(raw: any, photoCount: number): { score: number; factors: 
   }
   factors.push({ label: 'Minimum stay', got: mGot, max: 22, note: mNote, ok: mGot >= 18 ? 'good' : mGot >= 10 ? 'warn' : 'bad' })
   factors.push({ label: 'Instant Book', got: instant ? 22 : 6, max: 22, note: instant ? 'On - boosts ranking on Airbnb & Vrbo' : (instantRaw == null ? 'Unknown / not set' : 'Off - turning it on lifts ranking'), ok: instant ? 'good' : 'warn' })
-  let pGot = 0, pNote = ''
-  // If the AI photo-quality assessment has been run (persisted to raw._photoScore), score on a blend of
-  // coverage (count) + AI-judged quality. Otherwise fall back to count alone.
-  const aiPhoto: any = (raw && typeof raw._photoScore === 'object') ? raw._photoScore : null
-  const aiQ = aiPhoto && Number.isFinite(Number(aiPhoto.score)) ? Math.max(0, Math.min(100, Number(aiPhoto.score))) : null
-  if (aiQ != null) {
-    const countComp = photoCount >= 20 ? 8 : photoCount >= 15 ? 6 : photoCount >= 10 ? 4 : photoCount >= 6 ? 2 : photoCount > 0 ? 1 : 0
-    const qualComp = Math.round((aiQ / 100) * 8)
-    pGot = countComp + qualComp
-    pNote = `${photoCount} photos - AI quality ${aiQ}/100${aiPhoto.coverageNote ? ' - ' + String(aiPhoto.coverageNote) : ''}`
-  } else if (photoCount >= 20) { pGot = 12; pNote = `${photoCount} photos - strong count (run AI photo analysis to score quality)` }
-  else if (photoCount >= 15) { pGot = 9; pNote = `${photoCount} photos - good count, target 20+ (run AI photo analysis for quality)` }
-  else if (photoCount >= 10) { pGot = 6; pNote = `${photoCount} photos - add more (target 20+)` }
-  else if (photoCount >= 6) { pGot = 3; pNote = `${photoCount} photos - minimum met, well short of ideal` }
-  else if (photoCount > 0) { pGot = 1; pNote = `${photoCount} photos - below Vrbo's 6 minimum` }
-  else { pGot = 0; pNote = 'No photos detected' }
-  factors.push({ label: 'Photos', got: pGot, max: 16, note: pNote, ok: pGot >= 12 ? 'good' : pGot >= 6 ? 'warn' : 'bad' })
   const ciGot = checkIn && checkOut ? 10 : checkIn || checkOut ? 5 : 0
   factors.push({ label: 'Check-in/out times', got: ciGot, max: 10, note: checkIn && checkOut ? `${checkIn} / ${checkOut}` : 'Not fully set', ok: ciGot >= 10 ? 'good' : 'warn' })
-  return { score: Math.round(factors.reduce((s, f) => s + f.got, 0)), factors, meta: { minN, maxN, instant, instantRaw, checkIn, checkOut, cancel } }
+  // Photos moved out to their own pillar on 2026-08-21, so this pillar's raw ceiling is 84
+  // (cancellation 30 + min stay 22 + instant book 22 + check-in/out 10). Rescale to 0-100 so the
+  // weights in computeScore stay readable.
+  const rawMax = factors.reduce((s, f) => s + f.max, 0) || 1
+  const rawGot = factors.reduce((s, f) => s + f.got, 0)
+  return { score: Math.round((rawGot / rawMax) * 100), factors, meta: { minN, maxN, instant, instantRaw, checkIn, checkOut, cancel } }
+}
+
+/* ------------------------------ photos ------------------------------------- */
+// Photo count (0-55) + AI-judged photo quality (0-45). When the photo AI has never run we give a
+// provisional 30/45 rather than a zero — the same "don't punish what we haven't measured" rule
+// scoreReviews() uses for a brand-new listing — so a 25-photo unit lands at 85 until it is scored
+// for real. The factor note says so out loud.
+function scorePhotos(raw: any, photoScoreCol: any, photoCount: number): ScoreResult['photos'] {
+  const ai: any = (photoScoreCol && typeof photoScoreCol === 'object') ? photoScoreCol
+    : ((raw && typeof raw._photoScore === 'object') ? raw._photoScore : null)
+  const aiQ = ai && Number.isFinite(Number(ai.score)) ? Math.max(0, Math.min(100, Number(ai.score))) : null
+  const coverageNote = ai && typeof ai.coverageNote === 'string' ? ai.coverageNote : ''
+  const notes: string[] = ai && Array.isArray(ai.notes) ? ai.notes.filter((n: any) => typeof n === 'string').slice(0, 4) : []
+
+  let cGot = 0, cNote = ''
+  if (photoCount >= 25) { cGot = 55; cNote = `${photoCount} photos - a full set` }
+  else if (photoCount >= 20) { cGot = 50; cNote = `${photoCount} photos - strong count` }
+  else if (photoCount >= 15) { cGot = 38; cNote = `${photoCount} photos - good, target 20+` }
+  else if (photoCount >= 10) { cGot = 25; cNote = `${photoCount} photos - add more (target 20+)` }
+  else if (photoCount >= 6) { cGot = 12; cNote = `${photoCount} photos - Vrbo's minimum met, well short of ideal` }
+  else if (photoCount > 0) { cGot = 5; cNote = `${photoCount} photos - below Vrbo's 6-photo minimum` }
+  else { cGot = 0; cNote = 'No photos detected' }
+
+  const factors: Factor[] = [
+    { label: 'Photo count', got: cGot, max: 55, note: cNote, ok: cGot >= 50 ? 'good' : cGot >= 25 ? 'warn' : 'bad' },
+  ]
+  let qGot: number
+  if (aiQ != null) {
+    qGot = Math.round((aiQ / 100) * 45)
+    factors.push({
+      label: 'AI photo quality', got: qGot, max: 45,
+      note: `Scored ${aiQ}/100 on lighting, sharpness, composition and staging${coverageNote ? ` - ${coverageNote}` : ''}`,
+      ok: aiQ >= 80 ? 'good' : aiQ >= 60 ? 'warn' : 'bad',
+    })
+  } else {
+    qGot = 30
+    factors.push({
+      label: 'AI photo quality', got: qGot, max: 45,
+      note: 'Not scored yet - provisional credit. Run the photo AI on this unit to score it for real.',
+      ok: 'warn',
+    })
+  }
+  return { score: Math.max(0, Math.min(100, cGot + qGot)), factors, count: photoCount, aiQuality: aiQ, coverageNote, notes }
 }
 
 // Amenity coverage 0-100 + suggestions. siblingAmenities = amenities present on other
@@ -331,15 +369,17 @@ export function computeScore(listing: any, opts?: {
 
   const title = scoreTitle(name)
   const description = scoreDescription(pub)
-  const photoScore = (listing?.photo_score && typeof listing.photo_score === 'object') ? listing.photo_score : (raw._photoScore || null)
-  const settings = scoreSettings({ ...raw, _photoScore: photoScore }, photoCount)
+  const photoScoreCol = (listing?.photo_score && typeof listing.photo_score === 'object') ? listing.photo_score : null
+  const photos = scorePhotos(raw, photoScoreCol, photoCount)
+  const settings = scoreSettings(raw)
   const amen = scoreAmenities(amenities, {
     isBeach: opts?.isBeach,
     siblingNorm: opts?.siblingAmenities ? normAmenities(opts.siblingAmenities) : undefined,
   })
 
-  // Structural blend (sums to 1.0): Title .20 · Description .25 · Settings .30 · Amenities .25
-  const structural = title.score * 0.20 + description.score * 0.25 + settings.score * 0.30 + amen.score * 0.25
+  // Structural blend (sums to 1.0):
+  //   Title .18 · Description .22 · Photos .18 · Amenities .22 · Settings .20
+  const structural = title.score * 0.18 + description.score * 0.22 + photos.score * 0.18 + amen.score * 0.22 + settings.score * 0.20
 
   let overall = structural
   let reviewSignal: ScoreResult['reviewSignal'] = null
@@ -356,8 +396,83 @@ export function computeScore(listing: any, opts?: {
     band: band(o),
     title,
     description,
+    photos,
     settings,
     amenities: { score: amen.score, have: amen.have, suggestions: amen.suggestions, mustFix: amen.mustFix },
     reviewSignal,
   }
+}
+
+/* --------------------------- one truth for "optimized" ---------------------- */
+// Until 2026-08-21 the unit page decided "is this optimized?" three different ways in one file —
+// the last_optimized column, then raw._lastOptimized, then an INFERENCE from "has a title and 5+ of
+// 6 sections". A unit could read "Optimized" having never been touched by the optimizer, and the
+// building list (which only checked the first two) disagreed about the same unit. One helper now,
+// and "the content looks complete" is a separate, honestly-worded statement.
+export function lastOptimizedOf(listing: any): { at: string | null; date: Date | null } {
+  const raw = listing?.raw || {}
+  const iso = listing?.last_optimized || (typeof raw?._lastOptimized === 'string' ? raw._lastOptimized : null) || null
+  if (!iso) return { at: null, date: null }
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? { at: null, date: null } : { at: iso, date: d }
+}
+
+// Separate claim, separate words: the copy is filled in. It does NOT mean anyone ran the optimizer.
+export function contentLooksComplete(res: ScoreResult, name: string): boolean {
+  return !!(name && name !== 'Untitled unit' && res.description.sections.length >= 5)
+}
+
+/* ------------------------------- fix-next ---------------------------------- */
+// The Optimize Score already knows everything that is wrong with a unit — every factor carries a
+// `got` and a `max`. A worklist is just those gaps, converted into the points they actually cost
+// the overall score, and sorted. No new model, no second opinion to keep in sync.
+export type Gap = {
+  pillar: 'title' | 'description' | 'photos' | 'amenities' | 'settings'
+  label: string
+  note: string
+  points: number          // how much the overall score would rise if this were fully fixed
+  severity: 'good' | 'warn' | 'bad'
+}
+
+export const PILLAR_WEIGHTS: Record<Gap['pillar'], number> = {
+  title: 0.18, description: 0.22, photos: 0.18, amenities: 0.22, settings: 0.20,
+}
+// Structural score is blended with the review signal at 0.86 when reviews are present, so a
+// structural point is worth 0.86 of an overall point. Fixing copy cannot move the review signal.
+const REVIEW_BLEND = 0.86
+
+function gapsFromFactors(pillar: Gap['pillar'], factors: Factor[]): Gap[] {
+  const rawMax = factors.reduce((s, f) => s + f.max, 0) || 1
+  return factors
+    .filter(f => f.got < f.max)
+    .map(f => ({
+      pillar, label: f.label, note: f.note, severity: f.ok,
+      points: Math.round(((f.max - f.got) / rawMax) * 100 * PILLAR_WEIGHTS[pillar] * REVIEW_BLEND * 10) / 10,
+    }))
+}
+
+export function scoreGaps(res: ScoreResult): Gap[] {
+  const out: Gap[] = [
+    ...gapsFromFactors('title', res.title.factors),
+    ...gapsFromFactors('description', res.description.factors),
+    ...gapsFromFactors('photos', res.photos.factors),
+    ...gapsFromFactors('settings', res.settings.factors),
+  ]
+  // Amenities score without per-factor detail, so express the gap as the two things a human can act
+  // on: a missing safety amenity (always first) and the high-value suggestions.
+  const amenGapPts = Math.round((100 - res.amenities.score) * PILLAR_WEIGHTS.amenities * REVIEW_BLEND * 10) / 10
+  if (res.amenities.mustFix.length) {
+    out.push({
+      pillar: 'amenities', label: 'Missing safety amenity', severity: 'bad',
+      note: `${res.amenities.mustFix.join(', ')} - every OTA filters on these`,
+      points: Math.max(amenGapPts, 1),
+    })
+  } else if (res.amenities.suggestions.length && amenGapPts >= 0.5) {
+    out.push({
+      pillar: 'amenities', label: 'High-value amenities missing', severity: 'warn',
+      note: res.amenities.suggestions.slice(0, 3).map(x => x.name).join(', '),
+      points: amenGapPts,
+    })
+  }
+  return out.sort((a, b) => b.points - a.points)
 }
