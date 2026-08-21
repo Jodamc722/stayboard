@@ -97,7 +97,7 @@ export function LaborPanel() {
     <section className="space-y-4">
       {/* controls */}
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-[15px] font-bold text-ink flex items-center gap-1.5"><Clock size={15} /> Labor</h2>
+        <h2 className="text-[15px] font-bold text-ink flex items-center gap-1.5"><Clock size={15} /> Labor <span className="text-[11px] font-semibold text-muted">· the true-up — every brief and board reads from this engine</span></h2>
         <div className="flex items-center gap-1 ml-2">
           {MARKETS.map(m => (
             <button key={m.k} onClick={() => setMarket(m.k)}
@@ -358,6 +358,53 @@ export function LaborPanel() {
           <p className="mt-2 text-[11px] text-muted">
             Supervisors are not in these numbers — their hours are fixed overhead. Maintenance is not either, even when a tech turns a unit: that fee is maintenance revenue.
           </p>
+        </div>
+      )}
+
+      {/* THE TRUE-UP — where every dollar landed (Jon, 2026-08-21: "the labor mecca... it should
+          be a true up"). The board is only trustworthy if the reader can see what the engine did
+          with every fee and every payroll week: what was credited, what sits on unclosed paperwork
+          (and will settle), what never matched, what the OTA took, what got rebuilt on Expedia,
+          and what 17WEST covers. Pick any window above — this trues up with it. */}
+      {!hideMoney && econ?.feeAudit && (
+        <div className="rounded-xl border border-line bg-white px-3 py-4">
+          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">
+            True-up · where every cleaning fee landed <span className="normal-case font-normal">· {d?.range ? `${d.range.start} → ${d.range.end}` : ''} · re-checked on every load</span>
+          </p>
+          {econ?.payrollAudit && !econ.payrollAudit.complete && (
+            <div className="mx-2 mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700 font-semibold">
+              Homebase did not return timecards for: {econ.payrollAudit.failedWeeks.join(', ')} — every payroll-based number on this page is understated until it does. Refresh in a minute.
+            </div>
+          )}
+          <div className="px-2 overflow-x-auto">
+            <table className="w-full text-sm max-w-2xl">
+              <tbody>
+                <tr className="border-t border-line"><td className="py-1.5 pr-3">Credited to a housekeeper <span className="text-[10px] text-muted">clean closed, person named — in the margins above</span></td>
+                  <td className="py-1.5 text-right font-medium text-emerald-700">{fmt$(econ.feeAudit.credited)}</td></tr>
+                <tr className="border-t border-line"><td className="py-1.5 pr-3">On cleans not yet closed in Breezeway <span className="text-[10px] text-muted">work almost certainly done — settles into the row above as paperwork lands</span></td>
+                  <td className="py-1.5 text-right font-medium text-amber-700">{fmt$(econ.feeAudit.cleanNotClosed)}</td></tr>
+                <tr className="border-t border-line"><td className="py-1.5 pr-3">Clean closed with no assignee <span className="text-[10px] text-muted">nobody to credit — name assignees in Breezeway</span></td>
+                  <td className="py-1.5 text-right">{fmt$(econ.feeAudit.cleanNoAssignee)}</td></tr>
+                <tr className="border-t border-line"><td className="py-1.5 pr-3">No clean found for the checkout <span className="text-[10px] text-muted">searched 2 days before to 7 after</span></td>
+                  <td className="py-1.5 text-right text-red-600">{fmt$(econ.feeAudit.noCleanFound)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="px-2 mt-3 space-y-1 text-[11.5px] text-muted">
+            {econ.feeAudit.movedCleansMatched > 0 && (
+              <p>{econ.feeAudit.movedCleansMatched} moved clean{econ.feeAudit.movedCleansMatched === 1 ? '' : 's'} matched to a nearby day — a rescheduled clean keeps its fee.</p>
+            )}
+            {econ?.kpi?.housekeeping?.channelCut > 0 && (
+              <p>Channel cut: guests paid {fmt$(econ.kpi.housekeeping.revenueGross)} in cleaning fees; the OTAs kept {fmt$(econ.kpi.housekeeping.channelCut)} — every number above is the net.</p>
+            )}
+            {econ?.bundledFeeBackfill?.checkouts > 0 && (
+              <p>Expedia bundles the cleaning fee into the fare on {econ.bundledFeeBackfill.checkouts} checkout{econ.bundledFeeBackfill.checkouts === 1 ? '' : 's'} here — {fmt$(econ.bundledFeeBackfill.amount)} rebuilt from each unit&apos;s own non-Expedia fee and moved out of the fare, never invented.</p>
+            )}
+            {econ?.kpi?.seventeenWest?.covered > 0 && (
+              <p>17WEST covers {fmt$(econ.kpi.seventeenWest.covered)} of George Paz + Yoslenis&apos;s {fmt$(econ.kpi.seventeenWest.wages)} wages this window ($100k/yr, pro-rated) — maintenance and supervisor lines carry only Stay&apos;s share, and 17WEST tasks are unbilled by design.</p>
+            )}
+            <p>Yesterday always reads expensive — its fees sit on cleans nobody has closed yet. Manage on a settled window; this page recomputes every line from scratch on every load, so corrections in Breezeway, Homebase or Guesty true up here automatically.</p>
+          </div>
         </div>
       )}
 
