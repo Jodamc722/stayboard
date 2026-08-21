@@ -243,19 +243,46 @@ export async function projectCleaners(date: string): Promise<{ people: CleanerTo
     : Math.min(60, Math.max(30, (cal.settledMarginPct != null ? cal.settledMarginPct + 3 : 45)))
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
-  const meta: Record<string, { market: string; vendor: boolean }> = {}
+  // LOCK-OFF LISTINGS (Jon, 2026-08-21): "Arya 2004 FULL" IS "Arya 2004/1" plus "Arya 2004/2" —
+  // three listings, two physical studios, listed separately only so guests can book either shape.
+  // baseOfFull/baseOfPart tie the three names to one base so the counting below can be smart
+  // about it instead of crediting the same walls twice.
+  const baseOfFull = (n: string): string | null => {
+    const m = /^(.*?)[\s-]+full\b/i.exec(String(n || ''))
+    return m && m[1].trim() ? m[1].trim().toLowerCase() : null
+  }
+  const baseOfPart = (n: string): string | null => {
+    const m = /^(.*?)\/\s*\d+\b/.exec(String(n || ''))
+    return m && m[1].trim() ? m[1].trim().toLowerCase() : null
+  }
+  const meta: Record<string, { market: string; vendor: boolean; name: string }> = {}
+  const partsOfBase: Record<string, number> = {}
   for (const l of (listings || []) as any[]) {
     const name = l.nickname || l.title || 'Unit'
     const building = String(l.building || '')
     meta[String(l.id)] = {
       market: String(marketOf(building, l.address_city, name) || 'Miami').toLowerCase(),
       vendor: VENDOR.test(building) || VENDOR.test(String(name)),
+      name: String(name),
     }
+    const pb = baseOfPart(String(name))
+    if (pb) partsOfBase[pb] = (partsOfBase[pb] || 0) + 1
   }
   const { data: tasks } = await db.from('breezeway_tasks_sync')
     .select('id,name,status,assignees,reference_property_id')
     .eq('scheduled_date', date).limit(2000)
-  const per: Record<string, Record<string, number>> = {}
+  // A SUPERVISOR IS NOT A CLEANER (Jon, 2026-08-21: "Yoslenis is a Supervisor"). Her name lands
+  // on cleans because she helps or signs off, but her wages are supervision overhead (lib/crew),
+  // so she never belongs in the per-cleaner profit table — and she is dropped BEFORE shares are
+  // split, so the cleaner who actually turned the unit keeps full credit.
+  const crewMap = await getCrew().catch(() => null)
+  const cleanerCache: Record<string, boolean> = {}
+  const isCleaner = (n: string): boolean => {
+    if (!(n in cleanerCache)) cleanerCache[n] = !crewMap || crewMap.deptOf(n, null, 'housekeeping') === 'housekeeping'
+    return cleanerCache[n]
+  }
+  const rows: { m: { market: string; vendor: boolean; name: string }; ppl: string[]; weight: number }[] = []
+  const componentBasesToday: Record<string, true> = {}
   for (const t of (tasks || []) as any[]) {
     const status = String(t.status || '').toLowerCase()
     if (/delete|cancel/.test(status)) continue
@@ -264,9 +291,24 @@ export async function projectCleaners(date: string): Promise<{ people: CleanerTo
     if (!m || m.vendor) continue
     const ppl = (Array.isArray(t.assignees) ? t.assignees : [])
       .map((a: any) => String(a?.name || a || '').trim()).filter(Boolean)
+      .filter(isCleaner)
     if (!ppl.length) continue
-    const share = 1 / ppl.length
-    for (const pn of ppl) { per[pn] = per[pn] || {}; per[pn][m.market] = (per[pn][m.market] || 0) + share }
+    const pb = baseOfPart(m.name)
+    if (pb) componentBasesToday[pb] = true
+    rows.push({ m, ppl, weight: 1 })
+  }
+  const per: Record<string, Record<string, number>> = {}
+  for (const r of rows) {
+    const fb = baseOfFull(r.m.name)
+    if (fb) {
+      // The desk schedules the FULL clean AND the component cleans to be safe. When the
+      // components share the day, they are the physical truth — skip the FULL duplicate.
+      if (componentBasesToday[fb]) continue
+      // A FULL clean alone is still every unit it contains: two studios' worth of work and fees.
+      r.weight = Math.max(2, partsOfBase[fb] || 0)
+    }
+    const share = r.weight / r.ppl.length
+    for (const pn of r.ppl) { per[pn] = per[pn] || {}; per[pn][r.m.market] = (per[pn][r.m.market] || 0) + share }
   }
   const sched: Record<string, number> = {}
   try {
