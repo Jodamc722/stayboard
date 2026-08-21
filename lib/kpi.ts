@@ -201,7 +201,14 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     // so cleaning turns are split in-house vs vendor instead of blended.
     const VENDOR_K = vendorRegex((await getOpsPresets()).vendorBuildings)
     const vendorLi: Record<string, boolean> = {}
-    for (const l of all) vendorLi[l.id] = VENDOR_K.test(l.building) || VENDOR_K.test(l.name)
+    const botLi: Record<string, boolean> = {}
+    for (const l of all) {
+      vendorLi[l.id] = VENDOR_K.test(l.building) || VENDOR_K.test(l.name)
+      // BOTANICA (Jon, 2026-08-22): "the cleaning fee goes back into ADR. We don't even get
+      // invoiced for that... It's just part of ADR and our management agreement." Its fee is
+      // ROOM revenue by contract — it never touches a cleaning line anywhere in the app.
+      botLi[l.id] = /botanica/i.test(l.building) || /botanica/i.test(l.name)
+    }
     const dOf = (v: any) => str(v).slice(0, 10)
     const arrivalsToday = live.filter(r => dOf(r.check_in) === today)
     const departuresToday = live.filter(r => dOf(r.check_out) === today)
@@ -254,6 +261,13 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         if (inWin(dOf(r.check_out), a, b)) {
           const charged = num(r.cleaning)
           let c = charged
+          // Botanica's fee is ADR by contract — count it as room revenue and move on. No
+          // cleaning turn, no cleaning revenue, no fallback pricing.
+          if (li && botLi[li.id]) {
+            if (c > 0) { room += c; if (!byBuilding[bld]) byBuilding[bld] = { nights: 0, revenue: 0, cleaning: 0, units: {} }; byBuilding[bld].revenue += c }
+            if (inWin(dOf(r.check_in), a, b)) arrivals += 1
+            continue
+          }
           // Expedia-bundled fees were already rebuilt OUT of the fare above, so this fallback now
           // only prices a non-Expedia checkout that genuinely carries no fee.
           if (!c && li && li.listingFee > 0) { c = li.listingFee; turnsFromListingFee += 1 }
