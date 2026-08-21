@@ -14,6 +14,7 @@
 // returns '' and the brief renders without it.
 import 'server-only'
 import { buildKpi } from '@/lib/kpi'
+import { laborEconomics } from '@/lib/labor-econ'
 import type { Access } from '@/lib/access'
 
 const TZ = 'America/New_York'
@@ -70,6 +71,19 @@ export async function weeklyKpiCard(): Promise<string> {
     ])
     if (!L || !L.ok) return ''
 
+    // CLEANING ROWS COME FROM THE LABOR ENGINE (Jon, 2026-08-21: "make sure that on all
+    // interfaces everything is pulling the same level of data"). The board's checkout count is
+    // demand; the engine's credited departure cleans and net revenue are the economics — and the
+    // rest of THIS email runs on the engine, so its weekly review must too. SEQUENTIAL on
+    // purpose (shared Homebase upstream; past weeks ride the engine's week cache). Each window
+    // is its own try — a hiccup dashes that column, never the card.
+    const engineWin = async (a: string, b: string) => {
+      try { const e = await laborEconomics({ from: a, to: b, market: 'all' }); return e.kpi.housekeeping } catch { return null }
+    }
+    const EP = await engineWin(dISO(addDays(new Date(lastSun + 'T12:00:00'), -7)), dISO(addDays(new Date(lastSun + 'T12:00:00'), -1)))
+    const EL = await engineWin(lastSun, lastSat)
+    const EW = wantWtd ? await engineWin(thisSun, yesterday) : null
+
     const R = L.revenue, C = L.cleaning, K = L.work, G = L.glitches, S = L.sentiment, Wl = L.welcome
     const w = (pick: (p: any) => any): string => {
       if (!W || !W.ok) return '<span style="color:#9ca3af">&mdash;</span>'
@@ -96,15 +110,26 @@ export async function weeklyKpiCard(): Promise<string> {
       row('RevPAR', 'revenue per available night',
         money(R.revparPrev), money(R.revpar), chg(R.revpar, R.revparPrev, money),
         w(p => money(p.revenue.revpar))) +
-      row('Total revenue', 'room + cleaning, net of channel',
+      row('Total revenue', 'room + cleaning, as booked',
         money(R.totalPrev), money(R.total), chg(R.total, R.totalPrev, money),
         w(p => money(p.revenue.total))) +
-      row('Cleaning revenue', C.turns + ' checkout cleans' + (C.feePerTurn != null ? ' &middot; ' + money(C.feePerTurn) + ' / turn' : ''),
-        money(C.revenuePrev), money(C.revenue), chg(C.revenue, C.revenuePrev, money),
-        w(p => money(p.cleaning.revenue))) +
-      row('Checkout cleans', '',
-        intTxt(C.turnsPrev), intTxt(C.turns), chg(C.turns, C.turnsPrev, intTxt),
-        w(p => intTxt(p.cleaning.turns))) +
+      row('Cleaning revenue', 'labor engine &middot; net of channel cut, credited departure cleans' +
+        (EL && EL.revPerClean != null ? ' &middot; ' + money(EL.revPerClean) + ' / clean' : ''),
+        money(EP ? EP.revenue : null), money(EL ? EL.revenue : null),
+        chg(EL ? EL.revenue : null, EP ? EP.revenue : null, money),
+        EW ? money(EW.revenue) : '<span style="color:#9ca3af">&mdash;</span>') +
+      row('Departure cleans', 'credited to housekeepers &mdash; the cost-per-clean denominator',
+        intTxt(EP ? EP.cleans : null), intTxt(EL ? EL.cleans : null),
+        chg(EL ? EL.cleans : null, EP ? EP.cleans : null, intTxt),
+        EW ? intTxt(EW.cleans) : '<span style="color:#9ca3af">&mdash;</span>') +
+      row('Cost per clean', 'housekeeper wages &divide; departure cleans &mdash; lower is better',
+        money(EP ? EP.costPerClean : null), money(EL ? EL.costPerClean : null),
+        chg(EL ? EL.costPerClean : null, EP ? EP.costPerClean : null, money, false),
+        EW ? money(EW.costPerClean) : '<span style="color:#9ca3af">&mdash;</span>') +
+      row('HK margin', 'net cleaning revenue kept after housekeeper wages',
+        pctTxt(EP ? EP.marginPct : null), pctTxt(EL ? EL.marginPct : null),
+        chg(EL ? EL.marginPct : null, EP ? EP.marginPct : null, (n: any) => n + ' pts'),
+        EW ? pctTxt(EW.marginPct) : '<span style="color:#9ca3af">&mdash;</span>') +
       row('Tasks completed', (K.onTimeRate != null ? pctTxt(K.onTimeRate) + ' finished on the scheduled day' : ''),
         intTxt(K.completedPrev), intTxt(K.completed), chg(K.completed, K.completedPrev, intTxt),
         w(p => intTxt(p.work.completed))) +
@@ -130,7 +155,7 @@ export async function weeklyKpiCard(): Promise<string> {
       '<th style="' + th + ';text-align:right">Change</th>' +
       '<th style="' + th + ';text-align:right">This wk<br>' + (wantWtd ? niceDay(thisSun) + '&ndash;' + niceDay(yesterday) : 'just started') + '</th></tr>' +
       rows + '</table>' +
-      '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">This week runs Sunday through yesterday and has no change column &mdash; a partial week against a full one is not a comparison. Full detail on the <a href="https://lighthouse-stay.vercel.app/" style="color:#2563eb">KPI board</a>.</p>' +
+      '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">This week runs Sunday through yesterday and has no change column &mdash; a partial week against a full one is not a comparison. Cleaning rows are the labor engine&rsquo;s &mdash; identical to the <a href="https://lighthouse-stay.vercel.app/labor" style="color:#2563eb">Labor board</a> and the settled section above. Everything else on the <a href="https://lighthouse-stay.vercel.app/" style="color:#2563eb">KPI board</a>.</p>' +
       '</div>'
   } catch {
     return ''  // additive: a KPI hiccup never costs the labor email
