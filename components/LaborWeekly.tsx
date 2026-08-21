@@ -10,6 +10,7 @@
 // number here can never disagree with the number there.
 import { useCallback, useEffect, useState } from 'react'
 import { CalendarRange, Loader2, AlertTriangle, RefreshCw } from 'lucide-react'
+import { CleanLog } from '@/components/CleanLog'
 
 type Row = {
   label: string; start: string; end: string; partial?: boolean; error?: string
@@ -41,6 +42,9 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [weeks, setWeeks] = useState(6)
+  // Click a week's clean count to see the cleans behind it — unit, who, how long, and how long the
+  // guest had been there.
+  const [openWeek, setOpenWeek] = useState<Row | null>(null)
 
   const load = useCallback(() => {
     setLoading(true); setErr(null)
@@ -120,7 +124,14 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                     <td className={'py-1.5 pr-3 text-right tabular-nums font-semibold ' + ((r.hkMargin ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
                       {money(r.hkMargin)}{r.hkMarginPct != null && <span className="text-[11px] font-normal text-muted"> · {r.hkMarginPct}%</span>}
                     </td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums text-ink">{num(r.cleans)}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">
+                      <button
+                        onClick={() => setOpenWeek(openWeek?.start === r.start ? null : r)}
+                        title="See every clean in this week — unit, who turned it, how long it took, and the length of the stay before it"
+                        className={`tabular-nums font-semibold underline decoration-dotted underline-offset-2 hover:text-brand-700 ${openWeek?.start === r.start ? 'text-brand-700' : 'text-ink'}`}>
+                        {num(r.cleans)}
+                      </button>
+                    </td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{num(r.hkHours, 'h')}</td>
                     <td className={'py-1.5 pr-3 text-right tabular-nums ' + (hpc === 'high' ? 'text-rose-700 font-semibold' : hpc === 'low' ? 'text-emerald-700 font-semibold' : 'text-ink')}>
                       {r.hoursPerClean == null ? '—' : r.hoursPerClean + 'h'}
@@ -149,6 +160,13 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
               </tr>
             </tbody>
           </table>
+          {openWeek && (
+            <CleanLog
+              from={openWeek.start} to={openWeek.end} market={market}
+              label={`week of ${openWeek.label}`}
+              onClose={() => setOpenWeek(null)}
+            />
+          )}
           {d.failedWeeks.length > 0 && (
             <p className="text-[11.5px] text-amber-700 mt-2 px-1">
               {d.failedWeeks.length} week{d.failedWeeks.length === 1 ? '' : 's'} could not be built ({d.failedWeeks.join(', ')}) — the average above excludes them rather than treating them as zero.
