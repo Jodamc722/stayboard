@@ -17,13 +17,17 @@ type Tasks = { total: number; cleans: number; maintenance: number; inspection: n
 type Person = {
   name: string; dept: string; source: string; sourceLabel: string; editable: boolean
   hours: number; payroll: number | null
-  homebaseRole: string | null; staffRole: string | null; area: string | null
+  homebaseRole: string | null; staffRole: string | null
+  agency: string | null; area: string | null
   tasks: Tasks
 }
+type Opt = { key: string; label: string }
 type Data = {
   people: Person[]
   depts: { key: string; label: string }[]
   counts: Record<string, number>
+  agencies: Opt[]
+  areas: Opt[]
   gap: { people: number; hours: number; payroll: number | null }
   outside: { people: number; names: string[]; tasks: number }
   from: string; to: string; days: number
@@ -48,6 +52,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, string>>({})
+  const [staffEdits, setStaffEdits] = useState<Record<string, { agency?: string; area?: string }>>({})
   const [q, setQ] = useState('')
   const [onlyGaps, setOnlyGaps] = useState(false)
 
@@ -55,14 +60,18 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
     setLoading(true); setErr(null)
     fetch('/api/settings/crew-roles?days=30', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j?.ok) { setD(j); setEdits({}) } else setErr(j?.error || 'Could not load the roster.') })
+      .then(j => { if (j?.ok) { setD(j); setEdits({}); setStaffEdits({}) } else setErr(j?.error || 'Could not load the roster.') })
       .catch(e => setErr(String(e?.message || e)))
       .finally(() => setLoading(false))
   }, [])
   useEffect(() => { load() }, [load])
 
   const deptOf = (p: Person) => (p.name in edits ? edits[p.name] : p.dept)
-  const dirty = Object.keys(edits).length > 0
+  const agencyOf = (p: Person) => (staffEdits[p.name]?.agency ?? (p.agency || ''))
+  const areaOf = (p: Person) => (staffEdits[p.name]?.area ?? (p.area || ''))
+  const setStaff = (name: string, patch: { agency?: string; area?: string }) =>
+    setStaffEdits(s => ({ ...s, [name]: { ...s[name], ...patch } }))
+  const dirty = Object.keys(edits).length > 0 || Object.keys(staffEdits).length > 0
 
   const rows = useMemo(() => {
     if (!d) return []
@@ -79,11 +88,18 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
     setSaving(true); setErr(null); setMsg(null)
     try {
       const r = await fetch('/api/settings/crew-roles', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roles: edits }),
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roles: edits, staff: staffEdits }),
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Failed to save.')
-      setMsg(`Saved — ${j.set} placed${j.cleared ? `, ${j.cleared} handed back to the roster` : ''}. Every labor number recalculates from here.`)
+      const bits = [
+        j.set ? `${j.set} placed on a crew` : '',
+        j.cleared ? `${j.cleared} handed back to the roster` : '',
+        j.staffSaved ? `${j.staffSaved} employment/market change${j.staffSaved === 1 ? '' : 's'}` : '',
+      ].filter(Boolean)
+      if (Array.isArray(j.staffErrors) && j.staffErrors.length) setErr(`Some rows did not save — ${j.staffErrors.join('; ')}`)
+      setMsg(`Saved${bits.length ? ' — ' + bits.join(', ') : ''}. Every labor number recalculates from here.`)
       load()
     } catch (e: any) { setErr(e.message || String(e)) } finally { setSaving(false) }
   }
@@ -99,7 +115,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
           Hours and payroll are Homebase; the task mix beside them is Breezeway, shown as context only.
         </p>
         <div className="flex items-center gap-2 shrink-0">
-          {dirty && <span className="text-[11.5px] font-semibold text-amber-700">{Object.keys(edits).length} unsaved</span>}
+          {dirty && <span className="text-[11.5px] font-semibold text-amber-700">{new Set([...Object.keys(edits), ...Object.keys(staffEdits)]).size} unsaved</span>}
           <button onClick={save} disabled={!isOwner || saving || !dirty}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
@@ -152,8 +168,8 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         <table className="w-full text-[12.5px] min-w-[820px]">
           <thead>
             <tr className="border-b border-line text-left">
-              {['Person', 'Crew', 'Where that came from', 'Hours', 'Payroll', 'Breezeway (context only)', 'Staffing'].map((h, i) => (
-                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 3 || i === 4 ? 'text-right' : ''}`}>{h}</th>
+              {['Person', 'Crew', 'Agency / W2', 'Market', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
+                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 4 || i === 5 ? 'text-right' : ''}`}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -165,33 +181,50 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
               return (
                 <tr key={p.name} className={`border-b border-line/60 last:border-b-0 ${changed ? 'bg-brand-50/40' : ''}`}>
                   <td className="px-2.5 py-2 font-semibold text-ink whitespace-nowrap">{p.name}</td>
-                  <td className="px-2.5 py-2">
+                  <td className="px-2.5 py-2 align-top">
                     <select
                       value={cur} disabled={!isOwner}
                       onChange={e => setEdits(s => ({ ...s, [p.name]: e.target.value }))}
                       className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60">
                       {(d?.depts || []).map(x => <option key={x.key} value={x.key}>{x.label}</option>)}
                     </select>
+                    {/* Provenance stays — it is how you tell a stated fact from a guess — but it is a
+                        footnote under the answer now rather than a column of its own. */}
+                    <div className="mt-1 whitespace-nowrap">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SOURCE_TONE[p.source] || SOURCE_TONE.homebase}`}>{p.sourceLabel}</span>
+                      {p.source === 'override' && isOwner && (
+                        <button onClick={() => setEdits(s => ({ ...s, [p.name]: '' }))} title="Clear this override and hand them back to the roster"
+                          className="ml-1 text-muted hover:text-ink align-middle"><RotateCcw size={10} /></button>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">
-                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${SOURCE_TONE[p.source] || SOURCE_TONE.homebase}`}>{p.sourceLabel}</span>
-                    {p.source === 'override' && isOwner && (
-                      <button onClick={() => setEdits(s => ({ ...s, [p.name]: '' }))} title="Clear this override and hand them back to the roster"
-                        className="ml-1.5 text-muted hover:text-ink align-middle"><RotateCcw size={11} /></button>
-                    )}
+                  <td className="px-2.5 py-2 align-top">
+                    <select
+                      value={agencyOf(p)} disabled={!isOwner}
+                      onChange={e => setStaff(p.name, { agency: e.target.value })}
+                      title="W2 means they are on our payroll directly. An agency here is what the invoice and its fees hang off."
+                      className={`rounded-lg border bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60 ${staffEdits[p.name]?.agency !== undefined ? 'border-brand-300 text-brand-700 font-semibold' : 'border-line text-ink'}`}>
+                      {(d?.agencies || []).map(x => <option key={x.key} value={x.key}>{x.label}</option>)}
+                    </select>
                   </td>
-                  <td className="px-2.5 py-2 text-right tabular-nums text-ink whitespace-nowrap">{p.hours ? p.hours.toLocaleString() + 'h' : '—'}</td>
-                  <td className="px-2.5 py-2 text-right tabular-nums text-ink whitespace-nowrap">{money(p.payroll)}</td>
-                  <td className="px-2.5 py-2 text-muted whitespace-nowrap">
+                  <td className="px-2.5 py-2 align-top">
+                    <select
+                      value={areaOf(p)} disabled={!isOwner}
+                      onChange={e => setStaff(p.name, { area: e.target.value })}
+                      title="Which market their payroll counts against. Blank leaves them out of every market tab. Vendor is its own bucket, never part of Miami or Broward."
+                      className={`rounded-lg border bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60 ${!areaOf(p) ? 'border-amber-300 text-amber-700' : staffEdits[p.name]?.area !== undefined ? 'border-brand-300 text-brand-700 font-semibold' : 'border-line text-ink'}`}>
+                      {(d?.areas || []).map(x => <option key={x.key} value={x.key}>{x.label}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-2.5 py-2 text-right tabular-nums text-ink whitespace-nowrap align-top">{p.hours ? p.hours.toLocaleString() + 'h' : '—'}</td>
+                  <td className="px-2.5 py-2 text-right tabular-nums text-ink whitespace-nowrap align-top">{money(p.payroll)}</td>
+                  <td className="px-2.5 py-2 text-muted whitespace-nowrap align-top">
                     {p.tasks.total === 0 ? <span className="text-faint">no tasks</span> : (
                       <>{p.tasks.total} tasks
                         <span className="text-[11px]"> · {p.tasks.cleans} cleans · {p.tasks.maintenance} maint · {p.tasks.inspection} insp</span>
                       </>
                     )}
-                  </td>
-                  <td className="px-2.5 py-2 text-muted whitespace-nowrap">
-                    {p.staffRole || <span className="text-faint">role not set</span>}
-                    {p.area ? <span className="text-[11px]"> · {p.area}</span> : <span className="text-[11px] text-amber-700"> · no area</span>}
+                    {p.staffRole && <div className="text-[10.5px] text-faint">Staffing role: {p.staffRole}</div>}
                   </td>
                 </tr>
               )
@@ -200,10 +233,13 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         </table>
       </div>
 
-      <p className="text-[11.5px] text-muted mt-2.5 max-w-[76ch]">
-        <b className="text-ink">Area matters too.</b> A person with no area in <b>Staffing &amp; agencies</b> is left out of every
-        market tab rather than counted on all of them, so a blank area quietly shrinks Miami, Broward and North at once.
-        Anyone showing <b>no area</b> above is worth five seconds there.
+      <p className="text-[11.5px] text-muted mt-2.5 max-w-[80ch]">
+        <b className="text-ink">All three columns move money.</b> <b>Crew</b> decides which margin their wages land in.
+        <b> Agency / W2</b> is what the agency invoice and its fees hang off — W2 means they are on our payroll directly.
+        <b> Market</b> decides which tab their payroll counts against; an amber <em>Not set</em> leaves them out of Miami,
+        Broward and North alike, which is why those tabs can add up to less than the company total.
+        <b> Vendor</b> is deliberately its own bucket and never part of a geographic market.
+        These write the same record as <b>Staffing &amp; agencies</b> below, so the two can never drift.
       </p>
     </div>
   )
