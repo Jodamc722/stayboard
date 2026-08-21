@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
     counts,
     overrides: crew.overrides,
     // W2 is the absence of an agency, so it is offered as a real choice rather than a blank.
-    agencies: [{ key: '', label: 'W2 — in-house' }, ...agencies.map(a => ({ key: a.key, label: a.label }))],
+    agencies: [{ key: '', label: 'W2 — in-house' }, ...agencies.map(a => ({ key: a.key, label: a.label, fee_percent: a.fee_percent, fee_per_hour: a.fee_per_hour, fee_flat: a.fee_flat }))],
     // Vendor sits beside the geographic markets on purpose: a vendor-cleaned unit is its own bucket
     // in the economics, never part of Miami or Broward.
     areas: [
@@ -207,6 +207,9 @@ export async function PUT(req: NextRequest) {
     const patch: any = { name }
     if ('agency' in e) patch.agency = e.agency ? String(e.agency) : null
     if ('area' in e) patch.area = e.area ? String(e.area).toLowerCase() : null
+    // Role rides the same staff row (Jon, 2026-08-23: "put the role, the agency, and their pay
+    // agency fees so I can get a better assumption of labor cost based on market area and role").
+    if ('role' in e) patch.role = e.role ? String(e.role) : null
     if (Object.keys(patch).length < 2) continue
     const r = await upsertStaff(patch)
     if (r.ok) staffSaved++; else staffErrors.push(`${name}: ${r.error}`)
