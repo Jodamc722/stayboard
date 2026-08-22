@@ -120,7 +120,9 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
       </div>
 
       {/* Summary chips */}
-      <div className="flex items-center gap-2 text-xs mt-3">
+      {/* Three chips plus "synced 4 min ago" plus a 60-character error is more than one phone
+          line, and the error was the part that fell off the edge. */}
+      <div className="flex items-center gap-2 gap-y-1.5 flex-wrap text-xs mt-3">
         <Stat label="Total" value={fields.length} />
         <Stat label="Tracked" value={trackedCount} accent="emerald" />
         <Stat label="KPI" value={kpiCount} accent="brand" />
@@ -192,8 +194,12 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
               <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-2 pl-1">
                 {target} fields · {rows.length}
               </div>
+              {/* A five-column reference table — Field, Type, Track, KPI, KPI slug — whose fixed
+                  column widths already add up to about 700px. It keeps them and scrolls sideways
+                  in its own box; before this it dragged the whole page, heading and all. */}
               <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden">
-                <table className="w-full text-sm">
+                <div className="lh-hscroll">
+                <table className="w-full min-w-[760px] text-sm">
                   <thead>
                     <tr className="text-[11px] uppercase tracking-wider font-semibold text-muted bg-app">
                       <th className="text-left px-4 py-2.5">Field</th>
@@ -254,6 +260,7 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </section>
           ))}
