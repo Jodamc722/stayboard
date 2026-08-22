@@ -80,11 +80,16 @@ export async function GET(req: NextRequest) {
     ]
     for (const l of lists) if (!l.to.length) { l.to = [OWNER]; l.defaulted = true }
     const out: any[] = []
+    // STANDING CC (Jon, 2026-08-09, same rule as the ops brief): the operations manager sees
+    // every brief that goes out. Dropped automatically when he is already a named recipient.
+    const STANDING_CC = ['roberto@stay-hospitality.com']
     for (const { market, to, defaulted } of lists) {
       // SEQUENTIAL on purpose — both markets share the same Homebase/Supabase upstreams and the
       // second build rides the first one's caches.
       const b = await buildMaintBrief(market)
-      const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
+      const has = new Set(to.map(t => String(t || '').trim().toLowerCase()))
+      const cc = STANDING_CC.filter(c => !has.has(c.toLowerCase()))
+      const r = await sendGmail({ fromEmail, to, cc, subject: b.subject, html: b.html })
       out.push({ market, sent: !!r?.ok, to, defaulted: !!defaulted, subject: b.subject, counts: b.counts })
     }
     return NextResponse.json({ ok: true, briefs: out })
