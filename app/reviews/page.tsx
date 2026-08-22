@@ -35,11 +35,14 @@ export default async function ReviewsPage() {
 
       {/* The action board lives on its own page: it is a work queue, not a metric, and reading the
           reputation numbers is a different job from working the list. */}
+      {/* Phone: the label, the one-line explanation and the chevron all on one row squeezed the
+          explanation into a vertical ladder of words. Below sm the explanation drops to its own
+          full-width line under the label + chevron; from sm up the row is unchanged. */}
       <a href="/reviews/actions"
-        className="flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50/50 px-4 py-3 mb-5 hover:bg-brand-50 group">
+        className="flex items-center gap-2 flex-wrap gap-y-1 rounded-xl border border-brand-200 bg-brand-50/50 px-4 py-3 mb-5 hover:bg-brand-50 group">
         <ClipboardList size={16} className="text-brand-600 flex-shrink-0" />
         <span className="text-[13px] font-semibold text-ink">Actions from feedback</span>
-        <span className="text-[12px] text-muted">Turn the last 10 days of guest complaints into jobs, grouped by unit</span>
+        <span className="order-last basis-full sm:order-none sm:basis-auto text-[12px] text-muted">Turn the last 10 days of guest complaints into jobs, grouped by unit</span>
         <ChevronRight size={15} className="ml-auto text-muted group-hover:text-brand-700 flex-shrink-0" />
       </a>
 
