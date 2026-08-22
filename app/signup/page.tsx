@@ -47,7 +47,8 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-sm p-8 border border-slate-200">
+      {/* p-8 on a 375px screen left 311px for the form. The login card next door is p-6 sm:p-8. */}
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-sm p-6 sm:p-8 border border-slate-200">
         <h1 className="text-3xl font-bold text-slate-900">Create account</h1>
         <p className="mt-2 text-sm text-slate-500">Stay Hospitality emails only.</p>
 
@@ -63,6 +64,9 @@ export default function SignupPage() {
           </>
         ) : (
           <>
+            {/* autoComplete + autoCapitalize/autoCorrect are what make this form work on a phone,
+                same as /login: without them iOS never offers the saved login and helpfully
+                capitalises the first letter of the email address you type. */}
             <form onSubmit={submit} className="mt-6 space-y-3">
               <input
                 type="email"
@@ -71,6 +75,8 @@ export default function SignupPage() {
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="you@stay-hospitality.com"
+                name="email" autoComplete="email" inputMode="email"
+                autoCapitalize="none" autoCorrect="off" spellCheck={false}
                 className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition"
               />
               <input
@@ -79,6 +85,7 @@ export default function SignupPage() {
                 value={pw}
                 onChange={e => setPw(e.target.value)}
                 placeholder="Password (min 8 chars)"
+                name="new-password" autoComplete="new-password"
                 className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition"
               />
               <input
@@ -87,6 +94,7 @@ export default function SignupPage() {
                 value={pw2}
                 onChange={e => setPw2(e.target.value)}
                 placeholder="Confirm password"
+                name="confirm-password" autoComplete="new-password"
                 className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition"
               />
               {err && <div className="bg-rose-50 text-rose-700 p-3 rounded-lg text-sm">{err}</div>}
