@@ -20,6 +20,7 @@ import { getDirectory } from './slack'
 import { getTimecards } from './homebase-labor'
 import { loadBehind } from './ops-behind'
 import { draft } from './slack-queue'
+import { getSetting, setSetting } from './app-settings'
 import {
   getSlackRules, groupForBuilding, channelFor, audienceFor, resolveSlackId, deptForCategory,
   type SlackRules, type RoutingGroup, type Dept,
@@ -615,18 +616,40 @@ export async function runNotableArrivals(): Promise<any> {
   })
   if (!items.length) return { skipped: 'nothing notable coming up' }
 
+  // SAY IT ONCE (Slack audit, 2026-08-22: "some of the updates are pointless"). With a 7-day
+  // lookahead and a daily send, the same $10k booking was re-announced every morning until it
+  // arrived — the message read as wallpaper by day three. Each booking is announced the FIRST
+  // time it qualifies; a morning with nothing new sends nothing.
+  const seenKey = 'slack_notable_seen'
+  const seen = await getSetting<Record<string, string>>(seenKey, {}).catch(() => ({} as Record<string, string>))
+  const keyOf = (i: { unit: string; guest: string; checkIn: string }) =>
+    (String(i.unit) + '|' + String(i.guest) + '|' + String(i.checkIn)).slice(0, 120)
+  const fresh = items.filter(i => !seen[keyOf(i)])
+  if (!fresh.length) return { skipped: 'all ' + items.length + ' already announced' }
+
   const today = etDate()
   const audience = rules.leadership.length ? rules.leadership : rules.core
   const { body, summary } = notableArrivalsMessage({
-    items: items.map(i => ({
+    items: fresh.map(i => ({
       unit: i.unit, guest: i.guest, checkIn: i.checkIn, daysAway: i.daysAway,
       nights: i.nights, value: i.value, kind: i.kind,
     })),
     audience, days: rules.notableLookaheadDays,
   })
-  return draft({
+  const res = await draft({
     eventKey: 'notable_arrivals',
     groupKey: 'notable:' + today,
-    channelId, body, summary, audience, itemCount: items.length,
+    channelId, body, summary, audience, itemCount: fresh.length,
   }, rules)
+  // Remember what was announced only when it actually went out (sent or queued for approval),
+  // pruning entries older than 30 days so the map never grows without bound.
+  if (res && (res as any).ok) {
+    const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString()
+    const next: Record<string, string> = {}
+    for (const [k, at] of Object.entries(seen)) if (String(at) > cutoff) next[k] = String(at)
+    const nowIso = new Date().toISOString()
+    for (const i of fresh) next[keyOf(i)] = nowIso
+    await setSetting(seenKey, next, 'slack-alerts').catch(() => null)
+  }
+  return res
 }
