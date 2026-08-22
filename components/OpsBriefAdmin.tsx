@@ -12,8 +12,8 @@ type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: 
 // The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
 // on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
 const DIGESTS: { key: 'trueup' | 'salato'; label: string; blurb: string }[] = [
-  { key: 'trueup', label: 'Daily Labor · 7:45am ET', blurb: "One email: today's staffing plan, yesterday's labor, and the settled 30/45-day economics. Skips the day rather than send on partial payroll." },
-  { key: 'salato', label: 'Salato front desk · daily 7am ET', blurb: 'Reservations only: arriving, departing, in-house, upcoming — hotel-related flags highlighted.' },
+  { key: 'trueup', label: 'Daily Labor · 7:58am ET', blurb: "One simple email: today's shifts & tasks (8h standard), then cleaning revenue, maintenance revenue, payroll and profit for yesterday / 7 days / 30 days. Goes to the owner until a list is saved. Skips the day rather than send on partial payroll." },
+  { key: 'salato', label: 'Salato front desk · 7:16am ET', blurb: 'Reservations only: arriving, departing, in-house, upcoming — hotel-related flags highlighted.' },
 ]
 
 // Four audiences, deliberately different documents (2026-08-07). The blurb is the promise each
@@ -180,7 +180,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
             (its own brief comes later). */}
         <div className="rounded-xl border border-line p-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[12px] font-bold text-ink">Maintenance briefs · 7:15am ET</span>
+            <span className="text-[12px] font-bold text-ink">Maintenance briefs · 7:46am ET</span>
             <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
               <input type="checkbox" disabled={!isOwner} checked={cfg.maint?.enabled !== false}
                 onChange={e => setCfg(x => ({ ...x, maint: { ...(x.maint || {}), enabled: e.target.checked } }))} />
@@ -194,7 +194,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           <div className="text-[11px] text-muted mt-0.5 mb-1.5">
             One per market: yesterday&apos;s task completion, carryover not finished, open glitches, vacant units worth
             preventive work, recurring-issue units, and billable labor (yesterday / 7d / 30d) priced exactly like the invoices.
-            17 WEST is excluded from both — it gets its own brief.
+            17 WEST is excluded from both — it gets its own brief. Until a list is saved here, each goes to the owner alone.
           </div>
           <div className="grid sm:grid-cols-2 gap-3">
             {([['m_miami', 'Miami', 'miami'], ['m_broward', 'Broward', 'broward']] as [string, string, string][]).map(([rk, label, pk]) => (
