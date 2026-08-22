@@ -140,8 +140,14 @@ export async function GET(req: NextRequest) {
       const filled = shifts.filter(s => !s.open && s.startAt)
       const openShifts = shifts.filter(s => s.open).length
       onShift = filled.length
-      const hoursOf = (s: any): number | null =>
-        s.startAt && s.endAt ? r1((new Date(s.endAt).getTime() - new Date(s.startAt).getTime()) / 36e5) : null
+      // WORKED HOURS, NOT WALL SPAN. An 8:00–5:00 shift spans 9 hours but carries an unpaid
+      // break — judging the span against the 8h standard flagged 7 of 10 perfectly normal
+      // shifts on the first live preview. A shift longer than 6h assumes one unpaid hour.
+      const hoursOf = (s: any): number | null => {
+        if (!s.startAt || !s.endAt) return null
+        const span = (new Date(s.endAt).getTime() - new Date(s.startAt).getTime()) / 36e5
+        return r1(span > 6 ? span - 1 : span)
+      }
       const totalH = r1(filled.reduce((a, s) => a + (hoursOf(s) || 0), 0))
       const standardH = filled.length * SHIFT_STANDARD_H
       const overStd = filled.filter(s => (hoursOf(s) || 0) > SHIFT_STANDARD_H + 0.25)
@@ -174,7 +180,8 @@ export async function GET(req: NextRequest) {
         (openShifts ? ' &middot; <span style="' + RED + '">' + openShifts + ' open shift' + (openShifts === 1 ? '' : 's') + ' unfilled</span>' : '') +
         '<br>' + workBits + '</p>' +
         (rows
-          ? '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">On today</th><th style="' + th + '">Shift</th><th style="' + th + ';text-align:right">Hours</th></tr>' + rows + '</table>'
+          ? '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">On today</th><th style="' + th + '">Shift</th><th style="' + th + ';text-align:right">Hours</th></tr>' + rows + '</table>' +
+            '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Hours are worked hours &mdash; shifts over 6h assume one unpaid break hour, so 8:00&ndash;5:00 counts as 8h.</p>'
           : '<p style="margin:0;font-size:13px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>') +
         '</div>'
     } catch { /* additive */ }
