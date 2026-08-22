@@ -138,7 +138,11 @@ export function ReservationsView({
       ) : (
         <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full">
+            {/* Nine-column reference table. `min-w-full` alone let it COMPRESS to the width of a
+                phone rather than scroll — Guest, Property and Dates all collapsed into unreadable
+                slivers. Below sm it keeps a real width and scrolls inside this box; from sm up it
+                is exactly the authored min-w-full. */}
+            <table className="min-w-[900px] sm:min-w-full">
               <thead className="bg-app">
                 <tr>
                   {['Guest', 'Property', 'Dates', 'Nights', 'Status', 'Flags', 'Verify', 'Source', 'Total'].map(h => (
