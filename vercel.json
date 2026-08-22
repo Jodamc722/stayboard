@@ -73,10 +73,6 @@
       "schedule": "31 11 * * *"
     },
     {
-      "path": "/api/cron/maint-brief",
-      "schedule": "46 11 * * *"
-    },
-    {
       "path": "/api/cron/labor-trueup",
       "schedule": "58 11 * * *"
     },
