@@ -144,8 +144,10 @@ export default function GlitchesPage() {
           {rows.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing matches.</div>}
           <div className="space-y-2">
             {rows.map(g => (
-              <div key={g.id} className={'rounded-2xl border bg-white px-4 py-3 flex items-center gap-3 ' + (g.done ? 'border-line opacity-80' : g.unassigned ? 'border-rose-200' : 'border-line')}>
-                <div className="flex-1 min-w-0">
+              /* The assign box (150px) plus the two links left ~35px for the issue itself on a
+                 phone. Wrap: the issue takes its own line, then assign + links sit under it. */
+              <div key={g.id} className={'rounded-2xl border bg-white px-4 py-3 flex items-center gap-3 flex-wrap gap-y-2 ' + (g.done ? 'border-line opacity-80' : g.unassigned ? 'border-rose-200' : 'border-line')}>
+                <div className="basis-full min-w-0 sm:basis-auto sm:flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-ink">{g.issue}</span>
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 border-line text-muted">{g.unit}</span>
@@ -282,7 +284,10 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
 
       <div className="rounded-2xl border border-line bg-white p-4">
         <div className="text-sm font-semibold text-ink mb-3">Glitches per month (last 12){focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
-        <div className="flex items-end gap-1.5 h-28">
+        {/* Twelve bars across a phone is a 20px column — narrower than its own "Sep" label, so the
+            months collided. Give each bar a real width and let the chart scroll itself. */}
+        <div className="lh-hscroll -mx-1 px-1 sm:mx-0 sm:px-0">
+        <div className="flex items-end gap-1.5 h-28 min-w-[420px] sm:min-w-0">
           {stats.months.map(m => (
             <div key={m.key} className="flex-1 flex flex-col items-center gap-1">
               <span className="text-[10px] text-muted tabular-nums">{m.n || ''}</span>
@@ -290,6 +295,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
               <span className="text-[10px] text-muted">{m.label}</span>
             </div>
           ))}
+        </div>
         </div>
       </div>
 
