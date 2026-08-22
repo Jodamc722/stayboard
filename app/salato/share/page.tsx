@@ -99,8 +99,10 @@ export default function SalatoShare() {
   }, [])
 
   return (
-    <div className='min-h-screen bg-neutral-100 text-neutral-900'>
-      <div className='max-w-2xl mx-auto px-4 py-6'>
+    // No app Shell on this link, so it pads for the phone itself. px-safe goes on the outer element
+    // because it would replace the px-4 gutter if it shared one.
+    <div className='min-h-screen bg-neutral-100 text-neutral-900 px-safe'>
+      <div className='max-w-2xl mx-auto px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]'>
         <div className='rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4'>
           <div className='p-5'>
             <div className='flex items-start justify-between gap-3 flex-wrap'>
@@ -112,7 +114,7 @@ export default function SalatoShare() {
                 <h1 className='text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight'>Salato</h1>
                 <p className='text-xs text-neutral-400 mt-1.5'>Front desk{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''} · auto-refreshes every 30 min</p>
               </div>
-              <div className='flex items-center gap-2'>
+              <div className='flex items-center gap-2 flex-wrap gap-y-2'>
                 {newCount > 0 && <button onClick={markSeen} className='text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors'>{newCount} new</button>}
                 <button onClick={resync} disabled={syncing} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors'>{syncing ? 'Syncing…' : 'Resync'}</button>
                 <button onClick={() => { setLoading(true); load() }} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors'>Refresh</button>
@@ -121,7 +123,9 @@ export default function SalatoShare() {
           </div>
         </div>
 
-        <div className='flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm'>
+        {/* "Departure cleans" will not shrink below its text, so four tabs pushed the whole page
+            sideways on a 375px screen. The strip scrolls itself instead. */}
+        <div className='flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm overflow-x-auto'>
           {TABS.map(t => { const n = data ? (t.key === 'verify' ? (data.arrivals.length + data.active.length) : data[t.key].length) : 0; return (
             <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
           )})}
@@ -178,7 +182,9 @@ export default function SalatoShare() {
 
       {viewRid && (
         <div className='fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4' onClick={closeViewer}>
-          <div className='bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto' onClick={e => e.stopPropagation()}>
+          {/* 90vh counts Safari's URL bar, so on a phone the ID photo ran off the bottom of the
+              glass with nothing to scroll. dvh is what you can actually see. */}
+          <div className='bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90dvh] sm:max-h-[90vh] overflow-y-auto' onClick={e => e.stopPropagation()}>
             <div className='flex items-center justify-between px-5 py-4 border-b border-neutral-100 sticky top-0 bg-white rounded-t-2xl'>
               <div className='font-bold'>Verification</div>
               <button onClick={closeViewer} className='text-neutral-400 hover:text-neutral-700 text-xl leading-none'>×</button>
