@@ -192,6 +192,21 @@ export default function OwnerComplaintReport() {
         .oc-num { text-align:right; font-variant-numeric:tabular-nums; }
         .oc-red { color:#b91c1c; font-weight:700; }
         .oc-foot { margin-top:18px; padding-top:10px; border-top:1px solid #e4e4e7; font-size:11px; color:#71717a; line-height:1.5; }
+        /* PHONE. This page is its own document — no Shell, its own stylesheet — so its phone
+           layout lives here too. The A4-ish 34px page margins and the three-across stat row were
+           built for paper: on a 375px screen they left ~90px per stat card, which is not enough
+           for "Rest of the portfolio" plus a number plus a sub-label. Print is unaffected: a
+           printed page is far wider than 640px, so none of this matches. */
+        @media (max-width: 640px) {
+          .oc-root { padding:10px; }
+          .oc-page { padding:20px 16px 24px; }
+          .oc-title { font-size:22px; }
+          .oc-head { flex-wrap:wrap; gap:8px; }
+          .oc-headright { text-align:left; }
+          .oc-stats { grid-template-columns:1fr; }
+          /* Four score columns keep their widths and scroll rather than wrapping every heading. */
+          .oc-table { display:block; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+        }
         @media print {
           .oc-root { background:#fff; padding:0; }
           .oc-bar { display:none; }
