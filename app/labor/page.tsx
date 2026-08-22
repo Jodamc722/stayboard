@@ -99,8 +99,11 @@ export default function LaborPage() {
             <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Cost / clean</div><div className="text-2xl font-bold text-ink">{d.totals.cleans && d.totals.cost ? money(d.totals.cost / d.totals.cleans) : '—'}</div></div>
           </div>
 
+          {/* Seven columns with no scroller: on a phone this dragged the whole page sideways. It
+              scrolls inside its own card now. */}
           <div className="rounded-2xl border border-line bg-white overflow-hidden">
-            <table className="w-full text-sm">
+            <div className="lh-hscroll">
+            <table className="w-full text-sm min-w-[720px]">
               <thead><tr className="bg-app text-muted text-[11px] uppercase tracking-wider text-left border-b border-line">
                 <th className="px-3 py-2 font-semibold">Person</th><th className="px-3 py-2 font-semibold text-right">Days</th><th className="px-3 py-2 font-semibold text-right">Hours</th><th className="px-3 py-2 font-semibold text-right">Cost</th><th className="px-3 py-2 font-semibold text-right">Cleans</th><th className="px-3 py-2 font-semibold text-right">Hrs / clean</th><th className="px-3 py-2 font-semibold text-right">Cost / clean</th>
               </tr></thead>
@@ -118,6 +121,7 @@ export default function LaborPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
           <p className="text-xs text-muted mt-2">Cleans are matched by first name + last initial between Homebase and Breezeway. People with hours but no cleans are usually maintenance / inspectors / office &mdash; their cost still counts in the totals.</p>
         </>
