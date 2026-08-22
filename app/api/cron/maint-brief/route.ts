@@ -69,18 +69,23 @@ export async function GET(req: NextRequest) {
     if (cfg?.enabled === false && !force) {
       return NextResponse.json({ ok: true, sent: false, reason: 'disabled in settings' })
     }
-    const lists: Array<{ market: MaintMarket; to: string[] }> = [
+    // DEFAULTS ON, TO THE OWNER (2026-08-22). This brief shipped 08-20 with empty recipient
+    // lists and silently skipped every morning — Jon: "don't see maintenance one going out yet."
+    // Same rule as the Daily Labor email: until a list is saved in /users, it goes to the owner
+    // alone rather than silently nowhere. A saved list replaces the default.
+    const OWNER = 'jon@stay-hospitality.com'
+    const lists: Array<{ market: MaintMarket; to: string[]; defaulted?: boolean }> = [
       { market: 'Miami', to: (cfg?.miamiTo || []).filter(Boolean) },
       { market: 'Broward', to: (cfg?.browardTo || []).filter(Boolean) },
     ]
+    for (const l of lists) if (!l.to.length) { l.to = [OWNER]; l.defaulted = true }
     const out: any[] = []
-    for (const { market, to } of lists) {
-      if (!to.length) { out.push({ market, sent: false, reason: 'no recipients configured' }); continue }
+    for (const { market, to, defaulted } of lists) {
       // SEQUENTIAL on purpose — both markets share the same Homebase/Supabase upstreams and the
       // second build rides the first one's caches.
       const b = await buildMaintBrief(market)
       const r = await sendGmail({ fromEmail, to, subject: b.subject, html: b.html })
-      out.push({ market, sent: !!r?.ok, to, subject: b.subject, counts: b.counts })
+      out.push({ market, sent: !!r?.ok, to, defaulted: !!defaulted, subject: b.subject, counts: b.counts })
     }
     return NextResponse.json({ ok: true, briefs: out })
   } catch (e: any) {
