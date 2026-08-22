@@ -322,8 +322,13 @@ export default async function CommandCenterPage() {
         </div>
       )}
 
+      {/* PHONE STACK ORDER. The right rail used to be pulled above the feed on a narrow screen
+          (order-1), which put "Connect your tools", Ask Eve and Quick actions between Jon and the
+          day's actual exceptions — three admin cards to scroll past before the first thing that
+          needs him. On a phone the feed goes first and the rail follows; on lg the two columns
+          sit side by side exactly as before, so nothing above 640px moves. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
-        <div className="lg:col-span-2 order-2 lg:order-1">
+        <div className="lg:col-span-2">
           <MissionFeed
             reviews={reviewItems}
             approvals={approvals}
@@ -336,7 +341,7 @@ export default async function CommandCenterPage() {
           />
         </div>
 
-        <div className="lg:col-span-1 order-1 lg:order-2 space-y-4 lg:sticky lg:top-4">
+        <div className="lg:col-span-1 space-y-4 lg:sticky lg:top-4">
           <SlackQueueCard />
           <ConnectTools />
           <BrainConsole />
