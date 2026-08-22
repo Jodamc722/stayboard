@@ -66,7 +66,10 @@ export default async function ReservationDetail({ params }: { params: { id: stri
     <Shell>
       <Link href="/reservations" className="text-xs text-slate-500 hover:text-slate-900">← All reservations</Link>
 
-      <header className="mt-3 mb-6 flex items-end justify-between">
+      {/* Phone: a long guest name and the money block fought for the same row and neither could
+          shrink, so the total was pushed off the right edge. It wraps below sm; on desktop there
+          is room for both, so the row is unchanged (sm:gap-0 keeps the spacing byte-identical). */}
+      <header className="mt-3 mb-6 flex items-end justify-between flex-wrap gap-x-4 gap-y-3 sm:gap-0">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{r.guest_name}</h1>
           <p className="text-sm text-slate-500">
@@ -194,7 +197,9 @@ export default async function ReservationDetail({ params }: { params: { id: stri
                 <div key={m.id} className={`flex ${m.sender === 'guest' ? 'justify-start' : 'justify-end'}`}>
                   <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.sender === 'guest' ? 'bg-slate-100 text-slate-900' : 'bg-brand-500 text-white'}`}>
                     <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${m.sender === 'guest' ? 'text-slate-500' : 'text-white/70'}`}>{m.sender_name || m.sender}</div>
-                    <div>{m.body}</div>
+                    {/* A pasted booking link or a long guest email in a message body has no break
+                        opportunity and pushed the bubble past the card on a phone. */}
+                    <div className="break-words sm:break-normal">{m.body}</div>
                     <div className={`text-[10px] mt-0.5 ${m.sender === 'guest' ? 'text-slate-400' : 'text-white/70'}`}>{m.sent_at ? new Date(m.sent_at).toLocaleString() : ''}</div>
                   </div>
                 </div>
