@@ -204,8 +204,11 @@ export default function BotanicaReportPage() {
   const bannerOpts = data.bannerOptions || []
   const bannerOverride = data.bannerOverride || null
 
+  // NO SHELL AROUND THIS PAGE — the hotel's ownership opens the link on their own phone, so the
+  // safe-area padding comes from here: px-safe against a landscape notch, pb-safe so the footnote
+  // clears the home indicator. On the outer wrapper so the inner p-4 gutter survives.
   return (
-    <div className="min-h-screen bg-neutral-100 print:bg-white">
+    <div className="min-h-screen bg-neutral-100 print:bg-white px-safe pb-safe">
       <div className="max-w-5xl mx-auto p-4 sm:p-6">
         <div className="relative rounded-2xl bg-neutral-900 shadow-lg overflow-hidden" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
           {effBanner ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + effBanner + '")' }} aria-hidden="true" /> : null}
@@ -227,7 +230,9 @@ export default function BotanicaReportPage() {
                   {lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}
                 </p>
               </div>
-              <div className="flex items-center gap-2 print:hidden">
+              {/* Refresh · Resync · CSV · Photo · Print is wider than a phone screen — wrap it
+                  rather than let the banner push the page sideways. */}
+              <div className="flex flex-wrap items-center gap-2 print:hidden">
                 <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
                 <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{syncing ? 'Syncing…' : 'Resync'}</button>
                 <button onClick={downloadCsv} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors">CSV</button>
@@ -263,7 +268,7 @@ export default function BotanicaReportPage() {
             </button>
           ))}
           {preset === 'custom' && (
-            <span className="flex items-center gap-1 text-xs text-neutral-600">
+            <span className="flex flex-wrap items-center gap-1 text-xs text-neutral-600">
               <input type="date" value={fromD} min={openedOn} max={through} onChange={e => setFromD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1 bg-white" />
               <span>to</span>
               <input type="date" value={toD} min={openedOn} max={through} onChange={e => setToD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1 bg-white" />
@@ -282,7 +287,10 @@ export default function BotanicaReportPage() {
 
         <div className="mt-4 rounded-2xl border border-neutral-200 bg-white overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full text-xs sm:text-sm">
+            {/* Seven columns of nightly numbers. The min width stops a phone crushing "$1,234.00"
+                into three wrapped lines per cell — the table scrolls in its box instead. Print is
+                wider than 640px, so it prints exactly as it always has. */}
+            <table className="w-full min-w-[560px] sm:min-w-0 text-xs sm:text-sm">
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-neutral-400 border-b border-neutral-200">
                   <th className="px-3 py-2 text-left font-semibold">Date</th>
