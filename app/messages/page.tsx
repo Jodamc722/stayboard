@@ -119,11 +119,14 @@ export default async function MessagesPage() {
           {list.map((c: any) => {
             const awaiting = kpis.awaitingIds.has(c.id)
             return (
-              <Link key={c.id} href={`/messages/${c.id}`} className="flex items-start gap-3 px-5 py-3 hover:bg-app/40 transition-colors">
+              <Link key={c.id} href={`/messages/${c.id}`} className="flex items-start gap-3 px-3 sm:px-5 py-3 hover:bg-app/40 transition-colors">
                 <Avatar name={c.guest_name} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+                    {/* The channel, unit and "Awaiting reply" pills are all flex-shrink-0, so on a
+                        phone they took the whole row and truncated the guest's name to a couple of
+                        characters. Letting them wrap gives the name back its line. */}
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap gap-y-1">
                       <span className="font-medium text-ink truncate">{c.guest_name || 'Guest'}</span>
                       <span className="text-[10px] text-muted uppercase tracking-[0.08em] font-semibold flex-shrink-0">{CHANNEL_LABELS[c.channel] || c.channel}</span>
                       {unitById[c.listing_id] && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">Unit {unitById[c.listing_id]}</span>}
