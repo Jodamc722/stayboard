@@ -13,3 +13,164 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
   .owner-sheet img { max-height: 2.4in !important; }
   a[href]:after { content: ''; }
 }
+
+/* ================================================================================================
+   THE PHONE LAYER — Jon, 2026-08-21: "optimise the webapp on phone for phone use".
+   
+   Lighthouse was built at 1440px and then squeezed. The nav redesign (2026-08-19) gave the SHELL a
+   phone form — header, drawer, bottom bar — but every board inside it was still desktop: 9px badges,
+   six-column grids on a 375px screen, tables 1100px wide dragging the whole page sideways, and an
+   iOS keyboard that zoomed the viewport every time you tapped a filter.
+   
+   This block is the layer that fixes all 87 pages at once, so a per-page pass is about LAYOUT
+   rather than about legibility. It only ever applies below the breakpoint — the desktop app that
+   Jon and the office use every day renders byte-identically.
+   ================================================================================================ */
+
+/* ------------------------------------------------------------------------------------------------
+   1. 100vh IS A LIE ON A PHONE. Safari counts the URL bar as part of the viewport, so `h-screen`
+   on Shell's root made the app taller than the glass — and since the bottom nav bar is the LAST
+   child of that column, the bar sat permanently below the fold. You could not reach it without
+   scrolling a container that does not scroll. dvh measures what you can actually see.
+   ------------------------------------------------------------------------------------------------ */
+@supports (height: 100dvh) {
+  .h-screen { height: 100dvh; }
+  .min-h-screen { min-height: 100dvh; }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   2. THE SAFE AREA. viewport-fit=cover (set in layout.tsx so the app fills an iPhone edge to edge)
+   means the home indicator and the notch now sit OVER our content unless we pad for them. Named
+   utilities rather than inline arbitrary values so every fixed edge in the app pads the same way.
+   ------------------------------------------------------------------------------------------------ */
+.pb-safe    { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pt-safe    { padding-top: env(safe-area-inset-top, 0px); }
+.px-safe    { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+/* The safe-area classes REPLACE padding rather than adding to it — they are plain declarations
+   after @tailwind utilities, so `px-4 px-safe` on one element silently drops the 16px gutter to
+   env(), which is 0 in portrait. Use these -keep variants on any element that already carries its
+   own padding: they take the larger of the two, so they can only ever add. */
+.pb-safe-keep { padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)); }
+.pt-safe-keep { padding-top: max(0.5rem, env(safe-area-inset-top, 0px)); }
+.px-safe-keep { padding-left: max(0.75rem, env(safe-area-inset-left, 0px)); padding-right: max(0.75rem, env(safe-area-inset-right, 0px)); }
+.bottom-safe { bottom: calc(env(safe-area-inset-bottom, 0px) + 1.25rem); }
+/* Anything floating above the mobile bottom bar: bar height + the home indicator. */
+.above-bar  { bottom: calc(env(safe-area-inset-bottom, 0px) + 4.25rem); }
+
+/* ------------------------------------------------------------------------------------------------
+   3. WIDE THINGS SCROLL THEMSELVES — the page never travels sideways.
+   
+   A 1100px table inside a 375px screen used to scroll the whole MAIN element, which carries the
+   page header and the filter bar with it: you would swipe to read a column and lose the heading
+   that said what you were reading. `.lh-hscroll` is the wrapper the page pass puts around wide
+   blocks; the bare `table` rule is the safety net for anything not yet wrapped, so no board can be
+   left unreadable while the sweep is in progress.
+   ------------------------------------------------------------------------------------------------ */
+.lh-hscroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+@media screen and (max-width: 1023px) {
+  /* The safety net: any table becomes its own scroller…
+     (Written as "all tables, then undo inside a scroller" rather than as a :not() chain on the
+     parent — `main :not(.x) > table` silently never matches a table that is a DIRECT child of
+     main, because the :not() has to be a descendant of main and main cannot be its own
+     descendant. That version compiled fine and did nothing, which is the worst kind of CSS.) */
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  /* …except where the page has ALREADY authored a scroller around it. Wrapping an
+     `overflow-x-auto > table.min-w-[900px]` a second time squeezes its columns instead. */
+  .lh-hscroll table, .overflow-x-auto table, .overflow-auto table, .overflow-y-auto table {
+    display: table;
+    max-width: none;
+    overflow-x: visible;
+  }
+  /* A long unit name, a guest email or a Guesty id wraps rather than widening the card it is in.
+     break-word, not anywhere: `anywhere` also drives min-content to one character, which lets a
+     flex sibling collapse a paragraph into a vertical ladder of letters. */
+  p, h1, h2, h3, span, div, li, td, a { overflow-wrap: break-word; }
+  /* …except inside a scroller, where the whole point is that the row stays on one line. */
+  .lh-hscroll *, table * { overflow-wrap: normal; }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   4. TYPE YOU CAN READ AT ARM'S LENGTH. The app leans on 9-11px for badges, chips, table rows and
+   sub-labels — 2,127 places. At 375px those are decorative rather than readable, and re-typing
+   every one of them by hand would be 2,127 chances to break a desktop layout. Bumping the utility
+   itself, inside a phone-only media query, moves all of them and touches nothing above 640px.
+   Safari's own text inflation is turned off so this is the only thing changing the size.
+   ------------------------------------------------------------------------------------------------ */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media screen and (max-width: 640px) {
+  .text-\[7px\]    { font-size: 10px;   line-height: 1.3; }
+  .text-\[8px\]    { font-size: 10.5px; line-height: 1.3; }
+  .text-\[8\.5px\]{ font-size: 10.5px; line-height: 1.3; }
+  .text-\[9px\]    { font-size: 11px;   line-height: 1.35; }
+  .text-\[9\.5px\]{ font-size: 11px;   line-height: 1.35; }
+  .text-\[10px\]   { font-size: 11.5px; line-height: 1.4; }
+  .text-\[10\.5px\]{ font-size: 11.5px; line-height: 1.4; }
+  .text-\[11px\]   { font-size: 12px;   line-height: 1.45; }
+  .text-\[11\.5px\]{ font-size: 12.5px; line-height: 1.45; }
+  .text-\[12px\]   { font-size: 13px;   line-height: 1.5; }
+  .text-\[12\.5px\]{ font-size: 13px;   line-height: 1.5; }
+  .text-\[13px\]   { font-size: 13.5px; line-height: 1.5; }
+  /* Page titles: text-3xl is 30px, which eats a third of the screen before any content. */
+  .text-3xl { font-size: 1.5rem; line-height: 1.9rem; }
+  .text-2xl { font-size: 1.3rem; line-height: 1.7rem; }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   5. iOS STOPS ZOOMING ON EVERY TAP. Safari zooms the page whenever a focused field computes below
+   16px — and it does not zoom back out. Every filter box, date picker and search field in the app
+   is text-sm (14px), so tapping one left Jon at 1.3x with the nav off-screen. 16px is the floor.
+   The `!important` is deliberate: it has to beat the utility class on the element itself.
+   ------------------------------------------------------------------------------------------------ */
+@media screen and (max-width: 640px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea { font-size: 16px !important; }
+  input[type='checkbox'], input[type='radio'] { width: 18px; height: 18px; }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   6. THUMBS, NOT CURSORS. Apple's floor is 44px and Google's is 48; the dense boards can't carry
+   that without becoming three screens long, so the compromise is a 36px minimum on anything
+   clickable plus manipulation touch-action, which also kills the 300ms double-tap-zoom delay that
+   made every button in the app feel like it had missed the press.
+   ------------------------------------------------------------------------------------------------ */
+@media screen and (max-width: 640px) and (pointer: coarse) {
+  button, [role='button'], summary, select { min-height: 36px; }
+  a, button, [role='button'], summary, label { touch-action: manipulation; }
+  /* Icon-only buttons are the worst offenders — they get a square target, not a sliver. */
+  button:not(:has(span)):not(:has(p)) { min-width: 36px; }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   7. SCROLLING FEELS NATIVE. Momentum on every scroller, and contained overscroll so swiping to the
+   end of an inner list stops there instead of dragging the page (or triggering pull-to-refresh
+   mid-table).
+   ------------------------------------------------------------------------------------------------ */
+@media screen and (max-width: 1023px) {
+  .overflow-auto, .overflow-y-auto, .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   8. NOTHING FIXED-WIDTH OUTGROWS THE GLASS. Sidebars, drawers and detail panels were written as
+   w-[360px] / w-[420px] against a desktop column. On a 375px screen a single one of them is the
+   entire viewport plus overflow. Cap them; above 640px the authored width is untouched.
+   ------------------------------------------------------------------------------------------------ */
+@media screen and (max-width: 640px) {
+  [class*='w-\[3'], [class*='w-\[4'], [class*='w-\[5'], [class*='w-\[6'],
+  [class*='w-\[7'], [class*='w-\[8'], [class*='w-\[9'] { max-width: 100%; }
+  .lh-hscroll [class*='min-w-\['], .overflow-x-auto [class*='min-w-\['] { max-width: none; }
+  img, video, canvas, svg:not(.lucide) { max-width: 100%; height: auto; }
+}
