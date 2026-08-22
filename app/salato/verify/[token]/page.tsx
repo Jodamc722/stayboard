@@ -46,8 +46,11 @@ function deriveInitials(name: string): string {
 // which blurred whatever input the guest was typing in ("it kicks me out of the box"). Hoisting fixes it.
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-900">
-      <div className="max-w-xl mx-auto px-4 py-6">
+    // A guest opens this on their own phone with no app Shell around it, so it pads for the notch
+    // and the home indicator itself. px-safe on the outer element — on the same element as px-4 it
+    // would replace the gutter rather than add to it.
+    <div className="min-h-screen bg-neutral-100 text-neutral-900 px-safe">
+      <div className="max-w-xl mx-auto px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800 shadow-lg overflow-hidden mb-4">
           <div className="p-5">
             <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</div>
