@@ -139,8 +139,12 @@ export default function SalatoPage() {
   function markAllSeen() { if (!data) return; const s = new Set([...data.arrivals, ...data.departures, ...data.active].map(r => r.id)); setSeen(s); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s))) } catch {} }
 
   return (
-    <div className='max-w-3xl mx-auto px-4 py-6'>
-      <div className='flex items-center justify-between gap-3 mb-1'>
+    // Front desk opens this on a phone and there is no app Shell around it, so it carries its own
+    // safe-area padding: px-safe on the outer element (it would replace the px-4 gutter if it
+    // shared one), and a bottom pad so the last card clears the home indicator.
+    <div className='px-safe'>
+    <div className='max-w-3xl mx-auto px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]'>
+      <div className='flex items-center justify-between gap-3 gap-y-2 flex-wrap mb-1'>
         <div>
           <div className='text-xs uppercase tracking-wide text-gray-400'>Front desk</div>
           <h1 className='text-2xl font-bold text-gray-900'>Salato</h1>
@@ -152,7 +156,9 @@ export default function SalatoPage() {
       </div>
       <div className='text-xs text-gray-400 mb-4'>{lastLoaded ? 'Updated ' + lastLoaded.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' · auto-refreshes every 30 min' : 'Loading…'}</div>
 
-      <div className='flex gap-1 mb-4 bg-gray-100 rounded-xl p-1'>
+      {/* "Departure cleans" and "Active reservations" do not shrink below their text, so on a
+          375px screen this strip pushed the whole page sideways. Let the strip scroll itself. */}
+      <div className='flex gap-1 mb-4 bg-gray-100 rounded-xl p-1 overflow-x-auto'>
         {TABS.map(t => { const n = data ? data[t.key].length : 0; return (
           <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition ' + (tab === t.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700')}>{t.label}<span className='ml-1.5 text-xs text-gray-400'>{n}</span></button>
         )})}
@@ -164,6 +170,7 @@ export default function SalatoPage() {
       <div className='space-y-2'>
         {rows.map(r => (<Card key={r.id} r={r} mode={tab} expanded={expanded === r.id} onToggle={() => setExpanded(expanded === r.id ? null : r.id)} onAddNote={addNote} isNew={isNew(r.id)} />))}
       </div>
+    </div>
     </div>
   )
 }
