@@ -19,10 +19,10 @@ const DIGESTS: { key: 'trueup' | 'salato'; label: string; blurb: string }[] = [
 // Four audiences, deliberately different documents (2026-08-07). The blurb is the promise each
 // one makes — if a brief stops matching its blurb, one of the two is wrong.
 const LISTS: { key: 'miami' | 'broward' | 'full' | 'gm'; label: string; blurb: string }[] = [
-  { key: 'miami', label: 'Miami · supervisors', blurb: "Today on the ground in Miami: cleans, same-day turns, arrivals" },
-  { key: 'broward', label: 'Broward · supervisors', blurb: 'Same, for the Broward market' },
-  { key: 'full', label: 'Ops manager · all markets', blurb: 'Every market, full operational detail' },
-  { key: 'gm', label: 'GM Brief · leadership', blurb: 'High level: money, occupancy, reputation, claims' },
+  { key: 'miami', label: 'Miami · Day Sheet', blurb: "Run the day: each person's run in order, doors, priorities. No money." },
+  { key: 'broward', label: 'Broward · Day Sheet', blurb: 'Same, for the Broward crew' },
+  { key: 'full', label: 'Ops Command · manager', blurb: 'Exceptions, maintenance (both markets), paperwork, blocked units — the worklist' },
+  { key: 'gm', label: 'GM Brief · leadership', blurb: 'Decide today, engine tiles, trend vs settled 30, guests & risk' },
 ]
 
 export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
@@ -103,21 +103,11 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
-  async function sendMaintTest() {
-    setBusy('mtest'); setMsg(null)
-    try {
-      const r = await fetch('/api/cron/maint-brief?test=1', { cache: 'no-store' })
-      const j = await r.json()
-      if (!r.ok || !j.ok) throw new Error(j?.error || 'Test failed.')
-      setMsg({ tone: 'ok', text: `Test sent — both maintenance briefs are in ${j.to}'s inbox.` })
-    } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
-  }
-
   return (
     <div className="rounded-2xl border border-line bg-white overflow-hidden">
       <div className="px-4 py-3 border-b border-line flex items-center gap-2 flex-wrap">
         <Sunrise size={15} className="text-brand-600" />
-        <span className="text-sm font-bold text-ink">Morning Ops Brief</span>
+        <span className="text-sm font-bold text-ink">Briefs — the Morning System</span>
         <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${cfg.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-app text-muted'}`}>
           {cfg.enabled ? 'Sending daily at 7am ET' : 'Off'}
         </span>
@@ -135,9 +125,10 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         )}
 
         <p className="text-[12px] text-muted">
-          One email per market every morning: today&apos;s departure cleans and who&apos;s on them, priorities,
-          units to inspect, tonight&apos;s occupancy and the 30-day review pulse. Sends from <b>{cfg.fromEmail || 'jon@stay-hospitality.com'}</b> via
-          its Google connection — if the test says the Gmail permission is missing, reconnect Google from Owner Reports and approve the send-email permission.
+          Three altitudes, one system (approved 2026-08-22): the field runs the day, Ops Command catches what&apos;s
+          slipping (maintenance now lives inside it), the GM decides. Labor detail lives only in the Daily Labor email.
+          Sends from <b>{cfg.fromEmail || 'jon@stay-hospitality.com'}</b> via its Google connection — if a test says the
+          Gmail permission is missing, reconnect Google from Owner Reports and approve the send-email permission.
         </p>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -175,42 +166,8 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
         </div>
 
-        {/* MAINTENANCE BRIEFS (Jon, 2026-08-20): one per market — task completion, carryover,
-            glitches, vacant units, recurring issues, billable labor. 17 WEST excluded from both
-            (its own brief comes later). */}
-        <div className="rounded-xl border border-line p-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[12px] font-bold text-ink">Maintenance briefs · 7:46am ET</span>
-            <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
-              <input type="checkbox" disabled={!isOwner} checked={cfg.maint?.enabled !== false}
-                onChange={e => setCfg(x => ({ ...x, maint: { ...(x.maint || {}), enabled: e.target.checked } }))} />
-              sending
-            </label>
-            <button onClick={sendMaintTest} disabled={busy !== null}
-              className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-40">
-              {busy === 'mtest' ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send both to me
-            </button>
-          </div>
-          <div className="text-[11px] text-muted mt-0.5 mb-1.5">
-            One per market: yesterday&apos;s task completion, carryover not finished, open glitches, vacant units worth
-            preventive work, recurring-issue units, and billable labor (yesterday / 7d / 30d) priced exactly like the invoices.
-            17 WEST is excluded from both — it gets its own brief. Until a list is saved here, each goes to the owner alone.
-          </div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            {([['m_miami', 'Miami', 'miami'], ['m_broward', 'Broward', 'broward']] as [string, string, string][]).map(([rk, label, pk]) => (
-              <div key={rk}>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold text-ink">{label}</span>
-                  <a href={`/api/cron/maint-brief?preview=${pk}`} target="_blank" rel="noreferrer"
-                    className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview</a>
-                </div>
-                <textarea rows={2} disabled={!isOwner} value={raw[rk] ?? ''} onChange={e => setRaw(x => ({ ...x, [rk]: e.target.value }))}
-                  placeholder="emails, comma separated"
-                  className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* Maintenance briefs merged into Ops Command (Jon approved 2026-08-22) — the old
+            standalone emails are retired; preview the maintenance section via Ops Command above. */}
 
         {/* STAFFING PLANNER TARGET (Jon, 2026-08-18): the margin the Weekly planner's hours
             budget protects. Blank = automatic — the settled 30-day HK margin plus 3 points. */}
