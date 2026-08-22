@@ -126,7 +126,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                 {l.unit && <p className="text-[11px] text-muted mt-0.5">{l.unit}</p>}
               </div>
 
-              <div className="grid grid-cols-4 divide-x divide-line border-b border-line text-center">
+              <div className="grid grid-cols-2 divide-x divide-line border-b border-line text-center [&>*:nth-child(n+3)]:border-t [&>*:nth-child(n+3)]:border-line sm:grid-cols-4 sm:[&>*:nth-child(n+3)]:border-t-0">
                 <Spec label="Beds" value={Number(l.bedrooms) || 0} Icon={BedDouble} />
                 <Spec label="Baths" value={Number(l.bathrooms) || 0} Icon={Bath} />
                 <Spec label="Sleeps" value={Number(l.max_occupancy) || 0} Icon={Users} />
