@@ -92,8 +92,10 @@ export default async function CleanersPage() {
           <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Timer size={12} /> Avg time / clean</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.avgMin}m</div></div>
           <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Same-day finish</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.sameDayPct}%</div></div>
         </div>
+        {/* Seven columns; w-full inside a scroller just shrinks them to the phone, so "QC status"
+            and "Hubs" were unreadable slivers. min-w keeps the columns and scrolls the card. */}
         <div className="overflow-x-auto rounded-2xl border border-line bg-white">
-          <table className="w-full text-[13px] border-collapse">
+          <table className="w-full text-[13px] border-collapse min-w-[760px]">
             <thead>
               <tr className="bg-app/60 text-muted text-[10px] uppercase tracking-wider text-left">
                 <th className="px-3 py-2.5 font-semibold">Cleaner</th>
