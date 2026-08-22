@@ -18,13 +18,16 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
+import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const SALATO = /salato|salado/i
 const HOTEL = /hotel|front desk|reception|lobby|concierge|group|block/i
-const LIVE = /confirm|checked/i
+// Live-stay detection is the SHARED rule (lib/stay-status). The local /confirm|checked/ regex
+// this replaced is the exact pattern stay-status was written to retire — it missed 'closed' and
+// 'reserved' stays, silently dropping guests off the front desk's lists (super audit, 2026-08-22).
 const TZ = 'America/New_York'
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
@@ -74,7 +77,7 @@ export async function GET(req: NextRequest) {
       code: string; flags: string[]
     }
     const all: R[] = ((rows || []) as any[])
-      .filter(r => LIVE.test(str(r.status)))
+      .filter(r => isLiveStay(r.status))
       .map(r => {
         const raw = r.raw || {}
         const g = raw.guest || {}
