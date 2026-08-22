@@ -228,7 +228,15 @@ export default function DayLinkPage() {
 }
 
 const CSS = `
-  .dl-root { background:#f4f4f5; min-height:100vh; padding:12px; font-family:ui-sans-serif,system-ui,-apple-system,sans-serif; color:#18181b; -webkit-text-size-adjust:100%; }
+  /* This page has no app Shell around it, so it pads for the iPhone itself. 100vh counts Safari's
+     URL bar, which pushed the footer below the glass; dvh is what you can actually see. The
+     safe-area insets are 0 everywhere except an iPhone, so the desktop/print render is unchanged. */
+  .dl-root { background:#f4f4f5; min-height:100vh; min-height:100dvh; padding:12px;
+             padding-top:calc(12px + env(safe-area-inset-top,0px));
+             padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));
+             padding-left:calc(12px + env(safe-area-inset-left,0px));
+             padding-right:calc(12px + env(safe-area-inset-right,0px));
+             font-family:ui-sans-serif,system-ui,-apple-system,sans-serif; color:#18181b; -webkit-text-size-adjust:100%; }
   .dl-center { display:flex; align-items:center; justify-content:center; }
   .dl-pw { max-width:340px; width:100%; text-align:center; }
   .dl-h1 { font-size:22px; font-weight:800; margin:4px 0 6px; }
@@ -270,6 +278,16 @@ const CSS = `
   .dl-ok { font-size:12px; color:#15803d; } .dl-err { font-size:12.5px; color:#b91c1c; margin-top:6px; }
   .dl-empty { color:#a1a1aa; font-style:italic; padding:16px; text-align:center; }
   .dl-foot { margin-top:14px; font-size:11px; color:#a1a1aa; text-align:center; }
+  @media (max-width: 640px) {
+    /* The four tabs are the only navigation on this page. On a 40-card cleans list they scrolled
+       away, so switching to Issues meant thumbing all the way back to the top. Pin them. The
+       negative margin lets the strip bleed to the screen edge instead of ending in the gutter. */
+    .dl-tabs { position:sticky; top:env(safe-area-inset-top,0px); z-index:5; background:#f4f4f5;
+               margin:0 -12px 10px; padding:2px 12px 8px; }
+    /* Map / Breezeway / Reservation are the point of the page and were 30px pills — under the
+       thumb-target floor for someone holding a phone in one hand in a stairwell. */
+    .dl-link, .dl-notebtn { padding:9px 11px; }
+  }
   @media print {
     @page { size: letter portrait; margin: 0.4in; }
     .dl-root { background:#fff; padding:0; }
