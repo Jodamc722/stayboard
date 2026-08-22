@@ -280,7 +280,10 @@ export async function runDigest(): Promise<any> {
       .not('status', 'in', '("' + CLOSED_STATUSES.join('","') + '")'),
     db.from('glitches').select('id', { count: 'exact', head: true })
       .not('status', 'in', '("' + CLOSED_STATUSES.join('","') + '")').lt('due_date', today),
-    db.from('guesty_reservations').select('listing_id', { count: 'exact', head: true }).eq('check_in', today),
+    // Live stays only (super audit, 2026-08-22): without the exclusion, a booking cancelled this
+    // morning — or a raw inquiry — still counted toward "arrivals" in the auto-sent digest.
+    db.from('guesty_reservations').select('listing_id', { count: 'exact', head: true }).eq('check_in', today)
+      .not('status', 'in', '("canceled","cancelled","declined","expired","denied","inquiry")'),
     db.from('slack_outbox').select('id', { count: 'exact', head: true })
       .eq('status', 'expired').gte('created_at', new Date(Date.now() - 36 * 3600_000).toISOString()),
   ])

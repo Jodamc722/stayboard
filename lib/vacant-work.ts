@@ -72,9 +72,14 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
 
   const [tasksRes, auditRes, reqRes, glitchRes, listRes] = await Promise.all([
     // Audit / inspection / deep-clean history, by the same name rule the audits-due route uses.
+    // NEWEST FIRST (super audit, 2026-08-22): with no ORDER BY, PostgREST's 5000-row cap dropped
+    // ARBITRARY rows once the vacant list carried enough history — a unit's real audit could be
+    // the row that fell off, and the brief printed "never done" about work on record. Ordered
+    // newest-first, the rows that decide recency always survive the cap.
     db.from('breezeway_tasks_sync')
       .select('reference_property_id,name,status,finished_at,scheduled_date')
-      .in('reference_property_id', ids).limit(5000),
+      .in('reference_property_id', ids)
+      .order('scheduled_date', { ascending: false }).limit(5000),
     // AND the app's OWN audit records. An audit done through the walk engine never creates a
     // Breezeway task called "audit", so counting only those said "never audited" for units that
     // were audited last month. Both sources, newest wins.

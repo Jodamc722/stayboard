@@ -22,6 +22,7 @@ import { buildingOf, marketOf, type Market } from './segments'
 import { blockedUnits, type BlockedRun } from './blocked-units'
 import { isLiveStay } from './stay-status'
 import { loadBehind } from './ops-behind'
+import { isDepartureCleanName } from './breezeway'
 import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
 import { getTimecards } from './homebase-labor'
 import { noBreezewayRegex } from './ops-presets'
@@ -545,14 +546,24 @@ export async function checkReadiness(): Promise<Readiness> {
   } catch { return { date: today, units: [] } }
   if (!sheet || !sheet.ok) return { date: today, units: [] }
 
-  // clean status per unit — the departure clean is what gates readiness
+  // clean status per unit — the DEPARTURE clean is what gates readiness (super audit, 2026-08-22:
+  // the old /clean|turnover/ regex let an unstarted STRIP or oven clean mark a unit "not started"
+  // at 3pm when its actual departure clean finished hours ago — a false red @here alarm). When a
+  // unit has a real departure clean on the board, only departure cleans gate it; the broad match
+  // remains the fallback for units whose turnover was logged under a loose name.
   const cleanByUnit: Record<string, any> = {}
+  const hasDeparture: Record<string, boolean> = {}
+  for (const w of (sheet.work || [])) {
+    if (isDepartureCleanName(String(w.name || ''))) hasDeparture[String(w.unit || '')] = true
+  }
   for (const w of (sheet.work || [])) {
     const unit = String(w.unit || '')
     if (!unit) continue
     const dept = String(w.dept || '').toLowerCase()
     const name = String(w.name || '').toLowerCase()
-    const isClean = dept.indexOf('housekeep') >= 0 || /clean|turnover/.test(name)
+    const isClean = hasDeparture[unit]
+      ? isDepartureCleanName(String(w.name || ''))
+      : (dept.indexOf('housekeep') >= 0 || /clean|turnover/.test(name))
     if (!isClean) continue
     // keep the least-finished task: if anything is unstarted, the unit is not ready
     const prev = cleanByUnit[unit]

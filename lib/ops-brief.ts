@@ -17,7 +17,9 @@ import { getOpsPresets, getSetting } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
 import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
-import { getTimecards } from './homebase-labor'
+import { getTimecardsAudited } from './homebase-labor'
+import { kindOfTask, isDepartureCleanTask } from './labor-econ'
+import { isLiveStay } from './stay-status'
 import { billingMonth } from './billing'
 import { getLaborSettings } from './labor-settings'
 import { computeYesterdayLabor, laborRevenueStatus } from './labor-daily'
@@ -31,7 +33,8 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 function ymdET(d: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
 }
-const LIVE = new Set(['confirmed', 'checked_in', 'checked_out'])
+// One live-stay rule everywhere (lib/stay-status): exclusion-based, so 'closed'/'reserved' count
+// as live instead of silently dropping off the arrivals and big-money lists.
 
 // Four audiences, three shapes (2026-08-07, Jon):
 //   Miami / Broward → the SUPERVISOR's day: what's happening on the ground in that market.
@@ -103,13 +106,17 @@ async function gather(variant: BriefVariant) {
   }
 
   // Departure cleans with the cleaner on each door (daysheet market filter already applied via ours).
-  type Clean = { unit: string; assignee: string; state: 'done' | 'running' | 'not_started'; sameDayArrival: boolean }
+  // THE SHARED RULE, NOT A LOCAL REGEX (super audit, 2026-08-22): the old
+  // /departure clean|turnover clean/ missed "Check-out clean" and "Move-out clean" variants that
+  // the labor engine bills — those doors silently vanished from this list and the subject line.
+  // kindOfTask() returns 'clean' ONLY for a real departure clean (strips/walkthroughs excluded).
+  type Clean = { unit: string; lid: string; assignee: string; state: 'done' | 'running' | 'not_started'; sameDayArrival: boolean }
   const arrivingToday = new Set<string>((sheet.arrivals || []).map((a: any) => String(a.listingId)))
   const cleans: Clean[] = []
   for (const t of ((tRes.data || []) as any[])) {
     const status = str(t.status).toLowerCase()
     if (/delete|cancel/.test(status)) continue
-    if (!/departure clean|turnover clean/i.test(str(t.name))) continue
+    if (kindOfTask(t) !== 'clean') continue
     const lid = String(t.reference_property_id)
     if (!inVariant(lid)) continue
     const unit = meta[lid] ? meta[lid].name : 'Unknown unit'
@@ -118,7 +125,7 @@ async function gather(variant: BriefVariant) {
     const assignee = ppl.map((a: any) => str(a?.name || a)).filter(Boolean).join(', ') || '—  UNASSIGNED'
     const state: Clean['state'] = (/complete|finish|close|approv/.test(status) || t.finished_at) ? 'done'
       : (/progress|started/.test(status) || t.started_at) ? 'running' : 'not_started'
-    cleans.push({ unit, assignee, state, sameDayArrival: arrivingToday.has(lid) })
+    cleans.push({ unit, lid, assignee, state, sameDayArrival: arrivingToday.has(lid) })
   }
   cleans.sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
 
@@ -137,6 +144,10 @@ async function gather(variant: BriefVariant) {
   const sinceMark = seenMark || dayAgo
   const fresh = allRevs.filter(r => str(r.created_at) > sinceMark)
   const newSinceYesterday = fresh.length
+  // Low scores among the GENUINELY new only. lowNew used to read off newReviews, which falls back
+  // to the most recent old review when nothing is new — so the subject line could cry "1 low
+  // review" about last week's, every morning (super audit, 2026-08-22).
+  const freshLow = fresh.filter(r => { const st = ratingToStars(Number(r.rating)); return st != null && st <= 3 }).length
   const newReviews = (fresh.length ? fresh : allRevs.slice(0, 1))
     .slice()
     .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
@@ -158,7 +169,7 @@ async function gather(variant: BriefVariant) {
 
   // Big reservations arriving in the next 3 days — money the team should treat like a VIP.
   const bigArrivals = ((arrRes.data || []) as any[])
-    .filter(r => LIVE.has(str(r.status).toLowerCase()) && inVariant(String(r.listing_id)))
+    .filter(r => isLiveStay(r.status) && inVariant(String(r.listing_id)))
     .filter(r => Number(r.money_total) >= 2000 || Number(r.nights) >= 14)
     .sort((a, b) => Number(b.money_total) - Number(a.money_total))
     .slice(0, 8)
@@ -169,7 +180,9 @@ async function gather(variant: BriefVariant) {
       guest: str(r.guest_name).split(' ')[0] || 'Guest',
       today: str(r.check_in).slice(0, 10) === today,
     }))
+  // Live stays only — a cancelled $5k booking must not stamp BIG $ on today's real guest.
   const bigTodayIds = new Set(((arrRes.data || []) as any[])
+    .filter(r => isLiveStay(r.status))
     .filter(r => str(r.check_in).slice(0, 10) === today && (Number(r.money_total) >= 2000 || Number(r.nights) >= 14))
     .map(r => String(r.listing_id)))
 
@@ -194,6 +207,8 @@ async function gather(variant: BriefVariant) {
   const arrivalNotes: Record<string, string> = {}
   for (const r of ((arrRes.data || []) as any[])) {
     if (str(r.check_in).slice(0, 10) !== today) continue
+    // Live stays only — a cancelled booking's note must not attach to the real guest's row.
+    if (!isLiveStay(r.status)) continue
     const note = cfVal(r.custom_fields, RES_NOTES_FIELD)
     if (note) arrivalNotes[String(r.listing_id)] = note.replace(/\s+/g, ' ').slice(0, 180)
   }
@@ -203,7 +218,12 @@ async function gather(variant: BriefVariant) {
   // Counted from the same Breezeway mirror the boards read; hours are Breezeway's recorded minutes,
   // which is why every number here is labelled directional rather than presented as the books.
   const yest = ymdET(new Date(Date.now() - 86400000))
-  let yesterday = { cleans: 0, inspections: 0, maintenance: 0, hours: 0, cleanMinutes: 0 }
+  // THE SHARED CLASSIFIER (super audit, 2026-08-22). The old local regex counted strips, oven
+  // cleans, common-area/pool/trash work as "cleans completed" — inflating the count AND dragging
+  // the minutes-per-clean average, on the same email whose labor card excludes them. It also ate
+  // every inspection whose name contains "clean". kindOfTask() is the engine's one rule:
+  // 'clean' = departure cleans only; strips and the rest are 'other', shown on their own line.
+  let yesterday = { cleans: 0, inspections: 0, maintenance: 0, other: 0, hours: 0, cleanMinutes: 0 }
   try {
     const { data: yRows } = await db.from('breezeway_tasks_sync')
       .select('reference_property_id,name,type_department,status,finished_at,total_minutes')
@@ -212,12 +232,13 @@ async function gather(variant: BriefVariant) {
       if (!inVariant(String(t.reference_property_id))) continue
       const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
       if (!done) continue
-      const nm = str(t.name), dept = str(t.type_department)
       const mins = Number(t.total_minutes) || 0
       yesterday.hours += mins / 60
-      if (/clean/i.test(nm) || /housekeep/i.test(dept)) { yesterday.cleans++; yesterday.cleanMinutes += mins }
-      else if (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept)) yesterday.inspections++
-      else yesterday.maintenance++
+      const kind = kindOfTask(t)
+      if (kind === 'clean') { yesterday.cleans++; yesterday.cleanMinutes += mins }
+      else if (kind === 'inspection') yesterday.inspections++
+      else if (kind === 'maintenance') yesterday.maintenance++
+      else yesterday.other++
     }
   } catch { /* mirror unavailable — the brief still sends */ }
 
@@ -277,7 +298,7 @@ async function gather(variant: BriefVariant) {
   const watch30 = { low: low30, lowTotal: lowRevs.length, repeatUnits, themes, unanswered: owed, since: monthAgo.slice(0, 10) }
 
   return {
-    today, sheet, cleans, newReviews, newSinceYesterday, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
+    today, sheet, cleans, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
@@ -491,7 +512,7 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
 // with door codes, guest notes and later changes. So every vendor brief now leads with a link to
 // its own board rather than being the only copy of the day. No login — the slug is the key, and
 // each slug is scoped server-side to that vendor's buildings only.
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://stayboard-three.vercel.app').replace(/\/+$/, '')
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
 // Bulletproof-ish email button: a bordered table cell, because Outlook drops padding on <a>.
 function btn(href: string, label: string, sub?: string): string {
   return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:2px 0 10px"><tr><td>
@@ -554,15 +575,19 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const unassigned = d.cleans.filter(c => /UNASSIGNED/.test(c.assignee))
   const sameDay = d.cleans.filter(c => c.sameDayArrival && c.state !== 'done')
   const occupiedTonight = Math.max(0, d.activeCount - vacants.length)
-  const lowNew = d.newReviews.filter(r => r.rating <= 3)
+  const departures: any[] = sheet.departures || []
+  // Low scores among the GENUINELY new only — d.newReviews falls back to the latest old review
+  // when nothing is new, and that must never colour a card red or reach the subject line.
+  const lowNew = d.newSinceYesterday ? d.newReviews.filter(r => r.isNew !== false && r.rating <= 3) : []
 
   const subjParts = [
     `${arrivals.length} arrivals`,
+    `${departures.length} out`,
     `${d.cleans.length} cleans${sameDay.length ? ` (${sameDay.length} same-day)` : ''}`,
   ]
   if (unassigned.length) subjParts.push(`${unassigned.length} unassigned`)
   if (walkIns.length) subjParts.push(`${walkIns.length} walk-in`)
-  if (lowNew.length) subjParts.push(`${lowNew.length} low review${lowNew.length === 1 ? '' : 's'}`)
+  if (d.freshLow) subjParts.push(`${d.freshLow} low review${d.freshLow === 1 ? '' : 's'}`)
   const subject = `${label} Ops Brief ${dateNice}: ${subjParts.join(' · ')}`
 
   // ---- TOP PRIORITIES — the whole point. What breaks the day if ignored, in order. ----
@@ -618,12 +643,47 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <tr><td style="${S.td}">Cleans completed</td><td style="${S.td};text-align:right"><b>${y.cleans}</b>${yMinsPerClean ? ` <span style="${S.muted}">· ${yMinsPerClean} min average</span>` : ''}</td></tr>
     <tr><td style="${S.td}">Inspections completed</td><td style="${S.td};text-align:right"><b style="${y.inspections ? S.green : S.amber}">${y.inspections}</b>${!y.inspections ? ` <span style="${S.muted}">· none logged</span>` : ''}</td></tr>
     <tr><td style="${S.td}">Maintenance closed</td><td style="${S.td};text-align:right"><b>${y.maintenance}</b></td></tr>
+    ${(y as any).other ? `<tr><td style="${S.td}">Other work closed <span style="${S.muted}">strips, common areas, deliveries</span></td><td style="${S.td};text-align:right"><b>${(y as any).other}</b></td></tr>` : ''}
     <tr><td style="${S.td}">Hours on the clock <span style="${S.muted}">recorded in Breezeway</span></td><td style="${S.td};text-align:right"><b>${yHours || '—'}</b>${yHours ? ' <span style="' + S.muted + '">hrs</span>' : ''}</td></tr>`
 
-  const cleansRows = d.cleans.map(c => `
-    <tr><td style="${S.td}">${esc(c.unit)}${c.sameDayArrival ? ` <span style="${S.red}">← arrival today</span>` : ''}</td>
-    <td style="${S.td}${/UNASSIGNED/.test(c.assignee) ? ';color:#b91c1c;font-weight:600' : ''}">${esc(c.assignee)}</td>
-    <td style="${S.td}">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">scheduled</span>`}</td></tr>`).join('')
+  // ── CLEANS, IN ORDER BY PERSON (Jon, 2026-08-22: "overview of departure, arrivals, assignment
+  // in order by person"). Unassigned doors lead in red — they are nobody's list. Then each
+  // cleaner gets her own numbered run, same-day turns first with the arrival time that sets the
+  // deadline, so the row order IS the day's instruction.
+  const arrTimeOf: Record<string, string> = {}
+  for (const a of arrivals) if (a.checkInTime) arrTimeOf[String(a.listingId)] = str(a.checkInTime)
+  const cleanRow = (c: any, n: number | null, hot: boolean) => `
+    <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, hot) : ''}</td>
+    <td style="${S.td}"><b>${esc(c.unit)}</b>${c.sameDayArrival ? ` <span style="${S.red}">← guest lands ${esc(arrTimeOf[String(c.lid)] || 'today')}</span>` : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">scheduled</span>`}</td></tr>`
+  const byPerson: Record<string, any[]> = {}
+  for (const c of d.cleans) if (!/UNASSIGNED/.test(c.assignee)) (byPerson[c.assignee] = byPerson[c.assignee] || []).push(c)
+  const personOrder = Object.keys(byPerson).sort((a, b) => {
+    const sa = byPerson[a].some(c => c.sameDayArrival) ? 0 : 1
+    const sb = byPerson[b].some(c => c.sameDayArrival) ? 0 : 1
+    return sa - sb || byPerson[b].length - byPerson[a].length || a.localeCompare(b)
+  })
+  const personBlock = (name: string) => {
+    const mine = byPerson[name].slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
+    const hotN = mine.filter(c => c.sameDayArrival).length
+    const doneN = mine.filter(c => c.state === 'done').length
+    return `
+    <tr><td colspan="3" style="padding:10px 8px 2px;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b> <span style="${S.muted}">· ${mine.length} clean${mine.length === 1 ? '' : 's'}${hotN ? ` · <span style="${S.red}">${hotN} same-day</span>` : ''}${doneN ? ` · ${doneN} done` : ''}</span></td></tr>` +
+      mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival)).join('')
+  }
+  const cleansRows =
+    (unassigned.length ? `
+    <tr><td colspan="3" style="padding:10px 8px 2px;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="${S.muted}">· ${unassigned.length} door${unassigned.length === 1 ? '' : 's'} — assign these first</span></td></tr>` +
+      unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
+    personOrder.map(personBlock).join('')
+
+  // ── DEPARTURES — who leaves today, earliest first, same-day turns flagged.
+  const arrivingToday2 = new Set(arrivals.map((a: any) => String(a.listingId)))
+  const depRows = departures.slice()
+    .sort((a: any, b: any) => minsOfTime(a.checkOutTime) - minsOfTime(b.checkOutTime))
+    .slice(0, 20).map((dep: any) => `
+    <tr><td style="${S.td}"><b>${esc(str(dep.unit))}</b>${arrivingToday2.has(String(dep.listingId)) ? ' ' + pillRed('SAME-DAY TURN') : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap"><span style="${S.muted}">${esc(str(dep.guest).split(' ')[0])} · out ${dep.checkOutTime ? esc(str(dep.checkOutTime)) : 'today'}</span></td></tr>`).join('')
 
   // Colour carries the urgency: 3 and under is a problem to answer today, 4 and under is a watch.
   const revTone = (n: number) => n <= 3 ? S.red : n < 4.5 ? S.amber : S.green
@@ -720,13 +780,19 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   try {
     const yd = ymdET(new Date(Date.now() - 86400000))
     const settingsKey = variant === 'full' ? 'default' : variant.toLowerCase()
-    const [ySh, yTc, lset] = await Promise.all([
+    // AUDITED timecards (super audit, 2026-08-22): the bare getTimecards() threw away Homebase's
+    // failed-week signal, so a rate-limited morning printed a real-looking payroll figure that was
+    // quietly missing people — under the very card that says "numbers withheld" when the engine
+    // catches the same condition. Payroll dollars and the labor-% band print only on complete data.
+    const [ySh, yAudit, lset] = await Promise.all([
       getShifts(yd, 'America/New_York'),
-      getTimecards(yd, yd),
+      getTimecardsAudited(yd, yd),
       getLaborSettings(settingsKey),
     ])
+    const yTc = yAudit.cards
+    const payrollComplete = yAudit.complete
     const flags = computeYesterdayLabor(yd, ySh, yTc, lset)
-    const payroll = yTc.reduce((a, t) => a + (t.laborCost ?? 0), 0)
+    const payroll = payrollComplete ? yTc.reduce((a, t) => a + (t.laborCost ?? 0), 0) : 0
     // Yesterday's IN-HOUSE cleaning fees for this variant's market.
     const db2 = supabaseAdmin()
     const [lr2, rr2] = await Promise.all([
@@ -778,7 +844,9 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     if (flags.overSchedule.length) flagBits.push(`${flags.overSchedule.length} worked past schedule (${flags.overSchedule.slice(0, 4).map(x => `${esc(x.name)} +${x.overByHours}h`).join(', ')})`)
     if (flags.missedClockOuts.length) flagBits.push(`${flags.missedClockOuts.length} timecard${flags.missedClockOuts.length === 1 ? '' : 's'} left open`)
     const money = variant === 'full'
-      ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees (net of channel cut) · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
+      ? (payrollComplete
+          ? ` · <b>$${Math.round(payroll).toLocaleString('en-US')}</b> payroll vs <b>$${Math.round(fees).toLocaleString('en-US')}</b> in-house cleaning fees (net of channel cut) · vendor-cleaned units earned <b>$${Math.round(vendorFees).toLocaleString('en-US')}</b> (kept separate)`
+          : ` · <span style="${S.red}">payroll withheld — Homebase returned incomplete timecards (${esc(yAudit.failedWeeks.join(', '))})</span>`)
       : ''
     const laborLine = `<b>${flags.totalHoursWorked}h</b> worked by ${flags.headcount} people (${flags.totalScheduledHours}h scheduled)${money}<br><span style="${status.band === 'over' ? S.red : status.band === 'watch' ? S.amber : S.green}">${esc(status.label)}${variant === 'full' ? '' : ' (portfolio-wide)'}</span>` +
       (flagBits.length ? `<br><span style="color:#6b7280">${flagBits.join(' · ')}</span>` : '')
@@ -803,7 +871,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
             (short.length ? ` · <span style="${S.red}">short: ${short.join(', ')}</span>` : '') +
             (over.length ? ` · <span style="${S.amber}">over budget: ${over.join(', ')}</span>` : '') +
             ((!short.length && !over.length) ? ` · <span style="${S.green}">on plan</span>` : '') +
-            ` <a href="https://lighthouse-stay.vercel.app/schedule?tab=weekly" style="color:#2563eb">planner</a></p>`
+            ` <a href="${APP_URL}/schedule?tab=weekly" style="color:#2563eb">planner</a></p>`
         }
       } catch { /* additive only */ }
     }
@@ -1050,9 +1118,9 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     { label: 'Arrivals', value: String(arrivals.length) },
     { label: 'Cleans', value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} same-day` : undefined, tone: sameDay.length ? 'amber' : undefined },
     { label: 'Unassigned', value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
-    { label: 'Occupied', value: `${occupiedTonight}/${d.activeCount}`, note: 'tonight' },
+    { label: 'Departures', value: String(departures.length), note: 'check-outs today' },
     { label: 'Guest issues', value: String(glitches.length), tone: glitches.length ? 'amber' : 'green' },
-    { label: 'New reviews', value: String(d.newReviews.length), note: lowNew.length ? `${lowNew.length} low` : undefined, tone: lowNew.length ? 'red' : undefined },
+    { label: 'New reviews', value: String(d.newSinceYesterday), note: d.freshLow ? `${d.freshLow} low` : undefined, tone: d.freshLow ? 'red' : undefined },
   ]
 
   const eyebrow = (t: string) => `<p style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#9ca3af;margin:18px 8px 8px;text-transform:uppercase">${t}</p>`
@@ -1112,7 +1180,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
-  ${card("Departure cleans — who's on each door", d.cleans.length, d.cleans.length ? table(['Unit', 'Cleaner', 'Status'], cleansRows) : emptyLine('No departure cleans today.'))}
+  ${card("Cleans — each person's run, in order", d.cleans.length, d.cleans.length ? bare(cleansRows) : emptyLine('No departure cleans today.'))}
   ${cleanerCard}
   ${autoInsp.length ? card('Arrival inspections — auto-assigned', autoInsp.length, bare(autoInsp.map(i => `
     <tr><td style="${S.td}"><b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(str(i.check_in))}</span><br>
@@ -1124,6 +1192,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${crewCard}
 
   ${eyebrow('Today')}
+  ${departures.length ? card('Departures', departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
   ${arrivals.length ? card('Arrivals', arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
   ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, bare(ownerRows), '#4338ca') : ''}
   ${glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
@@ -1261,7 +1330,6 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const yEcon = ymdET(new Date(Date.now() - 86400000))
   const shiftDays = (ymd: string, n: number) => { const dd = new Date(ymd + 'T12:00:00'); dd.setDate(dd.getDate() + n); return ymdET(dd) }
   const winFrom = shiftDays(yEcon, -6), winTo = yEcon
-  const prevFrom = shiftDays(yEcon, -13), prevTo = shiftDays(yEcon, -7)
   // THE ENGINE OWNS THE MONEY (Jon, 2026-08-19: "cost at $120 per checkout — is this based only
   // on HK? we need HK, then HK and Supervisor, then maintenance completely separate"). The old
   // 7-day P&L guessed who was cleaning staff from Homebase role text and a task vote, so
@@ -1272,32 +1340,20 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   let ec7: Awaited<ReturnType<typeof laborEconomics>> | null = null
   try { ec7 = await laborEconomics({ from: winFrom, to: winTo, market: 'all' }) } catch { ec7 = null }
 
-  type Bucket = {
-    key: string; label: string
-    // CLEANS = CHECKOUTS, not closed Breezeway tasks (Jon, 2026-08-08: "it's possible that some
-    // staff, due to being new, do not complete tasks in Breezeway"). Every checkout needs a clean
-    // whether or not anyone remembered to close the task, so the checkout count is the real
-    // workload and the only denominator that can't be gamed by paperwork. bzClosed keeps the task
-    // count beside it — the GAP between the two is the compliance problem, shown as its own number.
-    cleans: number; bzClosed: number; fees: number
-    hkMins: number; maintMins: number; inspMins: number
-    billable: number; billableHk: number
-    payroll: number | null      // allocated (vendors: null — not ours to pay)
-    hours: number | null        // allocated clocked hours
-    // TRUE when every unit in this market is cleaned by an outside company, so its row is empty
-    // by design rather than by failure. North (Capri, Lucerne, Amrit) is entirely vendor-run.
-    vendorRun: boolean
-  }
-  const MK_ORDER = ['Miami', 'Broward', 'North', 'Vendors']
-  const newBucket = (k: string): Bucket => ({ key: k, label: k, cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: null, hours: null, vendorRun: false })
-  let buckets: Record<string, Bucket> = {}
-  let payrollWin: number | null = null, hoursWin = 0, payrollPrev: number | null = null, hoursPrev = 0
-  let payrollAll: number | null = null, hoursAll = 0
+  // ── COMPLIANCE + BILLABLE SIDE-COUNTS (super audit, 2026-08-22) ─────────────────────────────
+  // The ~200-line parallel P&L that lived here (allocated payroll buckets, a by-market table and
+  // a cost-per-clean trend that were computed and NEVER RENDERED, plus tiles that disagreed with
+  // the engine card below them in the same email) is retired. Every money figure now comes from
+  // the SAME laborEconomics run (ec7) as the labor card, so the GM tiles, the card and the
+  // subject line can no longer contradict each other or the Labor board. What stays measured
+  // here is only what the engine does not carry:
+  //   winCheckouts / winBzClosed — checkouts vs departure cleans actually closed (paperwork
+  //     compliance, non-vendor units; kindOfTask decides what counts as a departure clean)
+  //   totalBillable — owner-billable charges entered in the window (billingMonth, invoice engine)
+  //   cleanersNoTimecard — names on cleans with no Homebase timecard (audited weeks only)
+  let winCheckouts = 0, winBzClosed = 0
+  let totalBillable = 0, billableKnown = false
   const cleanersNoTimecard: string[] = []
-  let cleansPrev = 0, feesPrev = 0
-  let dailyCpc: { date: string; cpc: number | null }[] = []
-  let billableKnown = false
-
   try {
     const pageAll = async (build: () => any, maxPages = 12): Promise<any[]> => {
       const out: any[] = []
@@ -1310,188 +1366,61 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       }
       return out
     }
-    // Homebase rejects a range this wide in one call and, when the whole block shared a try, that
-    // single rejection wiped the fees and cleans too. Each week is its own contained call now.
-    const tcSafe = async (a: string, b: string): Promise<any[]> => { try { return await getTimecards(a, b) } catch { return [] } }
-    const [tcWin, tcPrev, lr3, rr3, cl3] = await Promise.all([
-      tcSafe(winFrom, winTo),
-      tcSafe(prevFrom, prevTo),
+    const [lr3, rr3, cl3] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
       pageAll(() => db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
-        .gte('check_out', prevFrom).lte('check_out', winTo)
+        .gte('check_out', winFrom).lte('check_out', winTo)
         .not('status', 'in', '("canceled","cancelled","declined")')
         .order('check_out', { ascending: false })),
       pageAll(() => db.from('breezeway_tasks_sync')
-        .select('reference_property_id,name,type_department,status,scheduled_date,finished_at,total_minutes,assignees,assignee_name,finished_by_name')
-        .gte('scheduled_date', prevFrom).lte('scheduled_date', winTo)
+        .select('reference_property_id,name,type_department,status,scheduled_date,finished_at,assignees,assignee_name,finished_by_name')
+        .gte('scheduled_date', winFrom).lte('scheduled_date', winTo)
         .order('scheduled_date', { ascending: false })),
     ])
     const presets3 = await getOpsPresets()
     const VEN3 = vendorRegex(presets3.vendorBuildings)
-    // listing -> which column it belongs in. Vendor beats geography: Jon asked for Vendors as its
-    // own column, and mixing vendor units into Broward would corrupt the cost-per-clean there.
-    const colOf: Record<string, string> = {}
-    // Which geographic markets exist at all, and which of them are 100% outside-cleaned. Without
-    // this, North renders as a row of dashes that reads like a broken feed rather than what it is:
-    // a market whose every building is cleaned by a vendor and therefore lives in the Vendors row.
-    const mktUnits: Record<string, { own: number; vendor: number }> = {}
+    const vendorOf: Record<string, boolean> = {}
     for (const l of ((lr3.data || []) as any[])) {
       const nm = l.nickname || l.title || ''
-      const geo = String(marketOf(l.building, l.address_city, nm) || 'Other')
-      const isVen = VEN3.test(str(l.building)) || VEN3.test(str(nm))
-      const e = mktUnits[geo] = mktUnits[geo] || { own: 0, vendor: 0 }
-      if (isVen) e.vendor++; else e.own++
-      colOf[String(l.id)] = isVen ? 'Vendors' : geo
+      vendorOf[String(l.id)] = VEN3.test(str(l.building)) || VEN3.test(str(nm))
     }
-    for (const k of MK_ORDER) buckets[k] = newBucket(k)
-    for (const k of MK_ORDER) {
-      const u = mktUnits[k]
-      if (u && u.vendor > 0 && u.own === 0) buckets[k].vendorRun = true
-    }
-    const bucketFor = (lid: string): Bucket | null => {
-      const k = colOf[lid]
-      if (!k) return null
-      return buckets[k] || (buckets[k] = newBucket(k))
-    }
-    const inWin = (d: string) => d >= winFrom && d <= winTo
-    const inPrev = (d: string) => d >= prevFrom && d <= prevTo
-    const perDay: Record<string, { mins: number; cleans: number }> = {}
-
-    // A CHECKOUT IS A CLEAN. Counted here, off reservations, so the workload is complete even when
-    // the task never got closed. The fee is counted on the same row; a checkout with no fee
-    // recorded still counts as a clean, because somebody still had to clean it.
+    const inWin = (d2: string) => d2 >= winFrom && d2 <= winTo
+    // A CHECKOUT IS A CLEAN — counted off reservations, complete even when the task never closed.
     for (const r of (rr3 as any[])) {
-      const dte = str(r.check_out).slice(0, 10)
-      const f = Number((r as any).cleaning)
-      if (inWin(dte)) {
-        const b = bucketFor(String(r.listing_id)); if (!b) continue
-        b.cleans++
-        if (Number.isFinite(f)) b.fees += f
-        if (b.key !== 'Vendors') { const d2 = perDay[dte] = perDay[dte] || { mins: 0, cleans: 0 }; d2.cleans++ }
-      } else if (inPrev(dte)) {
-        cleansPrev++
-        if (Number.isFinite(f)) feesPrev += f
-      }
+      if (vendorOf[String(r.listing_id)]) continue
+      winCheckouts++
     }
+    const nameOfAny = (v: any): string => {
+      if (!v) return ''
+      if (typeof v === 'string') return v
+      if (typeof v === 'object') return str(v.name || v.full_name || [v.first_name, v.last_name].filter(Boolean).join(' '))
+      return ''
+    }
+    const didClean: Record<string, boolean> = {}
     for (const t of (cl3 as any[])) {
-      const dte = str(t.scheduled_date).slice(0, 10)
+      if (kindOfTask(t) !== 'clean') continue
       const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
       if (!done) continue
-      const mins = Number(t.total_minutes) || 0
-      const nm = str(t.name), dept = str(t.type_department)
-      // Same rule as the Labor board: a departure clean names itself. Common-area, pool, trash,
-      // office and linen jobs live in the housekeeping department too, but they are not turnovers.
-      const isDeparture = /departure clean|turnover clean|check-?out clean/i.test(nm)
-      const isClean = /clean/i.test(nm) || /housekeep/i.test(dept)
-      const isInsp = !isClean && (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept))
-      if (inWin(dte)) {
-        const b = bucketFor(String(t.reference_property_id)); if (!b) continue
-        if (isClean) { if (isDeparture) b.bzClosed++; b.hkMins += mins; if (b.key !== 'Vendors') { const d2 = perDay[dte] = perDay[dte] || { mins: 0, cleans: 0 }; d2.mins += mins } }
-        else if (isInsp) b.inspMins += mins
-        else b.maintMins += mins
-      }
-    }
-    // HOUSEKEEPING PAYROLL ONLY (audit fix, 2026-08-08).
-    // The first version summed EVERY timecard — maintenance techs and inspectors included — and
-    // divided by cleans, which put cost per clean at $86 when the Labor board, doing it properly,
-    // said $44.70. Two numbers for the same thing in one product is worse than no number, so the
-    // rule below is copied from app/api/labor/kpi (deptOf): classify by the Homebase role, and
-    // when the role is blank or ambiguous, fall back to what the person actually did in Breezeway.
-    const deptOfRole = (r: any) => {
-      const t2 = str(r).toLowerCase()
-      if (/inspect|audit|quality/.test(t2)) return 'inspection'
-      if (/clean|housekeep|turn/.test(t2)) return 'housekeeping'
-      if (/maint|tech|repair|handy/.test(t2)) return 'maintenance'
-      return 'other'
-    }
-    // what each person actually did this window, from the task mirror (assignee OR whoever closed it)
-    const didByName: Record<string, { c: number; m: number; i: number }> = {}
-    const bump = (nm: string, kind: 'c' | 'm' | 'i') => {
-      const key = str(nm).trim().toLowerCase(); if (!key) return
-      const e = didByName[key] = didByName[key] || { c: 0, m: 0, i: 0 }
-      e[kind]++
-    }
-    for (const t of (cl3 as any[])) {
-      const dte = str(t.scheduled_date).slice(0, 10)
-      if (!(dte >= prevFrom && dte <= winTo)) continue
-      const nm = str(t.name), dept = str(t.type_department)
-      const kind: 'c' | 'm' | 'i' = (/clean/i.test(nm) || /housekeep/i.test(dept)) ? 'c'
-        : (/inspect|walk|audit|unit check/i.test(nm) || /inspect/i.test(dept)) ? 'i' : 'm'
-      // A task can be ASSIGNED to one person and CLOSED by another (Jon, 2026-08-08). Credit both
-      // names so a person is never invisible just because someone else finished their job.
-      // assignees comes back as a mix of plain names and {name}/{first_name,last_name} objects —
-      // stringifying blindly printed "[Object Object]" into the audit line.
-      const nameOfAny = (v: any): string => {
-        if (!v) return ''
-        if (typeof v === 'string') return v
-        if (typeof v === 'object') {
-          const n = v.name || v.full_name || [v.first_name, v.last_name].filter(Boolean).join(' ')
-          return str(n)
-        }
-        return ''
-      }
       const who = ([] as any[])
         .concat(Array.isArray((t as any).assignees) ? (t as any).assignees : [])
         .concat([(t as any).finished_by_name, (t as any).assignee_name])
         .map(nameOfAny).filter(Boolean)
-      for (const w of who) bump(w, kind)
+      for (const w of who) didClean[w.trim().toLowerCase()] = true
+      if (!vendorOf[String(t.reference_property_id)]) winBzClosed++
     }
-    const isHkPerson = (nm: string, role: any): boolean => {
-      const byRole = deptOfRole(role)
-      if (byRole !== 'other') return byRole === 'housekeeping'
-      const e = didByName[str(nm).trim().toLowerCase()]
-      if (!e || (!e.c && !e.m && !e.i)) return false     // unknown → not counted as cleaning cost
-      if (e.i > e.c && e.i > e.m) return false
-      return e.c >= e.m
-    }
-    const hkOnly = (rows: any[]) => rows.filter((t: any) => isHkPerson(t.name, t.role))
-    const sumPay = (rows: any[]) => rows.reduce((a: number, t: any) => a + (Number(t.laborCost) || 0), 0)
-    const sumHrs = (rows: any[]) => rows.reduce((a: number, t: any) => a + (Number(t.hours) || 0), 0)
-    const hkWin = hkOnly(tcWin), hkPrev = hkOnly(tcPrev)
-    payrollWin = hkWin.length ? sumPay(hkWin) : null; hoursWin = sumHrs(hkWin)
-    payrollPrev = hkPrev.length ? sumPay(hkPrev) : null; hoursPrev = sumHrs(hkPrev)
-    payrollAll = tcWin.length ? sumPay(tcWin) : null; hoursAll = sumHrs(tcWin)
-    // Everyone who did a clean but has NO timecard — vendors, contractors, or a name that does not
-    // match between Homebase and Breezeway. Their cleans are in the count but their cost is not.
-    const paidNames = new Set(tcWin.map((t: any) => str(t.name).trim().toLowerCase()).filter(Boolean))
-    for (const key of Object.keys(didByName)) {
-      if (!didByName[key].c) continue
-      if (paidNames.has(key)) continue
-      cleanersNoTimecard.push(key.replace(/\b\w/g, ch => ch.toUpperCase()))
-    }
-
-    // ALLOCATE the measured payroll across the non-vendor columns by housekeeping minutes.
-    // ALLOCATE BY CHECKOUTS, NOT BY BREEZEWAY MINUTES. Minutes only exist where somebody closed
-    // the task, so allocating on them would hand the biggest share of payroll to whichever market
-    // happens to have the most diligent paperwork — the exact bias Jon flagged. Checkouts are
-    // complete for every market, so they are the fair basis.
-    if (payrollWin != null) {
-      const ours = MK_ORDER.filter(k => k !== 'Vendors').map(k => buckets[k]).filter(Boolean)
-      const totCleans = ours.reduce((a, b) => a + b.cleans, 0)
-      for (const b of ours) {
-        const share = totCleans > 0 ? b.cleans / totCleans : 0
-        b.payroll = (payrollWin as number) * share
-        b.hours = hoursWin * share
+    // Cleaners with no Homebase timecard — claimed ONLY when the timecard weeks are COMPLETE, so
+    // a rate-limited Homebase morning can never manufacture a list of "missing" people.
+    try {
+      const tcAudit = await getTimecardsAudited(winFrom, winTo)
+      if (tcAudit.complete) {
+        const paidNames = new Set(tcAudit.cards.map((t: any) => str(t.name).trim().toLowerCase()).filter(Boolean))
+        for (const key of Object.keys(didClean)) {
+          if (!paidNames.has(key)) cleanersNoTimecard.push(key.replace(/\b\w/g, ch => ch.toUpperCase()))
+        }
       }
-    }
-
-    // Per-day cost per clean across the window — the shape of the week.
-    if (payrollWin != null) {
-      // HK ONLY here too — the first cut charged the maintenance crew's day against the cleans and
-      // produced a $145 Monday that never happened.
-      const byDayPay: Record<string, number> = {}
-      for (const t of (hkWin as any[])) { const k = str(t.date).slice(0, 10); if (k) byDayPay[k] = (byDayPay[k] || 0) + (Number(t.laborCost) || 0) }
-      const days: string[] = []
-      for (let i = 6; i >= 0; i--) days.push(shiftDays(yEcon, -i))
-      dailyCpc = days.map(k => {
-        const pay = byDayPay[k] || 0, cl = (perDay[k] || { cleans: 0 }).cleans
-        return { date: k, cpc: pay > 0 && cl > 0 ? pay / cl : null }
-      })
-    }
-
-    // BILLABLE — the amount entered against each task in Breezeway (billedAmount is that plus the
-    // rate math, and the rate is 0 on every task here, so this IS the entered cost). Same engine as
-    // the Billable Hours sheet, so the two always agree.
+    } catch { /* names list is a bonus, never a blocker */ }
+    // BILLABLE — the amount entered against each task in Breezeway. Same engine as the Billable
+    // Hours sheet, so the two always agree.
     try {
       const months = Array.from(new Set([winFrom.slice(0, 7), winTo.slice(0, 7)]))
       for (const m of months) {
@@ -1501,57 +1430,17 @@ export async function buildGmBrief(): Promise<OpsBrief> {
           if (!inWin(dte)) continue
           const amt = Number((t as any).billedAmount) || 0
           if (!amt) continue
-          const b = bucketFor(String((t as any).listingId)); if (!b) continue
-          b.billable += amt; billableKnown = true
-          // Jon, 2026-08-08: "departure cleans, owner cleans, deep cleans will have a value in
-          // Breezeway if we generate rev." So housekeeping-billable work is CLEANING REVENUE — an
-          // owner clean or a deep clean earns money that never appears as a guest cleaning fee,
-          // and leaving it out understated both the revenue and the margin.
-          if (/housekeep|clean/i.test(str((t as any).department))) b.billableHk += amt
+          totalBillable += amt; billableKnown = true
         }
       }
-    } catch { /* billing detail unavailable — the column simply reads as no data */ }
-  } catch { /* Homebase or the mirror is down — the card degrades to whatever it has */ }
+    } catch { /* billing detail unavailable — the tile simply reads as no data */ }
+  } catch { /* mirror down — the compliance line degrades, engine numbers still render */ }
 
-  const cols = MK_ORDER.map(k => buckets[k]).filter(Boolean) as Bucket[]
-  const tot = cols.reduce((a, b) => ({
-    cleans: a.cleans + b.cleans, bzClosed: a.bzClosed + b.bzClosed, fees: a.fees + b.fees, hkMins: a.hkMins + b.hkMins,
-    maintMins: a.maintMins + b.maintMins, inspMins: a.inspMins + b.inspMins,
-    billable: a.billable + b.billable, billableHk: a.billableHk + b.billableHk, payroll: a.payroll + (b.payroll || 0),
-  }), { cleans: 0, bzClosed: 0, fees: 0, hkMins: 0, maintMins: 0, inspMins: 0, billable: 0, billableHk: 0, payroll: 0 })
-  const oursTot = cols.filter(c => c.key !== 'Vendors').reduce((a, b) => ({
-    cleans: a.cleans + b.cleans, bzClosed: a.bzClosed + b.bzClosed, fees: a.fees + b.fees,
-    billableHk: a.billableHk + b.billableHk, payroll: a.payroll + (b.payroll || 0),
-  }), { cleans: 0, bzClosed: 0, fees: 0, billableHk: 0, payroll: 0 })
-  // NOT A PERCENTAGE. The first cut divided housekeeping tasks by checkouts and printed "116%",
-  // because closed HK tasks include deep cleans, strips and mid-stay work — the numerator is not a
-  // subset of the denominator. Both counts are shown side by side instead, with the caveat, and
-  // nothing on this page is derived from the task count.
-
-  // Window-level headline numbers (our crew only — vendor fees are not ours to earn a margin on).
-  const cpcY = null as number | null   // kept for the tile below; recomputed from the window
-  const cpcWin = oursTot.cleans && payrollWin != null ? oursTot.payroll / oursTot.cleans : null
-  const cpcPrevWin = cleansPrev && payrollPrev != null ? (payrollPrev as number) / cleansPrev : null
-  // TOTAL CLEANING REVENUE = the guest cleaning fee on checkouts PLUS the Breezeway billable value
-  // of owner cleans and deep cleans, which earn money outside the guest fee entirely.
-  const cleanRevWin = oursTot.fees + oursTot.billableHk
-  const marginWin = payrollWin != null ? cleanRevWin - oursTot.payroll : null
-  const marginPctWin = (marginWin != null && cleanRevWin) ? Math.round((marginWin / cleanRevWin) * 1000) / 10 : null
-  const marginPrev = payrollPrev != null ? feesPrev - (payrollPrev as number) : null
-  const marginPctPrev = (marginPrev != null && feesPrev) ? Math.round((marginPrev / feesPrev) * 1000) / 10 : null
-  const laborPctOfClean = (payrollWin != null && cleanRevWin) ? Math.round((oursTot.payroll / cleanRevWin) * 1000) / 10 : null
-  // Coverage differences between the two weeks make a comparison meaningless — same guard as before.
-  const hpcWin = oursTot.cleans && hoursWin ? hoursWin / oursTot.cleans : null
-  const hpcPrev = cleansPrev && hoursPrev ? hoursPrev / cleansPrev : null
-  const comparableWeeks = hpcWin != null && hpcPrev != null && hpcPrev >= hpcWin * 0.6 && hpcPrev <= hpcWin * 1.6
-  const cpcDelta = (comparableWeeks && cpcWin != null && cpcPrevWin != null && cpcPrevWin > 0) ? ((cpcWin - cpcPrevWin) / cpcPrevWin) * 100 : null
-  const marginDelta = (comparableWeeks && marginPctWin != null && marginPctPrev != null) ? marginPctWin - marginPctPrev : null
-  const feePerClean = oursTot.cleans ? cleanRevWin / oursTot.cleans : null
-  const costSource = payrollWin != null ? 'Homebase clocked payroll' : null
-  const bwHours = (tot.hkMins + tot.maintMins + tot.inspMins) / 60
-  const coverageWarn = payrollWin != null && bwHours > 0 && hoursWin > 0 && hoursWin < bwHours * 0.8
+  // THE ENGINE'S 7-DAY NUMBERS, used by tiles, card and subject alike.
+  const E7: any = (ec7 && !(ec7.payrollAudit && !ec7.payrollAudit.complete)) ? ec7.kpi : null
+  const H7t: any = E7 ? E7.housekeeping : null
   const winNice = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(winFrom + 'T12:00:00'))
-    + ' – ' + new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(winTo + 'T12:00:00'))
+    + ' \u2013 ' + new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(winTo + 'T12:00:00'))
 
   let claimsOpen = 0, claimsValue = 0, claimsWaiting = 0
   try {
@@ -1572,16 +1461,16 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // Jon: "revenue not as important — I have another app that sends that data." So the top line is
   // what ONLY this app knows: what a clean costs us, whether housekeeping earns, product health.
   const tiles: Tile[] = [
-    { label: 'Cost / clean · 7d', value: cpcWin != null ? money0(cpcWin) : '—',
-      tone: cpcWin == null ? undefined : (feePerClean != null && cpcWin > feePerClean) ? 'red' : 'green',
-      note: feePerClean != null ? 'we charge ' + money0(feePerClean) : (costSource ? undefined : 'connect Homebase') },
-    { label: 'Housekeeping margin · 7d', value: marginPctWin != null ? pct1(marginPctWin) : '—',
-      tone: marginPctWin == null ? undefined : marginPctWin >= 30 ? 'green' : marginPctWin >= 10 ? 'amber' : 'red',
-      note: marginWin != null ? money0(marginWin) + ' on ' + oursTot.cleans + ' cleans' : 'cost not available' },
-    { label: 'Labor % of fee', value: laborPctOfClean != null ? pct1(laborPctOfClean) : '—',
-      tone: laborPctOfClean == null ? undefined : laborPctOfClean <= 70 ? 'green' : laborPctOfClean <= 90 ? 'amber' : 'red',
-      note: hoursWin ? Math.round(hoursWin) + ' hrs clocked' : undefined },
-    { label: 'Billable labor · 7d', value: billableKnown ? money0(tot.billable) : '—',
+    { label: 'Cost / clean · 7d', value: H7t && H7t.costPerClean != null ? money0(H7t.costPerClean) : '—',
+      tone: !H7t || H7t.costPerClean == null ? undefined : (H7t.revPerClean != null && H7t.costPerClean > H7t.revPerClean) ? 'red' : 'green',
+      note: H7t && H7t.revPerClean != null ? 'we charge ' + money0(H7t.revPerClean) : (ec7 ? 'payroll incomplete — withheld' : 'labor engine unavailable') },
+    { label: 'Housekeeping margin · 7d', value: H7t && H7t.marginPct != null ? pct1(H7t.marginPct) : '—',
+      tone: !H7t || H7t.marginPct == null ? undefined : H7t.marginPct >= 30 ? 'green' : H7t.marginPct >= 10 ? 'amber' : 'red',
+      note: H7t ? money0(H7t.margin) + ' on ' + H7t.cleans + ' cleans' : 'cost not available' },
+    { label: 'Labor % of fee', value: H7t && H7t.laborPct != null ? pct1(H7t.laborPct) : '—',
+      tone: !H7t || H7t.laborPct == null ? undefined : H7t.laborPct <= 70 ? 'green' : H7t.laborPct <= 90 ? 'amber' : 'red',
+      note: H7t && H7t.hours ? Math.round(H7t.hours) + ' hrs clocked' : undefined },
+    { label: 'Billable labor · 7d', value: billableKnown ? money0(totalBillable) : '—',
       note: billableKnown ? 'owner-billable work' : 'no billing detail' },
     { label: 'Review score · 30d', value: d.rep.avg != null ? d.rep.avg.toFixed(2) : '—',
       tone: d.rep.avg == null ? undefined : d.rep.avg >= 4.6 ? 'green' : d.rep.avg >= 4.3 ? 'amber' : 'red',
@@ -1590,63 +1479,6 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       tone: rev.occupancy == null ? undefined : rev.occupancy >= 75 ? 'green' : rev.occupancy >= 60 ? 'amber' : 'red',
       note: rev.occupancyChange != null ? (rev.occupancyChange > 0 ? '+' : '') + rev.occupancyChange + ' pts vs prev' : undefined },
   ]
-
-  // Seven closed days of cost per clean — the shape of the week, not just its endpoints.
-  const trendPts = dailyCpc.filter(p => p.cpc != null)
-  const trendLine = trendPts.length >= 3
-    ? trendPts.map(p => `<span style="display:inline-block;margin:0 10px 0 0;white-space:nowrap"><span style="font-size:10px;color:#9ca3af">${p.date.slice(5)}</span>&nbsp;<b style="font-size:12px">$${Math.round(p.cpc as number)}</b></span>`).join('<span style="color:#d1d5db">·</span> ')
-    : ''
-
-  // ---- BY MARKET. Miami / Broward / North / Vendors, side by side for the week. ----
-  const hrs = (m: number) => m ? Math.round(m / 60) : 0
-  // WHAT THIS TABLE MAY AND MAY NOT CLAIM (audited 2026-08-10).
-  // Payroll per market is allocated by each market's share of CHECKOUTS (line ~1042). That makes
-  // cost-per-clean and hours-per-clean IDENTICAL in every market by construction — Miami read $56
-  // and Broward read $56 and neither number had measured anything. Both columns are gone. What
-  // replaces cost-per-clean is FEE PER CLEAN, which is genuinely measured per market: fees come
-  // off the reservation, so they split exactly, and Miami charging more per turn than Broward is a
-  // real fact the table can carry. Allocated labor and the margin it implies are still shown —
-  // they are the best available — but both are labelled as estimates so nobody reads a modelled
-  // split as a measurement.
-  const marketRows = cols.map(b => {
-    const isVendor = b.key === 'Vendors'
-    const bRev = b.fees + b.billableHk
-    const fpc = (b.cleans && bRev) ? bRev / b.cleans : null
-    const margin = (!isVendor && b.payroll != null) ? bRev - b.payroll : null
-    const marginPct = (margin != null && bRev) ? Math.round((margin / bRev) * 1000) / 10 : null
-    // A market with no cleans of ours is not a broken row — it is a market an outside company
-    // runs. Say so, instead of printing a line of dashes that reads like a data failure.
-    const sub = isVendor ? 'outside crews'
-      : (!b.cleans && b.vendorRun) ? 'run by outside crews \u2014 see Vendors'
-      : b.bzClosed + ' closed in BZ'
-    return `<tr>
-      <td style="${S.td}"><b>${esc(b.label)}</b><div style="font-size:11px;color:#9ca3af">${sub}</div></td>
-      <td style="${S.td};text-align:right">${b.cleans || '—'}</td>
-      <td style="${S.td};text-align:right">${bRev ? money0(bRev) : '—'}${b.billableHk ? `<div style="font-size:10px;color:#9ca3af">${money0(b.fees)} guest + ${money0(b.billableHk)} billable</div>` : ''}</td>
-      <td style="${S.td};text-align:right">${fpc != null ? `<b>${money0(fpc)}</b>` : '—'}</td>
-      <td style="${S.td};text-align:right">${(isVendor || b.vendorRun) ? `<span style="${S.muted}">vendor</span>` : (b.payroll ? money0(b.payroll) : '—')}</td>
-      <td style="${S.td};text-align:right">${marginPct != null ? `<b style="${marginPct < 10 ? S.red : S.green}">${pct1(marginPct)}</b>` : '—'}</td>
-      <td style="${S.td};text-align:right">${hrs(b.maintMins) || '—'}</td>
-      <td style="${S.td};text-align:right">${b.billable ? money0(b.billable) : '—'}</td>
-    </tr>`
-  }).join('') + (() => {
-    // The All row must total the same quantity the market rows show. It was printing guest fees
-    // only while every market row printed fees + billable, so the column did not add up (Broward
-    // showed $9,305, the total counted $9,185 of it).
-    const allRev = tot.fees + tot.billableHk
-    const allFpc = tot.cleans ? allRev / tot.cleans : null
-    const bt = ';border-top:2px solid #111827'
-    return `<tr>
-      <td style="${S.td}${bt}"><b>All</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${tot.cleans}</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${money0(allRev)}</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${allFpc != null ? money0(allFpc) : '—'}</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${payrollWin != null ? money0(payrollWin) : '—'}</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${marginPctWin != null ? pct1(marginPctWin) : '—'}</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${hrs(tot.maintMins) || '—'}</b></td>
-      <td style="${S.td};text-align:right${bt}"><b>${billableKnown ? money0(tot.billable) : '—'}</b></td>
-    </tr>`
-  })()
 
   // Engine layers, exactly Jon's structure. If payroll came back partial, say so and withhold.
   const laborRows = (() => {
@@ -1687,7 +1519,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   })()
   const moneyRows = laborRows + `
     <tr><td style="${S.td}">Departure cleans closed in Breezeway <span style="${S.muted}">paperwork drives every number above</span></td>
-      <td style="${S.td};text-align:right">${oursTot.cleans ? `<b style="${(oursTot.bzClosed / oursTot.cleans) < 0.8 ? S.red : (oursTot.bzClosed / oursTot.cleans) < 0.95 ? S.amber : S.green}">${pct1((oursTot.bzClosed / oursTot.cleans) * 100)}</b> <span style="${S.muted}">${oursTot.bzClosed} closed of ${oursTot.cleans} checkouts — an unclosed clean earns nobody credit and understates the margin</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
+      <td style="${S.td};text-align:right">${winCheckouts ? `<b style="${(winBzClosed / winCheckouts) < 0.8 ? S.red : (winBzClosed / winCheckouts) < 0.95 ? S.amber : S.green}">${pct1((winBzClosed / winCheckouts) * 100)}</b> <span style="${S.muted}">${winBzClosed} closed of ${winCheckouts} checkouts — an unclosed clean earns nobody credit and understates the margin</span>` : `<span style="${S.muted}">—</span>`}</td></tr>
     ${cleanersNoTimecard.length ? `<tr><td colspan="2" style="${S.td};background:#fffbeb">
       <span style="${S.amber}">${cleanersNoTimecard.length} ${cleanersNoTimecard.length === 1 ? 'person' : 'people'} cleaned this week with no Homebase timecard.</span>
       <span style="${S.muted}">${esc(cleanersNoTimecard.slice(0, 8).join(', '))}${cleanersNoTimecard.length > 8 ? ' and others' : ''}. Either a vendor/contractor (correct) or a name mismatch between Homebase and Breezeway — in which case their hours are missing and cost per clean reads low.</span></td></tr>` : ''}
@@ -1725,8 +1557,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const table = (heads: string[], rows: string) =>
     `<table width="100%" cellspacing="0" cellpadding="0"><tr>${heads.map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${rows}</table>`
   const subject = `GM Brief ${dateNice}: ${occToday != null ? pct1(occToday) + ' occupied' : ''}`
-    + (cpcWin != null ? ` · ${money0(cpcWin)}/clean` : '')
-    + (marginPctWin != null ? ` · ${pct1(marginPctWin)} margin 7d` : '')
+    + (H7t && H7t.costPerClean != null ? ` · ${money0(H7t.costPerClean)}/clean` : '')
+    + (H7t && H7t.marginPct != null ? ` · ${pct1(H7t.marginPct)} margin 7d` : '')
     + (d.rep.avg != null ? ` · ${d.rep.avg.toFixed(2)}★` : '')
     + (claimsOpen ? ` · ${claimsOpen} claims` : '')
 
@@ -1826,7 +1658,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   const nameOf: Record<string, string> = {}
   for (const l of ((lRes2 || []) as any[])) nameOf[String(l.id)] = l.nickname || l.title || 'Unit'
   const tomorrowArrivals = ((tomRes || []) as any[])
-    .filter(r => LIVE.has(str(r.status).toLowerCase()))
+    .filter(r => isLiveStay(r.status))
     .map(r => ({ unit: nameOf[String(r.listing_id)] || 'Unit', nights: r.nights != null ? Number(r.nights) : null }))
     .filter(r => mine(r.unit))
 
