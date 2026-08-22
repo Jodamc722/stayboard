@@ -330,7 +330,10 @@ export async function GET(req: NextRequest) {
       if (e && /@/.test(e) && !seen.has(e)) { seen.add(e); to2.push(e) }
     }
     if (!to2.length) to2.push(OWNER)
-    const enabled = cfgW?.enabled !== false || cfgD?.enabled !== false
+    // OFF MEANS OFF (super audit, 2026-08-22): switching EITHER legacy key off disables the email.
+    // The old `||` needed both keys explicitly false, so the /users toggle (which writes
+    // labor_weekly) appeared to do nothing while labor_daily sat unset.
+    const enabled = cfgW?.enabled !== false && cfgD?.enabled !== false
     if (!enabled && !force) {
       return NextResponse.json({ ok: true, sent: false, reason: 'switched off in settings', snapshotStored: true, forward, subject })
     }
