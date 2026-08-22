@@ -90,7 +90,9 @@ export default function AuditReviewPage({ params }: { params: { code: string } }
   )
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
+    // Share-code route — no Shell around it, so the safe-area inset has to come from here. It goes
+    // on a wrapper, not on this element: .px-safe sets the same property as px-4 and would win.
+    <div className="px-safe"><div className="max-w-3xl mx-auto px-4 py-6">
       <div className="mb-4">
         <a href="/audits" className="text-xs font-semibold text-neutral-400">&larr; All audits</a>
         <div className="flex items-baseline gap-2 mt-1">
@@ -138,9 +140,11 @@ export default function AuditReviewPage({ params }: { params: { code: string } }
                 const d = it.details || {}
                 return (
                   <div key={it.id} className="rounded-lg border border-neutral-100 p-2">
-                    <div className="flex gap-2.5 items-start">
+                    {/* Kind label + Edit + Delete never shrink, so on a phone the item name was left
+                        with about ten characters. The row wraps and the buttons drop below it. */}
+                    <div className="flex gap-2.5 items-start flex-wrap">
                       {it.photo_url ? <img src={it.photo_url} alt="" className="w-11 h-11 rounded-md object-cover shrink-0" /> : null}
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-[10rem]">
                         <div className="text-sm font-semibold text-neutral-900">{(it.qty || 1) > 1 ? (it.qty + '× ') : ''}{it.title || it.item_type}{d.brand ? <span className="text-[11px] text-neutral-500 font-normal ml-1.5">{d.brand}</span> : null}{d.size ? <span className="text-[11px] text-neutral-400 font-normal ml-1.5">{d.size}</span> : null}</div>
                         {it.note ? <div className="text-xs text-neutral-500 mt-0.5">{it.note}</div> : null}
                       </div>
@@ -183,6 +187,6 @@ export default function AuditReviewPage({ params }: { params: { code: string } }
         </div>
       </div>
       <a href={'/audit/' + code} className="text-xs font-semibold text-neutral-400">Open capture form &rarr;</a>
-    </div>
+    </div></div>
   )
 }
