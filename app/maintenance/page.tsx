@@ -228,12 +228,15 @@ export default async function MaintenancePage() {
         ) : (
           <div className="divide-y divide-line/60">
             {triage.slice(0, 30).map((t, i) => (
-              <Link key={i} href={t.href} className="flex items-center gap-3 px-4 py-2.5 hover:bg-app/40 transition-colors">
+              // Age chip + kind + title + up to three flag chips on one 375px line left the title
+              // about ten characters wide. A min-width on the title forces the flags onto their own
+              // line on a phone; at desktop widths the row still fits and nothing moves.
+              <Link key={i} href={t.href} className="flex items-center gap-3 px-4 py-2.5 hover:bg-app/40 transition-colors flex-wrap">
                 <span className={`${chip} ${ageCls(t.age)} w-11 text-center flex-shrink-0`}>{t.age}d</span>
                 <span className="text-[10px] uppercase tracking-wide font-bold text-muted w-14 flex-shrink-0">
                   {t.kind === 'wo' ? 'W.O.' : t.kind === 'task' ? 'Task' : 'Glitch'}
                 </span>
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-[11rem]">
                   <span className="text-sm font-medium text-ink truncate block">{t.title}</span>
                   <span className="text-xs text-muted">{t.where}{t.who ? ` · ${t.who}` : ''}</span>
                 </div>
@@ -258,7 +261,10 @@ export default async function MaintenancePage() {
             <h2 className="font-semibold text-ink text-sm">By building</h2>
             <p className="text-[11px] text-muted">Open items per property — where maintenance attention is owed</p>
           </div>
-          <table className="w-full text-sm">
+          {/* Six count columns plus a building name — scroll it inside the card instead of letting
+              the page travel sideways. */}
+          <div className="lh-hscroll">
+          <table className="w-full text-sm min-w-[560px]">
             <thead><tr className="text-[10px] uppercase tracking-wider text-muted">
               <th className="text-left px-4 py-2 font-semibold">Building</th>
               <th className="text-right px-2 py-2 font-semibold">W.O.</th>
@@ -281,6 +287,7 @@ export default async function MaintenancePage() {
               {gridRows.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted text-sm">Nothing open anywhere.</td></tr>}
             </tbody>
           </table>
+          </div>
         </section>
 
         {/* MONEY — closed maintenance with no dollars entered. Each row is billable revenue idle. */}
@@ -294,9 +301,10 @@ export default async function MaintenancePage() {
           ) : (
             <div className="divide-y divide-line/60">
               {unbilled.slice(0, 12).map((t: any) => (
-                <Link key={t.id} href="/billing" className="flex items-center gap-3 px-4 py-2.5 hover:bg-app/40 transition-colors">
+                // Same as triage: the "enter billing" chip was eating the task name on a phone.
+                <Link key={t.id} href="/billing" className="flex items-center gap-3 px-4 py-2.5 hover:bg-app/40 transition-colors flex-wrap">
                   <span className={`${chip} ${ageCls(ageDays(t.finished_at))} w-11 text-center flex-shrink-0`}>{ageDays(t.finished_at)}d</span>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-[11rem]">
                     <span className="text-sm font-medium text-ink truncate block">{str(t.name) || 'Maintenance task'}</span>
                     <span className="text-xs text-muted">{lname[str(t.reference_property_id)] || 'Unknown unit'}{t.assignee_name ? ` · ${t.assignee_name}` : ''}{t.total_minutes ? ` · ${Math.round(t.total_minutes / 6) / 10}h logged` : ''}</span>
                   </div>
