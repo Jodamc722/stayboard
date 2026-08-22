@@ -20,7 +20,7 @@ export const maxDuration = 60
 // It alerts at most once every 6 hours per feed, and posts a single recovery line when a feed comes
 // back, so a broken sync cannot turn into background noise people learn to ignore.
 
-type Feed = { key: string; label: string; maxMin: number }
+type Feed = { key: string; label: string; maxMin: number; silent?: boolean }
 type Ages = Record<string, { age: number | null; error: string | null }>
 const FEEDS: Feed[] = [
   { key: 'reservations', label: 'Bookings (Guesty)', maxMin: 20 },   // pulls every 5 min
@@ -30,7 +30,11 @@ const FEEDS: Feed[] = [
   // Not a job — a data pulse. Fires when NO new review has arrived in 4 days even though the sync
   // itself is green, which at this portfolio's ~8-reviews/day baseline means the channel feed into
   // Guesty (usually Airbnb) has stalled, not us.
-  { key: 'reviews_content', label: 'New guest reviews (none arriving — check Guesty’s channel connections, likely Airbnb)', maxMin: 4 * 24 * 60 },
+  // SILENT IN SLACK (Jon, 2026-08-22: "get rid of the airbnb review messages"): a stalled review
+  // channel is a known, slow-moving upstream problem — repeating it every 6 hours forever teaches
+  // people to ignore the channel that also carries real dead-sync alarms. It stays in this
+  // route's JSON report (Eve and the boards can read it); it never posts to Slack again.
+  { key: 'reviews_content', label: 'New guest reviews (none arriving — check Guesty’s channel connections, likely Airbnb)', maxMin: 4 * 24 * 60, silent: true },
 ]
 const ALERT_KEY = 'sync_watchdog_state'
 const REALERT_MIN = 6 * 60
@@ -90,6 +94,8 @@ async function reviewChannelFeeds(db: any): Promise<{ feeds: Feed[]; ages: Ages 
     feeds.push({
       key,
       maxMin: limitDays * 24 * 60,
+      // silent: tracked and reported, never posted to Slack (Jon, 2026-08-22).
+      silent: true,
       label: channel + ' reviews have stopped arriving (normally ~' + perDay.toFixed(1) +
              '/day) — the sync is fine, so check that channel\u2019s connection inside Guesty',
     })
@@ -159,11 +165,11 @@ async function run(req: NextRequest) {
       const lastAlert = prev?.alertedAt ? minsSince(prev.alertedAt) : null
       const due = lastAlert == null || lastAlert >= REALERT_MIN
       next[f.key] = { since, alertedAt: due ? nowIso : (prev?.alertedAt || nowIso) }
-      if (due) {
+      if (due && !f.silent) {
         alerts.push('*' + f.label + '* has not run for ' + human(a.age) +
           ' (limit ' + human(f.maxMin) + ')' + (a.error ? ' — error: ' + a.error.slice(0, 140) : '') + '.')
       }
-    } else if (prev) {
+    } else if (prev && !f.silent) {
       recovered.push('*' + f.label + '* is running again (last run ' + human(a.age) + ' ago).')
     }
   }
