@@ -37,10 +37,12 @@ export function EveWorkspace({ canEdit }: { canEdit: boolean }) {
   const [tab, setTab] = useState<Tab>('chat')
   return (
     <div>
-      <div className="flex items-center gap-1 mb-4 border-b border-line">
+      {/* Four icon+label tabs are wider than a 375px screen, and an underline tab strip cannot
+          wrap without the underline landing in the middle of the block. So it scrolls itself. */}
+      <div className="flex items-center gap-1 mb-4 border-b border-line lh-hscroll">
         {([['chat', 'Chat', MessageSquare], ['direction', 'Direction', Compass], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k as Tab)}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
+            className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={14} /> {label}
           </button>
         ))}
@@ -195,7 +197,8 @@ function EveMemory({ canEdit }: { canEdit: boolean }) {
 
       {err && <div className="mb-3 text-[13px] text-[#9A6200] bg-[#FDF3E0] border border-[#F0DAA8] rounded-xl px-3.5 py-2.5">{err}</div>}
 
-      <div className="flex items-center gap-2 mb-3">
+      {/* Filter box + count + "Teach her something" on one line ran off a phone screen. */}
+      <div className="flex flex-wrap items-center gap-2 gap-y-2 mb-3">
         <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter…" className={`${input} max-w-xs`} />
         <span className="text-xs text-muted">{shown.length} of {rows.length}</span>
         {canEdit && (

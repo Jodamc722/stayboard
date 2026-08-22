@@ -72,10 +72,13 @@ export default function UnitCalendar({ listingId, value, onChange, compact }: { 
         {cells.map((d, i) => d === null ? <div key={i} /> : (
           <button key={i} type="button" onClick={() => onChange(d)}
             title={(days[d] && days[d].occupied) ? 'Guest in house' + (days[d].guest ? ' — ' + days[d].guest : '') + ' · avoid scheduling work here' : (days[d] && days[d].checkOut) ? 'Checkout day — unit frees up' + (days[d].guest ? ' (' + days[d].guest + ' out)' : '') : 'Unit free'}
-            className={'relative h-8 rounded-md border text-[12px] leading-none flex items-center justify-center transition ' + cls(d)}>
+            className={'relative h-11 sm:h-8 rounded-md border text-[12px] leading-none flex items-center justify-center transition ' + cls(d)}>
             {Number(d.slice(8, 10))}
-            {days[d] && days[d].checkOut && d !== value && <span className="absolute bottom-0.5 text-[7px] font-bold uppercase">out</span>}
-            {days[d] && days[d].checkIn && !days[d].checkOut && d !== value && <span className="absolute bottom-0.5 text-[7px] font-bold uppercase">in</span>}
+            {/* A month has to stay seven columns wide, so the cell gets taller (not narrower) on a
+                phone: 44px is a thumb, 32px is a cursor. The in/out flag grows with it — 7px is
+                decoration, and this is the flag that says which day the unit is actually free. */}
+            {days[d] && days[d].checkOut && d !== value && <span className="absolute bottom-0.5 text-[9px] sm:text-[7px] font-bold uppercase">out</span>}
+            {days[d] && days[d].checkIn && !days[d].checkOut && d !== value && <span className="absolute bottom-0.5 text-[9px] sm:text-[7px] font-bold uppercase">in</span>}
           </button>
         ))}
       </div>

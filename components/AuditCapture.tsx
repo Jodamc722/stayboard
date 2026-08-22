@@ -903,12 +903,15 @@ function quickTags(r: string): string[] {
                       <div key={key} className="rounded-lg border border-neutral-100 bg-white">
                         <div className="flex items-center gap-2 px-2 py-1.5">
                           <span className={'flex-1 text-[13px] ' + (resolved ? 'text-neutral-400' : 'text-neutral-800')}>{flagged ? '⚠️ ' : ''}{T(label)}</span>
+                          {/* shrink-0: a long Spanish checkpoint ("Puertas, cerraduras y bisagras")
+                              was squeezing Good / Flag down to one letter per line on a 375px screen.
+                              The label wraps instead; the two buttons keep their size. */}
                           {resolved && !flagging ? (
-                            <button onClick={() => undoGood(room, label)} className="text-[11px] font-semibold text-emerald-600 px-1">{flagged ? T('flagged') : T('Good') + ' ✓'}</button>
+                            <button onClick={() => undoGood(room, label)} className="text-[11px] font-semibold text-emerald-600 px-1 shrink-0">{flagged ? T('flagged') : T('Good') + ' ✓'}</button>
                           ) : (
                             <>
-                              <button onClick={() => goodTap(room, label)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-emerald-300 text-emerald-700">{T('Good')}</button>
-                              <button onClick={() => openFlag(room, label, dflt)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border ' + (tone === 'inv' ? 'border-sky-300 text-sky-700' : 'border-amber-300 text-amber-700')}>{tone === 'inv' ? T('Missing / issue') : T('Flag')}</button>
+                              <button onClick={() => goodTap(room, label)} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-emerald-300 text-emerald-700 shrink-0">{T('Good')}</button>
+                              <button onClick={() => openFlag(room, label, dflt)} className={'text-[11px] font-semibold px-2 py-1 rounded-md border shrink-0 ' + (tone === 'inv' ? 'border-sky-300 text-sky-700' : 'border-amber-300 text-amber-700')}>{tone === 'inv' ? T('Missing / issue') : T('Flag')}</button>
                             </>
                           )}
                         </div>
@@ -1115,7 +1118,13 @@ function quickTags(r: string): string[] {
                       {it.note ? <div className="text-[11px] text-neutral-500 mt-0.5">{it.note}</div> : null}
                       <div className="text-[10px] text-neutral-400 mt-0.5">{it.status === 'task_created' ? 'Task created in Breezeway \u2713' : it.status}</div>
                     </div>
-                    {!done ? <button onClick={() => shootItemPhoto(it.id)} className="text-[11px] font-semibold text-indigo-600 px-1">{it.photo_url ? '📷 Redo' : '📷 Photo'}</button> : null}{!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}{iedId === it.id ? (<div className="w-full mt-1 space-y-1"><input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><div className="flex gap-1"><button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button><button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button></div></div>) : null}
+                    {/* Photo / Edit / × used to sit on the same line as the title and squeezed it to
+                        about fifteen characters — you could not tell two items apart. On a phone they
+                        drop to their own full-width line; sm:contents dissolves this wrapper so the
+                        desktop row is exactly as it was. */}
+                    <div className="w-full flex items-center justify-end gap-1 sm:contents">
+                    {!done ? <button onClick={() => shootItemPhoto(it.id)} className="text-[11px] font-semibold text-indigo-600 px-1">{it.photo_url ? '📷 Redo' : '📷 Photo'}</button> : null}{!done ? <button onClick={() => openIed(it)} className="text-[11px] font-semibold text-indigo-600 px-1">Edit</button> : null}{it.status === 'open' && !done ? <button onClick={() => removeItem(it)} className="text-neutral-300 text-lg leading-none px-1">×</button> : null}
+                    </div>{iedId === it.id ? (<div className="w-full mt-1 space-y-1"><input value={iedT} onChange={e => setIedT(e.target.value)} placeholder="Name" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedB} onChange={e => setIedB(e.target.value)} placeholder="Brand" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedSz} onChange={e => setIedSz(e.target.value)} placeholder="Detail (size, Smart, etc)" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><input value={iedN} onChange={e => setIedN(e.target.value)} placeholder="Note" className="w-full rounded border border-neutral-200 px-2 py-1 text-[12px]" /><div className="flex gap-1"><button onClick={() => saveIed(it)} disabled={iedBusy} className="flex-1 text-[12px] font-semibold px-2 py-1 rounded bg-neutral-900 text-white disabled:opacity-50">Save</button><button onClick={() => setIedId('')} className="text-[12px] font-semibold px-2 py-1 rounded border border-neutral-300">Cancel</button></div></div>) : null}
                   </div>
                 ))}
                 <div>

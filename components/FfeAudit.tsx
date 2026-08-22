@@ -701,7 +701,7 @@ export function FfeAudit({ code }: { code: string }) {
       </div>
 
       {/* ── RUNNING TALLY ─────────────────────────────────────────────────────────────────────── */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-200 px-4 py-2.5 shadow-[0_-2px_10px_rgba(0,0,0,.06)]">
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-200 px-4 py-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] shadow-[0_-2px_10px_rgba(0,0,0,.06)]">
         <p className="text-[12.5px] text-neutral-700 leading-snug">
           {findings
             ? <><span className="font-bold text-neutral-900">{findings} {t(FFE_UI.itemsToOrder)}</span> · {roomsDone}/{rooms.length} {t(FFE_UI.roomsProgress)}</>
@@ -712,7 +712,7 @@ export function FfeAudit({ code }: { code: string }) {
       {/* ── THE ADD SHEET ─────────────────────────────────────────────────────────────────────── */}
       {sheet ? (
         <div className="fixed inset-0 z-30 bg-black/45 flex items-end" onClick={() => !sheetBusy && setSheet(null)}>
-          <div className="bg-white w-full rounded-t-3xl px-4 pt-4 pb-6 max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full rounded-t-3xl px-4 pt-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-h-[88dvh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <p className="text-[16px] font-bold text-neutral-900">{t(FFE_UI.addTo)} {t(sheet.room)}</p>
             <p className="text-[12px] text-neutral-500 mt-0.5 mb-3">{t(FFE_UI.whatIsIt)}</p>
 

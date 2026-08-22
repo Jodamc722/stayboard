@@ -133,11 +133,14 @@ function FlowRow({ label, value, base, kind, note }: { label: string; value: num
   const w = base > 0 ? Math.min(100, (Math.abs(value) / base) * 100) : 0
   const bar = kind === 'minus' ? 'bg-ink/15' : kind === 'plus' ? 'bg-brand-300' : kind === 'total' ? 'bg-emerald-500' : 'bg-brand-600'
   const strong = kind === 'base' || kind === 'sub' || kind === 'total'
+  // PHONE: a 176px label + a 96px number left about seven pixels of bar on a 375px screen, so the
+  // waterfall had no waterfall in it. Below 640px the label and the money share the first line and
+  // the bar gets the whole of the second; from 640px it is the original single row.
   return (
-    <div className="flex items-center gap-3 py-[5px]">
-      <div className={`w-44 shrink-0 text-[13px] ${strong ? 'font-semibold text-ink' : 'text-muted'}`}>{kind === 'minus' ? '−  ' : kind === 'plus' ? '+  ' : ''}{label}</div>
-      <div className="flex-1 h-3 rounded-full bg-app overflow-hidden"><div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.max(value !== 0 ? 1.5 : 0, w)}%` }} /></div>
-      <div className={`w-24 shrink-0 text-right tabular-nums text-[13px] ${strong ? 'font-bold text-ink' : 'text-muted'}`}>{kind === 'minus' ? `−${fmtExact(Math.abs(value))}` : fmtExact(value)}</div>
+    <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 py-[5px]">
+      <div className={`min-w-0 sm:w-44 sm:shrink-0 text-[13px] ${strong ? 'font-semibold text-ink' : 'text-muted'}`}>{kind === 'minus' ? '−  ' : kind === 'plus' ? '+  ' : ''}{label}</div>
+      <div className="order-last sm:order-none w-full sm:w-auto sm:flex-1 h-3 rounded-full bg-app overflow-hidden"><div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.max(value !== 0 ? 1.5 : 0, w)}%` }} /></div>
+      <div className={`ml-auto sm:ml-0 w-24 shrink-0 text-right tabular-nums text-[13px] ${strong ? 'font-bold text-ink' : 'text-muted'}`}>{kind === 'minus' ? `−${fmtExact(Math.abs(value))}` : fmtExact(value)}</div>
       {note && <div className="hidden xl:block w-40 shrink-0 text-[11px] text-muted truncate">{note}</div>}
     </div>
   )
@@ -355,10 +358,11 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
       {/* Scope bar — filters every tab */}
       <div className="mb-3 rounded-2xl border border-line bg-white px-3.5 py-2.5 flex items-center gap-2 flex-wrap">
         <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold text-muted"><Filter size={12} /> Scope</span>
-        <div className="relative">
+        {/* On a phone the scope search wraps onto its own line — give it that whole line. */}
+        <div className="relative w-full sm:w-auto">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Unit, building or owner…"
-            className="rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[13px] text-ink w-52 focus:outline-none focus:border-brand-500" />
+            className="rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[13px] text-ink w-full sm:w-52 focus:outline-none focus:border-brand-500" />
         </div>
         <select value={bld} onChange={e => setBld(e.target.value)} className={selCls}>
           <option value="all">All buildings</option>
@@ -388,8 +392,9 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="mb-5 flex items-center gap-1.5">
+      {/* Tabs — the three of them are wider than a phone screen, so they wrap instead of pushing
+          the page sideways. */}
+      <div className="mb-5 flex flex-wrap items-center gap-1.5">
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-xl px-4 py-2 border transition-all ${tab === t.key ? 'bg-ink text-white border-ink shadow-sm' : 'bg-white border-line text-muted hover:text-ink'}`}>
@@ -485,13 +490,21 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
           <section className="rounded-2xl border border-line bg-white p-5 mb-4">
             <h2 className="text-sm font-bold text-ink mb-0.5">Revenue trend <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">portfolio · {d.daily.length > 62 ? 'weekly' : 'daily'}</span></h2>
             <p className="text-[12px] text-muted mb-2">Total collected per {d.daily.length > 62 ? 'week' : 'day'} across the selected range. Hover any bar.</p>
-            <RevTrend daily={d.daily} />
+            {/* The chart is drawn in a 720-wide viewBox. Scaled into 330px of phone the axis
+                labels land at about four pixels and a daily bar is under a pixel wide — so on a
+                phone it keeps a real width and scrolls sideways in its own box instead. */}
+            <div className="lh-hscroll -mx-5 px-5 sm:mx-0 sm:px-0">
+              <div className="min-w-[560px] sm:min-w-0"><RevTrend daily={d.daily} /></div>
+            </div>
           </section>
 
           <section className="rounded-2xl border border-line bg-white p-5 mb-4">
             <h2 className="text-sm font-bold text-ink mb-0.5 inline-flex items-center gap-1.5"><CalendarClock size={14} className="text-brand-600" /> Forward pacing <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">portfolio · next 90 days</span></h2>
             <p className="text-[12px] text-muted mb-2">Booked occupancy by night from today · booked revenue next 30d: <span className="font-semibold text-ink tabular-nums">{fmtMoney(d.otb.rev30)}</span></p>
-            <PaceChart fwdDaily={d.fwdDaily} activeUnits={d.activeUnits} />
+            {/* Same 720-wide viewBox as the trend chart — see the note there. */}
+            <div className="lh-hscroll -mx-5 px-5 sm:mx-0 sm:px-0">
+              <div className="min-w-[560px] sm:min-w-0"><PaceChart fwdDaily={d.fwdDaily} activeUnits={d.activeUnits} /></div>
+            </div>
           </section>
 
           {/* Revenue leakage — refunds/comps logged on guest-issue cards, rolled into the money view. */}

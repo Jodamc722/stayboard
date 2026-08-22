@@ -230,8 +230,50 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
         Showing <b className="text-ink tabular-nums">{rows.length}</b> of {units.filter(u => showDead || !u.dead).length} units · money is <b className="text-ink">{basisLabel}</b> over the last {revLabel} · rating over {periodLabel}
       </div>
 
+      {/* PHONE: the same twelve columns as a stacked card per unit. A 980px table on a 375px
+          screen is a sideways drag through thirteen columns to find one number, and this is the
+          board Jon opens standing in a building — so on a phone each unit becomes one card with
+          its headline (name, building, score) on top and every metric below as a labelled cell.
+          Same rows, same sort, same filters: `rows` feeds both. The table is unchanged from 640px
+          up. */}
+      <div className="rounded-2xl border border-line bg-white divide-y divide-line sm:hidden">
+        {rows.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm text-muted">No units match those filters.</div>
+        )}
+        {rows.map(u => (
+          <div key={u.id} className={`p-3 ${u.dead ? 'opacity-50' : ''}`}>
+            <div className="flex items-start gap-2">
+              {canEdit && (
+                <button onClick={() => togglePick(u.id)} aria-label={`Select ${u.name}`} className="text-muted mt-0.5 shrink-0">
+                  {picked.has(u.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} />}
+                </button>
+              )}
+              <div className="min-w-0 flex-1">
+                <Link href={`/listings/${u.id}`} className="block font-semibold text-ink text-[13.5px] leading-snug break-words">{u.name}</Link>
+                <div className="text-[11.5px] text-muted">{u.building}</div>
+              </div>
+              <span className={`shrink-0 inline-flex items-center justify-center min-w-[2.1rem] px-1.5 py-0.5 rounded-md ring-1 font-bold tabular-nums ${scoreClass(u.score)}`}>{u.score}</span>
+            </div>
+            <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1.5 text-[12px]">
+              <Cell label="Desc" value={`${u.sections}/6`} tone={u.sections === 0 ? 'bad' : u.sections < 6 ? 'warn' : ''} />
+              <Cell label="Photos" value={`${u.photos}${u.photoQuality != null ? ` · ${u.photoQuality}` : ' · —'}`} tone={u.photos < 10 ? 'bad' : ''} />
+              <Cell label="Amen" value={`${u.amenities}${u.mustFix > 0 ? ' ⚠' : ''}`} tone={u.mustFix > 0 ? 'bad' : ''} />
+              <Cell label="Rating" value={u.rating != null ? `${u.rating.toFixed(2)}★` : '—'} />
+              <Cell label="Occ" value={pct(u.occupancy)} />
+              <Cell label="ADR" value={money(u.adr)} />
+              <Cell label="RevPAR" value={money(u.revpar)} />
+              <Cell label="Optimized" value={shortDate(u.lastOptimized)} tone={u.lastOptimized ? '' : 'warn'} />
+            </dl>
+            <div className="mt-2 text-[12px] text-muted">
+              <span className="text-[10px] uppercase tracking-[0.09em] font-semibold text-muted">Next fix</span>{' '}
+              {u.topGap ? <span><b className="text-ink tabular-nums">+{u.topGap.points.toFixed(1)}</b> {u.topGap.label}</span> : <span className="text-emerald-700">nothing</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* table */}
-      <div className="rounded-2xl border border-line bg-white overflow-x-auto">
+      <div className="hidden rounded-2xl border border-line bg-white overflow-x-auto sm:block">
         <table className="w-full text-[12.5px] min-w-[980px]">
           <thead>
             <tr className="border-b border-line">
@@ -326,6 +368,17 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
           <Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> {runMsg}
         </div>
       )}
+    </div>
+  )
+}
+
+// One labelled metric in the phone card list. Mirrors the tone rules the table cells use, so a
+// thin photo set or a missing safety amenity reads the same in both layouts.
+function Cell({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] uppercase tracking-[0.09em] font-semibold text-muted">{label}</dt>
+      <dd className={`tabular-nums truncate ${tone === 'bad' ? 'text-rose-700 font-semibold' : tone === 'warn' ? 'text-amber-700 font-semibold' : 'text-ink'}`}>{value}</dd>
     </div>
   )
 }

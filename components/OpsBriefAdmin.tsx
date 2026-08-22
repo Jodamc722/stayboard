@@ -234,7 +234,9 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Mailbox connections — every account the app sends or drafts as needs its own Google connection. Connect opens Google; sign in AS that mailbox and approve.</div>
           <div className="rounded-xl border border-line divide-y divide-line">
             {mailboxes.map(m => (
-              <div key={m.email} className="flex items-center gap-2 px-3 py-2">
+              // A full mailbox address plus what it is used for plus the status plus Connect does
+              // not fit on one phone line; Connect was the part that disappeared.
+              <div key={m.email} className="flex items-center gap-2 gap-y-1 flex-wrap px-3 py-2">
                 <span className={'inline-block w-2 h-2 rounded-full ' + (m.connected ? 'bg-emerald-500' : 'bg-rose-400')} />
                 <span className="text-[12px] font-semibold text-ink">{m.email}</span>
                 <span className="text-[11px] text-muted">· {m.usedFor}</span>

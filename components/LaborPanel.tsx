@@ -236,10 +236,12 @@ export function LaborPanel() {
             <button key={p.d} onClick={() => pickPreset(p.d)}
               className={'text-[11px] font-semibold px-1.5 py-0.5 rounded ' + (!from && days === p.d ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{p.l}</button>
           ))}
+          {/* iOS forces a focused field to 16px, and a 16px date does not fit in 112px — both
+              pickers read "08/14…". On a phone they share the row and take what they need. */}
           <input type="date" value={from} onChange={e => setFrom(e.target.value)} title="From"
-            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white w-[112px]" />
+            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white flex-1 min-w-[135px] sm:flex-none sm:w-[112px]" />
           <input type="date" value={to} onChange={e => setTo(e.target.value)} title="To"
-            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white w-[112px]" />
+            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white flex-1 min-w-[135px] sm:flex-none sm:w-[112px]" />
           <button onClick={load} className="text-muted hover:text-ink p-1" title="Refresh">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -444,7 +446,10 @@ export function LaborPanel() {
           <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">
             Revenue vs payroll <span className="normal-case font-normal">· margin by crew</span>
           </p>
-          <table className="w-full text-sm">
+          {/* min-w: inside a scroller a w-full table shrinks to the phone instead of scrolling, so
+              six money columns were crushing to about 40px each. Columns keep their width and the
+              card scrolls sideways on its own. */}
+          <table className="w-full text-sm min-w-[720px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th className="py-1 pr-3">Crew</th><th className="py-1 pr-3 text-right">Revenue</th>
@@ -513,7 +518,8 @@ export function LaborPanel() {
       {!hideMoney && econ?.buckets?.length > 0 && (
         <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
           <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Housekeeping by market <span className="normal-case font-normal">· departure cleans from Breezeway, matched to Guesty checkouts</span></p>
-          <table className="w-full text-sm">
+          {/* Eleven columns. Without a min-width they collapse to unreadable slivers on a phone. */}
+          <table className="w-full text-sm min-w-[1040px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th className="py-1 pr-3">Bucket</th><th className="py-1 pr-3">Cleans</th><th className="py-1 pr-3">Housekeepers</th>
@@ -605,7 +611,7 @@ export function LaborPanel() {
           <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">
             Vendor buildings <span className="normal-case font-normal">· what they owe us a clean for, and what we did ourselves</span>
           </p>
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[820px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th className="py-1 pr-3">Building</th><th className="py-1 pr-3">Checkouts</th>
@@ -638,7 +644,7 @@ export function LaborPanel() {
                 {econ.vendorWork.ourCleanCount > 0 ? ' (' + econ.vendorWork.ourCleanCount + ' of them departure cleans)' : ''} —
                 {econ.vendorWork.unbilled > 0 ? ' ' + econ.vendorWork.unbilled + ' with nothing billed to anyone.' : ' all billed.'}
               </p>
-              <table className="w-full text-[12.5px]">
+              <table className="w-full text-[12.5px] min-w-[680px]">
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wide text-muted">
                     <th className="py-1 pr-3">Date</th><th className="py-1 pr-3">Unit</th><th className="py-1 pr-3">Who</th>
@@ -667,7 +673,7 @@ export function LaborPanel() {
       {!hideMoney && econ && (
         <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
           <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">Department P&amp;L <span className="normal-case font-normal">· cleaning fees + billable charges vs payroll</span></p>
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th className="py-1 pr-3">Department</th><th className="py-1 pr-3">People</th><th className="py-1 pr-3">Hours</th>
@@ -767,7 +773,10 @@ export function LaborPanel() {
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-4 pt-3 pb-1">
           People · click a name for their tasks
         </p>
-        <table className="w-full text-[13px]">
+        {/* Twelve columns and no scroller: on a phone this table used to drag the whole page
+            sideways, taking the heading with it. Now it scrolls inside its own card. */}
+        <div className="lh-hscroll">
+        <table className="w-full text-[13px] min-w-[1080px]">
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted border-b border-line">
               <th className="text-left font-semibold px-4 py-2">Person</th>
@@ -845,6 +854,7 @@ export function LaborPanel() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* CLEANERS — revenue vs cost */}
@@ -852,7 +862,8 @@ export function LaborPanel() {
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-4 pt-3 pb-1">
           Cleaners · revenue generated vs cost
         </p>
-        <table className="w-full text-[13px]">
+        <div className="lh-hscroll">
+        <table className="w-full text-[13px] min-w-[640px]">
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted border-b border-line">
               <th className="text-left font-semibold px-4 py-2">Cleaner</th>
@@ -883,6 +894,7 @@ export function LaborPanel() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   )

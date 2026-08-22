@@ -140,7 +140,9 @@ export function BuildingPatterns() {
                   </div>
                 ))}
               </div>
-              <div className="px-4 py-2 bg-app/40 border-t border-line flex items-center gap-3">
+              {/* Three links plus the review count ran past 375px on one line and pushed the card
+                  wider than the screen. Let the footer wrap. */}
+              <div className="px-4 py-2 bg-app/40 border-t border-line flex items-center gap-3 flex-wrap gap-y-1.5">
                 <Link href="/reviews" className="text-[11.5px] font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Reviews <ArrowRight size={11} /></Link>
                 <Link href="/glitches" className="text-[11.5px] font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Guest issues <ArrowRight size={11} /></Link>
                 <Link href="/reviews/actions" className="text-[11.5px] font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Fix jobs <ArrowRight size={11} /></Link>

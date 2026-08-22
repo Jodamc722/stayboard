@@ -265,11 +265,13 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
                     <div className="text-[11.5px] text-muted mt-0.5">{a.blurb}</div>
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mt-2">
-                      <div className="flex items-center gap-1.5">
+                      {/* "Goes to" + a 230px channel select is wider than a 375px card, so the
+                          select is given the full row on a phone and wraps under the label. */}
+                      <div className="flex items-center gap-1.5 flex-wrap gap-y-1 w-full sm:w-auto">
                         <span className="text-[11px] text-muted">Goes to</span>
                         {a.dest.kind === 'channel' ? (
                           <ChannelSelect
-                            width="w-[230px]"
+                            width="w-full sm:w-[230px]"
                             value={rules[a.dest.field] as string | null}
                             onChange={v => patch(r => ({ ...r, [(a.dest as any).field]: v } as Rules))}
                           />

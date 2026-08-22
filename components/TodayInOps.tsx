@@ -298,7 +298,10 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
     const doneN = (u.fullTasks || u.tasks).filter(t => t.done).length
     if (!isOpen(u)) return (
       <div key={u.listingId} style={{ borderLeftWidth: 3 }} className={'rounded-xl border bg-white overflow-hidden ' + accent(u)}>
-        <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: true }))} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-app/40 transition">
+        {/* Every badge on this line is shrink-0: a unit with Same-day + Unassigned + guest issues
+            + a review flag could not fit on a phone and pushed the page sideways. It wraps below
+            640px; from sm: up it stays the single line it has always been. */}
+        <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: true }))} className="w-full flex items-center gap-2 flex-wrap sm:flex-nowrap px-3 py-2 text-left hover:bg-app/40 transition">
           <span className="font-bold text-[15px] tracking-tight text-ink leading-none">{u.unit}</span>
           <span className="text-[11px] text-muted hidden sm:inline">{u.market}{u.city ? ' · ' + u.city : ''}</span>
           {u.sameDayTurn && !u.allDone && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Same-day</span>}
@@ -388,13 +391,21 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
             <div className="divide-y divide-line">
               {orderedTasks(u).map((t, ti, arr) => (
                 <div key={t.id} className={(t.done ? 'bg-emerald-50/40' : t.late ? 'bg-rose-50/50' : t.atRisk ? 'bg-amber-50/40' : ti % 2 ? 'bg-app/55' : 'bg-app')}>
-                <div className="group flex items-center gap-3 px-3 py-1.5 text-sm">
-                  <div className="flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                {/* THE TASK ROW ON A PHONE. Everything here except the task name is shrink-0 —
+                    reorder arrows, a 96px type chip, the status pill, two vendor flags, the
+                    comment button and the row menu — which left about 40px for the name and
+                    dragged the page sideways. Below 640px the row wraps: the name and its
+                    assignee take the first line (order-first), the chips and buttons the second.
+                    From sm: up nothing wraps and the row is byte-for-byte what it was. */}
+                <div className="group flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap px-3 py-1.5 text-sm">
+                  {/* The reorder arrows are opacity-0 until hover — on a touch screen they can
+                      never be revealed, so on a phone they are only stolen width. */}
+                  <div className="hidden sm:flex flex-col shrink-0 -my-1 text-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <button onClick={() => moveTask(u, t.id, -1)} disabled={ti === 0} title="Move up" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronUp size={16} /></button>
                     <button onClick={() => moveTask(u, t.id, 1)} disabled={ti === arr.length - 1} title="Move down" className="hover:text-ink disabled:opacity-20 leading-none p-1"><ChevronDown size={16} /></button>
                   </div>
                   <span className={'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ' + (TYPE_CLS[t.type] || TYPE_CLS.other)}>{TYPE_LABEL[t.type] || 'Task'}</span>
-                  <div className="flex-1 min-w-0">
+                  <div className="w-full order-first sm:w-auto sm:order-none sm:flex-1 min-w-0">
                     <div className="text-ink truncate">{t.name}</div>
                     <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
                       {t.guestyOnly ? <span className="text-[11px] text-muted">Vendor-cleaned {'\u00b7'} no Breezeway task</span> : <Assign task={t} people={people} onDone={load} />}
@@ -502,21 +513,31 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
           decide you want only the unassigned ones, and have to travel back to the top to say so.
           Where and what-kind were also split across two rows with two alert panels between them,
           so they never read as the same tool. One block, pinned. */}
-      <div className="sticky top-0 z-30 bg-app border-b border-line pt-1 pb-2 mb-3 space-y-2">
+      {/* PHONE: this block is NOT pinned. Wrapped onto a 375px screen the two rows below become
+          five or six, ~300px of a ~650px viewport, permanently covering the units they filter.
+          It scrolls away with the page on a phone and pins again from sm: up, unchanged. */}
+      <div className="sm:sticky sm:top-0 z-30 bg-app border-b border-line pt-1 pb-2 mb-3 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
+        {/* The market tabs are one rigid segmented control — four or five of them cannot shrink,
+            so on a phone they dragged the whole page sideways. Now they scroll in their own box.
+            The scroller is switched off again at sm: so it can never clip the strip's shadow. */}
+        <span className="overflow-x-auto sm:overflow-x-visible max-w-full">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shadow-soft">
           {markets.map(m => (
-            <button key={m} onClick={() => setMarket(m)} className={'text-[13px] font-medium px-3 py-1.5 transition ' + (market === m ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
+            <button key={m} onClick={() => setMarket(m)} className={'text-[13px] font-medium px-3 py-1.5 transition whitespace-nowrap ' + (market === m ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
           ))}
+        </span>
         </span>
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
           <button onClick={() => setShowDone(!showDone)} disabled={sf !== 'all' && sf !== 'done'} className={'text-[13px] font-medium px-3 py-1.5 disabled:opacity-40 ' + (showDone ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title={sf !== 'all' && sf !== 'done' ? 'The status filter already decides what shows — clear it to use this' : 'Show or hide units where everything is already done'}>Finished {doneCount}</button>
           <button onClick={() => setGroupBy(groupBy === 'area' ? 'urgency' : 'area')} className={'text-[13px] font-medium px-3 py-1.5 ' + (groupBy === 'area' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Group units by neighbourhood so runners drive less">By area</button>
         </span>
-        <span className="relative">
+        {/* w-60 is 240px of a 343px phone row — it left the date picker nowhere to go. Full width
+            on its own line on a phone, the authored 240px from sm: up. */}
+        <span className="relative w-full sm:w-auto">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, cleaner, task…" title="Filters the board — matches the unit, the guest leaving or arriving, the person assigned, or the task name"
-            className="text-[13px] pl-7 pr-7 py-1.5 rounded-lg border border-line bg-white w-60 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            className="text-[13px] pl-7 pr-7 py-1.5 rounded-lg border border-line bg-white w-full sm:w-60 focus:outline-none focus:ring-2 focus:ring-brand-200" />
           {q && <button onClick={() => setQ('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
         </span>
         {q && <span className="text-[12px] text-muted">{units.length} match{units.length === 1 ? '' : 'es'}</span>}
@@ -611,7 +632,9 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
               {glRows.map((g: any) => (
                 <div key={g.id} className="flex items-center gap-2.5 px-4 py-2.5 text-sm flex-wrap">
                   <span className="font-medium text-ink shrink-0">{g.unit}</span>
-                  <span className="text-[13px] text-ink/80 flex-1 min-w-[160px] truncate">{g.issue}</span>
+                  {/* Six shrink-0 controls follow this line; on a phone the issue text was squeezed
+                      to a couple of words between them. It gets its own line below 640px. */}
+                  <span className="text-[13px] text-ink/80 w-full sm:w-auto sm:flex-1 min-w-[160px] truncate">{g.issue}</span>
                   {glStage[g.id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200 shrink-0">{glStage[g.id]}</span>}
                   <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ' + (g.running ? 'bg-sky-50 text-sky-700 border-sky-200' : (g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>{g.running ? 'In progress' : 'Open' + (g.ageDays ? ' \u00b7 ' + g.ageDays + 'd' : '')}</span>
                   <span className={'text-xs shrink-0 ' + (g.unassigned ? 'font-medium text-rose-700' : 'text-muted')}>{g.unassigned ? 'Unassigned' : (g.assignees || []).join(', ')}</span>
@@ -642,8 +665,10 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
             <div className="divide-y divide-line">
               {vacants.map(vu => (
                 <div key={vu.listingId}>
-                  <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                    <div className="flex-1 min-w-0">
+                  {/* "next in Wed, Aug 27" plus an Add-task button are both shrink-0 and left the
+                      unit name a sliver on a phone; the row wraps below 640px instead. */}
+                  <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap px-4 py-2.5 text-sm">
+                    <div className="w-full sm:w-auto sm:flex-1 min-w-0">
                       <div className="font-medium text-ink truncate">{vu.unit}</div>
                       <div className="text-xs text-muted">{vu.market}{vu.leftToday ? ' \u00b7 checked out today' : ''}{vu.openTasks ? ' \u00b7 ' + vu.openTasks + ' task' + (vu.openTasks > 1 ? 's' : '') + ' today' : ''}</div>
                     </div>
@@ -717,10 +742,14 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
       )}
 
       <div className="space-y-1.5">
+        {/* The three group headers below pin at top-[86px], which is the height of the control bar
+            ON A DESKTOP. On a phone that bar wraps to roughly double that and no longer pins at
+            all (see above), so a header stuck at 86px sat behind it and disappeared. They scroll
+            with the list on a phone and pin exactly as before from sm: up. */}
         {/* BY AREA: units grouped into mini-markets worked out from coordinates, each block a run. */}
         {groupBy === 'area' && areas.map(a => (
           <div key={a.key} className="space-y-2">
-            <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app border-b border-line/60">
+            <div className="sm:sticky sm:top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app border-b border-line/60">
               <MapPin size={13} className="text-muted" />
               <span className="text-[13px] font-bold text-ink">{a.label}</span>
               {a.city && a.city !== a.label && <span className="text-[11px] text-muted">{a.city}</span>}
@@ -741,14 +770,14 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
           if (!needs.length || !rest.length) return units.map(u => renderUnit(u))
           return (
             <>
-              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app border-b border-line/60">
+              <div className="sm:sticky sm:top-[86px] z-20 flex items-center gap-2 px-1 py-1 bg-app border-b border-line/60">
                 <AlertTriangle size={13} className="text-rose-600" />
                 <span className="text-[13px] font-bold text-rose-700">Needs attention</span>
                 <span className="text-[11px] font-semibold text-muted">{needs.length} unit{needs.length === 1 ? '' : 's'} {'—'} late, same-day, unassigned or guest issue</span>
                 <span className="flex-1 h-px bg-rose-200" />
               </div>
               {needs.map(u => renderUnit(u))}
-              <div className="sticky top-[86px] z-20 flex items-center gap-2 px-1 py-1 mt-2 bg-app border-b border-line/60">
+              <div className="sm:sticky sm:top-[86px] z-20 flex items-center gap-2 px-1 py-1 mt-2 bg-app border-b border-line/60">
                 <span className="text-[13px] font-bold text-ink">On track</span>
                 <span className="text-[11px] font-semibold text-muted">{rest.length} unit{rest.length === 1 ? '' : 's'} {'·'} click a row for detail</span>
                 <span className="flex-1 h-px bg-line" />
@@ -1020,10 +1049,12 @@ function SignalPanel({ s, health, seed, listingId, unit, today, people, onClose,
       {(sg.pending || []).length > 0 && (
         <div className="mb-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 mb-1">Still open from the last 60 days</div>
+          {/* date, age, admin and report links are all whitespace-nowrap — on a phone they
+              crushed the task name to nothing. These rows wrap below 640px. */}
           <div className="space-y-1">
             {(sg.pending || []).slice(0, 6).map((t: any) => (
-              <div key={t.id} className="flex items-center gap-2 bg-white border border-amber-200 rounded-md px-2 py-1 text-[12px]">
-                <span className="text-ink truncate">{t.name}</span>
+              <div key={t.id} className="flex items-center gap-2 flex-wrap sm:flex-nowrap bg-white border border-amber-200 rounded-md px-2 py-1 text-[12px]">
+                <span className="w-full sm:w-auto text-ink truncate">{t.name}</span>
                 <span className="text-muted whitespace-nowrap">{t.date} {'\u00b7'} {t.daysOld}d old</span>
                 <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" className="ml-auto text-brand-600 hover:underline whitespace-nowrap">admin</a>
                 {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-muted hover:underline whitespace-nowrap">report</a>}
@@ -1153,11 +1184,13 @@ function UnitItems({ listingId, unit, people, onDone, onClose }: { listingId: st
       <div>
         <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Open non-clean work</div>
         {open.length === 0 && <div className="text-xs text-muted">Nothing open besides the clean.</div>}
+        {/* Type chip + date + a 130px assignee box + "Do today" are all shrink-0; the title had
+            nowhere left to go on a phone. It takes its own line below 640px. */}
         <div className="space-y-1">
           {open.map((it: any) => (
-            <div key={it.id} className="flex items-center gap-2 text-sm bg-white border border-line rounded-lg px-2 py-1.5">
+            <div key={it.id} className="flex items-center gap-2 flex-wrap sm:flex-nowrap text-sm bg-white border border-line rounded-lg px-2 py-1.5">
               <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-app text-muted border border-line shrink-0">{it.type}</span>
-              <span className="flex-1 min-w-0 truncate text-ink">{it.title}</span>
+              <span className="w-full order-first sm:w-auto sm:order-none sm:flex-1 min-w-0 truncate text-ink">{it.title}</span>
               <span className="text-[11px] text-muted shrink-0">{it.onToday ? 'today' : fmtShort(it.scheduledDate)}</span>
               <input list="ppl-all" defaultValue="" placeholder={it.assignees.length ? it.assignees.join(', ') : 'assign\u2026'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(it.id, p.id) } }} className="text-xs border border-line rounded px-2 py-1.5 w-[130px] shrink-0" />
               {!it.onToday && <button onClick={() => doToday(it.id)} disabled={busy === it.id} className="text-xs font-medium px-2 py-1 rounded bg-ink text-white disabled:opacity-40 shrink-0">{busy === it.id ? '\u2026' : 'Do today'}</button>}

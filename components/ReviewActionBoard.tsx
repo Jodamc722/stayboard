@@ -231,7 +231,9 @@ function Dispatch({ unit, rows, onDone }: { unit: any; rows: Action[]; onDone: (
       </div>
 
       {err && <div className="text-[11px] text-rose-700 mt-1">{err}</div>}
-      <div className="flex items-center gap-2 mt-2">
+      {/* "5 items → one task on 2026-08-24" plus both buttons does not fit a phone on one line,
+          and Create task is the primary action here — it must never be pushed off the edge. */}
+      <div className="flex items-center gap-2 mt-2 flex-wrap gap-y-2">
         <span className="text-[11px] text-muted">{rows.length} item{rows.length === 1 ? '' : 's'} → one task{date ? ' on ' + date : ''}</span>
         <button onClick={send} disabled={busy || !date}
           className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">

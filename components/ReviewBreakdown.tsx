@@ -305,6 +305,13 @@ export function ReviewBreakdown() {
 
       {err && <div className="px-3 py-2 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</div>}
 
+      {/* This is a six-column reference table drawn with flex rather than <table>, and the six
+          number columns are fixed-width: on a 375px screen they left the property name about
+          40px wide. Header and rows share one horizontal scroller so the columns stay aligned
+          while it scrolls, and the page itself never travels sideways. */}
+      <div className="lh-hscroll">
+      <div className="min-w-[560px]">
+
       <ColHead />
 
       {/* BY PROPERTY — click a building to open its units. */}
@@ -386,6 +393,9 @@ export function ReviewBreakdown() {
           )}
         </div>
       )}
+
+      </div>
+      </div>
 
       <div className="px-3 py-1.5 border-t border-line bg-app/40 text-[10.5px] text-muted flex items-start gap-2 flex-wrap">
         <MessageSquareWarning size={11} className="mt-0.5 flex-shrink-0" />

@@ -365,7 +365,11 @@ export function ReportsDesk() {
         ) : !reports.length ? (
           <div className="text-sm text-muted italic py-10 text-center">No reports yet — generate the first one above.</div>
         ) : (
-          <table className="w-full text-sm">
+          /* Five columns — title, period, as-of, status, actions — do not fit a phone, and the
+             report title in the first column is itself the link you tap, so the table keeps its
+             widths and scrolls in its own box rather than squeezing every date onto two lines. */
+          <div className="lh-hscroll">
+          <table className="w-full min-w-[680px] sm:min-w-0 text-sm">
             <thead>
               <tr className="text-left border-b border-line bg-app/50">
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-muted font-semibold">Report</th>
@@ -400,6 +404,7 @@ export function ReportsDesk() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>

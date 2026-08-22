@@ -313,8 +313,10 @@ export function LaborDashboard() {
               <span className="text-sm font-bold text-ink">Per person</span>
               <span className="text-[11px] text-muted">click a column to sort</span>
             </div>
+            {/* Ten sortable columns. Inside a scroller w-full alone shrinks the table to the phone
+                instead of scrolling it, so every number column collapsed. */}
             <div className="overflow-x-auto">
-              <table className="w-full text-[12.5px]">
+              <table className="w-full text-[12.5px] min-w-[900px]">
                 <thead><tr className="bg-app text-muted text-[10px] uppercase tracking-wider">
                   <Th k="name">Person</Th>
                   <Th k="dept">Dept</Th>

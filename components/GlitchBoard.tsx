@@ -164,11 +164,15 @@ export function GlitchBoard() {
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
       {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
 
-      <div className="flex gap-3 overflow-x-auto pb-4 items-start">
+      {/* On a phone a 288px lane leaves a sliver of the next one showing and no way to land on a
+          lane cleanly. Below sm each lane is nearly the full screen and the strip snaps to it, so
+          swiping moves you one stage at a time and the page itself never travels sideways. */}
+      <div className="sm:hidden text-[11px] text-muted mb-1.5">{COLS.length} lanes &mdash; swipe sideways</div>
+      <div className="flex gap-3 overflow-x-auto pb-4 items-start snap-x snap-mandatory sm:snap-none scroll-pl-3 sm:scroll-pl-0 -mx-3 px-3 sm:mx-0 sm:px-0">
         {COLS.map(col => {
           const cards = rows.filter(g => g.status === col.key)
           return (
-            <div key={col.key} className="w-72 shrink-0 rounded-2xl bg-app/70 border border-line">
+            <div key={col.key} className="w-[86vw] sm:w-72 shrink-0 snap-start sm:snap-align-none rounded-2xl bg-app/70 border border-line">
               <div className="px-3 py-2 flex items-center gap-2 border-b border-line">
                 <span className="text-xs font-semibold uppercase tracking-wide text-ink">{col.label}</span>
                 <span className="text-[11px] font-semibold text-muted">{cards.length}</span>
@@ -555,7 +559,9 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
   return (
     <div className="mt-1.5 rounded-lg border border-line bg-app/60 p-2 space-y-1.5">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Edit glitch</div>
-      <div className="grid grid-cols-2 gap-1.5">
+      {/* Two columns of fields inside a lane is ~145px per field, and iOS forces the text to 16px:
+          "Refund approved $" was unreadable. One field per line on a phone. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
         <select value={f.glitchType} onChange={e => set('glitchType', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white">{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
         <select value={f.category} onChange={e => set('category', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white"><option value="">Category…</option>{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select>
         <input type="date" value={f.incidentDate} onChange={e => set('incidentDate', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
@@ -566,7 +572,7 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
         <input value={f.channel} onChange={e => set('channel', e.target.value)} placeholder="Channel (Airbnb…)" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.recoveryCost} onChange={e => set('recoveryCost', e.target.value)} placeholder="Recovery cost $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.refundApproved} onChange={e => set('refundApproved', e.target.value)} placeholder="Refund approved $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
-        <input value={f.reportedBy} onChange={e => set('reportedBy', e.target.value)} placeholder="Reported by" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white col-span-2" />
+        <input value={f.reportedBy} onChange={e => set('reportedBy', e.target.value)} placeholder="Reported by" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white sm:col-span-2" />
       </div>
       <textarea value={f.overview} onChange={e => set('overview', e.target.value)} rows={3} className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
       <div className="flex items-center gap-1.5">

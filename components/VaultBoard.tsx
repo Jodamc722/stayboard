@@ -268,10 +268,11 @@ export function VaultBoard() {
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700">
           <Plus size={14} /> New item
         </button>
-        <div className="relative">
+        {/* A 256px box wrapped onto its own line on a phone and then used two thirds of it. */}
+        <div className="relative w-full sm:w-auto">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search the vault…"
-            className="rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[13px] w-64 outline-none focus:border-brand-400" />
+            className="rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[13px] w-full sm:w-64 outline-none focus:border-brand-400" />
         </div>
         <select value={cat} onChange={e => setCat(e.target.value)}
           className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink">

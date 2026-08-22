@@ -294,7 +294,9 @@ export default function WalkEngine({ code }: { code: string }) {
     <div className="flex items-center gap-2 mb-1">
       <div className="flex-1 min-w-0">
         <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">{template ? T(TPL[template].en, TPL[template].es) : T('Guided walk', 'Recorrido guiado')}</div>
-        <div className="text-lg font-extrabold text-neutral-900 leading-tight truncate">{listing?.name}</div>
+        {/* Unit names are long ("Oasis · Bougainvillea 214"). Truncated on a 375px screen the
+            walker could not tell which unit the link had opened — so on a phone it wraps. */}
+        <div className="text-lg font-extrabold text-neutral-900 leading-tight break-words sm:truncate">{listing?.name}</div>
       </div>
       <button onClick={() => { const l = lang === 'en' ? 'es' : 'en'; setLang(l); try { localStorage.setItem('lh_lang', l) } catch {} }} className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-neutral-200 bg-white">{lang === 'en' ? 'ES' : 'EN'}</button>
       {queued > 0 && <span title={T('Saved on this phone — will sync when back online', 'Guardado en este teléfono — se sincronizará')} className={'text-[10px] font-bold px-2 py-1 rounded-full ' + (online ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800')}>{queued} {online ? T('syncing', 'sinc.') : T('offline', 'sin señal')}</span>}
@@ -397,21 +399,32 @@ export default function WalkEngine({ code }: { code: string }) {
 }
 
 /* ------------------------------ small pieces ------------------------------- */
+// This page is opened from a text message, so it renders OUTSIDE the app Shell — none of the
+// Shell's safe-area padding reaches it. px-safe keeps the card off the notch in landscape, and the
+// bottom pad is the fixed NavBar's height PLUS the home indicator, or the last room's buttons sit
+// under the bar.
 function Screen({ children }: { children: React.ReactNode }) {
-  return <div className="min-h-screen bg-neutral-50"><div className="max-w-md mx-auto px-4 py-4 pb-24">{children}</div></div>
+  return <div className="min-h-screen bg-neutral-50 px-safe"><div className="max-w-md mx-auto px-4 py-4 pb-[calc(6rem_+_env(safe-area-inset-bottom))]">{children}</div></div>
 }
 function StepDots({ rooms, step, roomDone, onJump }: { rooms: string[]; step: number; roomDone: (r: string) => boolean; onJump: (i: number) => void }) {
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {rooms.map((r, i) => (
-        <button key={r} onClick={() => onJump(i)} title={r} className={'h-2.5 rounded-full transition-all ' + (i === step ? 'w-6 bg-neutral-900' : roomDone(r) ? 'w-2.5 bg-emerald-500' : 'w-2.5 bg-neutral-300')} />
+        // The dot is the room jump — a 10px target with a wet glove on it was a miss every time.
+        // Padding on the button (phone only) turns each dot into a real tap strip; the dot itself
+        // is unchanged, and sm:p-0 keeps the desktop row exactly 10px tall.
+        <button key={r} onClick={() => onJump(i)} title={r} aria-label={r} className="px-1.5 py-2.5 sm:p-0">
+          <span className={'block h-2.5 rounded-full transition-all ' + (i === step ? 'w-6 bg-neutral-900' : roomDone(r) ? 'w-2.5 bg-emerald-500' : 'w-2.5 bg-neutral-300')} />
+        </button>
       ))}
     </div>
   )
 }
 function NavBar({ step, max, onStep, T, autoNext }: { step: number; max: number; onStep: (n: number) => void; T: (a: string, b: string) => string; autoNext?: boolean }) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white/95 border-t border-neutral-200 backdrop-blur">
+    // pb-safe on the bar, not on the row: Back / Next were sitting under the iPhone home indicator,
+    // so the swipe-up gesture ate the tap that moves you to the next room.
+    <div className="fixed bottom-0 left-0 right-0 bg-white/95 border-t border-neutral-200 backdrop-blur pb-safe px-safe">
       <div className="max-w-md mx-auto px-4 py-3 flex gap-2">
         <button onClick={() => onStep(Math.max(0, step - 1))} disabled={step === 0} className="flex-1 text-sm font-bold py-3 rounded-xl border border-neutral-200 bg-white disabled:opacity-30">&larr; {T('Back', 'Atrás')}</button>
         <button onClick={() => onStep(Math.min(max, step + 1))} className={'flex-[2] text-sm font-extrabold py-3 rounded-xl ' + (autoNext ? 'bg-emerald-600 text-white' : 'bg-neutral-900 text-white')}>{step >= max - 1 && step < max ? T('Review & complete', 'Revisar y completar') : T('Next room', 'Siguiente')} &rarr;</button>
@@ -459,7 +472,10 @@ function FlagSheet({ code, room, verdict, template, lang, walker, save, onClose,
   }
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-end" onClick={() => onClose(false)}>
-      <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl p-4 pb-6" onClick={e => e.stopPropagation()}>
+      {/* The sheet is the whole flag flow — photo, chips, two fields, Save. On a small phone that
+          ran past the bottom of the glass with Save unreachable, and the last 34px sat under the
+          home indicator. Cap it to the visible viewport, scroll inside, pad past the indicator. */}
+      <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl p-4 pb-[calc(1.5rem_+_env(safe-area-inset-bottom))] max-h-[92dvh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <div className="text-base font-extrabold text-neutral-900">{T('Flag it', 'Repórtelo')} · {room}</div>
           <button onClick={() => onClose(false)} className="ml-auto text-neutral-400 text-xl leading-none">&times;</button>

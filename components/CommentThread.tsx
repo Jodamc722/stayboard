@@ -125,7 +125,8 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
 
   return (
     <div className="rounded-lg border border-line bg-app/40 p-2">
-      <div className="flex items-center gap-2 mb-1.5">
+      {/* Title + three source counts + Expand is wider than a phone; wrap instead of clipping. */}
+      <div className="flex items-center gap-2 gap-y-1 flex-wrap mb-1.5">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Notes &amp; comments</div>
         <div className="flex items-center gap-1 text-[9px] font-semibold">
           <span className="px-1.5 py-0.5 rounded-full bg-white border border-line text-muted" title="Comments inside Lighthouse - these drive the notification bell">App {items.length}</span>

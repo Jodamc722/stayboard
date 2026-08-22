@@ -289,7 +289,10 @@ export function OpsV2() {
           itself — Jon, 2026-08-17, on the stacked v2+v1 screen: "the Board tab is a mess. The
           Today in Ops board that we had was much better." So the board IS the board again; this
           layer only adds the tabs, the triage and the Add button. ── */}
-      <div className="flex items-center gap-6 border-b border-line mb-4">
+      {/* Three tabs plus the Add-task button is ~400px of chrome; on a 375px screen it pushed the
+          page sideways. It wraps below 640px (the button drops to its own line, still right-
+          aligned by ml-auto) and is one line from sm: up, where it always fitted. */}
+      <div className="flex items-center gap-6 flex-wrap border-b border-line mb-4">
         {([['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
            ['people', 'People', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
            ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (
@@ -757,10 +760,13 @@ function PushTab({ roster }: { roster: Roster[] }) {
                       {ev && <p className="text-[12px] text-muted mt-0.5 italic truncate">&ldquo;{ev.quote}&rdquo;{ev.stars != null ? ' · ' + ev.stars + '★' : ''}{ev.date ? ' · ' + ev.date : ''}</p>}
                       {!ev && task.metric && <p className="text-[12px] text-muted mt-0.5">{task.metric}</p>}
                     </div>
+                    {/* The action cluster below (a 150px select + Note + Push, ~300px) was held at
+                        shrink-0, which is wider than a phone row and spilled out of the card. It
+                        wraps and may shrink below 640px; from sm: up it is the same one-line row. */}
                     {filed[key] ? (
                       <span className="text-[12px] font-bold text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={13} /> Filed</span>
                     ) : (
-                      <span className="flex items-center gap-1.5 shrink-0">
+                      <span className="flex items-center gap-1.5 flex-wrap shrink sm:flex-nowrap sm:shrink-0">
                         <select value={who[key] || 0} onChange={e => setWho(w => ({ ...w, [key]: Number(e.target.value) }))}
                           className="text-[12px] border border-line rounded-lg px-1.5 py-1.5 bg-white text-muted max-w-[150px]">
                           <option value={0}>Default crew</option>
@@ -872,8 +878,12 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
 
   const uname = (l: Listing) => l.nickname || l.title || l.id
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 pt-[6vh] overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-xl p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+    /* PHONE: a full-screen sheet, not a floating card. The 16px gutter plus a 6vh top inset left
+       a narrow box with the template grid and the roster chips fighting for width, and its last
+       control (Create in Breezeway) sat under the home indicator. Full-bleed and full-height
+       below 640px; the floating dialog is unchanged from sm: up. */
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-0 sm:p-4 sm:pt-[6vh] overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-none sm:rounded-2xl w-full max-w-xl min-h-dvh sm:min-h-0 p-4 pb-10 sm:p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <h2 className="text-[16px] font-bold text-ink flex-1">Add a task</h2>
           <button onClick={onClose} className="text-muted hover:text-ink p-1"><X size={16} /></button>
@@ -920,14 +930,16 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
             <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted mt-4 mb-1.5">The task</p>
             <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs doing?"
               className="w-full rounded-xl border border-line px-3 py-2.5 text-[13.5px] mb-2" />
-            <div className="grid grid-cols-3 gap-2">
+            {/* Three across is ~90px a column on a phone — a native date picker does not fit in
+                that, so the date takes its own full-width row below 640px. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <select value={dept} onChange={e => setDept(e.target.value)} className="rounded-xl border border-line px-2 py-2 text-[12.5px] bg-white">
                 {['maintenance', 'housekeeping', 'inspection', 'safety'].map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
               </select>
               <select value={prio} onChange={e => setPrio(e.target.value)} className="rounded-xl border border-line px-2 py-2 text-[12.5px] bg-white">
                 {['normal', 'high', 'urgent', 'low'].map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
               </select>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="rounded-xl border border-line px-2 py-2 text-[12.5px] bg-white" title="Blank = today" />
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="col-span-2 sm:col-span-1 rounded-xl border border-line px-2 py-2 text-[12.5px] bg-white" title="Blank = today" />
             </div>
             {desc && (
               <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={4}

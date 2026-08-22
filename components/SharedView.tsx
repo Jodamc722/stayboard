@@ -69,7 +69,9 @@ export function SharedView({ code }: { code: string }) {
   )
 
   return (
-    <div className="min-h-screen bg-neutral-50 pb-16">
+    // A share link opens on a partner's phone with no app Shell around it, so it carries its own
+    // px-safe (the outer element — it has no px of its own to be replaced).
+    <div className="min-h-screen bg-neutral-50 pb-16 px-safe-keep">
       <div className="bg-neutral-900 text-white px-4 py-4">
         <p className="text-[9.5px] uppercase tracking-[0.2em] text-neutral-400 font-bold">Stay Hospitality</p>
         <h1 className="text-lg font-bold leading-tight">{data.label}</h1>
@@ -98,7 +100,8 @@ export function SharedView({ code }: { code: string }) {
           <Sec Icon={Megaphone} title="Where bookings came from" sub={s.marketing.basis}>
             <div className="divide-y divide-neutral-100">
               {(s.marketing.families || []).map((f: any) => (
-                <div key={f.label} className="px-4 py-2.5 flex items-center gap-3 text-[13px]">
+                // A long channel name plus the count plus the money did not fit on one 375px line.
+                <div key={f.label} className="px-4 py-2.5 flex items-center gap-3 gap-y-1 flex-wrap text-[13px]">
                   <span className="font-semibold text-neutral-900">{f.label}</span>
                   <span className="ml-auto tabular-nums text-neutral-600">{f.count} booking{f.count === 1 ? '' : 's'}</span>
                   {f.value != null ? <span className="tabular-nums font-bold text-neutral-900 w-20 text-right">{usd(f.value)}</span> : null}
@@ -147,7 +150,8 @@ export function SharedView({ code }: { code: string }) {
           <Sec Icon={ShieldCheck} title="Guest verification" sub="upcoming arrivals">
             <div className="divide-y divide-neutral-100">
               {s.verification.map((r: any, i: number) => (
-                <div key={i} className="px-4 py-2.5 flex items-center gap-2.5 text-[13px]">
+                // Unit + full guest name + date + status badge overflowed a phone line.
+                <div key={i} className="px-4 py-2.5 flex items-center gap-2.5 gap-y-1 flex-wrap text-[13px]">
                   <span className="font-bold text-neutral-900">{r.unit}</span>
                   <span className="text-neutral-600">{r.guest}</span>
                   <span className="text-neutral-500 tabular-nums">{r.checkIn}</span>

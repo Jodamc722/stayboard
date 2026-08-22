@@ -135,7 +135,10 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
         <Section icon={ClipboardCheck} title="Awaiting your approval" count={liveApprovals.length} accent="bg-amber-100 text-amber-700">
           <ul className="divide-y divide-line/70">
             {liveApprovals.slice(0, 6).map(a => (
-              <li key={a.id} className="px-4 py-3 flex items-center gap-3">
+              // Approve + reject + the priority pill are ~180px of fixed controls, which left
+              // roughly 100px for the request title on a phone — every one read "HVAC re…".
+              // Below 640px the buttons drop to their own line and the title gets the full width.
+              <li key={a.id} className="px-4 py-3 flex items-center gap-3 flex-wrap sm:flex-nowrap">
                 <Link href={`/requests/${a.id}`} className="flex-1 min-w-0 group">
                   <div className="text-sm font-medium text-ink truncate group-hover:text-brand-700">{a.title}</div>
                   <div className="text-[11px] text-muted truncate mt-0.5">
@@ -144,7 +147,7 @@ export function MissionFeed({ reviews, approvals, messages, welcome, welcomeOthe
                   </div>
                 </Link>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${PRIORITY[a.priority] || PRIORITY.low}`}>{a.priority.replace(/^\w/, c => c.toUpperCase())}</span>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 w-full sm:w-auto">
                   <button onClick={() => decide(a, true)} disabled={!!rowBusy[a.id]} className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"><Check size={13} /> Approve</button>
                   <button onClick={() => decide(a, false)} disabled={!!rowBusy[a.id]} className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white text-rose-700 border border-rose-200 hover:bg-rose-50 disabled:opacity-50"><X size={13} /></button>
                 </div>

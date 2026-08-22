@@ -113,7 +113,7 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
           <span className="relative">
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search projects, buildings, leads…"
-              className="text-[13px] pl-7 pr-7 py-1.5 rounded-lg border border-line bg-white w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              className="text-[13px] pl-7 pr-7 py-1.5 rounded-lg border border-line bg-white w-full sm:w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
             {q && <button onClick={() => setQ('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
           </span>
           <select value={cat} onChange={e => setCat(e.target.value)}
@@ -685,8 +685,8 @@ function Modal({ title, sub, children, onClose, wide }: { title: string; sub?: s
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k)
   }, [onClose])
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/30" onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} className={'bg-white rounded-2xl border border-line shadow-xl w-full overflow-hidden max-h-[90vh] flex flex-col ' + (wide ? 'max-w-3xl' : 'max-w-lg')}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-0 sm:p-8 bg-black/30" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className={'bg-white border border-line shadow-xl w-full overflow-hidden h-dvh flex flex-col sm:h-auto sm:max-h-[90vh] sm:rounded-2xl ' + (wide ? 'max-w-3xl' : 'max-w-lg')}>
         <div className="px-4 py-3 border-b border-line flex items-start gap-2">
           <div className="flex-1 min-w-0">
             <h3 className="text-[15px] font-bold text-ink truncate">{title}</h3>
@@ -694,7 +694,7 @@ function Modal({ title, sub, children, onClose, wide }: { title: string; sub?: s
           </div>
           <button onClick={onClose} className="text-muted hover:text-ink p-1"><X size={16} /></button>
         </div>
-        <div className="px-4 py-3 overflow-y-auto">{children}</div>
+        <div className="px-4 py-3 overflow-y-auto pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-3">{children}</div>
       </div>
     </div>
   )

@@ -310,7 +310,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         {!bleed && ghost && (
           <span className="pointer-events-none absolute -top-6 right-6 select-none text-[170px] font-medium leading-none" style={{ fontFamily: SERIF, color: ink, opacity: 0.05 }}>{ghost}</span>
         )}
-        <div className={'relative flex h-full flex-col ' + (bleed ? 'text-white' : '')} style={{ padding: '52px 58px 40px' }}>
+        <div className={'gb-body relative flex h-full flex-col ' + (bleed ? 'text-white' : '')} style={{ padding: '52px 58px 40px' }}>
           {children}
           {!noFooter && <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
             <span><Tel v={s.contact?.customerService || '954-526-8998'}>{s.contact?.customerService || '954-526-8998'}</Tel></span>
@@ -326,7 +326,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
   const PhotoBand = useMemo(() => function PhotoBand({ src, label, k, p }: { src: string | null; label?: string; k?: string; p?: string[] }) {
     const { showTags, edit, accentColor, pickBtn, openPick } = _live.current
     return src ? (
-    <div className="relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 88%, 0 100%)' }}>
+    <div className="gb-band relative -mx-[58px] -mt-[52px] mb-9 h-[34%] min-h-[220px] overflow-hidden" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 88%, 0 100%)' }}>
       <img loading="lazy" decoding="async" src={src} alt="" className="h-full w-full object-cover" />
       <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(10,10,12,0.45), rgba(10,10,12,0.05) 55%)' }} />
       {showTags && <span className="absolute left-[58px] top-[44%] h-px w-16 bg-white/70" style={{ transform: 'rotate(-24deg)' }} />}
@@ -335,7 +335,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
       {p ? pickBtn(p) : null}
     </div>
   ) : (edit && p ? (
-    <div className="relative -mx-[58px] -mt-[52px] mb-9 flex h-[120px] items-center justify-center border-b border-dashed border-neutral-300 print:hidden">
+    <div className="gb-band relative -mx-[58px] -mt-[52px] mb-9 flex h-[120px] items-center justify-center border-b border-dashed border-neutral-300 print:hidden">
       <button onClick={() => openPick(p)} className="rounded bg-neutral-100 px-3 py-1.5 text-[11px] font-bold text-neutral-700 ring-1 ring-neutral-300">📷 Add a photo</button>
     </div>
   ) : (label ? <p className="mb-3 text-[9px] tracking-[0.45em]" style={{ color: accentColor }}>{'// '}{k ? <L k={k} def={label} /> : label}</p> : null))
@@ -419,6 +419,53 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           .gb-page { flex: none !important; margin: 0 !important; width: 760px !important; max-width: 760px !important; transform: scale(var(--bkScale,0.5)) !important; transform-origin: center center !important; border-radius: 8px; box-shadow: 0 12px 44px rgba(0,0,0,0.2) !important; }
           .gb-nav { display: flex !important; }
         }
+        /* PHONE (<=640px) — THE BOOK STOPS PRETENDING TO BE PAPER.
+           Above 640px nothing here applies: 641-820px keeps the scaled page-flip carousel, and
+           print still emits exact Letter sheets. But a phone is where a guest actually reads this
+           — standing outside the door looking for the entry code — and fitting a 760px sheet into
+           a 375px screen means scaling it to 49%, which renders 12.5px body copy at 6px. That is
+           why the phone view needed a magnifying-glass overlay to read the wi-fi password: the
+           page was never readable, only inspectable. Below 640px the sheets reflow instead —
+           full-bleed, real type size, one column, scrolled top to bottom like any other page —
+           and the carousel/reader/lens script is skipped (see the mobile=w>640 guard).
+           Everything below is geometry that was written against a fixed Letter box and has to be
+           let go of once the box is gone. */
+        @media screen and (max-width: 640px) {
+          html, body { overflow: visible !important; height: auto !important; }
+          .gb-nav { display: none !important; }
+          .gb-chrome { position: sticky !important; top: 0; }
+          /* The Ask-AI and hidden-pages bars pin at top:57px, which is the toolbar's height only
+             while the toolbar is one row. On a phone it wraps, so they stack normally instead. */
+          .gb-chrome ~ .gb-chrome { position: static !important; }
+          .gb-pages { position: static !important; display: block !important; overflow: visible !important;
+                      height: auto !important; padding: 0 !important; margin: 0 !important; }
+          .gb-slide { display: block !important; height: auto !important; overflow: visible !important; }
+          .gb-page { transform: none !important; width: 100% !important; max-width: 100% !important;
+                     aspect-ratio: auto !important; height: auto !important; margin: 0 0 12px !important;
+                     border-radius: 0 !important; box-shadow: 0 1px 10px rgba(0,0,0,0.10) !important; }
+          /* 52/58/40 are print margins. On a 375px screen they are a third of the glass. */
+          .gb-page .gb-body { height: auto !important; min-height: 60dvh; padding: 30px 20px 26px !important; }
+          .gb-page .gb-wifi-body { margin: -30px -20px -26px !important; padding: 30px 20px 26px !important; }
+          /* Blocks that bleed to the sheet edge are written as negative print margins. */
+          .gb-page [class~="-mx-[58px]"] { margin-left: -20px !important; margin-right: -20px !important; }
+          .gb-page [class~="left-[58px]"] { left: 20px !important; }
+          .gb-page .gb-band { margin-top: -30px !important; height: auto !important; min-height: 190px; }
+          /* Percentage heights resolved against a sheet that no longer has a fixed height would
+             collapse the wi-fi photo band and its spacer to nothing. */
+          .gb-page [class~="h-[46%]"] { height: 230px !important; }
+          .gb-page [class~="h-[38%]"] { height: 196px !important; }
+          /* Nothing stretches to fill a sheet any more — a sheet ends where its content ends, so
+             the vertical-fill and equal-row rules have no leftover space to distribute. */
+          .gb-page .gb-vfill, .gb-page .gb-placegrid { flex: 0 0 auto !important; grid-auto-rows: auto !important; }
+          .gb-page .gb-placephoto { flex: 0 0 auto !important; height: 200px; min-height: 0; max-height: none; }
+          .gb-page .gb-placetext { min-height: 0 !important; }
+          /* The fill photo exists only to plug the tail of a short sheet. There is no tail now. */
+          .gb-page .gb-fillslot { display: none !important; }
+          /* The two type sizes the global phone layer does not cover, both of them page furniture
+             a guest still has to be able to read: the footer phone number and the retreat lines. */
+          .gb-page [class~="text-[8.5px]"] { font-size: 10.5px; }
+          .gb-page [class~="text-[9.5px]"] { font-size: 11.5px; }
+        }
         .gb-nav { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 58px; flex-direction: row; align-items: center; justify-content: space-between; gap: 6px; padding: 0 12px; z-index: 50; font-family: Inter, system-ui, sans-serif; }
         .gb-nav-center { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
         .gb-nav-btn { display: flex; align-items: center; gap: 5px; background: none; border: none; cursor: pointer; font: 600 9.5px Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: #6b6459; padding: 8px 6px; white-space: nowrap; }
@@ -446,18 +493,18 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         .gb-lens .gb-page { transform: none !important; margin: 0 !important; box-shadow: none !important; }
         @media print { .gb-reader { display: none !important; } }
       `}</style>
-      <script dangerouslySetInnerHTML={{ __html: "(function(){var NAV_H=58;function isDark(el){var s=getComputedStyle(el).backgroundColor;var i=s.indexOf('(');if(i<0)return false;var m=s.substring(i+1).split(',');var r=+m[0],g=+m[1],b=+m[2];return (0.299*r+0.587*g+0.114*b)<128;}var built=false,nav,dotsWrap,countEl,wrapper,allPages=[];function bookEl(){return (wrapper&&wrapper.parentElement)||(document.querySelector('.gb-chrome')&&document.querySelector('.gb-chrome').parentElement)||document.body;}var rdOv,rdWrap,rdCount,rdPrev,rdNext,rdPage,rdIdx,rdFit,rdZoom;function rdApplyZoom(){document.documentElement.style.setProperty('--rdScale',rdZoom);rdWrap.style.width=(760*rdZoom)+'px';rdWrap.style.height=(1073*rdZoom)+'px';}function rdBuild(){rdOv=document.createElement('div');rdOv.className='gb-reader';rdOv.style.background=getComputedStyle(bookEl()).backgroundColor;rdWrap=document.createElement('div');rdWrap.className='gb-reader-wrap';rdOv.appendChild(rdWrap);var ctr=document.createElement('div');ctr.className='gb-reader-ctr';function mk(t){var b=document.createElement('button');b.textContent=t;return b;}var cls=mk('✕');cls.onclick=closeReader;ctr.appendChild(cls);rdOv.appendChild(ctr);var bar=document.createElement('div');bar.className='gb-reader-bar';rdPrev=document.createElement('button');rdPrev.className='gb-reader-nav';rdPrev.textContent='‹';rdPrev.onclick=function(){rdShow(rdIdx-1);};rdCount=document.createElement('span');rdCount.className='gb-reader-pos';rdNext=document.createElement('button');rdNext.className='gb-reader-nav';rdNext.textContent='›';rdNext.onclick=function(){rdShow(rdIdx+1);};bar.appendChild(rdPrev);bar.appendChild(rdCount);bar.appendChild(rdNext);rdOv.appendChild(bar);var lens,lensC,LSZ=230,MAG=3;function lensBuild(){lens=document.createElement('div');lens.className='gb-lens';lensC=document.createElement('div');lensC.className='gb-lens-c';lens.appendChild(lensC);rdOv.appendChild(lens);}function lensShow(cx,cy){if(!rdPage)return;if(!lens)lensBuild();if(!lensC.firstChild){var c=rdPage.cloneNode(true);c.style.transform='none';c.style.margin='0';c.style.width='760px';lensC.appendChild(c);}var r=rdWrap.getBoundingClientRect();var px=(cx-r.left)/rdZoom,py=(cy-r.top)/rdZoom;if(px<0||py<0||px>760||py>1073){lensHide();return;}var Sc=rdZoom*MAG;lensC.style.transform='translate('+(LSZ/2-px*Sc)+'px,'+(LSZ/2-py*Sc)+'px) scale('+Sc+')';var lx=Math.max(8,Math.min(window.innerWidth-LSZ-8,cx-LSZ/2));var ly=cy-LSZ-36;if(ly<8)ly=Math.min(window.innerHeight-LSZ-8,cy+36);lens.style.left=lx+'px';lens.style.top=ly+'px';lens.style.display='block';}function lensHide(){if(lens){lens.style.display='none';while(lensC.firstChild)lensC.removeChild(lensC.firstChild);}}rdWrap.addEventListener('touchstart',function(e){if(e.target.closest('a,button'))return;var t=e.touches[0];lensShow(t.clientX,t.clientY);},{passive:true});rdWrap.addEventListener('touchmove',function(e){if(lens&&lens.style.display==='block'){e.preventDefault();var t=e.touches[0];lensShow(t.clientX,t.clientY);}},{passive:false});rdWrap.addEventListener('touchend',function(){lensHide();});rdWrap.addEventListener('touchcancel',function(){lensHide();});var mDown=false;rdWrap.addEventListener('mousedown',function(e){if(e.target.closest('a,button'))return;mDown=true;lensShow(e.clientX,e.clientY);e.preventDefault();});window.addEventListener('mousemove',function(e){if(mDown)lensShow(e.clientX,e.clientY);});window.addEventListener('mouseup',function(){mDown=false;lensHide();});document.body.appendChild(rdOv);}function rdShow(idx){if(idx<0||idx>=allPages.length)return;if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);}rdIdx=idx;rdPage=allPages[idx];rdPage.__slide=rdPage.parentElement;rdWrap.appendChild(rdPage);rdFit=Math.min(window.innerWidth/760,1);rdZoom=rdFit;rdApplyZoom();rdOv.scrollTo(0,0);rdCount.textContent=(idx+1)+' / '+allPages.length;rdPrev.style.visibility=idx>0?'visible':'hidden';rdNext.style.visibility=idx<allPages.length-1?'visible':'hidden';if(wrapper)wrapper.scrollTo({left:idx*window.innerWidth});}function openReader(page){var i=allPages.indexOf(page);if(i<0)i=0;if(!rdOv)rdBuild();rdOv.style.display='block';rdShow(i);}function closeReader(){if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);rdPage=null;}if(rdOv)rdOv.style.display='none';document.documentElement.style.removeProperty('--rdScale');}function build(){wrapper=document.querySelector('.gb-pages')||((document.querySelector('.gb-page')||{}).parentElement);if(!wrapper)return;wrapper.classList.add('gb-pages');var pages=[].slice.call(document.querySelectorAll('.gb-page'));allPages=pages;pages.forEach(function(p){if(!(p.parentElement&&p.parentElement.classList.contains('gb-slide'))){var s=document.createElement('div');s.className='gb-slide';p.parentElement.insertBefore(s,p);s.appendChild(p);}if(!p.__rd){p.__rd=1;p.addEventListener('click',function(e){if(window.innerWidth>820)return;if(e.target.closest('a,button'))return;if(rdOv&&rdOv.style.display!=='none')return;openReader(p);});}});if(!nav){nav=document.createElement('div');nav.className='gb-nav';dotsWrap=document.createElement('div');dotsWrap.className='gb-dots';pages.forEach(function(p,i){var dt=document.createElement('div');dt.className='gb-dot'+(i===0?' on':'');dt.addEventListener('click',function(){wrapper.scrollTo({left:i*window.innerWidth,behavior:'smooth'});});dotsWrap.appendChild(dt);});countEl=document.createElement('div');countEl.className='gb-count';countEl.textContent='01 / '+pages.length;function navBtn(ic,lb,fn){var b=document.createElement('button');b.className='gb-nav-btn';var s=document.createElement('span');s.className='ic';s.textContent=ic;b.appendChild(s);b.appendChild(document.createTextNode(' '+lb));b.addEventListener('click',fn);return b;}var center=document.createElement('div');center.className='gb-nav-center';center.appendChild(dotsWrap);center.appendChild(countEl);nav.appendChild(navBtn('↓','Save',function(){window.print();}));nav.appendChild(center);nav.appendChild(navBtn('🔍','Magnify',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);if(allPages[idx])openReader(allPages[idx]);}));document.body.appendChild(nav);wrapper.addEventListener('scroll',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);var ds=dotsWrap.children;for(var i=0;i<ds.length;i++){ds[i].className='gb-dot'+(i===idx?' on':'');}countEl.textContent=(idx+1<10?'0':'')+(idx+1)+' / '+pages.length;});}built=true;}function fit(){var w=window.innerWidth,mobile=w>0&&w<=820;if(mobile){if(!built)build();if(!wrapper)return;var chrome=document.querySelector('.gb-chrome');var topH=chrome?Math.ceil(chrome.getBoundingClientRect().height):0;var de=document.documentElement;de.style.setProperty('--bkTop',topH+'px');de.style.setProperty('--bkBottom',NAV_H+'px');var availH=window.innerHeight-topH-NAV_H;var scale=Math.min((w-12)/760,(availH-12)/1073);de.style.setProperty('--bkScale',scale);[].slice.call(document.querySelectorAll('.gb-page')).forEach(function(p){if(rdPage===p)return;p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';p.style.transformOrigin='';});if(nav){var el=bookEl();nav.className='gb-nav'+(isDark(el)?' gb-dark':'');nav.style.background=getComputedStyle(el).backgroundColor;nav.style.display='flex';}}else{if(nav)nav.style.display='none';}}fit();window.addEventListener('resize',fit);window.addEventListener('load',function(){setTimeout(fit,60);});window.addEventListener('beforeprint',function(){if(nav)nav.style.display='none';});window.addEventListener('afterprint',fit);})();" }} />
+      <script dangerouslySetInnerHTML={{ __html: "(function(){var NAV_H=58;function isDark(el){var s=getComputedStyle(el).backgroundColor;var i=s.indexOf('(');if(i<0)return false;var m=s.substring(i+1).split(',');var r=+m[0],g=+m[1],b=+m[2];return (0.299*r+0.587*g+0.114*b)<128;}var built=false,nav,dotsWrap,countEl,wrapper,allPages=[];function bookEl(){return (wrapper&&wrapper.parentElement)||(document.querySelector('.gb-chrome')&&document.querySelector('.gb-chrome').parentElement)||document.body;}var rdOv,rdWrap,rdCount,rdPrev,rdNext,rdPage,rdIdx,rdFit,rdZoom;function rdApplyZoom(){document.documentElement.style.setProperty('--rdScale',rdZoom);rdWrap.style.width=(760*rdZoom)+'px';rdWrap.style.height=(1073*rdZoom)+'px';}function rdBuild(){rdOv=document.createElement('div');rdOv.className='gb-reader';rdOv.style.background=getComputedStyle(bookEl()).backgroundColor;rdWrap=document.createElement('div');rdWrap.className='gb-reader-wrap';rdOv.appendChild(rdWrap);var ctr=document.createElement('div');ctr.className='gb-reader-ctr';function mk(t){var b=document.createElement('button');b.textContent=t;return b;}var cls=mk('✕');cls.onclick=closeReader;ctr.appendChild(cls);rdOv.appendChild(ctr);var bar=document.createElement('div');bar.className='gb-reader-bar';rdPrev=document.createElement('button');rdPrev.className='gb-reader-nav';rdPrev.textContent='‹';rdPrev.onclick=function(){rdShow(rdIdx-1);};rdCount=document.createElement('span');rdCount.className='gb-reader-pos';rdNext=document.createElement('button');rdNext.className='gb-reader-nav';rdNext.textContent='›';rdNext.onclick=function(){rdShow(rdIdx+1);};bar.appendChild(rdPrev);bar.appendChild(rdCount);bar.appendChild(rdNext);rdOv.appendChild(bar);var lens,lensC,LSZ=230,MAG=3;function lensBuild(){lens=document.createElement('div');lens.className='gb-lens';lensC=document.createElement('div');lensC.className='gb-lens-c';lens.appendChild(lensC);rdOv.appendChild(lens);}function lensShow(cx,cy){if(!rdPage)return;if(!lens)lensBuild();if(!lensC.firstChild){var c=rdPage.cloneNode(true);c.style.transform='none';c.style.margin='0';c.style.width='760px';lensC.appendChild(c);}var r=rdWrap.getBoundingClientRect();var px=(cx-r.left)/rdZoom,py=(cy-r.top)/rdZoom;if(px<0||py<0||px>760||py>1073){lensHide();return;}var Sc=rdZoom*MAG;lensC.style.transform='translate('+(LSZ/2-px*Sc)+'px,'+(LSZ/2-py*Sc)+'px) scale('+Sc+')';var lx=Math.max(8,Math.min(window.innerWidth-LSZ-8,cx-LSZ/2));var ly=cy-LSZ-36;if(ly<8)ly=Math.min(window.innerHeight-LSZ-8,cy+36);lens.style.left=lx+'px';lens.style.top=ly+'px';lens.style.display='block';}function lensHide(){if(lens){lens.style.display='none';while(lensC.firstChild)lensC.removeChild(lensC.firstChild);}}rdWrap.addEventListener('touchstart',function(e){if(e.target.closest('a,button'))return;var t=e.touches[0];lensShow(t.clientX,t.clientY);},{passive:true});rdWrap.addEventListener('touchmove',function(e){if(lens&&lens.style.display==='block'){e.preventDefault();var t=e.touches[0];lensShow(t.clientX,t.clientY);}},{passive:false});rdWrap.addEventListener('touchend',function(){lensHide();});rdWrap.addEventListener('touchcancel',function(){lensHide();});var mDown=false;rdWrap.addEventListener('mousedown',function(e){if(e.target.closest('a,button'))return;mDown=true;lensShow(e.clientX,e.clientY);e.preventDefault();});window.addEventListener('mousemove',function(e){if(mDown)lensShow(e.clientX,e.clientY);});window.addEventListener('mouseup',function(){mDown=false;lensHide();});document.body.appendChild(rdOv);}function rdShow(idx){if(idx<0||idx>=allPages.length)return;if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);}rdIdx=idx;rdPage=allPages[idx];rdPage.__slide=rdPage.parentElement;rdWrap.appendChild(rdPage);rdFit=Math.min(window.innerWidth/760,1);rdZoom=rdFit;rdApplyZoom();rdOv.scrollTo(0,0);rdCount.textContent=(idx+1)+' / '+allPages.length;rdPrev.style.visibility=idx>0?'visible':'hidden';rdNext.style.visibility=idx<allPages.length-1?'visible':'hidden';if(wrapper)wrapper.scrollTo({left:idx*window.innerWidth});}function openReader(page){var i=allPages.indexOf(page);if(i<0)i=0;if(!rdOv)rdBuild();rdOv.style.display='block';rdShow(i);}function closeReader(){if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);rdPage=null;}if(rdOv)rdOv.style.display='none';document.documentElement.style.removeProperty('--rdScale');}function build(){wrapper=document.querySelector('.gb-pages')||((document.querySelector('.gb-page')||{}).parentElement);if(!wrapper)return;wrapper.classList.add('gb-pages');var pages=[].slice.call(document.querySelectorAll('.gb-page'));allPages=pages;pages.forEach(function(p){if(!(p.parentElement&&p.parentElement.classList.contains('gb-slide'))){var s=document.createElement('div');s.className='gb-slide';p.parentElement.insertBefore(s,p);s.appendChild(p);}if(!p.__rd){p.__rd=1;p.addEventListener('click',function(e){if(window.innerWidth>820||window.innerWidth<=640)return;if(e.target.closest('a,button'))return;if(rdOv&&rdOv.style.display!=='none')return;openReader(p);});}});if(!nav){nav=document.createElement('div');nav.className='gb-nav';dotsWrap=document.createElement('div');dotsWrap.className='gb-dots';pages.forEach(function(p,i){var dt=document.createElement('div');dt.className='gb-dot'+(i===0?' on':'');dt.addEventListener('click',function(){wrapper.scrollTo({left:i*window.innerWidth,behavior:'smooth'});});dotsWrap.appendChild(dt);});countEl=document.createElement('div');countEl.className='gb-count';countEl.textContent='01 / '+pages.length;function navBtn(ic,lb,fn){var b=document.createElement('button');b.className='gb-nav-btn';var s=document.createElement('span');s.className='ic';s.textContent=ic;b.appendChild(s);b.appendChild(document.createTextNode(' '+lb));b.addEventListener('click',fn);return b;}var center=document.createElement('div');center.className='gb-nav-center';center.appendChild(dotsWrap);center.appendChild(countEl);nav.appendChild(navBtn('↓','Save',function(){window.print();}));nav.appendChild(center);nav.appendChild(navBtn('🔍','Magnify',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);if(allPages[idx])openReader(allPages[idx]);}));document.body.appendChild(nav);wrapper.addEventListener('scroll',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);var ds=dotsWrap.children;for(var i=0;i<ds.length;i++){ds[i].className='gb-dot'+(i===idx?' on':'');}countEl.textContent=(idx+1<10?'0':'')+(idx+1)+' / '+pages.length;});}built=true;}function fit(){var w=window.innerWidth,mobile=w>640&&w<=820;if(mobile){if(!built)build();if(!wrapper)return;var chrome=document.querySelector('.gb-chrome');var topH=chrome?Math.ceil(chrome.getBoundingClientRect().height):0;var de=document.documentElement;de.style.setProperty('--bkTop',topH+'px');de.style.setProperty('--bkBottom',NAV_H+'px');var availH=window.innerHeight-topH-NAV_H;var scale=Math.min((w-12)/760,(availH-12)/1073);de.style.setProperty('--bkScale',scale);[].slice.call(document.querySelectorAll('.gb-page')).forEach(function(p){if(rdPage===p)return;p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';p.style.transformOrigin='';});if(nav){var el=bookEl();nav.className='gb-nav'+(isDark(el)?' gb-dark':'');nav.style.background=getComputedStyle(el).backgroundColor;nav.style.display='flex';}}else{if(nav)nav.style.display='none';}}fit();window.addEventListener('resize',fit);window.addEventListener('load',function(){setTimeout(fit,60);});window.addEventListener('beforeprint',function(){if(nav)nav.style.display='none';});window.addEventListener('afterprint',fit);})();" }} />
 
       {/* Toolbar */}
       {!guest && (
-      <div className="gb-chrome sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
+      <div className="gb-chrome sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-black/10 bg-white/95 px-4 py-3 backdrop-blur">
         {guest
           ? <span className="text-xs font-semibold tracking-[0.3em] text-neutral-700">STAY HOSPITALITY</span>
           : <Link href="/guidebooks" className="inline-flex shrink-0 items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>}
         {edit
           ? <input value={gb.title || ''} onChange={e => setGb({ ...gb, title: e.target.value })} className="max-w-[40%] flex-1 rounded-lg border border-dashed border-neutral-400 px-2 py-1 text-sm font-semibold text-neutral-800" />
           : <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {!guest && <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
             <option value="editorial">Coastal editorial</option>
             <option value="dark">Dark luxe</option>
@@ -466,7 +513,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           {!guest && <input ref={matRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" onChange={e => addMaterials(e.target.files)} />}
           {pickPath ? (
             <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 print:hidden" onClick={() => setPickPath(null)}>
-              <div className="max-h-[80vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-4 text-neutral-900" onClick={(e: any) => e.stopPropagation()}>
+              <div className="max-h-[85dvh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-4 text-neutral-900 sm:max-h-[80vh]" onClick={(e: any) => e.stopPropagation()}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-bold">Pick a photo</p>
                   <div className="flex items-center gap-2">
@@ -543,7 +590,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           {pickBtn(['_photoAssign', 'cover'])}
           <div className="flex flex-1 flex-col items-center justify-center text-center">
             <p className="text-[9px] tracking-[0.55em] opacity-80"><L k="cover.kicker" def="WELCOME" /></p>
-            <div className="mt-5 text-[54px] leading-[1.08] font-medium" style={{ fontFamily: SERIF, textShadow: coverBleed ? '0 1px 24px rgba(0,0,0,0.35)' : 'none' }}>
+            <div className="mt-5 text-[34px] leading-[1.08] font-medium sm:text-[54px]" style={{ fontFamily: SERIF, textShadow: coverBleed ? '0 1px 24px rgba(0,0,0,0.35)' : 'none' }}>
               <T path={['cover', 'line1']} value={s.cover?.line1} /><br />
               <T path={['cover', 'line2']} value={s.cover?.line2} />
             </div>
@@ -586,7 +633,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             </div>
           )}
           {/* ESSENTIALS AT A GLANCE — the four things every guest hunts for, on page two. */}
-          <div className="mt-auto grid grid-cols-4 gap-5 border-t pt-5" style={{ borderColor: accentColor + '33' }}>
+          <div className="mt-auto grid grid-cols-2 gap-5 border-t pt-5 sm:grid-cols-4" style={{ borderColor: accentColor + '33' }}>
             <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.wifi" def="WI-FI" /></p><p className="mt-1 text-[11.5px] font-medium leading-snug"><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /><br /><span className="font-light opacity-80"><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></span></p></div>
             <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.inout" def="CHECK-IN / OUT" /></p><p className="mt-1 text-[11.5px] font-medium leading-snug"><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /><br /><span className="font-light opacity-80"><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></span></p></div>
             <div><p className="text-[8.5px] tracking-[0.3em]" style={{ color: accentColor }}><L k="ess.address" def="ADDRESS" /></p><p className="mt-1 text-[10.5px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
@@ -599,7 +646,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           <Page num={++pageNo} id="special" hideKey="special">
             <PhotoBand src={pa.special || null} label="THE EXPERIENCE" k="band.special" p={['_photoAssign', 'special']} />
             <H><T path={['special', 'heading']} value={s.special?.heading} /></H>
-            <div className="gb-vfill mt-7 grid flex-1 grid-cols-2 gap-x-10 gap-y-7">
+            <div className="gb-vfill mt-7 grid flex-1 grid-cols-1 gap-y-7 sm:grid-cols-2 sm:gap-x-10">
               {(s.special.groups).map((g: any, i: number) => (
                 <div key={i}>
                   <p className="text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><T path={['special', 'groups', String(i), 'title'] as any} value={g.title} /></p>
@@ -649,12 +696,12 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         <Page num={++pageNo} id="arrival">
           <PhotoBand src={pa.arrival || null} label="YOUR ARRIVAL" k="band.arrival" p={['_photoAssign', 'arrival']} />
           <H><T path={['arrival', 'heading']} value={s.arrival?.heading} /></H>
-          <div className="mt-6 flex gap-14">
+          <div className="mt-6 flex gap-8 sm:gap-14">
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.inLabel" def="CHECK-IN" /></p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkIn']} value={s.arrival?.checkIn} rows={1} /></p></div>
             <div className="w-px" style={{ background: accentColor + '44' }} />
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="arrival.outLabel" def="CHECK-OUT" /></p><p className="mt-1 text-[22px]" style={{ fontFamily: SERIF }}><T path={['arrival', 'checkOut']} value={s.arrival?.checkOut} rows={1} /></p></div>
           </div>
-          <div className="gb-vfill mt-8 grid flex-1 grid-cols-2 gap-x-12 gap-y-8 text-[12.5px] font-light leading-[1.85]">
+          <div className="gb-vfill mt-8 grid flex-1 grid-cols-1 gap-y-8 text-[12.5px] font-light leading-[1.85] sm:grid-cols-2 sm:gap-x-12">
             <div>
               <p className="mb-1.5 text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}><L k="arrival.entryLabel" def="Entry" /></p>
               <p className="max-w-[58ch]"><T path={['arrival', 'entry']} value={s.arrival?.entry} rows={4} /></p>
@@ -699,7 +746,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 <button onClick={() => openPick(['_photoAssign', 'wifi'])} className="rounded bg-white/10 px-3 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/30">📷 Add a photo</button>
               </div>
             ) : null)}
-          <div className="relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
+          <div className="gb-wifi-body relative flex h-full flex-col text-[#efeae2]" style={{ margin: '-52px -58px -40px', padding: '52px 58px 40px' }}>
             {/* The spacer only exists to clear the photo. Without one it was pure black void that
                 pushed the headline a third of the way down an otherwise empty page. */}
             {wifiPhoto ? <div className="h-[38%] shrink-0" /> : null}
@@ -707,11 +754,11 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <p className="text-[9px] tracking-[0.5em]" style={{ color: '#c9a96a' }}>{'// '}<L k="wifi.kicker" def="CONNECTED" /></p>
               <h2 className="mt-2 text-[40px] lowercase leading-[1.05] font-medium" style={{ fontFamily: SERIF, textShadow: wifiPhoto ? '0 1px 18px rgba(0,0,0,0.5)' : 'none' }}><L k="wifi.heading" def="wi-fi & the essentials" /></h2>
             </div>
-            <div className="mt-7 grid grid-cols-2 gap-8 border-y py-6" style={{ borderColor: '#c9a96a44' }}>
+            <div className="mt-7 grid grid-cols-1 gap-6 border-y py-6 sm:grid-cols-2 sm:gap-8" style={{ borderColor: '#c9a96a44' }}>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}><L k="wifi.netLabel" def="NETWORK" /></p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'network']} value={s.wifi?.network} rows={1} /></p></div>
               <div><p className="text-[9px] tracking-[0.4em]" style={{ color: '#c9a96a' }}><L k="wifi.passLabel" def="PASSWORD" /></p><p className="mt-2 text-[19px]" style={{ fontFamily: SERIF }}><T path={['wifi', 'password']} value={s.wifi?.password} rows={1} /></p></div>
             </div>
-            <div className="gb-vfill mt-7 grid flex-1 grid-cols-2 gap-x-8 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75">
+            <div className="gb-vfill mt-7 grid flex-1 grid-cols-1 gap-y-5 text-[11.5px] font-light leading-[1.9] text-[#efeae2]/75 sm:grid-cols-2 sm:gap-x-8 sm:gap-y-0">
               <div><L k="wifi.note1" def="The password is case-sensitive — enter it exactly as printed. Once a device connects, it will remember the network for the rest of your stay." rows={4} /></div>
               <div>{(() => { const d = 'Trouble connecting? Our team is one call away, day or night — ' + (s.contact?.customerService || '954-526-8998') + '. And if you sign into personal accounts on any TV, remember to log out before checkout.'; return edit ? <L k="wifi.note2" def={d} rows={4} /> : withTel(lbl('wifi.note2', d)) })()}</div>
             </div>
@@ -735,7 +782,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             {/* CSS columns can't be align-content'd, so the leftover space is absorbed with auto
                 margins instead — same optical centring, and auto margins collapse to 0 when the
                 content is taller than the box, so a full page still can't overflow. */}
-            <div className={'mb-auto mt-6 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-2' : 'columns-1')}>
+            <div className={'mb-auto mt-6 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-1 sm:columns-2' : 'columns-1')}>
               {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
                 <div key={i} className="flex gap-3 border-b pb-3 mb-3 break-inside-avoid" style={{ borderColor: accentColor + '22' }}>
                   <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
@@ -789,13 +836,13 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               only claims it when there is enough of it to be worth showing. */}
           <div className="mt-7 flex flex-col gap-5">
             {(s.guidelines?.items || []).slice(0, 5).map((it: any, i: number) => (
-              <div key={i} className="flex gap-4 border-b pb-3.5" style={{ borderColor: accentColor + '22' }}>
-                <p className="w-44 shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
+              <div key={i} className="flex flex-col gap-1 border-b pb-3.5 sm:flex-row sm:gap-4" style={{ borderColor: accentColor + '22' }}>
+                <p className="w-full shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5 sm:w-44" style={{ color: accentColor }}><T path={['guidelines', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                 <p className="text-[12px] font-light leading-[1.7]"><T path={['guidelines', 'items', String(i), 'body'] as any} value={it.body} rows={2} /></p>
               </div>
             ))}
           </div>
-          <div className="mt-6 grid grid-cols-3 gap-6">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.csLabel" def="CUSTOMER SERVICE · 24/7" /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p><div className="mt-1 text-[9.5px] font-light opacity-70"><L k="contact.emergency" def="Emergencies: dial 911 first, then call us." rows={2} /></div></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><T path={['contact', 'gmLabel']} value={s.contact?.gmLabel || 'GENERAL MANAGER'} rows={1} /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.addressLabel" def="ADDRESS" /></p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
@@ -814,9 +861,9 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
               <Kicker><L k={sec.key + '.tag'} def={sec.tag} /></Kicker>
               <H><L k={sec.key + '.heading'} def={sec.title} /></H>
               {anyPhoto ? (
-                <div className={'gb-placegrid mt-8 grid gap-6 ' + (few ? 'grid-cols-1' : 'grid-cols-2')}>
+                <div className={'gb-placegrid mt-8 grid gap-6 ' + (few ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
                   {items.map((p: any, i: number) => (
-                    <div key={i} className={'flex min-h-0 flex-col ' + (!few && items.length % 2 === 1 && i === items.length - 1 ? 'col-span-2' : '')}>
+                    <div key={i} className={'flex min-h-0 flex-col ' + (!few && items.length % 2 === 1 && i === items.length - 1 ? 'sm:col-span-2' : '')}>
                       <PlaceLink name={p.name} addr={p.address} cls="flex min-h-0 flex-1 flex-col">
                       {/* When a card has no usable photo but its neighbours do, it stays compact
                           instead of reserving photo height, which used to leave a tall empty box. */}
@@ -850,7 +897,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 // Last resort: no imagery anywhere in the section and nothing found to replace it.
                 // The entries still share the whole sheet rather than stacking at the top, so the
                 // page reads as a spaced list and not as one that ran out halfway down.
-                <div className="gb-placegrid mt-9 grid grid-cols-2 gap-x-10 gap-y-7">
+                <div className="gb-placegrid mt-9 grid grid-cols-1 gap-y-7 sm:grid-cols-2 sm:gap-x-10">
                   {items.map((p: any, i: number) => (
                     <div key={i} className="border-l-2 pl-5" style={{ borderColor: accentColor + '66' }}>
                       {pickBtn([sec.key, 'items', String(i), 'photo'], false)}
@@ -876,7 +923,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
             <Kicker><L k="addons.kicker" def="AT YOUR SERVICE" /></Kicker>
             <H><L k="addons.heading" def="exclusive add-ons" /></H>
             <p className="mt-4 max-w-[56ch] text-[12px] font-light leading-[1.8] opacity-80"><T path={['addons', 'intro']} value={s.addons?.intro} rows={2} /></p>
-            <div className={'gb-vfill mt-8 grid flex-1 ' + ((s.addons.items || []).length <= 4 ? 'grid-cols-1 gap-y-6' : 'grid-cols-2 gap-x-10 gap-y-5')}>
+            <div className={'gb-vfill mt-8 grid flex-1 ' + ((s.addons.items || []).length <= 4 ? 'grid-cols-1 gap-y-6' : 'grid-cols-1 gap-y-5 sm:grid-cols-2 sm:gap-x-10')}>
               {(s.addons.items).slice(0, 10).map((p: any, i: number) => (
                 <div key={i} className="flex items-baseline gap-5 border-b pb-4" style={{ borderColor: accentColor + '22' }}>
                   <span className={((s.addons.items || []).length <= 4 ? 'text-[24px]' : 'text-[13px]') + ' leading-none opacity-30'} style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
@@ -892,7 +939,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           {/* No label here: PhotoBand's read-mode fallback renders the label as a bare kicker,
               which stacked a second '// UNTIL NEXT TIME' directly above this page's own kicker. */}
           <PhotoBand src={pa.closing || null} p={['_photoAssign', 'closing']} />
-          <div className="grid flex-1 grid-cols-[1fr_1px_1.1fr] gap-x-8">
+          <div className="grid flex-1 grid-cols-1 gap-y-6 sm:grid-cols-[1fr_1px_1.1fr] sm:gap-x-8 sm:gap-y-0">
             <div>
               <p className="text-[9px] tracking-[0.5em]" style={{ color: accentColor }}>{'// '}<L k="closing.beforeLabel" def="BEFORE YOU GO" /></p>
               <ul className="mt-5 space-y-2.5 text-[11.5px] font-light leading-[1.65]">
@@ -901,7 +948,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
                 ))}
               </ul>
             </div>
-            <div style={{ background: accentColor + '33' }} />
+            <div className="h-px sm:h-auto" style={{ background: accentColor + '33' }} />
             <div className="flex flex-col items-center justify-center px-2 text-center">
               <p className="text-[13px] tracking-[0.5em]" style={{ color: accentColor }}><L k="closing.stars" def="★ ★ ★ ★ ★" /></p>
               <h3 className="mt-3 text-[26px] lowercase font-medium" style={{ fontFamily: SERIF }}><L k="closing.reviewHeading" def="loved your stay?" /></h3>

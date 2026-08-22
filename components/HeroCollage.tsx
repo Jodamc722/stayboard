@@ -357,7 +357,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
                   <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
                 </div>
                 {pool.length === 0 ? <div className={`text-[12px] ${dragOver ? 'text-brand-700' : 'text-muted'}`}>{dragOver ? 'Drop to upload…' : 'No photos yet — upload originals, or this unit has none synced.'}</div> : (
-                  <div className="grid grid-cols-4 gap-1.5 max-h-64 overflow-y-auto">
+                  <div className="grid grid-cols-3 gap-1.5 max-h-64 overflow-y-auto sm:grid-cols-4">
                     {pool.map(p => { const used = slots[sel] === p.id; return (
                       <button key={p.id} onClick={() => assignToSel(p.id)} title={used ? 'In the selected cell' : 'Put in the selected cell'} className={`relative aspect-square rounded-md overflow-hidden border-2 ${used ? 'border-brand-500' : 'border-transparent hover:border-brand-300'}`}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}

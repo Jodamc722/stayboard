@@ -121,7 +121,9 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
             const isOpen = open === p.id
             return (
               <div key={p.id} className="rounded-xl border border-line overflow-hidden">
-                <div className="flex items-center gap-2 px-3 py-2.5 bg-app">
+                {/* Name + PDF badge + unit count + a warning + the On switch was more than one
+                    phone line, and the On switch was the piece that fell off the right. */}
+                <div className="flex items-center gap-2 gap-y-1.5 flex-wrap px-3 py-2.5 bg-app">
                   <button onClick={() => setOpen(isOpen ? null : p.id)} className="text-muted hover:text-ink" aria-label="Toggle">
                     {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                   </button>

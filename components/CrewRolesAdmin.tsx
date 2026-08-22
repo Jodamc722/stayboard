@@ -368,7 +368,10 @@ function AgencyFees({ isOwner }: { isOwner: boolean }) {
       {msg && (
         <div className={`mt-2 rounded-lg border px-3 py-1.5 text-[12px] ${msg.tone === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>{msg.text}</div>
       )}
-      <table className="w-full text-sm mt-2">
+      {/* Five columns of fee inputs — they scroll inside this card rather than dragging the whole
+          page sideways and taking the heading that says what you are reading with them. */}
+      <div className="lh-hscroll -mx-3 px-3 sm:mx-0 sm:px-0">
+      <table className="w-full text-sm mt-2 min-w-[620px]">
         <thead>
           <tr className="text-left text-[10.5px] uppercase tracking-wide text-muted">
             <th className="py-1 pr-3">Agency</th>
@@ -400,7 +403,10 @@ function AgencyFees({ isOwner }: { isOwner: boolean }) {
           {!agencies.length && <tr><td colSpan={5} className="py-2 text-[12px] text-muted">No agencies yet.</td></tr>}
         </tbody>
       </table>
-      <div className="flex items-center gap-2 mt-2 text-[11.5px] text-muted">
+      </div>
+      {/* Two date pickers plus a sentence: iOS renders each picker at 16px, which overflowed the row
+          on a phone. Let it wrap. */}
+      <div className="flex flex-wrap items-center gap-2 mt-2 text-[11.5px] text-muted">
         Invoice window:
         <input type="date" value={invFrom} onChange={e => setInvFrom(e.target.value)} className="text-[11px] border border-line rounded px-1 py-0.5 bg-white" />
         →

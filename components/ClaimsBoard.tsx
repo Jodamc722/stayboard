@@ -228,12 +228,16 @@ export function ClaimsBoard() {
       )}
 
       {data && all.length > 0 && (
-        <div className="flex gap-3 overflow-x-auto pb-3">
+        <>
+        {/* Same treatment as the glitch board: on a phone each stage is nearly the full screen and
+            the strip snaps, so a swipe lands on one stage instead of half of two. */}
+        <div className="sm:hidden text-[11px] text-muted mb-1.5">{STAGES.length} stages &mdash; swipe sideways</div>
+        <div className="flex gap-3 overflow-x-auto pb-3 snap-x snap-mandatory sm:snap-none scroll-pl-3 sm:scroll-pl-0 -mx-3 px-3 sm:mx-0 sm:px-0">
           {STAGES.map(s => {
             const lane = byStage[s.key] || []
             const laneMoney = lane.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
             return (
-              <div key={s.key} className="w-[290px] shrink-0">
+              <div key={s.key} className="w-[86vw] sm:w-[290px] shrink-0 snap-start sm:snap-align-none">
                 <div className="flex items-baseline gap-2 px-1 mb-1.5">
                   <span className="text-sm font-semibold text-ink">{s.label}</span>
                   <span className="text-[11px] font-semibold text-muted tabular-nums">{lane.length}</span>
@@ -248,6 +252,7 @@ export function ClaimsBoard() {
             )
           })}
         </div>
+        </>
       )}
 
       {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => router.push('/claims/' + id)} />}
@@ -275,9 +280,10 @@ function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<strin
   const border = u === 'expired' ? 'border-rose-300' : u === 'critical' ? 'border-rose-200' : 'border-line'
   return (
     <Link href={'/claims/' + claim.id} className={'group relative block rounded-xl border bg-white p-3 hover:shadow-sm transition ' + border}>
-      {/* The delete sits on the card but out of the way — it appears on hover and swallows the
-          click so it can never open the claim by accident. */}
-      <span className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition">
+      {/* The delete sits on the card but out of the way — on a mouse it appears on hover, and it
+          swallows the click so it can never open the claim by accident. A touch screen has no
+          hover, so on a phone it is simply always there; otherwise there is no delete at all. */}
+      <span className="absolute top-1.5 right-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
         <DeleteButton variant="icon" title="Delete this claim" onDelete={onDelete} />
       </span>
       <div className="flex items-start gap-2">
@@ -349,7 +355,8 @@ function NewClaimModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   return (
     <div className="fixed inset-0 z-50 bg-ink/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-2xl border border-line shadow-xl w-full max-w-2xl mt-16" onClick={e => e.stopPropagation()}>
+      {/* mt-16 threw a third of a phone screen away before the search box appeared. */}
+      <div className="bg-white rounded-2xl border border-line shadow-xl w-full max-w-2xl mt-4 sm:mt-16 mb-[calc(env(safe-area-inset-bottom,0px)+4.25rem)] sm:mb-0" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-3 border-b border-line">
           <ShieldAlert size={16} className="text-ink" />
           <span className="font-semibold text-ink">Start a claim</span>

@@ -378,7 +378,10 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 ))}
               </div>
             }>
-            <div className="grid grid-cols-3 divide-x divide-line border-b border-line">
+            {/* Three of these across a phone is ~90px a tile, and each carries a label, a 32px
+                number and a "was 1,100" sub-label — the labels truncated to "Mainten…". Stacked
+                below 640px (with the divider turned horizontal), three across from sm: up. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-line border-b border-line">
               <Big label="Cleans" value={count(w.cleans)} Icon={Brush} href="/schedule"
                 sub={w.cleansPrev != null ? 'was ' + count(w.cleansPrev) : undefined} />
               <Big label="Maintenance" value={count(w.maintenance)} Icon={Wrench} href="/glitches"
@@ -387,8 +390,12 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 sub={w.inspectionsPrev != null ? 'was ' + count(w.inspectionsPrev) : undefined} />
             </div>
 
+            {/* Five-column reference tables. Rather than drop columns (Occ and Revenue are the
+                point of the cut), they scroll inside their own box on a phone; the page itself
+                never travels sideways. min-w only bites below the panel's own width. */}
             {cut === 'market' && (
-              <table className="w-full text-[12.5px]">
+              <div className="lh-hscroll">
+              <table className="w-full min-w-[480px] text-[12.5px]">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wider text-muted">
                     <th className="text-left font-semibold px-4 py-2">Market</th>
@@ -411,10 +418,12 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                   {(!w.byMarket || !w.byMarket.length) && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No work in this window.</td></tr>}
                 </tbody>
               </table>
+              </div>
             )}
 
             {cut === 'building' && (
-              <table className="w-full text-[12.5px]">
+              <div className="lh-hscroll">
+              <table className="w-full min-w-[480px] text-[12.5px]">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wider text-muted">
                     <th className="text-left font-semibold px-4 py-2">Building</th>
@@ -437,6 +446,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                   {(!w.byBuilding || !w.byBuilding.length) && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No work in this window.</td></tr>}
                 </tbody>
               </table>
+              </div>
             )}
 
             {cut === 'day' && (
@@ -533,7 +543,11 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
               const months = (rev && rev.months) || []
               if (!months.length) return <p className="text-sm text-muted text-center py-8">No review history in this window.</p>
               return (
-                <div className="flex items-end gap-2 h-40">
+                /* Twelve columns sharing a phone width is ~16px each — the month label and the
+                   count under every bar truncated to nothing. The chart keeps its real column
+                   width and scrolls sideways in its own box; above 640px it fits and never does. */
+                <div className="lh-hscroll -mx-4 px-4 sm:mx-0 sm:px-0">
+                <div className="flex items-end gap-2 h-40 min-w-[440px] sm:min-w-0">
                   {months.slice(-12).map((m: any) => (
                     <div key={m.month} className="flex-1 flex flex-col items-center gap-1 min-w-0">
                       <span className="text-[10px] font-semibold text-ink tabular-nums">{m.avg != null ? Number(m.avg).toFixed(2) : '—'}</span>
@@ -544,6 +558,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                       <span className="text-[9.5px] text-muted tabular-nums">{m.n}</span>
                     </div>
                   ))}
+                </div>
                 </div>
               )
             })()}
@@ -599,7 +614,10 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       {/* ---------------------------------------------------------------- channels + footnote */}
       {canSeeMoney && r.channels && r.channels.length > 0 && (
         <Panel title="Where the nights come from" note="channel mix by unit-nights in this window">
-          <table className="w-full text-[12.5px]">
+          {/* Channel · Nights · Share · Revenue · bar — a reference table, so it scrolls inside
+              its own box on a phone rather than dropping a column. */}
+          <div className="lh-hscroll">
+          <table className="w-full min-w-[520px] text-[12.5px]">
             <thead>
               <tr className="text-[10px] uppercase tracking-wider text-muted">
                 <th className="text-left font-semibold px-4 py-2">Channel</th>
@@ -621,6 +639,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
               ))}
             </tbody>
           </table>
+          </div>
         </Panel>
       )}
 

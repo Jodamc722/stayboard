@@ -83,7 +83,10 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
       {loading && !d && <div className="px-2 py-8 text-center text-sm text-muted">Rebuilding {weeks} weeks through the labor engine — this takes a moment.</div>}
 
       {d && (
-        <div className="overflow-x-auto">
+        <>
+        {/* The negative margin lets the scroller reach the edge of the glass, so an 860px table does
+            not look clipped inside the card's 12px gutter. Restored to nothing at sm and up. */}
+        <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
           <table className="w-full text-[12.5px] min-w-[860px]">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
@@ -160,19 +163,23 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
               </tr>
             </tbody>
           </table>
-          {openWeek && (
-            <CleanLog
-              from={openWeek.start} to={openWeek.end} market={market}
-              label={`week of ${openWeek.label}`}
-              onClose={() => setOpenWeek(null)}
-            />
-          )}
-          {d.failedWeeks.length > 0 && (
-            <p className="text-[11.5px] text-amber-700 mt-2 px-1">
-              {d.failedWeeks.length} week{d.failedWeeks.length === 1 ? '' : 's'} could not be built ({d.failedWeeks.join(', ')}) — the average above excludes them rather than treating them as zero.
-            </p>
-          )}
         </div>
+        {/* The clean log is a panel of its own, not part of the week table — it used to live INSIDE
+            the sideways scroller, so on a phone it slid off screen the moment you scrolled the table
+            to read a column. It sits below the scroller now. */}
+        {openWeek && (
+          <CleanLog
+            from={openWeek.start} to={openWeek.end} market={market}
+            label={`week of ${openWeek.label}`}
+            onClose={() => setOpenWeek(null)}
+          />
+        )}
+        {d.failedWeeks.length > 0 && (
+          <p className="text-[11.5px] text-amber-700 mt-2 px-1">
+            {d.failedWeeks.length} week{d.failedWeeks.length === 1 ? '' : 's'} could not be built ({d.failedWeeks.join(', ')}) — the average above excludes them rather than treating them as zero.
+          </p>
+        )}
+        </>
       )}
     </div>
   )

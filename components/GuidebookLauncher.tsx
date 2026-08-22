@@ -132,8 +132,8 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
         <BookOpen size={16} /> Generate Guidebook
       </button>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto">
-          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl my-8">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-0 overflow-y-auto sm:p-4">
+          <div className="w-full min-h-dvh max-w-2xl bg-white shadow-xl sm:min-h-0 sm:rounded-2xl sm:my-8">
             <div className="flex items-center justify-between border-b border-line px-5 py-4">
               <div>
                 <h3 className="font-bold text-ink">Guidebook builder — {name}</h3>
@@ -142,7 +142,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
               <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
 
-            <div className="px-5 py-4 space-y-5 max-h-[62vh] overflow-y-auto">
+            <div className="px-5 py-4 space-y-5 overflow-y-auto sm:max-h-[62vh]">
               {/* Uploads */}
               <div className="rounded-xl border border-dashed border-line bg-neutral-50 p-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -247,7 +247,7 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
                 </div>
               </div>
             ) : null}
-            <div className="flex items-center justify-between border-t border-line px-5 py-4">
+            <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-4">
               <p className="text-xs text-red-600 max-w-[55%]">{err}</p>
               <button onClick={() => generate()} disabled={busy || uploading}
                 className="inline-flex items-center gap-2 rounded-lg bg-ink text-white px-4 py-2 text-sm font-semibold disabled:opacity-50">

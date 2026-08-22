@@ -568,7 +568,7 @@ export function OrderDesk() {
           <button onClick={() => setView('item')} className={'text-xs font-semibold px-3 py-1.5 ' + (view === 'item' ? 'bg-ink text-white' : 'bg-white text-muted')}>By item</button>
           <button onClick={() => setView('unit')} className={'text-xs font-semibold px-3 py-1.5 ' + (view === 'unit' ? 'bg-ink text-white' : 'bg-white text-muted')}>By unit</button>
         </div>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit / building / item" className="text-xs border border-line rounded-lg px-2.5 py-1.5 w-52" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit / building / item" className="text-xs border border-line rounded-lg px-2.5 py-1.5 w-full sm:w-52" />
         <select value={ownerId} onChange={e => setOwnerId(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white max-w-[220px]" title="Filter to one owner's units and share their link">
           <option value="">All owners</option>
           {owners.slice().sort((a, b) => a.name.localeCompare(b.name)).map(o => <option key={o.id} value={o.id}>{o.name} ({o.listingIds.length})</option>)}

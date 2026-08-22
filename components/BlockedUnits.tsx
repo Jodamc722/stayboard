@@ -146,7 +146,10 @@ export function BlockedUnits() {
           <div className="divide-y divide-line">
             {runs.map(r => (
               <div key={r.listingId + r.from} className="px-4 py-3 flex items-start gap-3 flex-wrap">
-                <div className="min-w-0 flex-1">
+                {/* The date range never wraps, so on a phone it took half the row and squeezed the
+                    note — the whole point of the line — into a narrow ladder. A floor on the note
+                    column makes the dates drop underneath instead. */}
+                <div className="flex-1 min-w-[12rem]">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[13.5px] font-bold text-ink">{r.unit}</span>
                     <span className="text-[11px] text-muted">{r.market}</span>

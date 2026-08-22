@@ -36,7 +36,10 @@ export function HomebaseWeek() {
             <p className="text-[10.5px] font-bold text-ink mb-1">{dayLabel(d.date)}{d.date === today ? ' · today' : ''}</p>
             {d.people.length === 0 && <p className="text-[10.5px] text-muted">Nobody scheduled</p>}
             {d.people.map((p, i) => (
-              <p key={i} className="text-[10.5px] text-ink leading-4 whitespace-nowrap overflow-hidden text-ellipsis">
+              // Two day-cards to a phone row is about 150px each — a name plus a shift time does not
+              // fit on one line, so every entry read "Yoslenis Rodrigu…". It wraps on a phone; the
+              // desktop week keeps its one-line ellipsis.
+              <p key={i} className="text-[10.5px] text-ink leading-4 whitespace-normal sm:whitespace-nowrap overflow-hidden text-ellipsis">
                 {p.name} <span className="text-muted">{t12(p.start)}–{t12(p.end)}</span>
               </p>
             ))}

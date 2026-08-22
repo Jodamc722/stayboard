@@ -429,54 +429,57 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile header */}
-        <header className="lg:hidden flex items-center gap-2 px-3 py-2.5 bg-white border-b border-line flex-shrink-0">
+        <header className="lg:hidden flex items-center gap-2 px-3 py-2 pt-safe-keep px-safe-keep bg-white border-b border-line flex-shrink-0">
           <button type="button" onClick={() => setDrawerOpen(true)} aria-label="Open menu"
-            className="w-9 h-9 rounded-lg border border-line grid place-items-center text-muted hover:text-ink">
-            <Menu size={17} />
+            className="w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
+            <Menu size={18} />
           </button>
           <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
-          <span className="font-semibold text-sm text-ink truncate">{currentLabel}</span>
+          <span className="font-semibold text-[15px] text-ink truncate">{currentLabel}</span>
           <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Jump to a tab"
-            className="ml-auto w-9 h-9 rounded-lg border border-line grid place-items-center text-muted hover:text-ink">
-            <Search size={16} />
+            className="ml-auto w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
+            <Search size={17} />
           </button>
         </header>
 
-        <main className="flex-1 overflow-auto">
-          <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8 animate-fade-in">{children}</div>
+        <main className="flex-1 overflow-auto overscroll-contain px-safe">
+          <div className="max-w-[1600px] mx-auto px-3 py-4 sm:p-6 lg:p-8 animate-fade-in">{children}</div>
         </main>
 
         {/* Eve rides along on every page (Jon, 2026-08-19: floating icon, not a page). Same
             role gate the old sidebar entry used — a role with eve 'off' never sees the bubble. */}
         {canSee('/eve') && <EveFloat />}
 
-        {/* Mobile bottom bar — the first four pins. One thumb, no scrolling. */}
-        {pinned.length > 0 && (
-          <nav className="lg:hidden flex-shrink-0 border-t border-line bg-white flex items-stretch">
-            {pinned.slice(0, 4).map(({ to, label, Icon }) => {
-              const active = isActive(to)
-              return (
-                <Link key={'bb-' + to} href={to} prefetch={false}
-                  className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold ${active ? 'text-brand-600' : 'text-muted'}`}>
-                  <Icon size={18} strokeWidth={active ? 2.25 : 2} />
-                  <span className="truncate max-w-full px-1">{label}</span>
-                </Link>
-              )
-            })}
-            <button type="button" onClick={() => setDrawerOpen(true)}
-              className="flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold text-muted">
-              <Menu size={18} />
-              <span>More</span>
-            </button>
-          </nav>
-        )}
+        {/* Mobile bottom bar — the first four pins. One thumb, no scrolling.
+            It renders unconditionally: it used to be gated on `pinned.length > 0`, which meant a
+            person whose pins had not loaded yet (or whose role could see none of the daily six)
+            got a phone with no navigation at all except the hamburger. "More" alone is still
+            navigation. pb-safe keeps the labels off the iPhone home indicator, which viewport-fit
+            cover otherwise draws straight through. */}
+        <nav className="lg:hidden flex-shrink-0 border-t border-line bg-white flex items-stretch pb-safe px-safe">
+          {pinned.slice(0, 4).map(({ to, label, Icon }) => {
+            const active = isActive(to)
+            return (
+              <Link key={'bb-' + to} href={to} prefetch={false}
+                className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold ${active ? 'text-brand-600' : 'text-muted'}`}>
+                <Icon size={20} strokeWidth={active ? 2.25 : 2} />
+                <span className="truncate max-w-full px-1">{label}</span>
+              </Link>
+            )
+          })}
+          <button type="button" onClick={() => setDrawerOpen(true)} aria-label="More tabs"
+            className="flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold text-muted">
+            <Menu size={20} />
+            <span>More</span>
+          </button>
+        </nav>
       </div>
 
       {/* Mobile drawer */}
       {drawerOpen && (
         <div className="lg:hidden fixed inset-0 z-50" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setDrawerOpen(false)} />
-          <div className="absolute left-0 top-0 bottom-0 w-[82%] max-w-[300px] bg-white shadow-lifted flex flex-col">
+          <div className="absolute left-0 top-0 bottom-0 w-[86%] max-w-[320px] bg-white shadow-lifted flex flex-col pt-safe pb-safe">
             <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-line">
               <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
               <span className="font-bold text-sm tracking-tight text-ink">LIGHTHOUSE</span>

@@ -19,7 +19,9 @@ export function DateFilter({ selected, isToday }: { selected: string; isToday: b
   }
 
   return (
-    <div className="inline-flex items-center gap-1.5">
+    // Phone: the date input is forced to 16px (iOS zooms anything smaller), so arrows + input +
+    // "Today" no longer fit on 375px and the row dragged the page sideways. Let it wrap instead.
+    <div className="inline-flex items-center gap-1.5 flex-wrap gap-y-2 max-w-full">
       <CalendarDays size={14} className="text-muted" />
       <button onClick={() => shift(-1)} aria-label="Previous day"
         className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-brand-200">

@@ -54,7 +54,9 @@ export function ReservationFieldsEditor({ reservationId, fields }: { reservation
         {rows.map(f => {
           const changed = (vals[f.fieldId] ?? '') !== (orig[f.fieldId] ?? '')
           return (
-            <div key={f.fieldId} className="grid grid-cols-[40%_1fr] items-center gap-2">
+            // 40% of a phone card is about 110px of label and 160px of a 16px-font input — roughly
+            // ten characters of a Guesty value. Stack the label above the box below sm.
+            <div key={f.fieldId} className="grid grid-cols-1 sm:grid-cols-[40%_1fr] sm:items-center gap-1 sm:gap-2">
               <span className="text-[11px] text-muted truncate" title={f.name}>{f.name}</span>
               <input value={vals[f.fieldId] ?? ''} onChange={e => setVals(v => ({ ...v, [f.fieldId]: e.target.value }))} className={`rounded border px-2 py-1 text-[12px] text-ink focus:outline-none ${changed ? 'border-brand-600 bg-brand-50/40' : 'border-line'}`} />
             </div>

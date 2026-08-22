@@ -118,7 +118,9 @@ async function scan() {
     <section className="mb-6">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><ShieldAlert size={15} className="text-brand-600" /> Guest sentiment</h2>
-        <div className="flex items-center gap-2">
+        {/* Two filter buttons plus Scan now is ~300px — on a phone it needs to be able to break
+            onto a second line rather than push the heading off the screen. */}
+        <div className="flex items-center gap-2 flex-wrap gap-y-2">
           <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
             <button onClick={() => setFilter('attention')} className={`px-2.5 py-1 font-semibold ${filter === 'attention' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>Needs attention</button>
             <button onClick={() => setFilter('all')} className={`px-2.5 py-1 font-semibold ${filter === 'all' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>All scored</button>
@@ -174,7 +176,9 @@ async function scan() {
                       </div>
                     )}
                     {isOpen && r.reason && <div className="text-[12px] text-ink/70 mt-2 bg-app rounded-lg px-3 py-2">{r.reason}</div>}
-                    <div className="flex items-center gap-3 mt-2">
+                    {/* Four actions on one line — Open thread / Close out / Create QC task / Why —
+                        is well over a phone's width, so the row wraps instead of overflowing. */}
+                    <div className="flex items-center gap-3 mt-2 flex-wrap gap-y-1.5">
                       <Link href={`/messages/${r.id}`} className="text-[12px] font-semibold text-brand-700 hover:underline">Open thread →</Link>
                       <button onClick={() => close(r.id)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-700 hover:underline"><Check size={13} /> Close out</button>
 {qc[r.id] ? (qc[r.id].reportUrl ? <a href={qc[r.id].reportUrl as string} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-semibold text-violet-700 hover:underline">QC task created &rarr;</a> : <span className="text-[12px] font-semibold text-violet-700">QC task created</span>) : <button onClick={() => createQc(r)} disabled={!!qcBusy[r.id]} className="inline-flex items-center gap-1 text-[12px] font-semibold text-violet-700 hover:underline disabled:opacity-50" title="Create a targeted inspection/maintenance task in Breezeway with this guest's issue - only on your click">{qcBusy[r.id] ? 'Creating...' : 'Create QC task'}</button>}

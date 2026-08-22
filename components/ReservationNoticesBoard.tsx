@@ -391,10 +391,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700">
           <Plus size={14} /> New notice
         </button>
-        <div className="relative">
+        {/* A 256px box wrapped onto its own line on a phone and then used two thirds of it. */}
+        <div className="relative w-full sm:w-auto">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building, code…"
-            className="rounded-lg border border-line pl-8 pr-2.5 py-1.5 text-[13px] w-64" />
+            className="rounded-lg border border-line pl-8 pr-2.5 py-1.5 text-[13px] w-full sm:w-64" />
           {q.trim() && (
             <button onClick={() => setQ('')} title="Clear" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button>
           )}
@@ -412,7 +413,9 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (showSettings ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink')}>
           {showSettings ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<Settings size={13} /> Settings
         </button>
-        <div className="ml-auto flex items-center gap-2 text-[12px]">
+        {/* Three status chips beside each other were wider than a phone, so "to send today" —
+            the one that tells you whether you are done — was the piece that fell off. */}
+        <div className="ml-auto flex items-center gap-2 gap-y-1.5 flex-wrap text-[12px]">
           {counts.late > 0 && <span className="px-2 py-1 rounded-lg bg-rose-100 text-rose-700 font-semibold">{counts.late} arriving, unsent</span>}
           {counts.due > 0 && <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 font-semibold">{counts.due} past cutoff</span>}
           <span className="text-muted">{counts.toSend} to send today{counts.sentToday ? ' · ' + counts.sentToday + ' sent' : ''}</span>

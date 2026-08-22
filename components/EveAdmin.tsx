@@ -97,7 +97,8 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
         <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search her memory…" className={`${input} max-w-xs`} />
         <span className="text-xs text-muted">{shown.length} of {rows.length}</span>
         {canEdit && (
-          <div className="ml-auto flex items-center gap-2">
+          // "Learn now" + "Teach her something" would not fit beside the filter box on a phone.
+          <div className="ml-auto flex items-center gap-2 flex-wrap gap-y-2">
             <button onClick={learnNow} disabled={learning}
               title="Run the learning sweep now — she mines recent ops, money, quality and guest data for new insights"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 hover:bg-brand-100 disabled:opacity-50">
@@ -167,7 +168,9 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
               {editing === m.id ? (
                 <div className="space-y-2">
                   <textarea value={edit.text} onChange={e => setEdit({ ...edit, text: e.target.value })} rows={2} className={input} />
-                  <div className="grid grid-cols-3 gap-2">
+                  {/* Three controls across 375px left each one ~100px, and iOS renders a select at
+                      16px — the scope box showed about four characters. */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     <select value={edit.kind} onChange={e => setEdit({ ...edit, kind: e.target.value })} className={input}>
                       {KINDS.map(k => <option key={k} value={k}>{k}</option>)}
                     </select>

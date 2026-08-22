@@ -23,15 +23,21 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   const messages = initialMessages
 
   return (
-    <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col" style={{ minHeight: '55vh' }}>
+    /* The transcript only scrolls INSIDE its own box if the box has a height. A min-height alone
+       let the card grow to the length of the conversation, so on a phone reading a long thread
+       meant scrolling the whole page — and losing the header that tells you whose thread it is.
+       Below sm the card is capped to what you can actually see (dvh, so Safari's URL bar is not
+       counted as viewport) and the message list becomes the scroller. From sm up nothing is
+       capped, so the desktop card is exactly as before. */
+    <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col max-h-[calc(100dvh-11rem)] sm:max-h-none" style={{ minHeight: '55vh' }}>
       {/* Thread header */}
-      <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
+      <div className="px-3 sm:px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-semibold text-ink truncate">{guest || 'Guest'}</span>
           {unit && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">Unit {unit}</span>}
           {channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{channel}</span>}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap gap-y-2">
           {reservation && (
             <button onClick={() => setShowRes(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 px-2.5 py-1.5 rounded-lg">
               <CalendarDays size={13} /> Reservation details
@@ -44,7 +50,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
       </div>
 
       {/* Messages (read-only) */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3">
         {messages.length === 0 ? (
           <p className="text-center text-muted py-8 text-sm">No messages cached for this thread yet. Sync to pull the latest.</p>
         ) : messages.map(m => {
@@ -55,7 +61,10 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
             <div key={m.id} className={`flex ${guestMsg ? 'justify-start' : 'justify-end'}`}>
               <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm ${guestMsg ? 'bg-app text-ink border border-line' : 'bg-brand-600 text-white'}`}>
                 <div className={`text-[10px] mb-0.5 ${guestMsg ? 'text-muted' : 'text-white/70'}`}>{m.sender_name || (guestMsg ? guest : 'Team')}</div>
-                <div className="whitespace-pre-wrap leading-relaxed">{m.body}</div>
+                {/* pre-wrap keeps the guest's line breaks but will NOT break a long unbroken run
+                    of characters — one pasted booking URL or a long guest email address pushed
+                    the bubble past the card and widened the whole page. */}
+                <div className="whitespace-pre-wrap leading-relaxed break-words sm:break-normal">{m.body}</div>
                 <div className={`text-[10px] mt-0.5 ${guestMsg ? 'text-muted' : 'text-white/70'}`}>{fmt(m.sent_at)}</div>
               </div>
             </div>
@@ -64,7 +73,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
       </div>
 
       {/* Audit footer — reply happens in Guesty */}
-      <div className="border-t border-line px-5 py-3 flex items-center justify-between gap-3 flex-wrap bg-app/30">
+      <div className="border-t border-line px-3 sm:px-5 py-3 flex items-center justify-between gap-3 flex-wrap bg-app/30">
         <span className="text-[12px] text-muted inline-flex items-center gap-1.5"><MessageSquare size={13} /> Audit view — reply to the guest in Guesty.</span>
         <a href={guestyUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 hover:underline">
           Reply in Guesty <ExternalLink size={12} />
@@ -79,7 +88,10 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
               <h3 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><CalendarDays size={15} className="text-brand-600" /> Reservation</h3>
               <button onClick={() => setShowRes(false)} className="text-muted hover:text-ink"><X size={16} /></button>
             </div>
-            <div className="px-5 py-4 space-y-2.5 text-sm">
+            {/* Ten rows of detail plus a header and a footer is taller than a phone in landscape,
+                and the card is centred in the overlay — without an inner scroller the top and
+                bottom of it were simply unreachable. */}
+            <div className="px-5 py-4 space-y-2.5 text-sm max-h-[60dvh] overflow-y-auto sm:max-h-none sm:overflow-y-visible">
               <Row Icon={User} label="Guest" value={reservation.guest_name || guest} />
               {reservation.guest_phone && <Row Icon={Phone} label="Phone" value={reservation.guest_phone} link={`tel:${reservation.guest_phone}`} />}
               <Row Icon={Home} label="Unit" value={reservation.listing_name || (unit ? `Unit ${unit}` : '—')} />

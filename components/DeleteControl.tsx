@@ -89,7 +89,9 @@ export function UndoBar({ item, onUndone, onDismiss }: { item: { trashId: string
     } catch (e: any) { setErr(String(e?.message || e)); setBusy(false) }
   }
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 rounded-xl bg-ink text-white shadow-lg px-4 py-2.5 flex items-center gap-3 max-w-[92vw]">
+    // The undo toast sat under the phone's fixed bottom nav bar — the one control with a 12-second
+    // life was the one you could not see. Lift it above the bar and the home indicator.
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] sm:bottom-5 left-1/2 -translate-x-1/2 z-50 rounded-xl bg-ink text-white shadow-lg px-4 py-2.5 flex items-center gap-3 max-w-[92vw]">
       <span className="text-[13px] truncate">Deleted <span className="font-semibold">{item.label}</span></span>
       <button onClick={undo} disabled={busy} className="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 inline-flex items-center gap-1.5 disabled:opacity-50">
         {busy ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} Undo

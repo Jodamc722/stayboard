@@ -127,6 +127,19 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
 }
 
 // ── Per-task editor row ─────────────────────────────────────────────────────
+// PHONE: the 12-column task grid is load-bearing — task, dept, who, hours, rate, billed and the
+// action icons only line up because they share one column system, so it must NOT collapse. The
+// header and the rows instead go inside ONE `lh-hscroll` (see TaskTable below) at this min width,
+// so they scroll sideways together and stay aligned. Above 640px `sm:min-w-0` gives back exactly
+// the fluid grid the desktop board has always had.
+const TASK_COLS_MINW = 'min-w-[880px] sm:min-w-0'
+
+/** Header + rows in a single sideways scroller so a phone can read the wide columns without
+ *  dragging the whole page (and without the header sliding out of step with its rows). */
+function TaskTable({ children }: { children: React.ReactNode }) {
+  return <div className="lh-hscroll"><div className={TASK_COLS_MINW}>{children}</div></div>
+}
+
 // Shared column header for task tables (owner cards + All tasks). Keeps every row aligned.
 function ColsHeader({ withUnit }: { withUnit?: boolean }) {
   return (
@@ -379,7 +392,11 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
         </div>
       </div>
       {open ? (
-        <div className="px-10 pb-4 space-y-3">
+        /* The expanded editor lives inside the row scroller, so on a phone it would otherwise be
+           laid out 880px wide and you would have to swipe sideways to reach the Save button.
+           Pinning it to the left edge of the scroller at screen width keeps the form where your
+           thumb is; above 640px nothing scrolls, so it is the same static block as before. */
+        <div className="sticky left-0 w-[92vw] px-4 sm:static sm:w-auto sm:px-10 pb-4 space-y-3">
           {err ? <div className="text-[12px] text-rose-600">{err}</div> : null}
           <div className="space-y-1.5">
             <div className="text-[11px] uppercase tracking-wide text-muted font-bold">Task — full title &amp; description (saves to Breezeway)</div>
@@ -388,7 +405,8 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
             <textarea value={desc} onChange={e => setDesc(e.target.value)} disabled={!canEdit} rows={2}
               placeholder="Description of the work performed (shows in Breezeway and available for the owner sheet)"
               className="w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
-            <div className="flex items-center gap-2">
+            {/* "Save title & description to Breezeway" + "AI polish" do not fit on one phone line. */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
               <button onClick={() => post({ action: 'update', name: title, description: desc }, 'meta', { name: title, description: desc })}
                 disabled={!canEdit || busy === 'meta' || !title.trim()}
                 className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">
@@ -445,7 +463,9 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
             {t.items.length ? (
               <div className="space-y-1">
                 {t.items.map(it => (
-                  <div key={it.key} className="flex items-center gap-2 text-[12.5px]">
+                  /* A line item is chip + description + was-price + amount box; on a phone that is
+                     two lines, not one, so let it wrap instead of squashing the amount input. */
+                  <div key={it.key} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 text-[12.5px]">
                     <span className={chip(it.kind === 'extra' ? 'bg-brand-50 text-brand-700 ring-brand-200' : it.kind === 'supply' ? 'bg-teal-50 text-teal-700 ring-teal-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200')}>{it.kind}</span>
                     <span className="text-ink">{it.description}</span>
                     {it.bill_to ? <span className="text-[11px] text-muted">→ {it.bill_to}</span> : null}
@@ -476,7 +496,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
               <div className="text-[12px] text-muted">{t.hasDetail ? 'No costs or supplies on this task.' : 'Billing detail not pulled yet — use Re-pull from Breezeway, or the Pull details button up top.'}</div>
             )}
             {canEdit ? (
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 mt-2">
                 <input value={extraDesc} onChange={e => setExtraDesc(e.target.value)} placeholder="Add a line item (ours only — not sent to Breezeway)"
                   className="grow max-w-sm rounded-lg border border-line px-2 py-1 text-[12.5px]" />
                 <input value={extraAmt} onChange={e => setExtraAmt(e.target.value)} placeholder="0.00"
@@ -614,6 +634,11 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
         <Kpi label="Billable vs wages" value={wagesFor != null ? money(totals.billed - wagesFor) : '—'} sub="charges entered − payroll" />
       </div>
       <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+        {/* Person / tasks / hours / billable / rate / cost is a 12-column system — collapsing it
+            would break the alignment that makes the margin column readable. Header and rows share
+            one sideways scroller on a phone instead; above 640px the grid is fluid as before. */}
+        <div className="lh-hscroll">
+        <div className="min-w-[720px] sm:min-w-0">
         <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10.5px] uppercase tracking-wide text-muted font-bold border-b border-line">
           <div className="col-span-3">Person</div>
           <div className="col-span-2 text-right">Tasks (done)</div>
@@ -648,6 +673,8 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
             </div>
           )
         })}
+        </div>
+        </div>
         {!people.length ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">No one has time on task for this filter yet.</div> : null}
       </div>
       <p className="text-[11.5px] text-muted">Actual hours come from the crew&apos;s Start/Complete taps in Breezeway (total time on task). When a task has several assignees, its time and billable labor are split evenly between them. Rates are what YOU pay per hour (loaded) — they stay in this app.</p>
@@ -1026,7 +1053,10 @@ export function BillingBoard() {
               </div>
             )}
             {(data.maintenanceByMarket || []).length > 0 && (
-              <table className="w-full text-[12.5px]">
+              /* Reference table, five numeric columns: on a phone it scrolls in its own box —
+                 bleeding to the card edge so it does not look cut off inside the padding. */
+              <div className="lh-hscroll -mx-4 px-4 sm:mx-0 sm:px-0">
+              <table className="w-full min-w-[480px] sm:min-w-0 text-[12.5px]">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wider text-muted">
                     <th className="text-left font-semibold py-1">Market</th>
@@ -1048,6 +1078,7 @@ export function BillingBoard() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         )
@@ -1066,8 +1097,10 @@ export function BillingBoard() {
         </div>
       ) : null}
 
-      {/* Sticky so the view switch, filters and search stay in reach on a long month. */}
-      <div className="sticky top-2 z-20 rounded-2xl border border-line bg-white/95 backdrop-blur shadow-soft px-3 py-2.5 flex flex-wrap items-center gap-2">
+      {/* Sticky so the view switch, filters and search stay in reach on a long month — but only
+          from 640px up: on a phone this bar wraps to seven or eight lines, and a sticky element
+          that tall pins most of the screen shut and you can never see the tasks under it. */}
+      <div className="z-20 sm:sticky sm:top-2 rounded-2xl border border-line bg-white/95 backdrop-blur shadow-soft px-3 py-2.5 flex flex-wrap items-center gap-2">
         <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden">
           {(['owner', 'all', 'labor'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
@@ -1161,17 +1194,20 @@ export function BillingBoard() {
               </span>
             ) : null}
             <span className="grow" />
-            <div className="relative">
+            {/* Search lands on its own wrapped line on a phone — let it use the whole width. */}
+            <div className="relative w-full sm:w-auto">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Unit, task, owner, person…"
-                className="rounded-xl border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] w-56 shadow-soft" />
+                className="rounded-xl border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] w-full sm:w-56 shadow-soft" />
             </div>
           </>
         ) : null}
       </div>
 
       {canEdit && selIds.length > 0 && view !== 'labor' ? (
-        <div className="sticky top-2 z-10 rounded-2xl border border-brand-200 bg-brand-50/95 backdrop-blur px-4 py-2.5 flex items-center gap-3 flex-wrap shadow-soft">
+        /* Same reason as the filter bar above: on a phone the bulk bar wraps tall enough to hide
+           the very rows you selected, so it scrolls with the page and only sticks from 640px up. */
+        <div className="z-10 sm:sticky sm:top-2 rounded-2xl border border-brand-200 bg-brand-50/95 backdrop-blur px-4 py-2.5 flex items-center gap-3 flex-wrap shadow-soft">
           <span className="text-[12.5px] font-bold text-ink">{selIds.length} selected</span>
           {bulk ? (
             <span className="text-[12.5px] text-muted">{bulk.doing}… {bulk.done}/{bulk.total}</span>
@@ -1227,9 +1263,11 @@ export function BillingBoard() {
 
       {view === 'all' && data ? (
         <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-          <ColsHeader withUnit />
-          {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate} showUnit
-            selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
+          <TaskTable>
+            <ColsHeader withUnit />
+            {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate} showUnit
+              selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
+          </TaskTable>
           {!sortedFlat.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
         </div>
       ) : null}
@@ -1272,8 +1310,7 @@ export function BillingBoard() {
                     </button>
                   ) : null}
                 </div>
-                {open ? <ColsHeader /> : null}
-                {open ? unitKeys.map(u => {
+                {open ? <TaskTable><ColsHeader />{unitKeys.map(u => {
                   const ts = unitMap[u]
                   const unitTotal = ts.reduce((s, t) => s + t.billedAmount, 0)
                   const building = ts[0] && ts[0].building
@@ -1291,7 +1328,7 @@ export function BillingBoard() {
                         selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
                     </div>
                   )
-                }) : null}
+                })}</TaskTable> : null}
               </div>
             )
           })}

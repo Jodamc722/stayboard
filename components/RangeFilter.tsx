@@ -47,7 +47,9 @@ export function RangeFilter({ from, to }: { from: string; to: string }) {
       <span className="text-muted text-sm">to</span>
       <input type="date" value={to} onChange={e => go(from, e.target.value)}
         className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm text-ink focus:outline-none focus:border-brand-500" />
-      <div className="inline-flex gap-1">
+      {/* Six presets on one non-wrapping line overflowed a 375px screen — the outer row wraps but
+          this inner group did not, so "90d" fell off the edge. */}
+      <div className="inline-flex gap-1 flex-wrap gap-y-1">
         {presets.map(p => (
           <button key={p.k} onClick={() => preset(p.k)}
             className="text-[12px] font-medium rounded-lg px-2.5 py-1.5 border border-line bg-white text-muted hover:text-brand-700 hover:border-brand-200">

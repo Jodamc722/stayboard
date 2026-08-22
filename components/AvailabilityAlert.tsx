@@ -49,8 +49,10 @@ export function AvailabilityAlert() {
   return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50/50 overflow-hidden">
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left">
-        <span className="flex items-center gap-2 text-[13px] font-semibold text-amber-800">
-          <AlertTriangle size={15} />
+        {/* The sentence and the "(target 600 · 12/340 checked)" note are two flex items on one
+            non-wrapping line — on a phone they became two narrow columns of broken words. */}
+        <span className="flex items-center gap-2 flex-wrap text-[13px] font-semibold text-amber-800">
+          <AlertTriangle size={15} className="shrink-0" />
           {flagged.length} active {flagged.length === 1 ? 'listing is' : 'listings are'} bookable under {threshold} days
           <span className="font-normal text-amber-700/80">(target {target} · {data.checked ?? 0}/{data.totalActive ?? 0} checked)</span>
         </span>

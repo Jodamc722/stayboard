@@ -61,7 +61,10 @@ export function LaborStrip() {
 
       {open && d && (
         <div className="px-4 pb-3">
-          <table className="w-full text-[12.5px] bg-white rounded-lg overflow-hidden">
+          {/* Five columns ending in a row of status badges — scroll it inside the strip rather than
+              letting it drag the page underneath sideways. */}
+          <div className="lh-hscroll -mx-4 px-4 sm:mx-0 sm:px-0">
+          <table className="w-full text-[12.5px] bg-white rounded-lg overflow-hidden min-w-[520px]">
             <thead>
               <tr className="text-[9.5px] uppercase tracking-wide text-muted border-b border-line">
                 <th className="text-left font-semibold px-3 py-1.5">Person</th>
@@ -95,6 +98,7 @@ export function LaborStrip() {
               {!people.length && <tr><td colSpan={5} className="px-3 py-3 text-center text-muted">Nobody scheduled today.</td></tr>}
             </tbody>
           </table>
+          </div>
           <div className="mt-1.5 text-right"><a href="/labor" className="text-[11.5px] text-indigo-700 font-semibold hover:underline">Full labor board →</a></div>
         </div>
       )}

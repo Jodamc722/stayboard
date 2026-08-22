@@ -88,7 +88,7 @@ export default function ListingOpsPanel({
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
-      <div className="relative w-full max-w-md h-full bg-white shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="relative w-full max-w-md h-dvh bg-white shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold text-neutral-900 truncate">{ops?.unit || unitName || 'Listing'}</div>
           <button onClick={onClose} className="p-1 rounded hover:bg-neutral-100" aria-label="Close">
@@ -103,7 +103,7 @@ export default function ListingOpsPanel({
         ) : !ops ? (
           <div className="p-4 text-sm text-neutral-500">No ops data for this listing.</div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
+          <div className="flex-1 overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-4 text-sm">
             <div className={'rounded-lg p-3 ' + (ops.inspection.recommended ? 'bg-amber-50 border border-amber-200' : 'bg-emerald-50 border border-emerald-200')}>
               <div className="flex items-center gap-2 font-medium">
                 <AlertTriangle className={'w-4 h-4 ' + (ops.inspection.recommended ? 'text-amber-600' : 'text-emerald-600')} />

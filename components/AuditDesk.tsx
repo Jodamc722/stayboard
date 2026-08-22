@@ -317,8 +317,11 @@ export function AuditDesk() {
             <button onClick={() => createBuildingAudit(bld)} disabled={creating} className="w-full text-left text-xs font-semibold px-3 py-2 rounded-xl border border-dashed border-line text-muted hover:bg-white disabled:opacity-40">+ Common areas audit</button>
           {visible.filter(x => (rollupBuilding(x.building)) === bld).map(a => (
         <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
-          <div className="flex items-center gap-3 px-3.5 py-2.5">
-            <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-left flex-1 min-w-0">
+          {/* Nine unshrinkable things sit after the unit name — badges, a date and four buttons. On a
+              phone the row ran off the screen and dragged the whole page sideways with it. It wraps
+              now, and the unit name keeps a floor so the wrap lands after it rather than through it. */}
+          <div className="flex items-center gap-3 px-3.5 py-2.5 flex-wrap">
+            <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-left flex-1 min-w-[12rem]">
               <span className="text-sm font-semibold text-ink">{a.unit}</span>
               {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}{a.nextCheckout ? <span className="ml-2 text-[10px] text-amber-700">next checkout {a.nextCheckout.slice(5)}</span> : <span className="ml-2 text-[10px] text-neutral-300">no upcoming checkout</span>}
             </button>
@@ -418,9 +421,12 @@ export function AuditDesk() {
                       const cfg = taskCfg[it.id] || defCfg(it)
                       const ai = it.ai_assessment && typeof it.ai_assessment === 'object' ? it.ai_assessment : null
                       return (
-                        <div key={it.id} className={'flex gap-3 rounded-lg border border-line bg-white p-2.5' + (it.status === 'dismissed' ? ' opacity-60' : '')}>
+                        // The dispatch controls on the right — three selects and two buttons — are
+                        // wider than a phone on their own, so they used to push the card off screen.
+                        // The card wraps and the controls take their own line below the item.
+                        <div key={it.id} className={'flex gap-3 flex-wrap rounded-lg border border-line bg-white p-2.5' + (it.status === 'dismissed' ? ' opacity-60' : '')}>
                           {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer"><img src={it.photo_url} alt="" className="w-16 h-16 rounded-md object-cover shrink-0" /></a> : <div className="w-16 h-16 rounded-md bg-neutral-100 shrink-0" />}
-                          <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-[11rem]">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded border ' + (KIND_CLS[it.kind] || KIND_CLS.replace)}>{KIND_LABEL[it.kind] || 'Replace'}</span>
                               <span className="text-sm font-semibold text-ink">{it.title || it.item_type || 'Item'}</span>
@@ -441,14 +447,14 @@ export function AuditDesk() {
                             {ai && ai.howTo ? <div className="text-[11px] text-emerald-700 mt-0.5">How-to: {String(ai.howTo)}</div> : null}
                             {it.details && Array.isArray(it.details.photos) && it.details.photos.length > 1 ? <div className="mt-1 flex gap-1 flex-wrap">{it.details.photos.slice(0, 6).map((p: string, i: number) => <a key={i} href={p} target="_blank" rel="noreferrer"><img src={p} alt="" className="w-9 h-9 rounded object-cover" /></a>)}</div> : null}
                           </div>
-                          <div className="shrink-0 flex flex-col items-end gap-1.5">
+                          <div className="w-full sm:w-auto shrink-0 flex flex-col items-end gap-1.5">
                             {it.status === 'dismissed' ? <div className="text-xs text-neutral-400 font-semibold">Dismissed</div> : it.status === 'task_created' ? (
                               <div className="text-right">
                                 <div className={'text-xs font-semibold ' + (it.task_status === 'completed' ? 'text-emerald-700' : 'text-sky-700')}>{it.task_status === 'completed' ? 'Task done ✓' : it.task_status === 'in_progress' ? 'Task in progress' : 'Task created ✓'}</div>
                                 {it.report_url ? <a href={it.report_url} target="_blank" rel="noreferrer" className="text-[11px] text-brand-700 hover:underline">Open in Breezeway</a> : null}
                               </div>
                             ) : (
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap justify-end">
                                 <select value={cfg.department} onChange={e => setCfg(it, { department: e.target.value })} className="text-[11px] border border-line rounded-lg px-1.5 py-1 bg-white">
                                   {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>

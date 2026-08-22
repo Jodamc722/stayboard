@@ -345,6 +345,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
 
         {/* the journey — tap a stage to see exactly those lines */}
         <div className="px-4 pt-3">
+          <div className="lh-hscroll -mx-4 px-4 sm:mx-0 sm:px-0">
           <div className="flex gap-1 items-stretch">
             {PIPE.map(s => {
               const n = stageRoll[s] || 0
@@ -352,11 +353,11 @@ export function FfeOrderDetail({ id }: { id: string }) {
               return (
                 <button key={s} onClick={() => setStageFilter(on ? '' : s)}
                   title={n ? `${STAGE_LABEL[s]} — ${n} line${n === 1 ? '' : 's'}. Tap to see only these.` : `No lines ${STAGE_LABEL[s].toLowerCase()} yet.`}
-                  className={'flex-1 min-w-0 rounded-lg px-1 py-1.5 text-center border transition ' +
+                  className={'flex-1 min-w-[72px] sm:min-w-0 rounded-lg px-1 py-1.5 text-center border transition ' +
                     (on ? 'border-ink ring-1 ring-ink ' : 'border-transparent ') +
                     (n ? STAGE_CLS[s] : 'bg-app text-muted/50')}>
                   <div className="text-[13px] font-bold tabular-nums leading-none">{n}</div>
-                  <div className="text-[8.5px] font-bold uppercase tracking-wide mt-0.5 truncate">{STAGE_LABEL[s]}</div>
+                  <div className="text-[10px] sm:text-[8.5px] font-bold uppercase tracking-wide mt-0.5 truncate">{STAGE_LABEL[s]}</div>
                 </button>
               )
             })}
@@ -366,9 +367,10 @@ export function FfeOrderDetail({ id }: { id: string }) {
                 className={'shrink-0 rounded-lg px-2 py-1.5 text-center border transition ' +
                   (stageFilter === 'declined' ? 'border-ink ring-1 ring-ink ' : 'border-transparent ') + STAGE_CLS.declined}>
                 <div className="text-[13px] font-bold tabular-nums leading-none">{stageRoll.declined}</div>
-                <div className="text-[8.5px] font-bold uppercase tracking-wide mt-0.5">Not taken</div>
+                <div className="text-[10px] sm:text-[8.5px] font-bold uppercase tracking-wide mt-0.5">Not taken</div>
               </button>
             ) : null}
+          </div>
           </div>
         </div>
 

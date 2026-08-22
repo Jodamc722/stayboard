@@ -367,7 +367,7 @@ export function FfeOwnerOrder({ code }: { code: string }) {
       </p>
 
       {/* the decision bar */}
-      <div className="fixed bottom-0 inset-x-0 bg-white border-t border-neutral-200 px-4 py-3 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+      <div className="fixed bottom-0 inset-x-0 bg-white border-t border-neutral-200 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
         <div className="flex items-center gap-3">
           <div className="min-w-0">
             <p className="text-[10.5px] uppercase tracking-wider text-neutral-400 font-bold">{t(T.yours)}</p>

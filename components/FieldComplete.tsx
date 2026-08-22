@@ -88,15 +88,19 @@ export default function FieldComplete({ code }: { code: string }) {
       <div className="space-y-2 mb-4">
         {pending.map(it => { const km = KIND[it.kind] || KIND.replace; const dpeople = people.filter(p => !p.departments.length || p.departments.indexOf(km.dept) >= 0); const pick = dpeople.length ? dpeople : people; return (
           <div key={it.id} className="rounded-xl border border-neutral-200 bg-white p-3">
-            <div className="flex items-center gap-1.5">
+            {/* Kind chip + task + room on one line: the room name ("Entry & living room") was
+                squeezing the task title into a two-word column. It wraps to its own line instead. */}
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded ' + km.cls}>{km.label}</span>
-              <span className="text-sm font-semibold text-neutral-900 flex-1 min-w-0">{it.title || 'Task'}</span>
+              <span className="text-sm font-semibold text-neutral-900 flex-1 min-w-[8rem]">{it.title || 'Task'}</span>
               <span className="text-[10px] text-neutral-400">{it.room}</span>
             </div>
             {it.note ? <div className="text-[12px] text-neutral-600 mt-1">{it.note}</div> : null}
             <div className="text-[11px] text-emerald-700 mt-1">Done when: {doneWhen(it.kind)}</div>
             {it.photo_url ? <img src={it.photo_url} alt="" className="mt-2 w-full h-28 object-cover rounded-lg" /> : null}
-            <div className="mt-2 grid grid-cols-2 gap-1.5">
+            {/* iOS renders a date field at 16px minimum, which does not fit in half of a 375px
+                screen — the date read "9/1…". Assignee and date get a full line each on a phone. */}
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               <select value={it.assigneeIds && it.assigneeIds.length ? String(it.assigneeIds[0]) : ''} onChange={e => assign(it, e.target.value, pick)} disabled={busy === it.id} className="text-[12px] border border-neutral-200 rounded-lg px-2 py-1.5 bg-white">
                 <option value="">Unassigned</option>
                 {pick.map(p => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
@@ -117,9 +121,11 @@ export default function FieldComplete({ code }: { code: string }) {
           <div className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold mb-1.5">Completed · {done.length}</div>
           <div className="space-y-1.5">
             {done.map(it => { const km = KIND[it.kind] || KIND.replace; return (
-              <div key={it.id} className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
+              // Photo + title + "Open in Breezeway ↗" + Undo on one 375px line left the title with
+              // ~15 characters. min-w gives the title a floor so the two links wrap under it instead.
+              <div key={it.id} className="flex items-center gap-2 flex-wrap rounded-lg border border-emerald-100 bg-emerald-50 p-2">
                 {it.proofPhoto ? <a href={it.proofPhoto} target="_blank" rel="noreferrer"><img src={it.proofPhoto} alt="" className="w-9 h-9 rounded object-cover" /></a> : <div className="w-9 h-9 rounded bg-emerald-100" />}
-                <span className="flex-1 min-w-0">
+                <span className="flex-1 min-w-[8rem]">
                   <span className="text-[12px] font-semibold text-neutral-800 block truncate">{km.label}: {it.title}</span>
                   <span className="text-[10px] text-neutral-500">{it.room}{it.assigneeName ? ' · ' + it.assigneeName : ''}</span>
                 </span>

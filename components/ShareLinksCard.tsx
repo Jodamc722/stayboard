@@ -113,10 +113,13 @@ export function ShareLinksCard() {
     <div className="rounded-2xl border border-line bg-white p-5 mt-6">
       <div className="flex items-center gap-2 mb-1"><Link2 size={16} className="text-muted" /><h2 className="font-semibold text-ink">Vendor share links</h2></div>
       <p className="text-sm text-muted mb-4">Send these to vendors and the front desk. They open without a Lighthouse login — one shared password protects all of them.</p>
+      {/* Each row is label · URL · Copy. On a phone the 176px label plus the Copy button left about
+          90 pixels for the URL, so every link read "https://…". The label now takes the first line
+          and the URL and Copy share the second. */}
       <div className="space-y-2 mb-5">
         {links.map(l => { const href = l.path || '/vendor/' + l.v; const url = origin + href; return (
-          <div key={l.v} className="flex items-center gap-2 text-sm">
-            <span className="w-44 shrink-0 font-medium text-ink">{l.label}</span>
+          <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
+            <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
             <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
             <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
           </div>
@@ -137,8 +140,8 @@ export function ShareLinksCard() {
         <p className="text-xs text-muted mt-0.5 mb-2">Direct-booking performance for marketing partners. Booking numbers only &mdash; guest names are shortened and this password does not open any ops board. {mktSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
         <div className="space-y-2 mb-3">
           {mktLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
-            <div key={l.v} className="flex items-center gap-2 text-sm">
-              <span className="w-44 shrink-0 font-medium text-ink">{l.label}</span>
+            <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
+              <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
               <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
               <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
             </div>
@@ -156,8 +159,8 @@ export function ShareLinksCard() {
         <p className="text-xs text-muted mt-0.5 mb-2">The monthly statement review board. Reviewers on this link can mark rows and comment but see nothing else in the app. {oaSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
         <div className="space-y-2 mb-3">
           {oaLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
-            <div key={l.v} className="flex items-center gap-2 text-sm">
-              <span className="w-44 shrink-0 font-medium text-ink">{l.label}</span>
+            <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
+              <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
               <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
               <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
             </div>
@@ -184,7 +187,7 @@ export function ShareLinksCard() {
         <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>
         <p className="text-xs text-muted mt-0.5 mb-1">Required to delete ANY task or record, anywhere in the app. {adminSet ? 'Currently SET.' : 'Not set yet \u2014 Delete is locked until you set one.'}</p>
         {adminCurrent && (
-          <div className="flex items-center gap-2 mb-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 gap-y-1 mb-2 text-sm">
             <span className="text-muted">Current password:</span>
             <code className="px-2 py-1 rounded-md bg-app border border-line font-mono text-ink">{showAdminPw ? adminCurrent : '\u2022'.repeat(Math.min(adminCurrent.length, 12))}</code>
             <button onClick={() => setShowAdminPw(!showAdminPw)} className="text-xs font-medium text-brand-700 hover:underline">{showAdminPw ? 'Hide' : 'Show'}</button>

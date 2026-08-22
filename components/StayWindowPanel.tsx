@@ -285,7 +285,7 @@ export function StayWindowPanel() {
         <div className="mt-3">
           <div className="flex items-center gap-2">
             <Plus size={13} className="text-muted" />
-            <input className={`${INPUT} w-72`} placeholder="Search a listing by name or unit"
+            <input className={`${INPUT} w-full sm:w-72`} placeholder="Search a listing by name or unit"
               value={q} onChange={e => setQ(e.target.value)} />
           </div>
           {candidates.length > 0 && (
@@ -311,11 +311,14 @@ export function StayWindowPanel() {
         {cfg.log.length === 0 && <p className="text-[13px] text-muted">Nothing has run yet.</p>}
         <div className="space-y-1.5">
           {cfg.log.slice(0, 12).map((e, i) => (
-            <div key={i} className="text-[12.5px] flex items-start gap-2">
+            /* Four fixed-width columns (36+40+24 = 400px) in a row that never wrapped: on a phone
+               the run log ran straight off the card. Below sm the columns size to their text
+               and wrap; the desktop column widths are untouched. */
+            <div key={i} className="text-[12.5px] flex items-start gap-x-2 gap-y-0.5 flex-wrap sm:flex-nowrap">
               <span className={`mt-0.5 inline-block w-1.5 h-1.5 rounded-full ${e.ok && e.verified ? 'bg-emerald-500' : e.ok ? 'bg-amber-500' : 'bg-red-500'}`} />
-              <span className="text-muted w-36 shrink-0">{new Date(e.at).toLocaleString()}</span>
-              <span className="text-ink font-medium w-40 shrink-0">{e.label}</span>
-              <span className="text-muted w-24 shrink-0">{e.direction === 'open' ? 'short' : 'long'} · {e.minNights}n</span>
+              <span className="text-muted w-auto sm:w-36 shrink-0">{new Date(e.at).toLocaleString()}</span>
+              <span className="text-ink font-medium w-auto sm:w-40 shrink-0">{e.label}</span>
+              <span className="text-muted w-auto sm:w-24 shrink-0">{e.direction === 'open' ? 'short' : 'long'} · {e.minNights}n</span>
               <span className="text-muted">{e.note}</span>
             </div>
           ))}

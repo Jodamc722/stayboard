@@ -131,7 +131,9 @@ export function CleanLog({ from, to, market = 'all', label, onClose }: {
             ))}
           </div>
 
-          <div className="overflow-x-auto">
+          {/* Bleed the scroller to the edge of the glass on a phone — an 880px table clipped inside
+              the card's 12px gutter reads as broken rather than as scrollable. */}
+          <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
             {view === 'log' ? (
               <table className="w-full text-[12.5px] min-w-[880px]">
                 <thead>

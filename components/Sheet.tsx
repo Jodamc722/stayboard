@@ -45,8 +45,12 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, wide }
         aria-modal="true"
         aria-label={title}
         className={
-          'relative w-full bg-white shadow-2xl flex flex-col overflow-hidden ' +
-          'rounded-t-2xl max-h-[92vh] ' +
+          // 92vh was a lie on a phone: Safari counts the URL bar as part of the viewport, so a full
+          // sheet grew taller than the glass and its footer button sat below the fold with nothing
+          // to scroll it into view. dvh is what you can actually see. px-safe is for landscape,
+          // where the notch is a side edge and the first character of a label lands under it.
+          'relative w-full bg-white shadow-2xl flex flex-col overflow-hidden px-safe ' +
+          'rounded-t-2xl max-h-[92dvh] ' +
           'sm:rounded-2xl sm:max-h-[86vh] sm:mx-4 ' +
           (wide ? 'sm:max-w-3xl' : 'sm:max-w-xl')
         }
@@ -66,7 +70,10 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, wide }
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4">{children}</div>
+        {/* Body scrolls inside the sheet; the page behind never moves. With no footer the body IS
+            the bottom edge of the sheet, so it carries the home-indicator padding itself —
+            otherwise the last field of a footer-less sheet sits under the indicator. */}
+        <div className={'flex-1 overflow-y-auto px-4 sm:px-5 py-4' + (footer ? '' : ' pb-[max(1rem,env(safe-area-inset-bottom))]')}>{children}</div>
 
         {footer ? (
           <div className="border-t border-line bg-app/60 px-4 sm:px-5 py-3 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">

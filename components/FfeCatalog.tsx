@@ -291,7 +291,7 @@ export function FfeCatalog() {
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input value={term} onChange={e => setTerm(e.target.value)} placeholder="Search code, name, size, vendor…"
-            className="rounded-xl border border-line bg-white pl-8 pr-3 py-2 text-[12.5px] w-64" />
+            className="rounded-xl border border-line bg-white pl-8 pr-3 py-2 text-[12.5px] w-full sm:w-64" />
         </div>
         <select value={cat} onChange={e => setCat(e.target.value)}
           className="rounded-xl border border-line bg-white px-2.5 py-2 text-[12.5px]">

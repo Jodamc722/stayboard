@@ -162,10 +162,11 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
       {msg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {msg}</div>}
 
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-line flex items-center gap-3">
+        {/* Title + a 224px search box did not fit on a 375px screen: the box ran off the card. */}
+        <div className="px-4 py-3 border-b border-line flex items-center gap-3 flex-wrap gap-y-2">
           <span className="text-sm font-bold text-ink">People with access</span>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, email, role…"
-            className="ml-auto text-[12px] rounded-lg border border-line bg-app px-2.5 py-1.5 w-56 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            className="ml-auto text-[12px] rounded-lg border border-line bg-app px-2.5 py-1.5 w-full sm:w-56 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </div>
         {loading ? (
           <div className="px-4 py-10 text-center text-sm text-muted">Loading…</div>
@@ -230,7 +231,8 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
             </div>
           </div>
         </button>
-        <div className="flex items-center gap-2">
+        {/* Edit / Disable / Password / Delete on one unbreakable line ran past the card edge. */}
+        <div className="flex items-center gap-2 flex-wrap gap-y-1.5">
           <button onClick={onToggle}
             className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-semibold transition-colors ${expanded ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-brand-300 text-brand-700 hover:bg-brand-50'}`}>
             <SlidersHorizontal size={13} /> {expanded ? 'Close' : 'Edit'}
@@ -346,9 +348,12 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
                     className="text-[11px] font-semibold text-muted hover:text-ink underline">Reset all to role</button>
                 )}
               </div>
-              <div className="overflow-x-auto rounded-lg border border-line bg-white max-h-[360px] overflow-y-auto">
-                <table className="w-full text-[12px]">
-                  <thead className="bg-app text-muted sticky top-0">
+              {/* A three-column reference grid: it keeps its column widths and scrolls sideways
+                  inside its own box rather than squeezing the role select down to nothing.
+                  z-10 on the sticky head or the rows scroll through it. */}
+              <div className="lh-hscroll rounded-lg border border-line bg-white max-h-[360px] overflow-y-auto">
+                <table className="w-full min-w-[420px] text-[12px]">
+                  <thead className="bg-app text-muted sticky top-0 z-10">
                     <tr>
                       <th className="text-left font-semibold px-2.5 py-1.5">Tab</th>
                       <th className="text-left font-semibold px-2.5 py-1.5 whitespace-nowrap">From role</th>

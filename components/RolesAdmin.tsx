@@ -170,7 +170,9 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
                   {FEATURES.filter(f => dPerms[f.key] !== 'off').map(f => <option key={f.key} value={f.path}>{f.label}</option>)}
                 </select>
               </div>
-              <div className="ml-auto flex items-center gap-2">
+              {/* Preview / Duplicate / Delete / Save changes on one unbreakable line ran off the
+                  right of a phone, taking Save with them. */}
+              <div className="ml-auto flex items-center gap-2 flex-wrap gap-y-2">
                 <button onClick={() => setPreview(true)}
                   title="See exactly what someone on this role sees — including unsaved changes"
                   className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-2.5 py-1.5 hover:bg-brand-100"><Eye size={13} /> Preview</button>
@@ -219,7 +221,9 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
                                 className="text-[9px] font-bold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-px shrink-0">New</span>
                             )}
                           </span>
-                          <div className="inline-flex rounded-lg border border-line overflow-hidden">
+                          {/* shrink-0: on a phone the off/view/edit/full control was being squeezed
+                              instead of the tab name truncating, which is what should give. */}
+                          <div className="inline-flex shrink-0 rounded-lg border border-line overflow-hidden">
                             {LEVEL_OPTS.map(o => {
                               const active = dPerms[k] === o.key
                               return (
@@ -253,7 +257,9 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
           exactly as they are for the real person; each visible tab carries its level. */}
       {preview && role && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setPreview(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          {/* 85vh counts Safari's URL bar, so the footnote at the bottom of the preview was below
+              the glass with nothing to scroll. dvh is what you can actually see. */}
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[85dvh] sm:max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-line flex items-center gap-2">
               <Eye size={15} className="text-brand-600" />
               <div>

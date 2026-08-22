@@ -185,7 +185,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
           <input value={genPrompt} onChange={e => setGenPrompt(e.target.value)} placeholder="Optional: make sure something gets included (e.g. “mention the rooftop pool and free garage parking”)"
             className="mt-2 w-full sm:w-[420px] text-[12px] rounded-lg border border-line bg-app px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:flex-shrink-0">
           <button onClick={loadCurrent} disabled={busy} title="Load the current Guesty title + descriptions to edit by hand and push \u2014 no AI"
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
             <Pencil size={15} /> Edit current

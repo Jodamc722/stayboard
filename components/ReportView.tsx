@@ -1154,10 +1154,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     .filter(k => !!k && (k === 'hero' || !isHidden(k as string))).length + customSecs.length
 
   return (
-    <div className="min-h-screen" style={{ background: t.bg, color: t.ink, '--ed-bg': t.edBg, '--ed-border': t.edBorder, '--t-card': t.card, '--t-border': t.toolbarBorder, '--t-ink': t.ink, '--t-accent': t.accent } as Any}>
+    /* px-safe: this report is the share link — it renders with NO Shell around it, so the padding
+       that keeps content clear of an iPhone's notch in landscape has to come from here. It sits on
+       the outer element so the reading column's own px-5 gutter is untouched. */
+    <div className="min-h-screen px-safe" style={{ background: t.bg, color: t.ink, '--ed-bg': t.edBg, '--ed-border': t.edBorder, '--t-card': t.card, '--t-border': t.toolbarBorder, '--t-ink': t.ink, '--t-accent': t.accent } as Any}>
       {/* toolbar (edit only appears for logged-in team) */}
       {canEdit && (
-        <div className="sb-noprint sticky top-0 z-20 flex items-center justify-end gap-2 px-4 py-2.5 flex-wrap" style={{ background: t.toolbarBg, backdropFilter: 'blur(6px)', borderBottom: '1px solid ' + t.rule }}>
+        /* The editing toolbar wraps to five or six rows on a phone; sticky at that height it would
+           cover most of the report it is meant to be editing, so it only sticks from 640px up. */
+        <div className="sb-noprint z-20 sm:sticky sm:top-0 flex items-center justify-end gap-2 px-4 py-2.5 flex-wrap" style={{ background: t.toolbarBg, backdropFilter: 'blur(6px)', borderBottom: '1px solid ' + t.rule }}>
           <div className="mr-auto flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
               {Object.keys(THEMES).map(k => (
@@ -1322,6 +1327,24 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .sb-present { position: fixed; inset: 0; height: 100vh; width: 100vw; overflow-y: scroll; scroll-snap-type: y mandatory; z-index: 40; background: ${t.bg}; -ms-overflow-style: none; scrollbar-width: none; }
         .sb-present::-webkit-scrollbar { display: none; }
         .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; padding: 5vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
+        /* PHONE: Safari counts the URL bar inside 100vh, so a presented slide was taller than the
+           glass and the Exit button and slide dots sat permanently below the fold. dvh is what you
+           can actually see; on a desktop dvh and vh are the same number. */
+        @supports (height: 100dvh) {
+          .sb-present { height: 100dvh; }
+          .sb-present > section, .sb-present > header { min-height: 100dvh; }
+        }
+        /* Two grids below are laid out with inline grid-template-columns (their widths are computed
+           in the component), which no utility class can override — so their phone shape lives here.
+           Nothing in this block applies above 639px: the desktop report is untouched. */
+        @media (max-width: 639px) {
+          /* Pacing: metric | ours | comps | delta is four columns in ~295px, which crushes the
+             two big figures. Metric and delta take a full line each; the two figures share one. */
+          .sb-pacerow { grid-template-columns: 1fr 1fr !important; }
+          .sb-pacerow .sb-pace-span { grid-column: 1 / -1; }
+          /* Stacked, the fee-summary cells kept the divider that only makes sense in a row. */
+          .sb-feesplit > div { border-left: 0 !important; }
+        }
         .sb-present > header { text-align: center; }
         .sb-present > footer { display: none; }
         .sb-present > section > *, .sb-present > header > * { max-width: 1080px; width: 100%; margin-left: auto; margin-right: auto; }
@@ -1712,6 +1735,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   )}
                   {/* per-listing table (filtered) */}
                   <div className="mt-4 overflow-hidden rounded-2xl border" style={{ borderColor: t.cardBorder }}>
+                    {/* Listing · revenue · occ · ADR · RevPAR is five columns of money in 335px of
+                        phone — every figure wrapped mid-number. Header and rows share one sideways
+                        scroller so they stay in step; above 640px the grid is fluid as before. */}
+                    <div className="lh-hscroll">
+                    <div className="min-w-[560px] sm:min-w-0">
                     <div className="grid gap-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider" style={{ background: t.chip, color: t.muted, gridTemplateColumns: '1.7fr 1fr 0.8fr 1fr 1fr' }}>
                       <div>Listing</div><div className="text-right">Revenue</div><div className="text-right">Occ</div><div className="text-right">ADR</div><div className="text-right">RevPAR</div>
                     </div>
@@ -1727,6 +1755,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       </div>
                       )
                     })}
+                    </div>
+                    </div>
                     {rows.length === 0 && <div className="px-4 py-6 text-center text-[13px]" style={{ color: t.muted }}>No listings match this filter.</div>}
                   </div>
                 </div>
@@ -1748,11 +1778,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </p>
               <div className="mt-6 space-y-4">
                 {(c.pacing.rows || []).map((r: Any, i: number) => (
-                  <div key={i} className="relative rounded-2xl p-5 shadow-sm border grid items-center gap-3" style={{ background: t.card, borderColor: t.cardBorder, gridTemplateColumns: 'minmax(6rem,1.15fr) 1fr 1fr minmax(5rem,1fr)' }}>
+                  <div key={i} className="sb-pacerow relative rounded-2xl p-5 shadow-sm border grid items-center gap-3" style={{ background: t.card, borderColor: t.cardBorder, gridTemplateColumns: 'minmax(6rem,1.15fr) 1fr 1fr minmax(5rem,1fr)' }}>
                     {edit && (
                       <button onClick={() => mutate(d => d.pacing.rows.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                     )}
-                    <div className="text-sm font-bold" style={{ color: t.ink }}>{r.metric}</div>
+                    <div className="sb-pace-span text-sm font-bold" style={{ color: t.ink }}>{r.metric}</div>
                     <div className="text-center">
                       <p className="text-2xl font-black tabular-nums" style={{ color: t.ink }}><Ed v={r.ours || ''} set={v => patch('pacing.rows.' + i + '.ours', v)} edit={edit} /></p>
                       <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.accent }}>{meta.scopeLabel || 'Us'}</p>
@@ -1761,7 +1791,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <p className="text-2xl font-black tabular-nums" style={{ color: t.muted }}><Ed v={r.comps || ''} set={v => patch('pacing.rows.' + i + '.comps', v)} edit={edit} /></p>
                       <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: t.muted }}>Comp set</p>
                     </div>
-                    <div className="text-right">
+                    <div className="sb-pace-span text-right">
                       <p className="text-lg font-black" style={{ color: (String(r.delta || '').trim().indexOf('-') === 0 || String(r.delta || '').trim().indexOf('−') === 0) ? t.downGray : t.good }}><Ed v={r.delta || ''} set={v => patch('pacing.rows.' + i + '.delta', v)} edit={edit} /></p>
                       <p className="text-[10px] uppercase tracking-wider" style={{ color: t.muted }}>vs. comps</p>
                     </div>
@@ -1890,8 +1920,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       ))}
                     </div>
 
+                    {/* The statement tables already scrolled sideways; what they lacked was a floor
+                        width, so on a phone the browser squeezed the columns instead and "Net to
+                        owner" wrapped to three lines per cell. The min width is dropped at 640px,
+                        so desktop — and print, which lays out far wider — is unchanged. */}
                     <div className="mt-5 overflow-x-auto">
-                      <table className="w-full text-[12.5px]">
+                      <table className="w-full min-w-[480px] sm:min-w-0 text-[12.5px]">
                         <thead>
                           <tr style={{ color: t.muted }}>
                             <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Month</th>
@@ -1922,7 +1956,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               {Array.isArray(c.statement.owners) && c.statement.owners.length > 1 && (
                 <div className="mt-4 rounded-2xl p-5 shadow-sm border overflow-x-auto" style={{ background: t.card, borderColor: t.cardBorder }}>
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-3" style={{ color: t.muted }}>BY OWNER</p>
-                  <table className="w-full text-[12.5px]">
+                  <table className="w-full min-w-[540px] sm:min-w-0 text-[12.5px]">
                     <thead>
                       <tr style={{ color: t.muted }}>
                         <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Owner</th>
@@ -1989,7 +2023,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       Net per unit after commission and charges. Bars are scaled to the largest unit.
                     </p>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-[12.5px]">
+                      <table className="w-full min-w-[640px] sm:min-w-0 text-[12.5px]">
                         <thead>
                           <tr style={{ color: t.muted }}>
                             <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Unit</th>
@@ -2066,7 +2100,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </p>
 
                     {/* Rental → deductions → credits → net, so the arithmetic is visible. */}
-                    <div className="grid gap-0 sm:grid-cols-4 mb-4">
+                    <div className="sb-feesplit grid gap-0 sm:grid-cols-4 mb-4">
                       {[
                         { l: 'Rental income', v: rentalTop, c: t.ink },
                         { l: 'Charges and commission', v: totCharge, c: t.accent },
@@ -2081,7 +2115,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
 
                     <div className="overflow-x-auto">
-                      <table className="w-full text-[12.5px]">
+                      <table className="w-full min-w-[520px] sm:min-w-0 text-[12.5px]">
                         <thead>
                           <tr style={{ color: t.muted }}>
                             <th className="text-left font-bold uppercase tracking-[0.12em] text-[10px] pb-2">Line</th>

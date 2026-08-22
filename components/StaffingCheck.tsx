@@ -27,7 +27,9 @@ export function StaffingCheck({ date }: { date?: string }) {
   const gap = s.nothingAssigned > 0
   return (
     <div className={'rounded-2xl border mb-3 overflow-hidden ' + (gap ? 'border-amber-300 bg-amber-50/60' : 'border-line bg-white')}>
-      <button onClick={() => setOpen(o => !o)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left">
+      {/* Four separate phrases on one non-wrapping line — on a phone each one shrank into its own
+          narrow column of broken text. They wrap as whole phrases below 640px. */}
+      <button onClick={() => setOpen(o => !o)} className="w-full px-4 py-2.5 flex items-center gap-2 flex-wrap sm:flex-nowrap text-left">
         {gap ? <AlertTriangle size={14} className="text-amber-700 flex-shrink-0" /> : <Users size={14} className="text-muted flex-shrink-0" />}
         <span className="text-[12.5px] font-semibold text-ink">Staffing check</span>
         <span className="text-[12px] text-muted">{s.clockedIn} clocked in · {s.onToday} on today</span>

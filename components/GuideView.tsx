@@ -349,7 +349,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
 
       {/* top bar */}
       <div style={{ position: 'sticky', top: 0, zIndex: 40, background: 'rgba(255,255,255,.86)', backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(22,32,75,.08)' }}>
-        <div className={wrap + ' flex items-center gap-4 py-3'}>
+        <div className={wrap + ' flex flex-wrap items-center gap-x-4 gap-y-2 py-3'}>
           <div className="font-semibold tracking-tight" style={{ fontFamily: SERIF, fontSize: 18 }}>{g.hero?.eyebrow ? String(g.hero.eyebrow).split(' - ')[0] : 'Your stay'}</div>
           <nav className="hidden md:flex items-center gap-5 text-[13px]" style={{ color: 'rgba(22,32,75,.7)' }}>
             {nav.map(n => <a key={n.id} href={'#' + n.id} style={{ textDecoration: 'none', color: 'inherit' }}>{n.label}</a>)}
@@ -402,7 +402,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
               : <div style={{ fontSize: 12, letterSpacing: '.2em', textTransform: 'uppercase', fontWeight: 700, color: 'rgba(255,255,255,.85)' }}>{g.hero?.eyebrow}</div>}
             {edit
               ? <div className="mt-3"><Ed v={g.hero?.title || ''} on={s => set(['hero', 'title'], s)} area rows={2} style={{ color: '#16204B', fontFamily: SERIF, fontSize: 30 }} /></div>
-              : <h1 style={{ fontFamily: SERIF, fontSize: 52, lineHeight: 1.05, marginTop: 14, letterSpacing: '-.01em' }}>{g.hero?.title}</h1>}
+              : <h1 style={{ fontFamily: SERIF, fontSize: 'clamp(32px, 8.125vw, 52px)', lineHeight: 1.05, marginTop: 14, letterSpacing: '-.01em' }}>{g.hero?.title}</h1>}
             {edit
               ? <div className="mt-3"><Ed v={g.hero?.subtitle || ''} on={s => set(['hero', 'subtitle'], s)} area rows={3} style={{ color: '#16204B' }} /></div>
               : <p style={{ fontSize: 18, lineHeight: 1.6, marginTop: 16, color: 'rgba(255,255,255,.92)', maxWidth: 640 }}>{g.hero?.subtitle}</p>}
@@ -517,7 +517,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
             <div onClick={() => setCalOpen(false)}
               style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(14,21,51,.5)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
               <div className="gd-card gd-shadow" onClick={e => e.stopPropagation()}
-                style={{ padding: 18, width: '100%', maxWidth: 760, maxHeight: '88vh', overflowY: 'auto' }}>
+                style={{ padding: 18, width: '100%', maxWidth: 760, maxHeight: '88dvh', overflowY: 'auto' }}>
               <div className="flex items-center justify-between mb-3">
                 <Btn onClick={() => setCalMonth(shiftMonth(calMonth, -1))}>Prev</Btn>
                 <div style={{ fontFamily: SERIF, fontSize: 21 }}>{monthLabel(calMonth)}</div>
@@ -527,7 +527,8 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                   <Btn onClick={() => setCalOpen(false)} tone="solid">Close</Btn>
                 </div>
               </div>
-              <div className="grid grid-cols-7 gap-1">
+              <div className="lh-hscroll -mx-2 px-2 sm:mx-0 sm:px-0">
+              <div className="grid grid-cols-7 gap-1 min-w-[520px] sm:min-w-0">
                 {DOW_SHORT.map(d => (
                   <div key={d} style={{ fontSize: 10.5, letterSpacing: '.1em', textTransform: 'uppercase', fontWeight: 700, color: 'rgba(22,32,75,.45)', textAlign: 'center', paddingBottom: 4 }}>{d}</div>
                 ))}
@@ -558,6 +559,7 @@ export function GuideView({ slug, initial, canEdit: canEditInit }: { slug: strin
                     </button>
                   )
                 })}
+              </div>
               </div>
               <p className="text-[12px] mt-3" style={{ color: 'rgba(22,32,75,.55)' }}>
                 {edit

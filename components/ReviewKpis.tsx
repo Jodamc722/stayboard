@@ -101,7 +101,9 @@ function TagFold({ title, rows, tone }: { title: string; rows: any[]; tone: 'bad
           head={() => (<>
             <span className="flex-1 text-ink truncate">{t.tag}</span>
             <span className="text-[10.5px] text-muted flex-shrink-0">{t.unitCount} unit{t.unitCount === 1 ? '' : 's'}</span>
-            <span className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
+            {/* The bar restates the number next to it. On a phone 96px of it left the tag name
+                about two characters wide, so it shrinks below sm and is untouched above. */}
+            <span className="w-10 sm:w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
               <span className={'block h-full ' + bar} style={{ width: Math.max(4, (t.n / max) * 100) + '%' }} />
             </span>
             <span className="w-7 text-right text-muted tabular-nums flex-shrink-0">{t.n}</span>
@@ -174,21 +176,26 @@ export function ReviewKpis() {
   return (
     <section className="rounded-xl border border-line bg-white mb-5">
       {/* one line, always visible */}
-      <div className="flex items-center gap-2 px-3 py-2">
+      {/* On a phone this "one line" is four period buttons + two date fields + a channel select +
+          Refresh — about 420px of controls on a 375px screen, which used to drag the whole page
+          sideways. It wraps onto as many lines as it needs instead; on desktop it still fits on one. */}
+      <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
         <button onClick={toggle} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted font-semibold hover:text-ink">
           <ChevronRight size={13} className={'transition-transform ' + (open ? 'rotate-90' : '')} />
           Reputation
         </button>
         {!open && <span className="text-[12.5px] text-ink font-medium">{line}</span>}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex items-center gap-1.5 flex-wrap gap-y-1.5">
           {PERIODS.map(p => (
             <button key={p.d} onClick={() => { setDays(p.d); setFrom(''); setTo('') }}
               className={'text-[11px] font-semibold px-1.5 py-0.5 rounded ' + (days === p.d && !from ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{p.l}</button>
           ))}
+          {/* iOS forces every input to 16px (it zooms the page otherwise), so a 112px date box
+              clipped its own value on a phone. Wider below sm, authored width from sm up. */}
           <input type="date" value={from} onChange={e => setFrom(e.target.value)} title="From"
-            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white w-[112px]" />
+            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white w-[132px] sm:w-[112px]" />
           <input type="date" value={to} onChange={e => setTo(e.target.value)} title="To"
-            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white w-[112px]" />
+            className="text-[11px] border border-line rounded px-1 py-0.5 bg-white w-[132px] sm:w-[112px]" />
           <select value={channel} onChange={e => setChannel(e.target.value)}
             className="text-[11px] border border-line rounded px-1.5 py-0.5 bg-white">
             <option value="all">All channels</option>

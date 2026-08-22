@@ -869,7 +869,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         {/* notes and comments live ON the row, visible at all times — findings and the
             conversation about them never hide behind a click */}
         {!open && (it.note || it.comments.length > 0) && (
-          <div className="px-4 pb-2.5 pl-11 -mt-1 space-y-1">
+          /* The 44px indent that lines notes up under the row title on desktop is an eighth of a
+             phone screen — indent only from 640px up. */
+          <div className="px-4 pb-2.5 sm:pl-11 -mt-1 space-y-1">
             {it.note && (
               <div className="flex items-start gap-1.5 max-w-2xl text-[11px] text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-200 rounded-lg px-2 py-1">
                 <StickyNote size={11} className="mt-0.5 shrink-0 text-amber-600" />
@@ -898,7 +900,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         )}
 
         {open && (
-          <div className="px-4 pb-3 pl-11">
+          <div className="px-4 pb-3 sm:pl-11">
             {worst && (
               <div className="space-y-1 mb-2">
                 {it.flags.map((f, i) => (
@@ -965,8 +967,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               )}
             </div>
             {it.lines.length > 0 && (
+              /* Four columns of statement detail (date, label, code, amount). On a phone the code
+                 and the amount were being crushed to a couple of characters each, so the table
+                 keeps its widths and scrolls inside the card instead. */
               <div className="rounded-xl border border-line overflow-hidden mb-2 max-w-2xl">
-                <table className="w-full text-xs">
+                <div className="lh-hscroll">
+                <table className="w-full min-w-[400px] sm:min-w-0 text-xs">
                   <tbody>
                     {it.lines.map((l, i) => (
                       <tr key={i} className={i % 2 ? 'bg-app/50' : 'bg-white'}>
@@ -991,6 +997,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     </tr>
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
             {/* Pull THIS booking again from Guesty. Folio edits (fee breakouts, corrections) are
@@ -1117,7 +1124,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Owner statements</div>
           <h1 className="text-lg font-semibold text-ink">Statement audit {data ? '· ' + data.label : ''}</h1>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        {/* Worklist/Statements/Prep + the month select + three icon buttons are ~530px of toolbar:
+            on a phone they used to run off the side of the screen. Let them wrap. */}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <div className="flex rounded-lg border border-line bg-white overflow-hidden">
             <button onClick={() => { setView('work') }}
               className={'inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 transition ' + (view === 'work' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
@@ -1386,7 +1395,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         <>
           {/* progress + money strip */}
           <div className="rounded-2xl border border-line bg-white shadow-soft p-4">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            {/* Nine label+number blocks. Wrapped as a flex row on a phone they landed in a ragged
+                one-and-a-bit-per-line stagger; a plain two-column grid reads down the screen.
+                From 640px it is the same wrapping flex row it has always been. */}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:flex sm:flex-wrap sm:items-center sm:gap-y-2">
               {/* Progress counts ONLY rows that needed a person. Clean rows are reported separately
                   instead of being folded in — see the status ladder in lib/owner-audit.ts. */}
               <div>
@@ -1394,7 +1406,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 <div className="text-sm font-semibold text-ink">
                   {total === 0 ? 'Nothing flagged this month' : t!.done + ' of ' + total + ' · ' + pct + '%'}
                 </div>
-                <div className="mt-1.5 w-44 h-[8px] rounded-full bg-brand-100 overflow-hidden">
+                <div className="mt-1.5 w-full sm:w-44 h-[8px] rounded-full bg-brand-100 overflow-hidden">
                   <div className="h-full rounded-full bg-brand-600 transition-[width] duration-500" style={{ width: pct + '%' }} />
                 </div>
                 <div className="text-[10px] text-muted mt-1">{t!.clear.toLocaleString()} more rows had nothing flagged</div>
@@ -1402,7 +1414,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Signed off</div>
                 <div className="text-sm font-semibold text-ink">{t!.signedOff} of {t!.statements} statements</div>
-                <div className="mt-1.5 w-28 h-[8px] rounded-full bg-emerald-100 overflow-hidden">
+                <div className="mt-1.5 w-full sm:w-28 h-[8px] rounded-full bg-emerald-100 overflow-hidden">
                   <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500" style={{ width: (t!.statements ? Math.round((t!.signedOff / t!.statements) * 100) : 0) + '%' }} />
                 </div>
               </div>
@@ -1427,7 +1439,58 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ STATEMENTS: overview grid ═══ */}
           {view === 'stmt' && !curOwner && (
             <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-              <table className="w-full text-sm">
+              {/* PHONE: eight columns of statement state will not fit, and this is the list you
+                  actually work from — so the same rows render as tapable cards below 640px and the
+                  table takes over from `sm:` up. Same data, same click, nothing dropped. */}
+              <div className="divide-y divide-line sm:hidden">
+                {data.owners.map(o => {
+                  const s = stats[o.ownerId] || { notes: 0, comments: 0 }
+                  const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
+                  const toClose = o.done + o.open
+                  const p = toClose ? Math.round((o.done / toClose) * 100) : 100
+                  return (
+                    <button key={o.ownerId} onClick={() => { setStmtOwner(o.ownerId); window.scrollTo({ top: 0 }) }}
+                      className="w-full text-left px-4 py-3 active:bg-app/60">
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-ink truncate">{o.ownerName}</div>
+                          <div className="text-[11px] text-muted">{o.items} row{o.items === 1 ? '' : 's'}{o.open ? ' · ' + o.open + ' to review' : ''}{o.hasStatement ? '' : ' · no statement generated'}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-semibold text-ink whitespace-nowrap">{o.dueToOwner != null ? fmt(o.dueToOwner) : fmt(o.net)}</div>
+                          <div className="text-[10px] uppercase tracking-wide text-muted">payout</div>
+                        </div>
+                        <ChevronRight size={15} className="text-muted shrink-0 mt-0.5" />
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {!o.hasStatement
+                          ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No stmt</span>
+                          : (() => { const b = tieBadge(o); return <span title={b.help} className={'text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset ' + b.cls}>{o.isDraft && !o.hasPayout ? 'Draft' : o.ties ? b.text : (o.hasPayout ? fmt(off || 0) : 'balance ' + fmt(off || 0))}</span> })()}
+                        {o.high > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.high}>{o.high} high</span>}
+                        {o.reviewFlags > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.review}>{o.reviewFlags} review</span>}
+                        {o.high === 0 && o.reviewFlags === 0 && <span className="text-[10px] text-muted">clean</span>}
+                        {o.stmtNote && <span title={o.stmtNote} className="inline-flex items-center px-1 rounded bg-amber-50 ring-1 ring-inset ring-amber-200"><StickyNote size={11} className="text-amber-600" /></span>}
+                        {s.notes > 0 && <span className="inline-flex items-center gap-0.5 text-[11px] text-muted"><StickyNote size={11} className="text-amber-600" /> {s.notes}</span>}
+                        {s.comments > 0 && <span className="inline-flex items-center gap-0.5 text-[11px] text-muted"><MessageSquare size={11} className="text-brand-600" /> {s.comments}</span>}
+                        {o.signOff
+                          ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200"><ShieldCheck size={11} /> {shortWho(o.signOff.by)}</span>
+                          : o.open > 0
+                            ? <span className="text-[11px] text-muted">{o.open} open</span>
+                            : <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-brand-50 text-brand-700 ring-brand-200">Ready to sign</span>}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <div className="w-16 h-[6px] rounded-full bg-brand-100 overflow-hidden">
+                          <div className={'h-full rounded-full ' + (p === 100 ? 'bg-emerald-500' : 'bg-brand-600')} style={{ width: p + '%' }} />
+                        </div>
+                        <span className="text-[11px] text-muted whitespace-nowrap" title={o.clear + ' rows had nothing flagged'}>
+                          {toClose ? o.done + '/' + toClose + ' closed out' : 'nothing flagged'}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              <table className="hidden sm:table w-full text-sm">
                 <thead>
                   <tr className="text-left text-[10px] font-semibold uppercase tracking-wide text-muted border-b border-line">
                     <th className="px-4 py-2.5">Owner</th>
@@ -1512,8 +1575,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <button disabled={stmtIdx >= data.owners.length - 1} onClick={() => { setStmtOwner(data.owners[stmtIdx + 1].ownerId); window.scrollTo({ top: 0 }) }}
                     className="p-1.5 rounded-lg border border-line bg-white hover:bg-app disabled:opacity-30"><ChevronRight size={14} className="text-muted" /></button>
                 </div>
-                <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
-                  <div>
+                {/* Same story as the totals strip: eight money blocks read as a two-column list on
+                    a phone, and as the original wrapping row from 640px up. */}
+                <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:flex sm:flex-wrap sm:items-end sm:gap-y-2">
+                  <div className="col-span-2 sm:col-auto">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">{data.label} statement</div>
                     <div className="text-lg font-semibold text-ink">{curOwner.ownerName}</div>
                     {!curOwner.hasStatement && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">No statement generated</span>}
@@ -1598,7 +1663,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                             {flagged > 0 && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + FLAG_CLS.review}>{flagged} flagged</span>}
                             {openN > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">{openN} open</span>}
                             {notesN > 0 && <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-brand-700 bg-brand-50 ring-1 ring-inset ring-brand-200 px-1.5 py-0.5 rounded-full"><MessageSquare size={10} /> {notesN}</span>}
-                            <span className="ml-auto flex items-center gap-4 text-right">
+                            {/* Rental / avg / commission / net: on a phone they wrapped onto their
+                                own line anyway, so give them the whole line and space them out. */}
+                            <span className="ml-auto flex w-full justify-between sm:w-auto sm:justify-start items-center gap-4 text-right">
                               <span><span className="text-[10px] uppercase tracking-wide text-muted block">Rental</span><span className="text-sm font-semibold text-ink">{fmt0(rental)}</span></span>
                               <span><span className="text-[10px] uppercase tracking-wide text-muted block">Avg/n</span><span className="text-sm font-semibold text-ink">{nights > 0 ? fmt0(rental / nights) : '—'}</span></span>
                               <span><span className="text-[10px] uppercase tracking-wide text-muted block">Comm.</span><span className="text-sm font-semibold text-ink">{fmt0(commission)}</span></span>
@@ -1745,7 +1812,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                                 className="text-[11px] font-medium px-2 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink disabled:opacity-40">Reopen</button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1.5">
+                            /* Chips + "Edit in Guesty" + the name box + "Mark broken out" is far
+                               wider than a phone; without wrap the row ran off the screen. */
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {p.noFees && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200" title="Expedia-family booking with NO fees on the folio at all — the fees were never set up on this reservation">⚠ Fees not set up</span>
                               )}
@@ -1950,10 +2019,10 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <option value="">All owners</option>
                   {data.owners.map(o => <option key={o.ownerId} value={o.ownerId}>{o.ownerName}</option>)}
                 </select>
-                <div className="relative">
+                <div className="relative w-full sm:w-auto">
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, code…"
-                    className="text-xs border border-line rounded-lg pl-7 pr-2.5 py-1.5 w-48 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                    className="text-xs border border-line rounded-lg pl-7 pr-2.5 py-1.5 w-full sm:w-48 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 </div>
                 {(fStatus || fFlag || fTag || fSource || fOwner || q || fFresh) && (
                   <button onClick={() => { setFStatus(''); setFFlag(''); setFTag(''); setFSource(''); setFOwner(''); setQ(''); setFFresh(false) }}

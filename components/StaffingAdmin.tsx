@@ -155,8 +155,10 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
           <h4 className="text-[12px] font-semibold text-ink inline-flex items-center gap-1.5"><Building2 size={13} /> Agencies & fees</h4>
           <button onClick={addAgency} disabled={dis} className="text-[11px] font-semibold text-brand-700 hover:text-brand-800 inline-flex items-center gap-1 disabled:opacity-50"><Plus size={12} /> Add agency</button>
         </div>
+        {/* A w-full table inside a scroller shrinks to the phone instead of scrolling: the three
+            number inputs were being crushed to a single digit. min-w makes it scroll properly. */}
         <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full text-[12px]">
+          <table className="w-full text-[12px] min-w-[600px]">
             <thead className="bg-app text-muted">
               <tr>
                 {['Agency', 'Markup %', '$ / hour', 'Flat / invoice', 'Active'].map(h => (
@@ -219,9 +221,11 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
             {diag.locations === 0 && <span className="text-amber-700"> — could not reach Homebase; check the API key.</span>}
           </p>
         )}
+        {/* Seven columns of selects and rates. min-w so they keep their widths and the box scrolls;
+            z-10 on the sticky head so rows do not show through it while you scroll. */}
         <div className="overflow-x-auto rounded-xl border border-line max-h-[420px] overflow-y-auto">
-          <table className="w-full text-[12px]">
-            <thead className="bg-app text-muted sticky top-0">
+          <table className="w-full text-[12px] min-w-[820px]">
+            <thead className="bg-app text-muted sticky top-0 z-10">
               <tr>{['Name', 'Agency', 'Role', 'Area', 'Rate/hr', 'Agency cost/hr', 'Active'].map(h => (
                 <th key={h} className="text-left font-semibold px-2.5 py-1.5 whitespace-nowrap">{h}</th>))}
               </tr>

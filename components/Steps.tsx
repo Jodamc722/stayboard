@@ -23,6 +23,11 @@ export function StepDots({ steps, current, furthest, onGo }: {
 }) {
   return (
     <div>
+      {/* The dot IS the tap target, and on a phone the global 36px minimum-target rule applied to
+          the bar itself — five 6px progress segments became five 36px blocks of colour that filled
+          half the sheet header. So the button is now an invisible 36px-tall strip and the coloured
+          bar is a child of it: same thin progress line, a target a thumb can actually hit.
+          min-w-0 keeps five steps sharing the width instead of overflowing the sheet. */}
       <div className="flex items-center gap-1.5">
         {steps.map((s, i) => {
           const done = i < furthest
@@ -37,11 +42,17 @@ export function StepDots({ steps, current, furthest, onGo }: {
               aria-label={'Step ' + (i + 1) + ': ' + s.label}
               aria-current={here ? 'step' : undefined}
               className={
-                'h-1.5 flex-1 rounded-full transition ' +
-                (here ? 'bg-ink' : done ? 'bg-emerald-400' : 'bg-line') +
-                (reachable ? ' cursor-pointer' : ' cursor-default')
+                'flex-1 min-w-0 py-[9px] -my-[9px] sm:py-0 sm:my-0 flex items-center ' +
+                (reachable ? 'cursor-pointer' : 'cursor-default')
               }
-            />
+            >
+              <span
+                className={
+                  'block w-full h-1.5 rounded-full transition ' +
+                  (here ? 'bg-ink' : done ? 'bg-emerald-400' : 'bg-line')
+                }
+              />
+            </button>
           )
         })}
       </div>

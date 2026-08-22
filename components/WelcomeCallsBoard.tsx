@@ -68,10 +68,13 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
           <span className="text-muted">·</span>
           <span className="text-[13px] font-semibold text-emerald-600">{doneCount} done</span>
         </div>
+        {/* The three segments with their counts are just over a 375px screen once the phone type
+            bump lands, and a segmented control cannot wrap without falling apart — so it loses
+            some horizontal padding below sm and keeps the authored padding above. */}
         <div className="inline-flex rounded-xl border border-line overflow-hidden text-[13px]">
-          <button onClick={() => setFilter('due')} className={`px-3 py-2 font-semibold ${filter === 'due' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>Due now ({duePending.length})</button>
-          <button onClick={() => setFilter('pending')} className={`px-3 py-2 font-semibold border-l border-line ${filter === 'pending' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>All pending ({pending.length})</button>
-          <button onClick={() => setFilter('all')} className={`px-3 py-2 font-semibold border-l border-line ${filter === 'all' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>All ({rows.length})</button>
+          <button onClick={() => setFilter('due')} className={`px-2 sm:px-3 py-2 font-semibold ${filter === 'due' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>Due now ({duePending.length})</button>
+          <button onClick={() => setFilter('pending')} className={`px-2 sm:px-3 py-2 font-semibold border-l border-line ${filter === 'pending' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>All pending ({pending.length})</button>
+          <button onClick={() => setFilter('all')} className={`px-2 sm:px-3 py-2 font-semibold border-l border-line ${filter === 'all' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>All ({rows.length})</button>
         </div>
       </div>
 
@@ -112,7 +115,9 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
                   </div>
                 ) : <div className="text-[11px] text-muted/70 mt-1">No phone on file</div>}
               </div>
-              <div className="flex items-center gap-2">
+              {/* Guesty + Script + Mark called is ~320px of buttons; on a phone they need to be
+                  able to break onto a second line instead of running off the card. */}
+              <div className="flex items-center gap-2 flex-wrap gap-y-2">
                 <a href={`https://app.guesty.com/reservations/${r.id}/summary`} target="_blank" rel="noopener noreferrer" title="Open this reservation in Guesty" className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink"><Globe size={13} /> Guesty</a>
                 <button onClick={() => setOpenId(open ? null : r.id)} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold ${open ? 'border-brand-600 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink'}`}><ScrollText size={13} /> Script <ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /></button>
                 {r.done ? (

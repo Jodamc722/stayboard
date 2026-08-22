@@ -213,8 +213,10 @@ function TrendChart({ trend }: { trend: Trend[] }) {
           <h3 className="text-base font-bold text-ink tracking-tight mt-1">Direct bookings as they came in</h3>
         </div>
       </div>
-      <div className="px-4 pt-3 pb-1">
-        <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ height: 140 }} preserveAspectRatio="none" role="img" aria-label="Direct bookings created per day">
+      {/* A 90-day trend squeezed into a phone gives every day under a pixel of bar. Keep the chart
+          at a width where a day is still a bar and let it scroll inside its own box. */}
+      <div className="px-4 pt-3 pb-1 lh-hscroll">
+        <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full min-w-[560px] sm:min-w-0" style={{ height: 140 }} preserveAspectRatio="none" role="img" aria-label="Direct bookings created per day">
           {uniq.map(v => (
             <g key={'g' + v}>
               <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="#EEF0F4" strokeWidth="1" />
@@ -806,10 +808,11 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                 <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Every one of them</div>
                 <h3 className="text-base font-bold text-ink tracking-tight mt-1">Direct bookings, one by one</h3>
               </div>
-              <div className="relative">
+              {/* The search box wraps onto its own line on a phone — let it fill that line. */}
+              <div className="relative w-full sm:w-auto">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
                 <input value={q} onChange={e => { setQ(e.target.value); setLimit(100) }} placeholder="Search guest, property, source, confirmation…"
-                  className="text-xs border border-line rounded-lg pl-8 pr-3 py-1.5 w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  className="text-xs border border-line rounded-lg pl-8 pr-3 py-1.5 w-full sm:w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
               </div>
               <select value={stateFilter} onChange={e => setStateFilter(e.target.value as any)} className="text-xs border border-line rounded-lg px-2 py-1.5">
                 <option value="all">All statuses</option>

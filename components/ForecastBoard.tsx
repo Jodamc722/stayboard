@@ -89,7 +89,10 @@ function HoursPlanCard({ weekStart, nonce }: { weekStart: string; nonce: number 
         <p className="text-[10px] uppercase tracking-wide text-neutral-500 font-bold">Hours plan · margin-first</p>
         <span className="text-[11px] text-neutral-400">target {p.targetMarginPct}% kept{p.targetSource === 'derived' ? ' (settled margin + 3)' : ''} · housekeeper hours only</span>
       </div>
-      <table className="w-full text-[12px] mt-2">
+      {/* Seven days + a label column + a total: squeezed into 375px each day gets ~30px, which is
+          not enough for "$1,250". Let the plan scroll inside itself instead. */}
+      <div className="lh-hscroll">
+      <table className="w-full min-w-[640px] sm:min-w-0 text-[12px] mt-2">
         <thead>
           <tr className="text-neutral-400">
             <th className="text-left font-medium px-3 py-1 min-w-[130px]"></th>
@@ -139,6 +142,7 @@ function HoursPlanCard({ weekStart, nonce }: { weekStart: string; nonce: number 
           </tr>
         </tbody>
       </table>
+      </div>
       <p className="px-3 py-2 text-[10.5px] text-neutral-400 leading-relaxed">
         Learned from the settled 30 days ({cal.snapshotFrom || '—'} → {cal.snapshotTo || '—'}): {calBits.join(' · ') || 'no snapshot yet — using portfolio defaults'}
         {cal.overheadShare > 0 ? ' · +' + Math.round(cal.overheadShare * 100) + '% for HK hours that never match a clean' : ''}.
@@ -501,7 +505,8 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
     <div className="space-y-4">
       {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+        {/* Nine controls on one un-wrapping line ran to ~900px and dragged the whole page sideways. */}
+        <div className="flex items-center gap-2 flex-wrap gap-y-2">
           <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden">
             {[...MARKETS, 'Vendor'].map((m) => (
               <button key={m} onClick={() => setMarket(m)} className={`px-4 py-1.5 text-sm font-medium ${market === m ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}>{m}</button>
@@ -550,7 +555,10 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
 
       {view === 'week' ? (
         <div className="overflow-x-auto rounded-xl border border-neutral-200">
-          <table className="w-full text-sm">
+          {/* The roster grid is a name column plus seven day columns of dropdowns. At 375px each
+              day was ~30px wide and iOS forces the select to 16px text, so nothing was readable.
+              Keep the columns their real width and scroll the grid; the name column stays pinned. */}
+          <table className="w-full min-w-[720px] sm:min-w-0 text-sm">
             <thead>
               <tr className="bg-neutral-50">
                 <th className="text-left font-medium px-3 py-2 sticky left-0 bg-neutral-50 min-w-[140px] text-neutral-500">Team member</th>
@@ -620,8 +628,10 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
         </div>
       ) : (
         <>
-          {/* week strip */}
-          <div className="grid grid-cols-7 gap-1.5">
+          {/* week strip — seven columns are load-bearing (they ARE the week), so on a phone the
+              strip scrolls sideways at a readable cell width rather than collapsing to two rows. */}
+          <div className="lh-hscroll -mx-3 px-3 sm:mx-0 sm:px-0">
+          <div className="grid grid-cols-7 gap-1.5 min-w-[560px] sm:min-w-0">
             {days.map(d => {
               const need = needOn(d)
               const working = workingOn(d.date)
@@ -638,6 +648,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
                 </button>
               )
             })}
+          </div>
           </div>
 
           {selDay && (
