@@ -224,8 +224,11 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-900 print:bg-white">
-      <div className="max-w-2xl mx-auto px-4 py-6">
+    // Vendors open this link on a phone and there is no app Shell around it, so the page pads for
+    // the iPhone itself: px-safe for the landscape notch, and a bottom pad that clears the home
+    // indicator (py-6 is 24px, the indicator is 34px, so the last card sat under it).
+    <div className="min-h-screen bg-neutral-100 text-neutral-900 print:bg-white px-safe">
+      <div className="max-w-2xl mx-auto px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <div className="relative rounded-2xl bg-neutral-900 shadow-lg overflow-hidden mb-4" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
           {effBanner ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url("' + effBanner + '")' }} aria-hidden="true" /> : null}
           <div className={'absolute inset-0 ' + (effBanner ? 'bg-gradient-to-br from-black/85 via-black/70 to-black/55' : 'bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-800')} aria-hidden="true" />
@@ -239,7 +242,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                 <h1 className="text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight">{data.label}</h1>
                 <p className="text-xs text-neutral-400 mt-1.5">This week · {data.unitCount} units · {data.today ? fmtDate(data.today) : ''} – {data.end ? fmtDate(data.end) : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}{data.lastSync ? ' · synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}</p>
               </div>
-              <div className="flex items-center gap-2 print:hidden">
+              {/* Seven header buttons on one non-wrapping line ran off the right of a 375px screen
+                  and took Print and Rules with them. */}
+              <div className="flex items-center gap-2 flex-wrap gap-y-2 print:hidden">
                 {newCount > 0 && <button onClick={markSeen} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors">{newCount} new</button>}
                 <button onClick={resync} disabled={syncing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{syncing ? 'Syncing…' : 'Resync'}</button>
                 <button onClick={doRefresh} disabled={refreshing} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors">{refreshing ? 'Refreshing…' : 'Refresh'}</button>
@@ -302,7 +307,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                   </div>
                 ))}
                 <button onClick={addRule} className="w-full rounded-2xl border-2 border-dashed border-neutral-300 text-neutral-600 text-sm font-semibold py-3 hover:border-neutral-400 hover:bg-neutral-50 transition-colors">+ Add rule</button>
-                <div className="sticky bottom-3 flex items-center gap-2 bg-white/95 backdrop-blur rounded-2xl border border-neutral-200 p-3 shadow-lg">
+                {/* The save bar sat 12px off the bottom, which is under the iPhone home indicator —
+                    "Save rules" was there but not tappable. */}
+                <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center gap-2 bg-white/95 backdrop-blur rounded-2xl border border-neutral-200 p-3 shadow-lg">
                   <button onClick={saveRules} disabled={rulesBusy || (!data.isAppUser && rulesPw.trim().length < 4)} className="flex-1 rounded-xl bg-neutral-900 text-white text-sm font-semibold py-2.5 disabled:opacity-40 hover:bg-neutral-800 transition-colors">{rulesBusy ? 'Saving…' : 'Save rules'}</button>
                   <button onClick={loadRules} disabled={rulesBusy} className="rounded-xl border border-neutral-300 text-neutral-700 text-sm font-semibold px-4 py-2.5 disabled:opacity-40">Reload</button>
                 </div>
@@ -377,7 +384,9 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                                 <div>
                                   <div className="text-emerald-700 text-[13px] font-semibold mb-2">✓ Verified{r.verifiedAt ? ' · ' + fmtDate(String(r.verifiedAt).slice(0, 10)) : ''}</div>
                                   {data.isAppUser ? (
-                                    <div className="grid grid-cols-3 gap-2">
+                                    /* Three ID photos across 375px is ~100px each — too small to
+                                       check a licence against a face. Two up on a phone. */
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                       {r.idUrl && <a href={r.idUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">ID</div><img src={r.idUrl} alt="ID" className="w-full rounded-lg border border-neutral-200" /></a>}
                                       {r.selfieUrl && <a href={r.selfieUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Selfie</div><img src={r.selfieUrl} alt="Selfie" className="w-full rounded-lg border border-neutral-200" /></a>}
                                       {r.signatureUrl && <a href={r.signatureUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Signature</div><img src={r.signatureUrl} alt="Signature" className="w-full rounded-lg border border-neutral-200 bg-white" /></a>}
