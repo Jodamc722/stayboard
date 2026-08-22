@@ -102,8 +102,8 @@ export default function DeliveryPage() {
                     <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold mb-1.5">{u}</div>
                     <div className="space-y-1">
                       {byBldg[b][u].map(it => (
-                        <div key={it.id} className="flex items-start gap-2">
-                          <span className="text-sm font-semibold text-neutral-900 whitespace-nowrap">{it.qty > 1 ? it.qty + '× ' : ''}{it.title}</span>
+                        <div key={it.id} className="flex flex-wrap items-start gap-x-2 gap-y-1">
+                          <span className="text-sm font-semibold text-neutral-900 sm:whitespace-nowrap">{it.qty > 1 ? it.qty + '× ' : ''}{it.title}</span>
                           <span className="text-xs text-neutral-500 mt-0.5">{it.room ? '→ ' + it.room : ''}</span>
                           <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ' + (STATUS_CLS[it.status] || 'bg-neutral-100 text-neutral-600')}>{STATUS_LABEL[it.status] || it.status}</span>
                           <span className="ml-auto flex items-center gap-1.5">
