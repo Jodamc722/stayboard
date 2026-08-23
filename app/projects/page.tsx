@@ -20,7 +20,9 @@ export default async function ProjectsPage() {
 
   return (
     <Shell>
-      <div className="mb-3">
+      {/* <header> rather than <div>: globals §9 clamps a page description to two lines on a phone
+          via `main header h1 + p`, and this block is exactly that block. Desktop is unchanged. */}
+      <header className="mb-3">
         <p className="text-[11px] uppercase tracking-wider font-semibold text-muted inline-flex items-center gap-1.5">
           <KanbanSquare size={12} /> Operations
         </p>
@@ -30,7 +32,7 @@ export default async function ProjectsPage() {
           property, anything that runs for weeks and needs someone to own it. Day-to-day jobs stay in
           Today in Ops.
         </p>
-      </div>
+      </header>
       <ProjectBoard
         canEdit={atLeast(level, 'edit')}
         canFull={atLeast(level, 'full')}
