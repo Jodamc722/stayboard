@@ -14,10 +14,10 @@ export default async function UsersPage() {
   if (!access.user) redirect('/login')
   return (
     <Shell>
-      <div className="mb-5">
+      <header className="mb-5">
         <h1 className="text-2xl font-bold text-ink">Users &amp; admin</h1>
         <p className="text-sm text-muted mt-1">People &amp; roles — who sees which tabs and what they can do there — plus app-wide settings.</p>
-      </div>
+      </header>
       {access.role !== 'admin' ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-[13px] text-amber-800 inline-flex items-start gap-2">
           <ShieldAlert size={16} className="mt-0.5 flex-shrink-0" /> This page is for admins only. Ask an admin to manage access.
