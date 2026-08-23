@@ -351,7 +351,7 @@ export default async function CommandCenterPage() {
               <ListChecks size={15} className="text-brand-600" />
               <span className="font-semibold text-ink">Quick actions</span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="lh-actions flex flex-wrap items-center gap-2">
               <GeneratePlanButton />
               <Link href="/plan" className="inline-flex items-center gap-1.5 rounded-xl border border-line text-sm font-semibold text-ink px-3.5 py-2 hover:bg-app transition-colors">
                 Ops Plans <ArrowUpRight size={14} className="text-muted" />
@@ -376,14 +376,19 @@ function AlertCard({ label, value, href, Icon }: { label: string; value: number;
   const ic = hot ? (isUrgent ? 'text-red-500' : isAttention ? 'text-amber-500' : 'text-brand-600') : 'text-muted'
   const num = hot ? (isUrgent ? 'text-red-600' : isAttention ? 'text-amber-700' : 'text-ink') : 'text-ink'
 
+  // PHONE TILE (Jon, 2026-08-22: "much taller than their content needs"). Two tiles per row is
+  // ~173px wide; 16px of padding each side plus the extra letter-spacing pushed "Awaiting approval"
+  // onto two lines with the number stranded below it, and the hover-only "View" line held ~20px of
+  // height that a touch screen can never reveal. Below 640px: tighter padding, normal tracking so
+  // the label keeps one line, and no dead hover row. Every sm: value is the authored desktop one.
   return (
-    <Link href={href} className={`group rounded-2xl border ${ring} p-4 transition-colors hover:border-brand-300`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">{label}</span>
-        <Icon size={15} className={ic} />
+    <Link href={href} className={`group rounded-2xl border ${ring} p-3 sm:p-4 transition-colors hover:border-brand-300`}>
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="text-[11px] uppercase tracking-normal sm:tracking-wider text-muted font-semibold">{label}</span>
+        <Icon size={15} className={`${ic} shrink-0`} />
       </div>
-      <div className={`text-2xl font-bold mt-2 tabular-nums ${num}`}>{value}</div>
-      <div className="mt-1 text-[11px] text-muted inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className={`text-2xl font-bold mt-1 sm:mt-2 tabular-nums ${num}`}>{value}</div>
+      <div className="mt-1 text-[11px] text-muted hidden sm:inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         View <ArrowUpRight size={11} />
       </div>
     </Link>
