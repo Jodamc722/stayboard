@@ -19,13 +19,13 @@ export default async function IntegrationsPage() {
 
   return (
     <Shell>
-      <div className="mb-5">
+      <header className="mb-5">
         <p className="text-[11px] uppercase tracking-wider font-semibold text-muted/70">Setup</p>
         <h1 className="text-2xl font-bold text-ink">Integrations</h1>
         <p className="text-sm text-muted mt-1">
           The outside apps Lighthouse talks to, and whether they are actually listening.
         </p>
-      </div>
+      </header>
 
       {!allowed ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-[13px] text-amber-800 inline-flex items-start gap-2">
