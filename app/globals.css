@@ -164,6 +164,53 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 }
 
 /* ------------------------------------------------------------------------------------------------
+   9. THE FIRST SCREEN SHOWS CONTENT, NOT CHROME.  (Jon, 2026-08-22: "it doesn't perfectly fit")
+   
+   Nothing was overflowing — every tab measured zero horizontal scroll. The complaint was about
+   what you SEE when a tab opens. Every page in this app starts with an eyebrow, a 30px title and
+   a three-line paragraph explaining the page, and several then stack four rows of action buttons
+   on top of that. On a 1440px desktop that reads as a well-made header. On a 390px phone it is
+   250-450px of preamble — you open Billable Hours and scroll past a wall of buttons before the
+   first dollar figure. The page fits; the page just isn't showing you anything.
+   ------------------------------------------------------------------------------------------------ */
+@media screen and (max-width: 640px) {
+  /* The page description is a desktop subtitle. Two lines is enough to say what the page is when
+     you are already standing on it — clamped rather than hidden, so nothing is actually removed. */
+  main header h1 + p,
+  main h1.text-3xl + p,
+  main h1.text-2xl + p,
+  main header p.max-w-2xl,
+  main h1 + p.max-w-2xl {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  main header { margin-bottom: 0.875rem; }
+
+  /* A page's action cluster becomes ONE swipeable row instead of four stacked ones: eight buttons
+     go from ~250px of screen to ~44px. Add `lh-actions` to a page-header button row to opt in.
+     The negative margin lets it bleed to the screen edge so it reads as scrollable. */
+  .lh-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+    padding: 0.125rem 0.75rem;
+    scrollbar-width: none;
+  }
+  .lh-actions::-webkit-scrollbar { display: none; }
+  .lh-actions > * { flex: 0 0 auto; }
+
+  /* A two-word uppercase chip breaking across lines ("SAME-" / "DAY") reads as a rendering fault,
+     not as emphasis. Short all-caps badges stay on one line. */
+  .lh-chip { white-space: nowrap; }
+}
+
+/* ------------------------------------------------------------------------------------------------
    8. NOTHING FIXED-WIDTH OUTGROWS THE GLASS. Sidebars, drawers and detail panels were written as
    w-[360px] / w-[420px] against a desktop column. On a 375px screen a single one of them is the
    entire viewport plus overflow. Cap them; above 640px the authored width is untouched.
