@@ -270,7 +270,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
         </nav>
       </header>
 
-      <div className="flex flex-wrap items-center gap-2 mb-5">
+      <div className="lh-actions flex flex-wrap items-center gap-2 mb-5">
         <nav className="inline-flex rounded-xl border border-line bg-white p-1" aria-label="Portfolio view">
           {TABS.map(t => {
             const qs = new URLSearchParams()
