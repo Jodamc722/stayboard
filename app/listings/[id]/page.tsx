@@ -202,7 +202,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
       </header>
 
       {/* Jump rail — the page is one scroll by design, so give it a spine. */}
-      <nav className="mb-5 flex flex-wrap gap-1.5 text-[12px]" aria-label="Jump to section">
+      <nav className="lh-actions mb-5 flex flex-wrap gap-1.5 text-[12px]" aria-label="Jump to section">
         {[
           { id: 'fix', label: 'What to fix' },
           { id: 'content', label: 'Content' },
