@@ -74,7 +74,10 @@ export default function GlitchesPage() {
         <p className="text-sm text-muted mt-1">Every guest-reported problem — what&rsquo;s open, what got resolved, and which units keep having issues. Current ones also show on Today in Ops.</p>
       </header>
 
-      <div className="flex items-center gap-2 flex-wrap mb-4">
+      {/* Board + History + Patterns, and on History five market chips, a search box and Refresh.
+          Wrapped, that is four rows of chrome between the title and the first glitch — one
+          swipeable strip below sm instead (`lh-actions`), untouched from sm up. */}
+      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
           <button onClick={() => setTab('board')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'board' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Board</button>
           <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>History</button>
