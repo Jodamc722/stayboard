@@ -304,8 +304,8 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
         <button onClick={() => setOpenUnits(x => ({ ...x, [u.listingId]: true }))} className="w-full flex items-center gap-2 flex-wrap sm:flex-nowrap px-3 py-2 text-left hover:bg-app/40 transition">
           <span className="font-bold text-[15px] tracking-tight text-ink leading-none">{u.unit}</span>
           <span className="text-[11px] text-muted hidden sm:inline">{u.market}{u.city ? ' · ' + u.city : ''}</span>
-          {u.sameDayTurn && !u.allDone && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Same-day</span>}
-          {u.unassigned && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 shrink-0">Unassigned</span>}
+          {u.sameDayTurn && !u.allDone && <span className="lh-chip text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Same-day</span>}
+          {u.unassigned && <span className="lh-chip text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 shrink-0">Unassigned</span>}
           {gls.length > 0 && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">{gls.length} guest issue{gls.length === 1 ? '' : 's'}</span>}
           {s && s.review && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 shrink-0">{s.review.rating}{'★'} review</span>}
           {s && s.feedback && s.feedback.count > 0 && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-300 shrink-0">{s.feedback.count} fix</span>}
@@ -334,7 +334,7 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
             <div className={'px-3 pt-2 pb-1.5 border-b border-line ' + (u.late ? 'bg-rose-50/70' : u.atRisk ? 'bg-amber-50/60' : 'bg-white')}>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[15px] tracking-tight text-ink leading-none">{u.unit}</span>
-                {u.sameDayTurn && <span title="A guest checks in here today — this clean cannot slip" className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white">Same-day turn</span>}
+                {u.sameDayTurn && <span title="A guest checks in here today — this clean cannot slip" className="lh-chip text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white">Same-day turn</span>}
                 {(() => {
                   const LS = data.longStayNights || 10
                   const n = Number(u.nights)
@@ -551,7 +551,9 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
       </div>
 
       {/* WORK FILTERS — two axes together: WHAT kind of job, and WHERE it stands. */}
-      <div className="flex items-center gap-1.5 flex-wrap">
+      {/* Ten-plus chips wrapped to four rows on a phone — ~130px of filters above the board.
+          lh-actions makes them one swipeable strip below 640px; inert from sm: up. */}
+      <div className="lh-actions flex items-center gap-1.5 flex-wrap">
         <span className="text-[11px] uppercase tracking-wide text-muted font-semibold mr-0.5">Show</span>
         {JOBS.map(j => <Chip key={j[0]} label={j[1]} n={jobCount(j[0])} active={jf === j[0]} onClick={() => setJf(j[0])} />)}
         <span className="h-5 w-px bg-line mx-1" />
@@ -714,7 +716,9 @@ export function TodayInOps({ hideBands = false }: { hideBands?: boolean } = {}) 
               {bh.sameDay > 0 ? ' — start with the units that have a check-in today.' : '.'}
               {bh.waiting > 0 ? ' (' + bh.waiting + ' more not started, but those guests have not checked out yet — not a problem.)' : ''}
             </div>
-            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+            {/* Twelve unit chips wrapped to four rows on a phone and buried the band's own action.
+                One swipeable strip below 640px; the desktop row is untouched. */}
+            <div className="lh-actions mt-2 flex items-center gap-1.5 flex-wrap">
               {bh.units.slice(0, 12).map(b => (
                 <button key={b.taskId} onClick={() => setQ(b.unit)} title={'Filter the board to ' + b.unit} className="text-[11px] font-medium px-2 py-1 rounded-lg border bg-white border-line hover:border-ink/30 inline-flex items-center gap-1.5">
                   <span className="font-semibold text-ink">{b.unit}</span>

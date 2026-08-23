@@ -571,7 +571,9 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
           <div>
             <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Stay Hospitality &middot; Marketing</div>
             <h1 className="text-2xl font-extrabold text-ink tracking-tight mt-0.5">Direct bookings</h1>
-            <p className="text-[13px] text-muted mt-1.5 leading-relaxed max-w-[80ch]">
+            {/* Five lines of subtitle before the first number on a phone. Two is enough when you
+                are already standing on the page; from 640px it is the full paragraph again. */}
+            <p className="text-[13px] text-muted mt-1.5 leading-relaxed max-w-[80ch] line-clamp-2 sm:line-clamp-none">
               Every booking <strong className="text-ink">made</strong> between {fmtDayY(fromD)} and {fmtDayY(toD)} — counted on the day it came in, whenever the guest actually stays.
               {data && data.compare ? <span> Measured against {fmtDay(data.compare.from)}&ndash;{fmtDay(data.compare.to)}.</span> : null}
             </p>
@@ -587,6 +589,9 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 mt-3">
+          {/* Six range presets stacked three rows deep on a phone; one swipeable line instead.
+              The sync stamp stays outside the strip so it does not scroll out of sight. */}
+          <div className="lh-actions sm:contents flex items-center gap-1.5">
           {PRESETS.map(p => (
             <button key={p.key} onClick={() => applyPreset(p.key)}
               className={'text-xs font-medium px-2.5 py-1.5 rounded-lg border ' + (preset === p.key ? 'bg-ink text-white border-ink' : 'border-line text-ink hover:bg-app')}>
@@ -601,6 +606,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               <button onClick={() => load(fromD, toD, true)} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-ink text-white">Apply</button>
             </span>
           ) : null}
+          </div>
           {data && data.lastSync ? <span className="text-[11px] text-muted ml-auto">Guesty synced {new Date(data.lastSync).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span> : null}
         </div>
       </div>

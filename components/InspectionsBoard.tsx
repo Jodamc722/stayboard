@@ -154,7 +154,7 @@ export function InspectionsBoard() {
       {!!cleaners.length && (
         <section className="rounded-xl border border-line bg-white p-4">
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-2">By cleaner {'·'} last {days} days</div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="lh-actions flex flex-wrap gap-1.5">
             {cleaners.map(c => (
               <button key={c.name} onClick={() => setFilterCleaner(filterCleaner === c.name ? '' : c.name)}
                 className={'text-[12px] px-2.5 py-1.5 rounded-lg border ' + (filterCleaner === c.name ? 'bg-ink text-white border-ink' : 'bg-white border-line hover:bg-slate-50')}>
@@ -169,7 +169,7 @@ export function InspectionsBoard() {
 
       {/* HISTORY */}
       <section className="rounded-xl border border-line bg-white p-4">
-        <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="lh-actions flex flex-wrap items-center gap-2 mb-3">
           <span className="text-[11px] uppercase tracking-wide text-muted font-semibold">History</span>
           <div className="relative">
             <Search size={13} className="absolute left-2 top-2 text-muted" />

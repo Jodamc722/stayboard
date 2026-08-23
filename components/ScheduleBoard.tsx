@@ -498,15 +498,17 @@ async function pushBlocks() {
   const allSelected = rows.length > 0 && rows.every(c => selected[keyOf(c)])
   const guestyOnlyCount = rows.filter(r => r.syncStatus === 'guesty-only').length
 
-  const tabsBar = (
-    <div className="inline-flex items-center gap-1 border border-line rounded-xl p-1 bg-white">
+  // Board/planner switcher. Takes its own display classes so the phone can carry it inside the
+  // toolbar strip below while the desktop keeps it on its own line, exactly where it has always sat.
+  const tabsBar = (show: string) => (
+    <div className={show + ' items-center gap-1 border border-line rounded-xl p-1 bg-white'}>
       <button onClick={() => setTab('board')} className={'px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'board' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Day board</button>
       <button onClick={() => setTab('planner')} className={'px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'planner' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Weekly planner</button>
     </div>
   )
   if (tab === 'planner') return (
     <div className="space-y-4">
-      {tabsBar}
+      {tabsBar('inline-flex')}
       <HomebaseWeek />
       <ForecastBoard mode="weekly" />
     </div>
@@ -514,9 +516,15 @@ async function pushBlocks() {
 
   return (
     <div className="space-y-4">
-      {tabsBar}
+      {tabsBar('hidden sm:inline-flex')}
       {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       <div className="flex items-center gap-2 flex-wrap">
+        {/* THREE BANDS OF CHROME BECOME ONE (Jon, 2026-08-22). Day board/Weekly planner sat on its
+            own line, Day/Week on the next, and the pager and label wrapped below that. Under 640px
+            all four ride in a single swipeable strip; `sm:contents` dissolves the wrapper from sm:
+            up so the desktop row is the same flex row it always was, tabs included above it. */}
+        <div className="lh-actions w-full sm:w-auto sm:contents">
+        {tabsBar('inline-flex sm:hidden')}
         <div className="inline-flex rounded-lg border border-line overflow-hidden">
           {(['day', 'week'] as const).map(v => (
             <button key={v} onClick={() => { setView(v); load(v, v === 'day' ? (date || data?.today || '') : date) }} className={`text-[12px] font-semibold px-3 py-1.5 ${view === v ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>{v === 'day' ? 'Day' : 'Week'}</button>
@@ -529,6 +537,9 @@ async function pushBlocks() {
 <input type="date" value={data?.weekStart || date || ''} onChange={e => e.target.value && load(view, e.target.value)} className="text-[12px] font-semibold border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink outline-none cursor-pointer" title="Jump to any date" />
         </div>
         <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {rangeLabel || 'Loading…'}</span>
+        </div>
+        {/* Sync / Add clean / More keep their own wrapping row: the More menu is an absolutely
+            positioned dropdown and a horizontal scroller would clip it. */}
         <div className="ml-auto inline-flex items-center gap-1.5 flex-wrap gap-y-1.5">
           {data?.syncedAt && <span className="text-[11px] text-muted">Synced {agoLabel(data.syncedAt)}</span>}
           {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2.5 py-1.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
@@ -574,7 +585,8 @@ async function pushBlocks() {
 </div>
 )}
 
-<div className="flex items-center gap-2 flex-wrap">
+{/* Five market chips carrying counts and dollars wrapped to three rows on a phone. */}
+<div className="lh-actions flex items-center gap-2 flex-wrap">
         {(['all', ...MARKETS, 'vendor'] as const).map(m => (
           <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? (() => { const _e = data.totals.byMarket.find(x => x.market === m); return ' · ' + (_e?.count ?? 0) + (_e?.fee ? ' · $' + Math.round(_e.fee).toLocaleString() : '') })() : ''}</button>
         ))}

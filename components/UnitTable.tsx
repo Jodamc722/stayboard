@@ -204,7 +204,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-3">
+      <div className="lh-actions flex flex-wrap gap-1.5 mb-3">
         {FILTERS.map(f => {
           const on = active.has(f.key)
           return (

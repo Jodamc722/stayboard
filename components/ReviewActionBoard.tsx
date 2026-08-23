@@ -385,7 +385,7 @@ export function ReviewActionBoard() {
         {!!groups.length && <span className="text-[11.5px] text-muted">across {groups.length} unit{groups.length === 1 ? '' : 's'}</span>}
         {!!counts.done && <span className="text-[11.5px] text-muted">· {counts.done} done</span>}
 
-        <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+        <div className="lh-actions ml-auto flex items-center gap-1.5 flex-wrap">
           {VIEWS.map(v => (
             <button key={v.v} onClick={() => setView(v.v)}
               className={'text-[11px] font-semibold px-1.5 py-0.5 rounded ' + (view === v.v ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{v.l}</button>

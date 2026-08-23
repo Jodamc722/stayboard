@@ -88,7 +88,7 @@ function Section({ id, title, note, children }: { id: string; title: string; not
       {pick && data ? (
         <div className="space-y-4">
           {(otaLinks.length > 0 || !listingId) ? (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="lh-actions flex flex-wrap items-center gap-2">
               {!listingId ? <a href={'/listings/' + pick} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50">Open unit in app →</a> : null}
               {otaLinks.map((o: any) => <a key={o.name} href={o.url} target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50">{o.name} ↗</a>)}
             </div>

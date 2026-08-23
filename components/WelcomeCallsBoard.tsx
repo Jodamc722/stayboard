@@ -60,7 +60,7 @@ export function WelcomeCallsBoard({ rows: initial }: { rows: Row[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="lh-actions flex items-center gap-3 flex-wrap">
         <div className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3.5 py-2">
           <span className="text-[13px] font-bold text-rose-600">{duePending.length} due now</span>
           <span className="text-muted">·</span>

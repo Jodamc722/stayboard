@@ -124,7 +124,9 @@ export function CleanLog({ from, to, market = 'all', label, onClose }: {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-1.5 mb-2.5">
+          {/* Four filter chips with counts wrapped to two rows on a phone; one swipeable line
+              instead (the bleed matches this card's px-3 gutter exactly). */}
+          <div className="lh-actions flex flex-wrap gap-1.5 mb-2.5">
             {([['', 'All'], ['long', `Long stays (${s.longStayCleans})`], ['over', 'Over benchmark'], ['unassigned', `No cleaner named (${s.unassigned})`]] as const).map(([k, t]) => (
               <button key={k} onClick={() => setOnly(k as any)}
                 className={`text-[11.5px] font-medium px-2.5 py-1 rounded-full border ${only === k ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink'}`}>{t}</button>

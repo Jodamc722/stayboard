@@ -172,11 +172,16 @@ function ExcRow({ e, roster, open, onToggleAssign, onDone, onGiveWork, onAddTask
     <div className={'pl-3 pr-3 ' + (compact ? 'py-2' : 'py-2.5') + ' border-l-4 ' +
       (e.kind === 'turn' || e.kind === 'late' ? 'border-l-rose-500' : e.kind === 'guest' ? 'border-l-pink-400' : 'border-l-amber-400')}>
       <div className="flex items-center gap-2.5 flex-wrap">
-        <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-[70px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
+        {/* The badge is a fixed 70px column on desktop; on a phone §4 bumps 9.5px type to 11px and
+            "SAME-DAY" split into "SAME-" / "DAY". lh-chip holds it on one line and the width goes
+            auto below 640px so the longer word has room — sm: is the desktop column, unchanged. */}
+        <span className={'lh-chip text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-auto sm:w-[70px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
         <span className="text-[13.5px] font-bold text-ink shrink-0">{e.who}</span>
         {e.market ? <span className="text-[10px] font-semibold text-muted bg-app rounded px-1.5 py-0.5 shrink-0">{e.market}</span> : null}
         <span className={'text-[13px] text-ink/75 flex-1 min-w-[180px] leading-snug' + (compact ? ' truncate' : '')}>{e.what}</span>
-        <span className="flex items-center gap-1.5 shrink-0 ml-auto">
+        {/* Below 640px the row wraps and a lone "+ Task" ended up beside the description text,
+            mid-row. Full width on phone keeps every action of the row together on one end line. */}
+        <span className="flex items-center gap-1.5 shrink-0 ml-auto w-full justify-end sm:w-auto">
           {e.kind === 'idle' ? (
             <button onClick={onGiveWork} className={btn + ' bg-ink text-white'}>Give work</button>
           ) : e.taskId && !e.assignee ? (
@@ -289,10 +294,11 @@ export function OpsV2() {
           itself — Jon, 2026-08-17, on the stacked v2+v1 screen: "the Board tab is a mess. The
           Today in Ops board that we had was much better." So the board IS the board again; this
           layer only adds the tabs, the triage and the Add button. ── */}
-      {/* Three tabs plus the Add-task button is ~400px of chrome; on a 375px screen it pushed the
-          page sideways. It wraps below 640px (the button drops to its own line, still right-
-          aligned by ml-auto) and is one line from sm: up, where it always fitted. */}
-      <div className="flex items-center gap-6 flex-wrap border-b border-line mb-4">
+      {/* Three tabs plus the Add-task button is ~400px of chrome. Wrapping it left the Add button
+          stranded alone in a ~60px empty band under the tabs (Jon, 2026-08-22). `lh-actions` makes
+          the whole strip one swipeable line below 640px; from sm: up it is the same one-line row it
+          always was. gap-4 on phone keeps all four items within a thumb's reach of the edge. */}
+      <div className="lh-actions flex items-center gap-4 sm:gap-6 flex-wrap border-b border-line mb-4">
         {([['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
            ['people', 'People', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
            ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (

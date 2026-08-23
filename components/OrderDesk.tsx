@@ -554,7 +554,7 @@ export function OrderDesk() {
         </div>
       </div>
       {/* status strip */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
+      <div className="lh-actions flex flex-wrap items-center gap-2 mb-3">
         {FILTERS.map(f => (
           <button key={f.key} onClick={() => setTf(f.key)} className={'text-xs font-semibold px-2.5 py-1.5 rounded-lg border ' + (tf === f.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>
             {f.label}{' · '}{counts[f.key] === undefined ? 0 : counts[f.key]}

@@ -293,7 +293,9 @@ export function AuditDesk() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* Two pickers and four buttons: five wrapped rows before the first audit on a phone.
+          One swipeable strip below sm, with the listing picker first so it is never off-screen. */}
+      <div className="lh-actions flex items-center gap-2 flex-wrap">
         <select value={pick} onChange={e => setPick(e.target.value)} className="text-sm border border-line rounded-lg px-2.5 py-2 bg-white max-w-[320px]">
           <option value="">Pick a listing…</option>
           {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
@@ -328,7 +330,7 @@ export function AuditDesk() {
             <span className="text-xs text-muted shrink-0">{a.counts.total} items · {a.counts.open} open · {a.counts.tasks} tasks</span>
             <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ' + (a.auditType === 'quality' ? 'bg-indigo-100 text-indigo-700' : 'bg-sky-100 text-sky-700')}>{a.auditType === 'quality' ? 'QUALITY' : 'ONBOARDING'}</span>
             <span className="text-[10px] text-neutral-400 shrink-0">{String((a.status === 'completed' ? (a.updatedAt || a.createdAt) : a.createdAt) || '').slice(0, 10)}</span>
-            {dueLabel(a) ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-rose-100 text-rose-700">{dueLabel(a)}</span> : null}
+            {dueLabel(a) ? <span className="lh-chip text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-rose-100 text-rose-700">{dueLabel(a)}</span> : null}
             <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
             <button onClick={() => markComplete(a, a.status === 'completed')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{a.status === 'completed' ? 'Reopen' : 'Mark complete'}</button>
             <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>

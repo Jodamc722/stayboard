@@ -1125,8 +1125,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           <h1 className="text-lg font-semibold text-ink">Statement audit {data ? '· ' + data.label : ''}</h1>
         </div>
         {/* Worklist/Statements/Prep + the month select + three icon buttons are ~530px of toolbar:
-            on a phone they used to run off the side of the screen. Let them wrap. */}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+            on a phone that wrapped to three stacked rows under the title. One swipeable strip
+            instead, so the board starts at the top of the screen. */}
+        <div className="lh-actions ml-auto flex flex-wrap items-center gap-2">
           <div className="flex rounded-lg border border-line bg-white overflow-hidden">
             <button onClick={() => { setView('work') }}
               className={'inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 transition ' + (view === 'work' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
@@ -1757,7 +1758,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     reservation in Guesty</span> (Cleaning fee + Revenue fee on the guest folio); rows where the folio already
                     shows the split clear automatically. For the rest: open the reservation, break out the fees, then mark it done.
                   </p>
-                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <div className="lh-actions flex flex-wrap items-center gap-2 mt-3">
                     {chip('', total + ' Expedia-family', 'bg-white text-ink ring-line')}
                     {chip('open', outstanding + ' to break out', outstanding ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
                     {chip('nofees', noFees + ' fees not set up', noFees ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200')}
@@ -1969,8 +1970,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ WORKLIST ═══ */}
           {view === 'work' && (
             <>
-              {/* filters — row 1: work state (statuses + flags) */}
-              <div className="flex flex-wrap items-center gap-2">
+              {/* filters — row 1: work state (statuses + flags). A dozen chips stacked four rows
+                  deep on a phone; one swipeable line instead. */}
+              <div className="lh-actions flex flex-wrap items-center gap-2">
                 {(['action', 'review', 'done', 'clear'] as Status[]).map(s => (
                   <button key={s} onClick={() => setFStatus(fStatus === s ? '' : s)}
                     className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + STATUS_CLS[s] + (fStatus === s ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
@@ -1998,6 +2000,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
               {/* filters — row 2: what the booking IS (tags + channel), plus owner + search */}
               <div className="flex flex-wrap items-center gap-2">
+                {/* Tag chips + the two selects swipe as one line; the search box keeps its own
+                    full-width line below, where you can actually see it. */}
+                <div className="lh-actions sm:contents flex items-center gap-2">
                 {([['canceled', 'Canceled'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']] as [typeof fTag, string][])
                   .filter(([k]) => tagCounts.t[k as string])
                   .map(([k, label]) => (
@@ -2019,6 +2024,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <option value="">All owners</option>
                   {data.owners.map(o => <option key={o.ownerId} value={o.ownerId}>{o.ownerName}</option>)}
                 </select>
+                </div>
                 <div className="relative w-full sm:w-auto">
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, code…"

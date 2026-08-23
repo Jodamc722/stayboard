@@ -373,7 +373,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={15} className="text-brand-600" /> Organize photos with AI</h2>
           <p className="text-[12px] text-muted mt-0.5">AI studies every photo, orders them to maximize bookings, and writes a guest-facing description for each. You pick the cover photo (#1); AI orders the rest. Edit anything, then push the order + descriptions to Guesty.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:flex-shrink-0">
+        <div className="lh-actions flex flex-wrap items-center gap-2 sm:flex-nowrap sm:flex-shrink-0">
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addFiles(e.target.files)} />
           <input ref={replaceRef} type="file" accept="image/*" className="hidden" onChange={e => replaceFile(e.target.files)} />
           <button onClick={() => fileRef.current?.click()} disabled={uploadingCount > 0 || pushing}

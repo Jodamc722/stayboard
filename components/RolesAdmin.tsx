@@ -172,7 +172,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
               </div>
               {/* Preview / Duplicate / Delete / Save changes on one unbreakable line ran off the
                   right of a phone, taking Save with them. */}
-              <div className="ml-auto flex items-center gap-2 flex-wrap gap-y-2">
+              <div className="lh-actions ml-auto flex items-center gap-2 flex-wrap gap-y-2">
                 <button onClick={() => setPreview(true)}
                   title="See exactly what someone on this role sees — including unsaved changes"
                   className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-2.5 py-1.5 hover:bg-brand-100"><Eye size={13} /> Preview</button>

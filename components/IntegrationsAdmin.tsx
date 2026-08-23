@@ -87,7 +87,7 @@ export function IntegrationsAdmin() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[13px] font-bold text-ink">{it.label}</span>
-                      <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${it.connected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                      <span className={`lh-chip text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${it.connected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                         {it.connected ? 'Connected' : 'Not connected'}
                       </span>
                     </div>

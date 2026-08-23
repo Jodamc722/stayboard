@@ -433,10 +433,33 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
         @media screen and (max-width: 640px) {
           html, body { overflow: visible !important; height: auto !important; }
           .gb-nav { display: none !important; }
-          .gb-chrome { position: sticky !important; top: 0; }
-          /* The Ask-AI and hidden-pages bars pin at top:57px, which is the toolbar's height only
-             while the toolbar is one row. On a phone it wraps, so they stack normally instead. */
+          /* THE OPERATOR TOOLBAR DOES NOT FOLLOW YOU DOWN THE BOOK (Jon, 2026-08-22: the guidebook
+             "looks weird when you click into it"). It is sticky by design on a desktop, where it is
+             one 57px row. On a phone those six controls wrap to three rows — about 200px, a THIRD
+             of the screen — and pinning that over a 14,000px book means every screenful of the
+             guest's guidebook is two-thirds toolbar. Nobody needs Print/PDF pinned while reading.
+             It scrolls away with the rest of the page; scroll back up to reach it. A guest never
+             sees it at all (it renders only when !guest). */
+          .gb-chrome { position: static !important; top: auto !important; }
+          /* Same reason for the Ask-AI and hidden-pages bars, which pin at top:57px — a height the
+             toolbar only has while it is one row. */
           .gb-chrome ~ .gb-chrome { position: static !important; }
+          /* Six controls at 16px do not belong on three rows of a phone: one swipeable row. */
+          .gb-chrome .gb-tools {
+            flex-wrap: nowrap !important; overflow-x: auto; -webkit-overflow-scrolling: touch;
+            margin: 0 -16px; padding: 2px 16px; scrollbar-width: none;
+          }
+          .gb-chrome .gb-tools::-webkit-scrollbar { display: none; }
+          .gb-chrome .gb-tools > * { flex: 0 0 auto; }
+          /* The title truncated to "… — Gue…" told you nothing. Let it use two lines instead. */
+          .gb-chrome .gb-title { max-width: 100% !important; flex: 1 1 100%; order: -1;
+            white-space: normal !important; text-overflow: clip !important;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+            overflow: hidden !important; font-size: 13px; line-height: 1.3; }
+          /* Decorative section watermarks are sized for a 760px sheet — at 170px on a 390px screen
+             a single word hangs 57px off the left edge looking like a bug. */
+          .gb-page [class*="text-[1"][class*="px]"] { max-width: 100%; }
+          .gb-page .gb-watermark, .gb-page [class~="text-[170px]"] { font-size: 84px !important; right: 8px !important; }
           .gb-pages { position: static !important; display: block !important; overflow: visible !important;
                       height: auto !important; padding: 0 !important; margin: 0 !important; }
           .gb-slide { display: block !important; height: auto !important; overflow: visible !important; }
@@ -503,8 +526,8 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
           : <Link href="/guidebooks" className="inline-flex shrink-0 items-center gap-1.5 text-sm text-neutral-600 hover:text-black"><ArrowLeft size={15} /> Guidebooks</Link>}
         {edit
           ? <input value={gb.title || ''} onChange={e => setGb({ ...gb, title: e.target.value })} className="max-w-[40%] flex-1 rounded-lg border border-dashed border-neutral-400 px-2 py-1 text-sm font-semibold text-neutral-800" />
-          : <div className="truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>}
-        <div className="flex flex-wrap items-center gap-2">
+          : <div className="gb-title truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>}
+        <div className="gb-tools flex flex-wrap items-center gap-2">
           {!guest && <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
             <option value="editorial">Coastal editorial</option>
             <option value="dark">Dark luxe</option>

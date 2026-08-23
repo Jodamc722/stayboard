@@ -166,7 +166,7 @@ export function ClaimDesk({ id }: Props) {
       {flash && <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-2"><Check size={14} />{flash}</div>}
 
       {/* Stage stepper */}
-      <div className="flex items-center gap-1 flex-wrap mb-5">
+      <div className="lh-actions flex items-center gap-1 flex-wrap mb-5">
         {STAGES.map((s, i) => (
           <span key={s.key} className={'text-[11px] font-semibold px-2 py-1 rounded-lg border ' + (i === stageIndex ? 'bg-ink text-white border-ink' : i < stageIndex ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-muted border-line')}>
             {i < stageIndex ? '✓ ' : ''}{s.label}

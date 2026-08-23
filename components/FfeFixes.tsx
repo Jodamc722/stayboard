@@ -118,7 +118,7 @@ export function FfeFixes() {
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="lh-actions flex flex-wrap items-center gap-2">
         <div className="flex items-center rounded-lg border border-line overflow-hidden">
           {([['open', 'To do'], ['doing', 'In progress'], ['done', 'Finished'], ['all', 'All']] as const).map(([k, l]) => (
             <button key={k} onClick={() => { setTab(k); setSel({}) }}

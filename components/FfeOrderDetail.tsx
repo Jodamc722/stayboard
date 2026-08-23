@@ -375,7 +375,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
         </div>
 
         {/* the recommendation mix, with dollars — and the view, one control, in one place */}
-        <div className="px-4 py-2.5 flex flex-wrap items-center gap-1.5">
+        <div className="px-4 py-2.5"><div className="lh-actions flex flex-wrap items-center gap-1.5">
           {TIERS.map(k => tierRoll[k].n ? (
             <button key={k} onClick={() => setTierFilter(tierFilter === k ? '' : k)}
               title="Tap to see only these lines."
@@ -407,7 +407,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
               <Building2 className="w-3 h-3" /> By unit
             </button>
           </div>
-        </div>
+        </div></div>
 
         {/* every action, one bar */}
         <div className="px-3 py-2.5 border-t border-line bg-app/40 flex flex-wrap items-center gap-2">

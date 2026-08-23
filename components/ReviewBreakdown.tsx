@@ -273,7 +273,7 @@ export function ReviewBreakdown() {
           </span>
         </button>
 
-        {open && <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+        {open && <span className="lh-actions ml-auto flex items-center gap-1.5 flex-wrap">
           <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
             <button onClick={() => setFlat(false)} className={'text-[11px] font-semibold px-2 py-1 ' + (!flat ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Group units under their property">By property</button>
             <button onClick={() => setFlat(true)} className={'text-[11px] font-semibold px-2 py-1 ' + (flat ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')} title="Every unit in one flat list">All units</button>

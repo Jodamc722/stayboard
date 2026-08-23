@@ -505,8 +505,10 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
     <div className="space-y-4">
       {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        {/* Nine controls on one un-wrapping line ran to ~900px and dragged the whole page sideways. */}
-        <div className="flex items-center gap-2 flex-wrap gap-y-2">
+        {/* Nine controls on one un-wrapping line ran to ~900px and dragged the whole page sideways.
+            Wrapping fixed the width but cost four stacked rows — ~160px of buttons above the
+            planner on a phone. lh-actions makes it one swipeable strip below 640px; inert at sm:. */}
+        <div className="lh-actions flex items-center gap-2 flex-wrap gap-y-2">
           <div className="inline-flex rounded-lg border border-neutral-200 overflow-hidden">
             {[...MARKETS, 'Vendor'].map((m) => (
               <button key={m} onClick={() => setMarket(m)} className={`px-4 py-1.5 text-sm font-medium ${market === m ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-50'}`}>{m}</button>

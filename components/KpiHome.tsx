@@ -218,7 +218,10 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       </header>
 
       {/* ---------------------------------------------------------------- controls */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Six period chips, two dropdowns and a date range wrapped to four rows on a phone — the
+          whole filter bar sat between the title and the first number. One swipeable strip below
+          640px (the pickers are all native popups, so nothing gets clipped); inert from sm: up. */}
+      <div className="lh-actions flex flex-wrap items-center gap-2 mb-4">
         <div className="flex gap-1">
           {PERIODS.map(p => (
             <button key={p.d} onClick={() => { setDays(p.d); setFrom(''); setTo('') }}

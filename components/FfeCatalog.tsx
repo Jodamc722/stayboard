@@ -256,7 +256,7 @@ export function FfeCatalog() {
       </p>
 
       {/* KIND TABS — furniture and trash bags are not the same list */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-line pb-2">
+      <div className="lh-actions flex flex-wrap items-center gap-1.5 border-b border-line pb-2">
         <button onClick={() => { setKind(''); setCat('') }}
           className={'rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ' + (!kind ? 'bg-ink text-white' : 'text-muted hover:bg-app')}>
           Everything <span className="tabular-nums opacity-70">{live.length}</span>
@@ -271,7 +271,7 @@ export function FfeCatalog() {
       {kindMeta ? <p className="text-[11.5px] text-muted -mt-1">{kindMeta.blurb}</p> : null}
 
       {/* TIER CHIPS — the same role at three price points */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="lh-actions flex flex-wrap items-center gap-1.5">
         <button onClick={() => setTier('')}
           className={'rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ' +
             (!tier ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>

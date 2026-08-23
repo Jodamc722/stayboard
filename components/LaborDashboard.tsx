@@ -135,7 +135,10 @@ export function LaborDashboard() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* Period switch, date pager, Yesterday, auto-update, CSV and Refresh stacked three rows
+          deep under the page title on a phone. One swipeable strip; the period switch and the
+          date pager lead it, so what you steer with is visible without a swipe. */}
+      <div className="lh-actions flex items-center gap-2 flex-wrap">
         <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
           {(['day', 'week', 'month'] as const).map(p => (
             <button key={p} onClick={() => setPeriod(p)}

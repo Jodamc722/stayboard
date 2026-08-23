@@ -177,15 +177,16 @@ export function ReviewKpis() {
     <section className="rounded-xl border border-line bg-white mb-5">
       {/* one line, always visible */}
       {/* On a phone this "one line" is four period buttons + two date fields + a channel select +
-          Refresh — about 420px of controls on a 375px screen, which used to drag the whole page
-          sideways. It wraps onto as many lines as it needs instead; on desktop it still fits on one. */}
+          Refresh — about 420px of controls on a 375px screen. Wrapping it stacked four rows of
+          chrome on top of the score, so below sm the control cluster is one swipeable strip
+          (`lh-actions`); on desktop it is inert and the row still fits on one line. */}
       <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
         <button onClick={toggle} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted font-semibold hover:text-ink">
           <ChevronRight size={13} className={'transition-transform ' + (open ? 'rotate-90' : '')} />
           Reputation
         </button>
         {!open && <span className="text-[12.5px] text-ink font-medium">{line}</span>}
-        <div className="ml-auto flex items-center gap-1.5 flex-wrap gap-y-1.5">
+        <div className="lh-actions ml-auto flex items-center gap-1.5 flex-wrap gap-y-1.5">
           {PERIODS.map(p => (
             <button key={p.d} onClick={() => { setDays(p.d); setFrom(''); setTo('') }}
               className={'text-[11px] font-semibold px-1.5 py-0.5 rounded ' + (days === p.d && !from ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{p.l}</button>

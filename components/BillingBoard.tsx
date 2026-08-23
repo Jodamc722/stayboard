@@ -117,9 +117,11 @@ function AddTask({ units, month, onDone }: { units: { id: string; name: string }
 
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'bad' }) {
   const v = tone === 'bad' ? 'text-rose-600' : tone === 'good' ? 'text-emerald-700' : 'text-ink'
+  // Tighter padding + tracking on a phone only, so a two-word label ("BILLED TO OWNERS") stays on
+  // one line instead of pushing the figure down a row. Desktop is unchanged.
   return (
-    <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
-      <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">{label}</div>
+    <div className="rounded-2xl border border-line bg-white p-3 sm:p-4 shadow-soft">
+      <div className="text-[10.5px] uppercase tracking-[0.08em] sm:tracking-[0.14em] text-brand-600 font-bold">{label}</div>
       <div className={'text-2xl font-bold tabular-nums mt-1 tracking-tight ' + v}>{value}</div>
       {sub ? <div className="text-[11px] text-muted mt-0.5">{sub}</div> : null}
     </div>
@@ -612,7 +614,7 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
   const wagesNote = dept === 'maintenance' ? 'declared maintenance crew' : dept === 'housekeeping' ? 'housekeepers only' : 'whole team this month'
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="lh-actions flex flex-wrap items-center gap-2">
         {DEPTS.map(d => (
           <button key={d} onClick={() => setDept(d)}
             className={'rounded-full px-3 py-1 text-[12px] font-semibold ring-1 ring-inset ' + (dept === d ? 'bg-ink text-white ring-ink' : 'bg-white text-muted ring-line hover:text-ink')}>
@@ -931,7 +933,10 @@ export function BillingBoard() {
           <h1 className="text-2xl font-bold text-ink tracking-tight">Billable Hours</h1>
           <p className="text-[12.5px] text-muted mt-0.5">Breezeway tasks organized for billing — review the cost, fix the rate, export by billing owner.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Eight controls wrapped to four stacked rows on a phone — ~250px of screen before the
+            first dollar figure. One swipeable strip instead; the month pager leads it, so the
+            primary control is still fully visible at rest and the exports are one swipe away. */}
+        <div className="lh-actions flex items-center gap-2 flex-wrap">
           {/* DATE WINDOW. Months by default because that is how owners are billed; Custom opens a
               from/to pair for a week, a pay period or a quarter. Everything on the page — tiles,
               market table, task list, exports — reads the same window. */}
@@ -1101,6 +1106,10 @@ export function BillingBoard() {
           from 640px up: on a phone this bar wraps to seven or eight lines, and a sticky element
           that tall pins most of the screen shut and you can never see the tasks under it. */}
       <div className="z-20 sm:sticky sm:top-2 rounded-2xl border border-line bg-white/95 backdrop-blur shadow-soft px-3 py-2.5 flex flex-wrap items-center gap-2">
+        {/* View switch + every filter chip wrapped to seven lines on a phone. They become one
+            swipeable strip inside the card (the class's bleed matches this card's px-3 exactly);
+            `sm:contents` dissolves this wrapper from 640px up so the desktop bar is untouched. */}
+        <div className="lh-actions sm:contents flex items-center gap-2">
         <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden">
           {(['owner', 'all', 'labor'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
@@ -1193,8 +1202,14 @@ export function BillingBoard() {
                 />/h
               </span>
             ) : null}
+          </>
+        ) : null}
+        </div>
+        {/* Search stays OUT of the strip: a text field you have to swipe to find is worse than one
+            on its own line, and on a phone it gets the full width. */}
+        {view !== 'labor' ? (
+          <>
             <span className="grow" />
-            {/* Search lands on its own wrapped line on a phone — let it use the whole width. */}
             <div className="relative w-full sm:w-auto">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Unit, task, owner, person…"

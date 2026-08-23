@@ -218,7 +218,9 @@ export function ReportsDesk() {
             <p className="text-[12px] text-muted mt-0.5">Pick properties + a period. Revenue, occupancy, reviews and completed work are pulled automatically.</p>
           </div>
           {!showNew && (
-            <button onClick={() => setShowNew(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-4 py-2 hover:bg-brand-700">
+            /* On a phone this wrapped onto its own line and sat alone in an empty band next to
+               nothing. Full width there instead — it is the primary action on the page. */
+            <button onClick={() => setShowNew(true)} className="w-full sm:w-auto justify-center sm:justify-start inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-4 py-2 hover:bg-brand-700">
               <Plus size={14} /> New report
             </button>
           )}

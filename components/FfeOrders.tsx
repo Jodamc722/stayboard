@@ -143,7 +143,7 @@ export function FfeOrders() {
             const present = Object.keys(ORDER_STATUS_LABEL).filter(s => counts[s])
             if (orders.length < 2 || present.length < 2) return <span className="text-[11px] text-muted tabular-nums">{orders.length}</span>
             return (
-              <div className="flex items-center gap-1 flex-wrap">
+              <div className="lh-actions flex items-center gap-1 flex-wrap">
                 <button onClick={() => setStatusFilter('')}
                   className={'text-[10.5px] font-bold px-2 py-1 rounded-lg border ' +
                     (!statusFilter ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>

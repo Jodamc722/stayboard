@@ -316,7 +316,7 @@ export function FfeAudit({ code }: { code: string }) {
             </a>
             <h1 className="text-lg font-bold leading-tight truncate">{data.unit.name}</h1>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-              <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white ' + (STATUS[data.unit.today] || STATUS.vacant).cls}>
+              <span className={'lh-chip text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded text-white ' + (STATUS[data.unit.today] || STATUS.vacant).cls}>
                 {t(STATUS[data.unit.today] || STATUS.vacant)}
               </span>
               {data.unit.ownerName ? <span className="text-[11px] text-neutral-400 truncate">{data.unit.ownerName}</span> : null}

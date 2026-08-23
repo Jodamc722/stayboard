@@ -160,7 +160,7 @@ export function FfeHub({ code }: { code: string }) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[15px] font-bold text-neutral-900">{u.name}</span>
-                      <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + st.cls}>{t(st)}</span>
+                      <span className={'lh-chip text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + st.cls}>{t(st)}</span>
                       {u.completedAt ? (
                         <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-600 text-white">{t(T.done)}</span>
                       ) : null}

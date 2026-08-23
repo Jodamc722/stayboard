@@ -352,7 +352,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Revenue Center</h1>
           <p className="text-sm text-muted mt-1">{d.from} to {d.to} · {d.days} days · prorated per night · Δ vs {d.prev.from} – {d.prev.to}</p>
         </div>
-        <RangeFilter from={d.from} to={d.to} />
+        {/* Two date fields and six presets wrapped to three rows on a phone. One swipeable strip
+            instead — the dates lead it, so they are still there without a swipe. `sm:contents`
+            dissolves this wrapper above 640px, so the desktop header is untouched. */}
+        <div className="lh-actions sm:contents"><RangeFilter from={d.from} to={d.to} /></div>
       </header>
 
       {/* Scope bar — filters every tab */}
@@ -364,6 +367,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Unit, building or owner…"
             className="rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[13px] text-ink w-full sm:w-52 focus:outline-none focus:border-brand-500" />
         </div>
+        {/* Everything after the search was four more wrapped rows on a phone; one strip instead. */}
+        <div className="lh-actions sm:contents flex items-center gap-2">
         <select value={bld} onChange={e => setBld(e.target.value)} className={selCls}>
           <option value="all">All buildings</option>
           {buildings.map(b => <option key={b} value={b}>{b}</option>)}
@@ -390,11 +395,12 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
             <button onClick={clearFilters} className="text-[12px] text-muted hover:text-ink inline-flex items-center gap-0.5"><X size={12} /> Clear</button>
           )}
         </div>
+        </div>
       </div>
 
-      {/* Tabs — the three of them are wider than a phone screen, so they wrap instead of pushing
-          the page sideways. */}
-      <div className="mb-5 flex flex-wrap items-center gap-1.5">
+      {/* Tabs — the three of them are wider than a phone screen. Below 640px they ride one
+          swipeable line instead of stacking two rows above the first number. */}
+      <div className="lh-actions mb-5 flex flex-wrap items-center gap-1.5">
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-xl px-4 py-2 border transition-all ${tab === t.key ? 'bg-ink text-white border-ink shadow-sm' : 'bg-white border-line text-muted hover:text-ink'}`}>
@@ -557,6 +563,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
           </div>
           <section className="rounded-2xl border border-line bg-white">
             <div className="p-4 pb-3 flex items-center gap-2 flex-wrap border-b border-line">
+              <div className="lh-actions sm:contents flex items-center gap-2">
               <h2 className="text-sm font-bold text-ink mr-1 inline-flex items-center gap-1.5">
                 {view === 'owners' ? <Users size={14} /> : <Building2 size={14} />} Performance
               </h2>
@@ -572,6 +579,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                 className={`text-[12px] font-medium rounded-lg px-2.5 py-1.5 border inline-flex items-center gap-1 ${showMoney ? 'bg-brand-50 border-brand-200 text-brand-700' : 'bg-white border-line text-muted hover:text-ink'}`}>
                 <Layers size={12} /> {showMoney ? 'Hide money detail' : 'Show money detail'}
               </button>
+              </div>
+              {/* The count/sort line stays out of the strip — it is a caption, not a control. */}
               <span className="ml-auto text-[12px] text-muted">{sorted.length} {view === 'units' ? 'units' : view === 'buildings' ? 'buildings' : 'owners'} · sorted by {sortKey === 'rgi' ? 'biggest opportunity' : sortKey}</span>
             </div>
             <div className="overflow-x-auto">

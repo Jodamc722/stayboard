@@ -50,7 +50,7 @@ function DeadlineChip({ claim }: { claim: Claim }) {
     : d === 0 ? 'DUE TODAY'
     : 'due in ' + d + 'd'
   return (
-    <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ' + URGENCY_CLASS[u]}>
+    <span className={'lh-chip text-[10px] font-semibold px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ' + URGENCY_CLASS[u]}>
       <CalendarClock size={10} />{text}
       {claim.due_source === 'manual' && <span className="opacity-60">·set</span>}
     </span>
@@ -73,7 +73,7 @@ function HardChip({ claim }: { claim: Claim }) {
   if (!hardDeadlineBiting(claim)) return null
   const h = daysUntil(claim.deadline_on)
   return (
-    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-rose-600 text-white border-rose-600">
+    <span className="lh-chip text-[10px] font-bold px-1.5 py-0.5 rounded border bg-rose-600 text-white border-rose-600">
       {h !== null && h < 0 ? 'WINDOW CLOSED' : 'window closes in ' + h + 'd'}
     </span>
   )
@@ -165,7 +165,7 @@ export function ClaimsBoard() {
 
   return (
     <>
-      <div className="flex items-center gap-2 flex-wrap mb-4">
+      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
         <button onClick={() => setNewOpen(true)} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-ink text-white hover:opacity-90 inline-flex items-center gap-1.5">
           <Plus size={14} /> New claim
         </button>

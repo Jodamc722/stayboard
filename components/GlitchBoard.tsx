@@ -152,7 +152,7 @@ export function GlitchBoard() {
 
   return (
     <div>
-      <div className="flex items-center gap-2 flex-wrap mb-4">
+      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
         <button onClick={() => setShowNew(true)} className="text-sm font-medium px-3 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1.5"><Plus size={14} /> New glitch</button>
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>

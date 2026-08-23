@@ -51,7 +51,7 @@ export function BuildingPatterns() {
   return (
     <div>
       {/* CONTROLS */}
-      <div className="flex items-center gap-2 flex-wrap mb-4">
+      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line shadow-soft">
           {MKTS.map(m => (
             <button key={m} onClick={() => setMarket(m)} className={'text-[13px] font-medium px-3 py-1.5 transition ' + (market === m ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
