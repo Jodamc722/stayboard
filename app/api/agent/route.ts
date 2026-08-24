@@ -26,6 +26,24 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 const MODEL = 'claude-opus-4-8'
+
+// Anthropic's SERVER-SIDE web search. Jon asked Eve to "connect to internet and study trends in
+// south florida" — this is the supported way. Verified against the tool reference (Aug 2026):
+// type `web_search_20250305`, name `web_search`, NO anthropic-beta header, and it lives in the same
+// tools array as our own client tools.
+//
+// It does NOT emit `tool_use` blocks — it emits `server_tool_use` + `web_search_tool_result` — so
+// the dispatch loop below never mistakes a search for one of our tools.
+//
+// Model support for this exact model string is not enumerated in the docs, so `callAnthropic` below
+// degrades gracefully: if the API rejects the tool, we retry once without it rather than failing the
+// whole answer. Costs $10 per 1,000 searches, hence max_uses.
+const WEB_SEARCH_TOOL = {
+  type: 'web_search_20250305',
+  name: 'web_search',
+  max_uses: 6,
+  user_location: { type: 'approximate', city: 'Miami', region: 'Florida', country: 'US', timezone: 'America/New_York' },
+}
 const MAX_TURNS = 16
 const TOOL_RESULT_CHARS = 9000
 
@@ -105,18 +123,38 @@ export async function POST(req: NextRequest) {
   try {
     let finalText = ''
     let turns = 0
+    let pauses = 0
+    // Flipped off permanently for this request if the API rejects the server-side search tool.
+    let webOk = true
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       turns = turn + 1
       // The atlas rides with the memories: what every page of the app is for, and a live census of
       // her own tool domains — so "where do I…" questions get a real answer, and a tool added in
       // code is in her head on the next deploy without anyone re-teaching her.
       const system = buildSystem({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice, userName, canMoney })
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
+      // Keep the SAME tools array across the whole conversation. If a resume request drops a server
+      // tool the API is still waiting on, it 400s with "but no web_search tool was provided".
+      const toolset: any[] = wireTools(open)
+      if (webOk) toolset.push(WEB_SEARCH_TOOL as any)
+
+      let r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: wireTools(open), messages: convo }),
+        body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: toolset, messages: convo }),
       })
-      const d: any = await r.json()
+      let d: any = await r.json()
+
+      // If this model/account cannot use the server-side search tool, lose the search — not the answer.
+      if (!r.ok && webOk && /web_search/i.test(JSON.stringify(d?.error || ''))) {
+        webOk = false
+        r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: wireTools(open), messages: convo }),
+        })
+        d = await r.json()
+      }
+
       if (!r.ok) {
         const msg = (d?.error?.message || JSON.stringify(d)).slice(0, 240)
         // A 429 here is almost always the org tokens-per-minute ceiling, not a bug. Say so.
@@ -124,6 +162,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Anthropic ${r.status}: ${msg}${hint}` }, { status: 502 })
       }
       convo.push({ role: 'assistant', content: d.content })
+
+      // A long web search can be PAUSED mid-turn. The assistant message goes back UNCHANGED and the
+      // API carries on. Treating this as terminal (the obvious bug) silently truncates the search.
+      if (d.stop_reason === 'pause_turn') { pauses++; if (pauses > 4) break; continue }
 
       if (d.stop_reason === 'tool_use') {
         const results: any[] = []
@@ -181,7 +223,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       reply: finalText,
       chatId,
-      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney },
+      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model' },
     })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
