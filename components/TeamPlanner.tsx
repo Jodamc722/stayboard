@@ -259,6 +259,10 @@ export function TeamPlanner() {
                               <span className={'text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded ' +
                                 (j.status === 'done' ? 'bg-emerald-100 text-emerald-700' : j.status === 'in progress' ? 'bg-amber-100 text-amber-800' : 'bg-app text-muted')}>{j.status}</span>
                               <span className="font-semibold text-ink">{j.unit}</span>
+                              {j.market && j.market.toLowerCase() !== b.market.toLowerCase() ? (
+                                <span title="This unit is in another market — a vendor-serviced one this person is covering"
+                                  className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">{j.market}</span>
+                              ) : null}
                               <span className="text-muted">{j.task}</span>
                               {j.tags.map(t => <TagChip key={t.key} t={t} />)}
                             </div>
@@ -285,7 +289,8 @@ export function TeamPlanner() {
 
       <p className="text-[11.5px] text-muted">
         Days on and off come from the roster you keep on the Turnover Schedule; the numbers are the work
-        actually assigned in Breezeway.
+        actually assigned in Breezeway. Vendor-serviced markets do not get their own block — their work
+        only shows when one of our rostered people is on it, and it lands on that person's own row.
         Long stay is {data.rules.longStayNights}+ nights and a big arrival is ${data.rules.bigBookingUsd.toLocaleString()}+ —
         both read from your own settings at Users → Task automation, so this screen, Slack and the ops brief
         always agree. Vendor-building work only appears when one of our people is assigned to it.
