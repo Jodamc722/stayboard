@@ -502,14 +502,24 @@ export async function syncListings(maxPages = 20, since: string | null = null): 
 export async function syncCustomFields(): Promise<number> {
   const sb = supabaseAdmin()
   // Correct Open API path is account-scoped: /accounts/{id}/custom-fields (NOT /custom-fields).
-  const data = await api<{ results?: any[]; data?: any[]; fields?: any[] } | any[]>(`/accounts/${ACCOUNT_ID}/custom-fields`)
-  const arr: any[] = Array.isArray(data) ? data : ((data as any).results || (data as any).data || (data as any).fields || [])
+  const data = await api<any>(`/accounts/${ACCOUNT_ID}/custom-fields`)
+  // 2026-08-19: this endpoint returns the ACCOUNT OBJECT with the definitions nested under
+  // `customFields` — not a bare list. The extraction below only looked for results/data/fields, so
+  // it silently found zero, skipped the write, and stamped the feed as a clean sync. The table sat
+  // EMPTY for months while every caller that resolves a field BY NAME (door code, welcome_call,
+  // sensitive) quietly fell back to id-matching or gave up. Guesty had 27 definitions the whole time.
+  const arr: any[] = Array.isArray(data) ? data
+    : ((data as any).customFields || (data as any).results || (data as any).data || (data as any).fields
+      || (data as any)?.account?.customFields || [])
   const rows = arr.map(mapCustomField).filter((r: any) => r.id && r.name)
   if (rows.length) {
     const { error } = await sb.from('guesty_custom_fields').upsert(rows, { onConflict: 'id' })
     if (error) throw new Error(`upsert custom_fields: ${error.message}`)
   }
-  await recordSync('custom_fields', rows.length)
+  // Finding NOTHING on an account that has custom fields is a bug, not a quiet success. Record it as
+  // an error so the feed shows red instead of a reassuring timestamp.
+  await recordSync('custom_fields', rows.length,
+    rows.length ? null : 'parsed 0 field definitions from the account payload — shape may have changed again')
   return rows.length
 }
 
