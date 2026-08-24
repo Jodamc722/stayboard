@@ -128,6 +128,17 @@ export type ReportContent = {
   // Per-section revenue basis (see lib/basis.ts). default flows to every section unless overridden.
   // Snapshot cards show a big primary number with a secondary number beneath ('none' hides it).
   basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis; byMonth?: Basis; ahead?: Basis }
+  // NEXT SEASON PROJECTION (Jon, 2026-08-22): the Projections board's numbers for THIS report's
+  // units, frozen at generation time (lib/projections.projectionSectionFor). Null when the scope
+  // resolves no projectable units; old reports simply don't have the key and don't render it.
+  projection?: {
+    headline: string; subtitle: string
+    monthLabels: string[]
+    units: { name: string; months: number[]; total: number }[]
+    byMonth: number[]
+    total: number; nights: number; mgmtPct: number
+    note: string
+  } | null
   // Listing ids blocked/off-market for the period — dropped from revenue and the occupancy denominator.
   excludeListings?: string[]
   // Legacy (pre-basis) flag; superseded by `basis` above. Kept so old reports still parse.

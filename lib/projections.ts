@@ -287,3 +287,43 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
     updatedAt: cfg?.updatedAt || null, updatedBy: cfg?.updatedBy || null,
   }
 }
+
+// ---------------------------------------------------------------------------
+// OWNER-REPORT SECTION (Jon, 2026-08-22: "create a owner report with the owner report tab based
+// on this"). A compact, scope-filtered slice of the projection, frozen into the report content
+// at generation time — the same numbers the Projections board shows for those units, so the
+// report and the board can never disagree on the day the report is made.
+// ---------------------------------------------------------------------------
+export type ProjectionSection = {
+  headline: string; subtitle: string
+  monthLabels: string[]
+  units: { name: string; months: number[]; total: number }[]
+  byMonth: number[]
+  total: number; nights: number; mgmtPct: number
+  note: string
+}
+
+export async function projectionSectionFor(listingIds: string[]): Promise<ProjectionSection | null> {
+  const want = new Set((listingIds || []).map(String))
+  if (!want.size) return null
+  const all = await buildProjections()
+  const units = all.units.filter(u => want.has(u.id))
+  if (!units.length) return null
+  const monthLabels = all.season.map(m =>
+    new Date(m + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }).toUpperCase())
+  const byMonth = all.season.map((m, i) => r2(units.reduce((a, u) => a + (u.months[i] ? u.months[i].netOwner : 0), 0)))
+  const total = r2(byMonth.reduce((a, b) => a + b, 0))
+  const nights = units.reduce((a, u) => a + u.seasonNights, 0)
+  const pcts = Array.from(new Set(units.map(u => u.mgmtPct)))
+  const seasonTxt = monthLabels[0] + ' – ' + monthLabels[monthLabels.length - 1]
+  return {
+    headline: 'Projected net owner revenue for next season.',
+    subtitle: seasonTxt + '  ·  same month last season, adjusted for the market outlook  ·  net of channel and management fee',
+    monthLabels,
+    units: units.map(u => ({ name: u.name, months: u.months.map(c => Math.round(c.netOwner)), total: Math.round(u.seasonNet) })),
+    byMonth: byMonth.map(v => Math.round(v)),
+    total: Math.round(total), nights,
+    mgmtPct: pcts.length === 1 ? pcts[0] : all.mgmtPct,
+    note: 'Projection basis: last season’s measured occupancy, net ADR and length of stay per unit, adjusted for the researched market outlook (Miami revenue +4.7% YoY with ~30% more supply; Fort Lauderdale +2.0% with budget-airlift headwinds; international and group demand carrying 2027 spend). Cleaning fees are a guest pass-through and are not owner revenue. These figures are a planning estimate, not a guarantee.',
+  }
+}
