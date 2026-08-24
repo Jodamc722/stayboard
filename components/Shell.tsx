@@ -98,6 +98,7 @@ const SECTIONS: NavSection[] = [
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
       { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
+      { to: '/projections', label: 'Projections', Icon: TrendingUp }, // 2026-08-21 - next season net owner revenue
       { to: '/reports',  label: 'Owner Reports', Icon: FileText },
       { to: '/owner-audit', label: 'Owner Audit', Icon: ListChecks },
     ],
