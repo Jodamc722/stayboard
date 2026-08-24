@@ -79,6 +79,7 @@ export const FEATURES: Feature[] = [
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
   { key: 'owner-audit',   label: 'Owner Audit',       path: '/owner-audit', group: 'Money' },
+  { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Team' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
   // Labor Dashboard (2026-08-10, Jon): the live click-into view behind the daily labor email —

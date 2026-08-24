@@ -139,6 +139,11 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
     const db = supabaseAdmin()
     const presets = await getOpsPresets()
     const VENDOR_RE = vendorRegex(presets.vendorBuildings)
+    // ONE definition of a long stay (2026-08-21). This file used to hardcode 10 nights while the ops
+    // brief, Slack and the weekly planner all read `slack_rules.longStayNights` — so the same guest
+    // was a long stay on one screen and not on another. The editable setting wins everywhere.
+    let LONG_STAY_NIGHTS = 14
+    try { LONG_STAY_NIGHTS = (await (await import('./slack-rules')).getSlackRules()).longStayNights || 14 } catch { /* default stands */ }
 
     const [lRes, tRes, rRes, oRes, gRes, sRes, fRes, gsRes, iRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields,lat:raw->address->>lat,lng:raw->address->>lng'),
@@ -495,7 +500,7 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
       if (d.extension) add('high', 'Guest is staying on', d.unit,
         d.guest + ' checks out and books straight back in today, so nobody actually leaves.',
         'Do not strip the unit. Ask ' + d.guest + ' whether they want a clean, then book one if they say yes.')
-      if (d.nights != null && d.nights >= 10) add('med', 'Long stay ending', d.unit,
+      if (d.nights != null && d.nights >= LONG_STAY_NIGHTS) add('med', 'Long stay ending', d.unit,
         d.guest + ' was here ' + d.nights + ' nights.',
         'Allow extra time — laundry, fridge, kitchen and bins all take longer after a long stay.')
       if (d.vendor) continue
@@ -546,7 +551,7 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
     }
 
     for (const a of arrivals) {
-      if (a.nights != null && a.nights >= 10) add('med', 'Long booking arriving', a.unit,
+      if (a.nights != null && a.nights >= LONG_STAY_NIGHTS) add('med', 'Long booking arriving', a.unit,
         a.guest + ' is booked for ' + a.nights + ' nights, arriving ' + (a.checkInTime || '4:00 PM') + '.',
         'Walk the unit properly — a long stay notices everything.')
       if (a.bookedAfterSync || a.bookedToday) add('high', 'Booked today (walk-in)', a.unit,
