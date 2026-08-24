@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bucketFor, familyFor, FAMILY_LABEL } from '@/lib/marketing'
+import { marketOf } from '@/lib/segments'
 import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 
 export const dynamic = 'force-dynamic'
@@ -43,11 +44,19 @@ async function handle(code: string, pw: string) {
   const since = ymdET(new Date(Date.now() - windowDays * 86400000))
 
   // ── Resolve the scope to listing ids ────────────────────────────────────────────────────────
-  const { data: listings } = await db.from('guesty_listings').select('id, nickname, title, building, status').limit(2000)
+  const { data: listings } = await db.from('guesty_listings').select('id, nickname, title, building, address_city, status').limit(2000)
   const active = (listings || []).filter((l: any) => String(l.status || '').toLowerCase() !== 'inactive')
   const ids = new Set<string>()
   const scopeIds: string[] = Array.isArray(link.scope_ids) ? link.scope_ids.map(str) : []
+  const scopeMarkets: string[] = link.scope_type === 'market' ? scopeIds : []
   if (link.scope_type === 'listing') for (const id of scopeIds) ids.add(id)
+  else if (link.scope_type === 'market') {
+    const want = new Set(scopeIds.map(s => s.toLowerCase()))
+    for (const l of active) {
+      const nm = str((l as any).nickname || (l as any).title)
+      if (want.has(marketOf((l as any).building, (l as any).address_city, nm).toLowerCase())) ids.add(str((l as any).id))
+    }
+  }
   else if (link.scope_type === 'building') {
     const want = new Set(scopeIds.map(s => s.toLowerCase()))
     for (const l of active) if (want.has(str((l as any).building).toLowerCase())) ids.add(str((l as any).id))
@@ -159,7 +168,12 @@ async function handle(code: string, pw: string) {
     // The weekly planner, scoped to whatever this link covers. Same builder the in-app tab uses —
     // one set of numbers, two doors — and the same tag vocabulary as Slack and the ops brief.
     // Names are the point here: this is a rota, not guest data, so `guest_names` does not apply.
-    const plan = await buildTeamSchedule({ from: today, to: addDaysET(today, Math.min(windowDays, 14) - 1), listingIds: idList })
+    // A market-scoped link passes the market through as well as the units, so the planner groups and
+    // filters exactly the way the in-app tab does.
+    const plan = await buildTeamSchedule({
+      from: today, to: addDaysET(today, Math.min(windowDays, 14) - 1),
+      listingIds: idList, markets: scopeMarkets,
+    })
     out.sections.team = {
       from: plan.from, to: plan.to, days: plan.days, rules: plan.rules,
       markets: plan.markets.map(m => ({
