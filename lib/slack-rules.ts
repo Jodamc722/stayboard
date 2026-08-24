@@ -30,6 +30,8 @@ export type EventKey =
   | 'walk_in_risk'
   | 'readiness_3pm' | 'labor_report' | 'notable_arrivals'
   | 'weekly_planner'
+  // Guest orders (2026-08-24): new basket → approvers; paid order → area HK channel on delivery day.
+  | 'guest_orders'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -46,6 +48,7 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   walk_in_risk: 'Could be a walk-in tonight',
   readiness_3pm: '3pm check — ready for 4pm?',
   weekly_planner: 'Weekly planner (who is working, per market)',
+  guest_orders: 'Guest orders (new basket → approvers; delivery day → housekeeping)',
   labor_report: 'Hours, no-shows, over hours',
   notable_arrivals: 'Owner stays & big bookings',
 }
@@ -249,6 +252,10 @@ export const DEFAULT_RULES: SlackRules = {
     // format goes out before anyone can stop it. Read one, then flip approval off in settings.
     // Cooldown is a week minus a few hours so a re-run cannot double-post the same week.
     weekly_planner: { enabled: false, approval: true, quietStart: 16 * 60, quietEnd: 21 * 60, cooldownMin: 6 * 24 * 60 },
+    // GUEST ORDERS. A guest can submit at 11pm, and the human already approved the order before the
+    // delivery-day message goes to housekeeping — so no window and no second approval gate. Each
+    // message carries its own order id in the group key, so there is nothing to cool down.
+    guest_orders: { enabled: true, approval: false, quietStart: 0, quietEnd: 0, cooldownMin: 0 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,
