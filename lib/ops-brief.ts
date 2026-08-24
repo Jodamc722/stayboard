@@ -214,6 +214,7 @@ async function gather(variant: BriefVariant) {
       const nights = r.nights != null ? Number(r.nights) : null
       const total = Math.round(Number(r.money_total) || 0)
       return {
+        lid,
         unit: meta[lid]?.name ?? 'Unit',
         market: meta[lid]?.market || 'Other',
         when: str(r.check_in).slice(0, 10),
@@ -387,7 +388,7 @@ type Tile = { label: string; value: string; note?: string; tone?: 'red' | 'amber
 function tileRow(tiles: Tile[]): string {
   const toneCss = (t?: string) => t === 'red' ? ';color:#b91c1c' : t === 'amber' ? ';color:#b45309' : t === 'green' ? ';color:#047857' : ''
   return `<table width="100%" cellspacing="0" cellpadding="0"><tr>` +
-    tiles.map(t => `<td style="width:${Math.round(100 / tiles.length)}%">
+    tiles.map((t, i) => `<td style="width:${Math.round(100 / tiles.length)}%;padding-bottom:8px${i ? ';border-left:1px solid #f3f4f6' : ''}">
       <div style="${S.tileLabel}">${t.label}</div>
       <div style="${S.tileValue}${toneCss(t.tone)}">${t.value}</div>
       ${t.note ? `<div style="${S.tileNote}">${t.note}</div>` : ''}
@@ -676,11 +677,16 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   // AUTO-CREATED ARRIVAL INSPECTIONS (Jon, 2026-08-18: "shared in the brief as todo / priorities").
   // The ones not yet done for arrivals today/tomorrow go straight into the priority list with who
   // holds them; the full window gets its own card below. Market variants only see their market.
-  let autoInsp: Awaited<ReturnType<typeof upcomingAutoInspections>> = []
+  // Fetched over the WHOLE lookahead window so the week-ahead card can show, per big arrival,
+  // whether Lighthouse already created its inspection (Jon, 2026-08-24). The priorities list and
+  // the inspections card keep their tighter 2-day focus.
+  let autoInspWide: Awaited<ReturnType<typeof upcomingAutoInspections>> = []
   try {
-    autoInsp = (await upcomingAutoInspections(2))
+    autoInspWide = (await upcomingAutoInspections((d as any).lookaheadDays || 7))
       .filter(i => variant === 'full' || variant === 'GM' || str(i.market) === variant)
   } catch { /* automation table may not exist yet — the brief still sends */ }
+  const soonCut2 = ymdET(new Date(Date.now() + 2 * 86400000))
+  const autoInsp = autoInspWide.filter(i => str(i.check_in) <= soonCut2)
   const inspOpen = autoInsp.filter(i => !/complet|finish|close|approv/i.test(str(i.status)))
   for (const i of inspOpen.filter(x => x.check_in <= ymdET(new Date(Date.now() + 86400000))).slice(0, 4)) {
     priorities.push(prio('amber', str(i.unit_name),
@@ -731,12 +737,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const hotN = mine.filter(c => c.sameDayArrival).length
     const doneN = mine.filter(c => c.state === 'done').length
     return `
-    <tr><td colspan="3" style="padding:10px 8px 2px;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b> <span style="${S.muted}">· ${mine.length} clean${mine.length === 1 ? '' : 's'}${hotN ? ` · <span style="${S.red}">${hotN} same-day</span>` : ''}${doneN ? ` · ${doneN} done` : ''}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b> <span style="${S.muted}">· ${mine.length} clean${mine.length === 1 ? '' : 's'}${hotN ? ` · <span style="${S.red}">${hotN} same-day</span>` : ''}${doneN ? ` · ${doneN} done` : ''}</span></td></tr>` +
       mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival)).join('')
   }
   const cleansRows =
     (unassigned.length ? `
-    <tr><td colspan="3" style="padding:10px 8px 2px;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="${S.muted}">· ${unassigned.length} door${unassigned.length === 1 ? '' : 's'} — assign these first</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} door${unassigned.length === 1 ? '' : 's'} — assign these first</span></td></tr>` +
       unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
     personOrder.map(personBlock).join('')
 
@@ -804,6 +810,24 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     (x.long ? ' ' + pillAmber('LONG STAY') : '') +
     (x.big ? ' ' + (isField ? pillAmber('VIP') : pillRed('BIG $')) : '')
   const fwdWhen = (x: any) => x.when === d.today ? pillRed('TODAY') : `<span style="${S.muted}">${esc(niceDay(x.when))}</span>`
+  // LIGHTHOUSE'S OWN INSPECTIONS RIDE ON THE ROW (Jon, 2026-08-24: "should show automated
+  // inspections created by lighthouse"). Matched by listing + check-in date. A big arrival
+  // inside the automation's 3-day horizon with NO inspection yet prints amber — that is the gap
+  // to close; arrivals further out simply have not been reached by the automation yet.
+  const inspByKey: Record<string, any> = {}
+  for (const i of autoInspWide) if (i.listing_id) inspByKey[String(i.listing_id) + '|' + str(i.check_in)] = i
+  const soon3 = ymdET(new Date(Date.now() + 3 * 86400000))
+  const fwdInspLine = (x: any): string => {
+    const i = inspByKey[String(x.lid) + '|' + String(x.when)]
+    if (i) {
+      const st = str(i.status)
+      const done = /complet|finish|close|approv/i.test(st)
+      const started = /progress|start/i.test(st)
+      return `<br><span style="font-size:11.5px;color:${done ? '#047857' : started ? '#b45309' : '#6b7280'}">✓ inspection auto-created${Array.isArray(i.assignees) && i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ''} · ${done ? 'done' : started ? 'in progress' : 'open'}</span>`
+    }
+    if (x.big && x.when <= soon3) return `<br><span style="font-size:11.5px;color:#b45309">no pre-arrival inspection yet</span>`
+    return ''
+  }
   const fwdMore = fwdAll.length > FWD_LIMIT
     ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${fwdAll.length - FWD_LIMIT} more inside the window — the boards have the full list.</p>`
     : ''
@@ -812,7 +836,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   if (isField) {
     // No dollars, no money column — nights and pills carry everything the crew needs.
     const rows = fwdShown.map(x => `
-    <tr><td style="${S.td}"><b>${esc(x.unit)}</b>${fwdPills(x)}<br><span style="${S.muted};font-size:12px">${esc(x.guest)}${x.nights ? ` · ${x.nights} night${x.nights === 1 ? '' : 's'}` : ''}</span></td>
+    <tr><td style="${S.td}"><b>${esc(x.unit)}</b>${fwdPills(x)}<br><span style="${S.muted};font-size:12px">${esc(x.guest)}${x.nights ? ` · ${x.nights} night${x.nights === 1 ? '' : 's'}` : ''}</span>${fwdInspLine(x)}</td>
     <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top">${fwdWhen(x)}</td></tr>`).join('')
     fwdCard = fwdAll.length
       ? card(`Next ${lookD} days — worth preparing for`, fwdAll.length,
@@ -824,9 +848,9 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     for (const x of fwdShown) (byMk[x.market] = byMk[x.market] || []).push(x)
     const mkOrder = Object.keys(byMk).sort((a, b) => byMk[b].length - byMk[a].length || a.localeCompare(b))
     const rows = mkOrder.map(mk => `
-    <tr><td colspan="3" style="padding:10px 8px 2px;border-top:1px solid #e5e7eb;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280">${esc(mk)} <span style="font-weight:400;text-transform:none;letter-spacing:0">· ${byMk[mk].length}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#4338ca">${esc(mk)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9ca3af">· ${byMk[mk].length}</span></td></tr>` +
       byMk[mk].map(x => `
-    <tr><td style="${S.td}"><b>${esc(x.unit)}</b>${fwdPills(x)}<br><span style="${S.muted};font-size:12px">${esc(x.guest)}${x.nights ? ` · ${x.nights}n` : ''}</span></td>
+    <tr><td style="${S.td}"><b>${esc(x.unit)}</b>${fwdPills(x)}<br><span style="${S.muted};font-size:12px">${esc(x.guest)}${x.nights ? ` · ${x.nights}n` : ''}</span>${fwdInspLine(x)}</td>
     <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top">${fwdWhen(x)}</td>
     <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><b>$${x.total.toLocaleString()}</b></td></tr>`).join('')).join('')
     fwdCard = fwdAll.length
@@ -1030,7 +1054,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       '#6366f1')
   }
 
-  const eyebrow = (t: string) => `<p style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#9ca3af;margin:18px 8px 8px;text-transform:uppercase">${t}</p>`
+  // Section eyebrows carry a rule line so the email reads as CHAPTERS, not one long scroll —
+  // the eye can jump Act now → Today → Looking ahead → The shop without reading a word.
+  const eyebrow = (t: string) =>
+    `<table width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 10px"><tr>
+      <td style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#6b7280;text-transform:uppercase;white-space:nowrap;padding:0 10px 0 4px">${t}</td>
+      <td width="100%" style="border-top:2px solid #e5e7eb;line-height:1px;font-size:1px">&nbsp;</td>
+    </tr></table>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
   const tiles: Tile[] = isField ? [
     { label: 'Cleans', value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} same-day` : 'today', tone: sameDay.length ? 'amber' : undefined },
@@ -1106,7 +1136,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   let paperCard = ''
   if (variant === 'full' && comp) {
     const bzPct = comp.winCheckouts ? Math.round((comp.winBzClosed / comp.winCheckouts) * 1000) / 10 : null
-    paperCard = card('Paperwork & coverage', null, `
+    paperCard = card('Paperwork — cleans closed in Breezeway & timecards', null, `
       <table width="100%" cellspacing="0" cellpadding="0">
       <tr><td style="${S.td}">Departure cleans closed in Breezeway <span style="${S.muted}">drives every labor number</span></td>
         <td style="${S.td};text-align:right">${bzPct != null ? `<b style="${bzPct < 80 ? S.red : bzPct < 95 ? S.amber : S.green}">${bzPct}%</b> <span style="${S.muted}">${comp.winBzClosed} of ${comp.winCheckouts} checkouts · 7d</span>` : '—'}</td></tr>
@@ -1127,7 +1157,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
         : sameDay.length
           ? `Same-day doors first: ${sameDay.slice(0, 5).map(c => esc(c.unit)).join(', ')}${sameDay.length > 5 ? ` +${sameDay.length - 5}` : ''}.`
           : `No same-day turns — work each run in order.`)
-    : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'} · ${fullBlocked.length} blocked${bzPct2 != null ? ` · paperwork ${bzPct2}%` : ''}.</b> ` +
+    : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'} · ${fullBlocked.length} blocked${bzPct2 != null ? ` · ${bzPct2}% of cleans closed in Breezeway` : ''}.</b> ` +
       `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.`
 
   const title = isField ? `${variant} — Day Sheet` : 'Ops Command'
@@ -1145,8 +1175,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <p style="${S.bandSub}">${subTitle}</p>
   </div>
   ${quoteBanner(d.today)}
-  <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:11px 18px;margin-bottom:10px">
-    <p style="margin:0;font-size:13.5px;line-height:1.6">${verdict}</p>
+  <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:10px">
+    <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
   ${accessNotice()}
@@ -1155,6 +1185,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
+  ${!isField && fwdCard ? fwdCard : ''}
   ${onTodayCard}
   ${card("Cleans — each person's run, in order", d.cleans.length, d.cleans.length ? bare(cleansRows) : emptyLine('No departure cleans today.'))}
   ${autoInsp.length ? card('Arrival inspections — auto-assigned', autoInsp.length, bare(autoInsp.map(i => `
@@ -1168,7 +1199,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, bare(ownerRows), '#4338ca') : ''}
   ${!isField && glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
-  ${fwdCard ? eyebrow('Looking ahead') + fwdCard : ''}
+  ${isField && fwdCard ? eyebrow('Looking ahead') + fwdCard : ''}
 
   ${!isField && (maintCard || paperCard || laborCard) ? eyebrow('The shop — maintenance, paperwork, labor') + maintCard + paperCard + laborCard : ''}
 
@@ -1520,8 +1551,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <p style="${S.bandSub}">${dateNice} · whole portfolio · ${d.activeCount} active units</p>
   </div>
   ${quoteBanner(today)}
-  <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 18px;margin-bottom:12px">
-    <p style="margin:0;font-size:14px;line-height:1.6">${verdict}</p>
+  <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:12px">
+    <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
 
