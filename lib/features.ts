@@ -75,6 +75,8 @@ export const FEATURES: Feature[] = [
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
   { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Money' },
+  // Owner projections (2026-08-21, Jon): next season's net owner revenue, editable per month.
+  { key: 'projections',   label: 'Projections',       path: '/projections', group: 'Money' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Money' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
