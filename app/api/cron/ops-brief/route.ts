@@ -95,19 +95,45 @@ export async function GET(req: NextRequest) {
     { v: 'GM', to: (cfg.gm || []).filter(Boolean) },
   ]
   const out: any[] = []
+  // EACH VARIANT ON ITS OWN (robustness pass, 2026-08-24): build(v) used to run bare, so one
+  // variant throwing — a daysheet hiccup, one bad row — 500'd the whole route and NO brief went
+  // out that morning, silently. Now each build/send is isolated, and any failure is reported to
+  // the owner below rather than swallowed. Never quiet-skip.
   for (const { v, to } of lists) {
     if (!to.length) { out.push({ variant: v, skipped: 'no recipients' }); continue }
-    const b = await build(v)
-    const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
-    out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+    try {
+      const b = await build(v)
+      const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
+      out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+    } catch (e: any) {
+      out.push({ variant: v, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
+    }
   }
   // Vendor briefs — external companies, so each group only ever sees its own buildings.
   for (const g of VENDOR_GROUPS) {
     const to = ((cfg.vendors || {})[g.key] || []).filter(Boolean)
     if (!to.length) { out.push({ variant: 'vendor:' + g.key, skipped: 'no recipients' }); continue }
-    const b = await buildVendorBrief(g.key)
-    const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
-    out.push({ variant: 'vendor:' + g.key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+    try {
+      const b = await buildVendorBrief(g.key)
+      const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
+      out.push({ variant: 'vendor:' + g.key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+    } catch (e: any) {
+      out.push({ variant: 'vendor:' + g.key, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
+    }
+  }
+  // ANY FAILURE GETS A NOTE TO THE OWNER — a brief that didn't arrive looks identical to a quiet
+  // morning, so the silence itself is reported. One short email listing what failed and why.
+  const failed = out.filter(o => !o.skipped && !o.sent)
+  if (failed.length) {
+    const esc2 = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    await sendGmail({
+      fromEmail, to: [DEFAULT_FROM], cc: ccFor([DEFAULT_FROM]),
+      subject: `⚠️ Morning briefs: ${failed.length} of ${out.filter(o => !o.skipped).length} did not send`,
+      html: '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.7;color:#0b1220">' +
+        'These briefs did not go out this morning:</p><ul style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;line-height:1.7;color:#374151">' +
+        failed.map(f => '<li><b>' + esc2(f.variant) + '</b> &mdash; ' + esc2(f.error || 'unknown error') + '</li>').join('') +
+        '</ul><p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#6b7280">Any brief not listed above sent normally. They will all run again tomorrow morning.</p>',
+    }).catch(() => null)
   }
   // THE REVIEW WATERMARK. Stamped only after a real send, so tomorrow's brief starts where this
   // one stopped and nobody reads the same review twice. Previews and tests never move it.
