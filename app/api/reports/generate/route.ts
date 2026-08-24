@@ -214,11 +214,68 @@ export async function POST(req: NextRequest) {
   // statements" pulls everything the picker offered instead of silently dropping the tail.
   const statementIds: string[] = Array.isArray(body?.statementIds) ? body.statementIds.map((x: any) => String(x)).filter(Boolean).slice(0, 60) : []
   const heroImageUrl = str(body?.heroImageUrl)
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd) {
+  // kind 'projection' (Jon, 2026-08-22: "i just want to be able to create a customizable report
+  // for owners based on projections") builds a SEASON PROJECTION report: hero + snapshot tiles +
+  // the Next Season table and upsides, everything else omitted (an editor can un-hide sections
+  // later — that is the customizable part). No period needed: the season IS the period.
+  const kind = str(body?.kind) === 'projection' ? 'projection' : 'review'
+  if (kind !== 'projection' && (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd)) {
     return NextResponse.json({ error: 'periodStart/periodEnd (YYYY-MM-DD) required' }, { status: 400 })
   }
   if (!listingIds.length && !buildings.length) {
     return NextResponse.json({ error: 'listingIds or buildings required' }, { status: 400 })
+  }
+
+  if (kind === 'projection') {
+    const { listings, scopeLabel } = await resolveScope(listingIds, buildings)
+    const ids2 = listings.map(l => l.id)
+    if (!ids2.length) return NextResponse.json({ error: 'No active listings in that scope.' }, { status: 400 })
+    let proj: ReportContent['projection'] = null
+    try { proj = await projectionSectionFor(ids2) } catch (e: any) {
+      return NextResponse.json({ error: 'Projection build failed: ' + String(e?.message || e).slice(0, 200) }, { status: 500 })
+    }
+    if (!proj) return NextResponse.json({ error: 'No projection data for that scope yet — open Money → Projections first.' }, { status: 400 })
+    const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+    const seasonLabel = proj.monthLabels[0] + ' – ' + proj.monthLabels[proj.monthLabels.length - 1]
+    const pStart = etToday()
+    const content: ReportContent = {
+      meta: { scopeLabel, periodStart: pStart, periodEnd: pStart, asOf, activeListings: ids2.length, daysRemaining: 0, generatedAt: new Date().toISOString() },
+      hero: {
+        eyebrow: prettyDate(asOf).toUpperCase(),
+        title: scopeLabel,
+        headline: 'Projecting ' + money0(proj.total) + ' net to you across next season (' + seasonLabel + ').',
+        preparedFor: 'Prepared for the owners of ' + scopeLabel,
+        dateLabel: 'SEASON PROJECTION',
+        heroImage: heroImageUrl || null,
+      },
+      snapshot: {
+        headline: 'Next season at a glance.',
+        subtitle: seasonLabel + '  ·  ' + ids2.length + ' active listing' + (ids2.length === 1 ? '' : 's') + '  ·  assumptions as of ' + prettyDate(asOf),
+        cards: [
+          { key: 'net', label: 'NET TO OWNER', value: money0(proj.total), sub: 'After the ' + proj.mgmtPct + '% management fee' },
+          { key: 'nights', label: 'PROJECTED NIGHTS', value: String(proj.nights), sub: 'Across the season' },
+          { key: 'permonth', label: 'AVG PER MONTH', value: money0(proj.total / Math.max(1, proj.monthLabels.length)), sub: 'Net owner revenue' },
+          { key: 'basis', label: 'BASELINE', value: 'Last season', sub: 'Same months last year × market outlook' },
+        ],
+        ytd: null,
+      },
+      pacing: null, plan: null, statement: null,
+      ahead: { headline: '', subtitle: '', months: [], strip: [] },
+      voices: { headline: '', subtitle: '', quotes: [], themes: [] },
+      projects: { headline: '', subtitle: '', weeks: [], tracking: [] },
+      projection: proj,
+      basis: { default: 'netota' },
+      omit: ['pacing', 'plan', 'statement', 'ahead', 'voices', 'projects'],
+    }
+    const code2 = makeCode()
+    const title2 = str(body?.title) || (scopeLabel + ' — Next Season Projection — ' + prettyDate(asOf))
+    const { data: ins2, error: err2 } = await supabaseAdmin().from('owner_reports').insert({
+      code: code2, title: title2, scope_label: scopeLabel, listing_ids: ids2,
+      period_start: pStart, period_end: pStart, as_of: asOf,
+      theme, status: 'draft', content, created_by: user.email || null,
+    }).select('id, code').limit(1)
+    if (err2) return NextResponse.json({ error: err2.message }, { status: 500 })
+    return NextResponse.json({ ok: true, id: (ins2 || [])[0]?.id, code: code2, aiUsed: false })
   }
 
   // A selected statement whose month has not been swept into the ledger mirror would aggregate
