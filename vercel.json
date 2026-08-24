@@ -103,6 +103,10 @@
     {
       "path": "/api/schedule/sync",
       "schedule": "23 16 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-planner",
+      "schedule": "29 22 * * 0"
     }
   ]
 }
