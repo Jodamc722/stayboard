@@ -603,10 +603,17 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   // ---- TOP PRIORITIES — the whole point. What breaks the day if ignored, in order. ----
   // One line per priority: WHAT in bold, WHY short, HOW muted. Digestible beats complete —
   // the boards carry the detail; this list carries the order.
+  // Truncate the how-line at a WORD, with an ellipsis — a hard slice printed "book one if they"
+  // and the reader was left to guess the instruction's ending.
+  const clip = (s: string, n: number) => {
+    if (s.length <= n) return esc(s)
+    const cut = s.slice(0, n)
+    return esc(cut.slice(0, Math.max(cut.lastIndexOf(' '), n - 20))) + '…'
+  }
   const prio = (tone: 'red' | 'amber', unit: string, what: string, how?: string) =>
     `<tr><td style="padding:5px 0;font-size:13px;line-height:1.55;border-top:1px solid #f8f9fa">` +
     `<span style="${tone === 'red' ? S.red : S.amber}">●</span>&nbsp; <b>${esc(unit)}</b> <span style="color:#374151">— ${what}</span>` +
-    (how ? `<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${esc(how).slice(0, 96)}</span>` : '') + `</td></tr>`
+    (how ? `<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${clip(how, 120)}</span>` : '') + `</td></tr>`
   const priorities: string[] = []
   // SAME-DAY TURNS: ONE LINE, NOT ONE ALARM PER DOOR (Jon, 2026-08-17: "don't need priorities for
   // all departure cleans... it has not started at 7am as no cleans start that early"). This lands
@@ -631,7 +638,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const inspOpen = autoInsp.filter(i => !/complet|finish|close|approv/i.test(str(i.status)))
   for (const i of inspOpen.filter(x => x.check_in <= ymdET(new Date(Date.now() + 86400000))).slice(0, 4)) {
     priorities.push(prio('amber', str(i.unit_name),
-      `pre-arrival inspection — <b>${esc(str(i.reason))}</b> lands ${esc(str(i.check_in))}`,
+      `pre-arrival inspection — <b>${esc(str(i.reason))}</b> lands ${esc(niceDay(str(i.check_in)))}`,
       i.assignees.length ? 'With ' + i.assignees.join(' and ') + '.' : 'Not assigned — pick it up.'))
   }
 
@@ -891,7 +898,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       `<p style="margin:0;font-size:13px;line-height:1.6">${laborLine}</p>` + planLine +
       `<p style="margin:8px 0 0;padding-top:8px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280">Payroll, margins and the settled 30 days live in the <b>Daily Labor email</b> (7:58am) — one place, one engine.</p>`,
       status.band === 'over' ? '#dc2626' : '#6366f1', `Yesterday · ${niceDay(yd)}`)
-  } catch { /* Homebase down — the brief still sends */ }
+  } catch {
+    // Homebase down — the brief still sends, but the gap is NAMED instead of silently absent.
+    laborCard = card('Labor · Homebase', null,
+      `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Yesterday's labor line could not be loaded this morning (Homebase did not answer). The numbers live in the <b>Daily Labor email</b> (7:58am) and on the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a>.</p>`,
+      '#6366f1')
+  }
 
   const eyebrow = (t: string) => `<p style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#9ca3af;margin:18px 8px 8px;text-transform:uppercase">${t}</p>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
@@ -956,6 +968,13 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       (carryRows ? `<p style="margin:10px 0 4px;font-size:12.5px;color:#374151"><b>Carried over — oldest first</b></p><table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}">Unit · task</th><th style="${S.th};text-align:right">Age</th><th style="${S.th}">With</th></tr>${carryRows}</table>${carryAll.length > 10 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${carryAll.length - 10} more on the board</p>` : ''}` : `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.green}">Nothing carried over</span> <span style="${S.muted}">— every scheduled task from the last week is closed.</span></p>`) +
       (recurringAll.length ? `<p style="margin:10px 0 0;font-size:12.5px"><b>Recurring</b> <span style="${S.muted}">3+ tasks in 30d — worth a root-cause visit:</span> ${recurringAll.map(r => esc(r.unit) + ' <span style="' + S.red + '">×' + r.n + '</span>').join(' · ')}</p>` : ''),
       '#7c2d12', '17WEST and vendor buildings excluded')
+  } else if (variant === 'full') {
+    // BOTH MARKETS FAILED TO LOAD — say so. The maintenance story was merged into this email; a
+    // morning where the card silently vanishes reads as "no maintenance news", which is exactly
+    // wrong when the truth is "the data did not come back".
+    maintCard = card('Maintenance — Miami | Broward', null,
+      `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Maintenance data could not be loaded this morning, so this card is withheld rather than shown empty. Breezeway and the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a> have the live picture.</p>`,
+      '#7c2d12')
   }
 
   // ── PAPERWORK & COVERAGE — why every other number can be trusted ────────────────────────────
@@ -1013,7 +1032,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
   ${card("Cleans — each person's run, in order", d.cleans.length, d.cleans.length ? bare(cleansRows) : emptyLine('No departure cleans today.'))}
   ${autoInsp.length ? card('Arrival inspections — auto-assigned', autoInsp.length, bare(autoInsp.map(i => `
-    <tr><td style="${S.td}"><b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(str(i.check_in))}</span><br>
+    <tr><td style="${S.td}"><b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(niceDay(str(i.check_in)))}</span><br>
     <span style="font-size:12px;color:#6b7280">${esc(str(i.reason))}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
     <td style="${S.td};text-align:right;white-space:nowrap">${/complet|finish|close|approv/i.test(str(i.status)) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')), '#7c3aed') : ''}
   ${maintCard}
@@ -1302,7 +1321,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const tiles: Tile[] = [
     { label: 'Cost / clean · 7d', value: H7t && H7t.costPerClean != null ? money0(H7t.costPerClean) : '—',
       tone: !H7t || H7t.costPerClean == null ? undefined : (H7t.revPerClean != null && H7t.costPerClean > H7t.revPerClean) ? 'red' : 'green',
-      note: H7t && H7t.revPerClean != null ? 'we charge ' + money0(H7t.revPerClean) : (ec7 ? 'payroll incomplete — withheld' : 'labor engine unavailable') },
+      // The withheld/unavailable note only when the ENGINE gave nothing — with good payroll and
+      // simply no in-house cleans this week, saying "payroll incomplete" would be a false alarm.
+      note: !H7t ? (ec7 ? 'payroll incomplete — withheld' : 'labor engine unavailable')
+        : H7t.revPerClean != null ? 'we charge ' + money0(H7t.revPerClean) : undefined },
     { label: 'HK margin · 7d', value: H7t && H7t.marginPct != null ? pct1(H7t.marginPct) : '—',
       tone: !H7t || H7t.marginPct == null ? undefined : H7t.marginPct >= 30 ? 'green' : H7t.marginPct >= 10 ? 'amber' : 'red',
       note: H7t ? money0(H7t.margin) + ' on ' + H7t.cleans + ' cleans' : 'cost not available' },
@@ -1326,7 +1348,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <td style="${S.td};text-align:right;white-space:nowrap;color:#6b7280">${settled}</td></tr>`
   const trendRows = (E7 ? [
     tRow('Labor profit', money0(E7.allIn.margin) + (E7.allIn.marginPct != null ? ` <span style="${S.muted}">(${pct1(E7.allIn.marginPct)})</span>` : ''),
-      snap ? money0(snap.margin) + ' · 30d' : '—', 'all crews, revenue minus payroll'),
+      snap ? money0(snap.margin) + ' · 30d' : '—', 'all crews & salaried management, revenue minus payroll'),
     tRow('Cost / clean', H7t && H7t.costPerClean != null ? money0(H7t.costPerClean) : '—',
       snap && snap.costPerClean != null ? money0(snap.costPerClean) + ' settled' : '—', 'housekeepers only'),
     tRow('Departure cleans', H7t ? String(H7t.cleans) : '—',
