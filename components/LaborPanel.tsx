@@ -595,6 +595,9 @@ export function LaborPanel() {
             {econ?.kpi?.agencyLoad?.total > 0 && (
               <p>Agency markup — {econ.kpi.agencyLoad.byAgency.map((a: any) => `${a.label}: ${fmt$(a.load)} on ${fmt$(a.wages)} wages (${a.people} people)`).join(' · ')} — already inside every payroll line and cost per clean above.</p>
             )}
+            {econ?.kpi?.management?.salaryWindow > 0 && (
+              <p>Management (salaried) — {econ.kpi.management.people.map((m: any) => `${m.name} $${(m.annual / 1000).toFixed(0)}k/yr → ${fmt$(m.windowSalary)} this window`).join(' · ')} — fixed cost in the all-in line, never inside cost per clean; their punches are excluded from supervisor payroll.</p>
+            )}
             {econ?.kpi?.seventeenWest?.covered > 0 && (
               <p>17WEST covers {fmt$(econ.kpi.seventeenWest.covered)} of George Paz + Yoslenis&apos;s {fmt$(econ.kpi.seventeenWest.wages)} wages this window ($100k/yr, pro-rated) — maintenance and supervisor lines carry only Stay&apos;s share, and 17WEST tasks are unbilled by design.</p>
             )}
