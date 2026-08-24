@@ -44,6 +44,9 @@ export type Tag = { key: TagKey; label: string; tone: 'amber' | 'violet' | 'emer
 
 export type Job = {
   id: string
+  /** Deep link into the Breezeway task, so a maintenance lead can act rather than just read. */
+  url: string
+  reportUrl: string | null
   date: string
   unit: string
   listingId: string
@@ -81,9 +84,12 @@ export type MarketBlock = {
   cleans: number
 }
 
+export type Dept = 'cleaning' | 'maintenance' | 'all'
+
 export type TeamSchedule = {
   from: string
   to: string
+  dept: Dept
   days: { date: string; dow: string; weekend: boolean; today: boolean }[]
   markets: MarketBlock[]
   rules: { longStayNights: number; bigBookingUsd: number }
@@ -162,11 +168,18 @@ export async function buildTeamSchedule(opts: {
   markets?: string[]
   /** Restrict to these listing ids (how a share link scopes itself to a building or an owner). */
   listingIds?: string[]
+  /**
+   * Which trade this planner is for. Jon, 2026-08-21: "maintenance should be separate link for
+   * Broward and Miami" — a cleaner opening the rota should not be reading work orders, and a
+   * maintenance lead should not be scrolling past forty cleans to find three repairs.
+   */
+  dept?: Dept
 } = {}): Promise<TeamSchedule> {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const from = opts.from || today
   const to = opts.to || addDays(from, 13)
+  const dept: Dept = opts.dept === 'maintenance' || opts.dept === 'all' ? opts.dept : 'cleaning'
   const rules = await getSlackRules().catch(() => ({ longStayNights: 14, bigBookingUsd: 3000 } as any))
   const LONG = num(rules.longStayNights) || 14
   const BIG = num(rules.bigBookingUsd) || 3000
@@ -198,7 +211,7 @@ export async function buildTeamSchedule(opts: {
   for (let i = 0; i < ids.length; i += 300) {
     const chunk = ids.slice(i, i + 300)
     const got = await pageAll((a, b) => db.from('breezeway_tasks_sync')
-      .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at')
+      .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,report_url')
       .in('reference_property_id', chunk)
       .gte('scheduled_date', from).lte('scheduled_date', to)
       .order('scheduled_date').range(a, b))
@@ -331,9 +344,16 @@ export async function buildTeamSchedule(opts: {
     const date = str(t.scheduled_date).slice(0, 10)
     if (!date) continue
     const name = str(t.name)
+    const jobDept = deptOf(t.type_department)
+    // Inspections ride with cleaning: whoever turns the unit is the one who gets walked through it.
+    if (dept === 'cleaning' && jobDept === 'Maintenance') continue
+    if (dept === 'maintenance' && jobDept !== 'Maintenance') continue
     const job: Job = {
-      id: str(t.id), date, unit: u.name, listingId: li, market: u.market,
-      task: name, dept: deptOf(t.type_department), status: statusOf(t),
+      id: str(t.id),
+      url: 'https://app.breezeway.io/task/' + str(t.id),
+      reportUrl: str(t.report_url) || null,
+      date, unit: u.name, listingId: li, market: u.market,
+      task: name, dept: jobDept, status: statusOf(t),
       isClean: /clean|turnover|departure/i.test(name),
       tags: tagsFor(li, date),
     }
@@ -367,7 +387,8 @@ export async function buildTeamSchedule(opts: {
       const key = pl.market + '|' + pl.person
       const p = byPerson[key] = byPerson[key] || { name: pl.person, dept: job.dept, byDay: {}, roster: {}, clashes: {}, unrostered: false, daysWorked: 0, daysOn: 0, jobs: 0, cleans: 0 }
       // Someone doing a clean is Housekeeping even if a stray maintenance ticket came first.
-      if (job.dept === 'Housekeeping') p.dept = 'Housekeeping'
+      if (dept !== 'maintenance' && job.dept === 'Housekeeping') p.dept = 'Housekeeping'
+      if (dept === 'maintenance') p.dept = 'Maintenance'
       ;(p.byDay[date] = p.byDay[date] || []).push(job)
       p.jobs++; if (job.isClean) p.cleans++
       // A job with two people on it counts once against the market, not twice.
@@ -383,7 +404,9 @@ export async function buildTeamSchedule(opts: {
 
   // Everyone on the roster gets a row even with nothing assigned — an empty day for someone marked
   // Working is exactly the thing this screen exists to show.
-  for (const mk of Object.keys(rosterMembers)) {
+  // The roster on the Turnover Schedule is a HOUSEKEEPING roster, so it only seeds the cleaning
+  // planner. A maintenance planner is built purely from who has work assigned.
+  for (const mk of dept === 'maintenance' ? [] : Object.keys(rosterMembers)) {
     if (wantMarkets && !wantMarkets.has(mk.toLowerCase())) continue
     // A vendor market's roster is the vendor's business, and seeding it would put an empty block
     // on the page for a market we have no crew in.
@@ -438,7 +461,7 @@ export async function buildTeamSchedule(opts: {
   })
 
   return {
-    from, to, days, markets,
+    from, to, dept, days, markets,
     rules: { longStayNights: LONG, bigBookingUsd: BIG },
     counts: { tasksRead: tasks.length, vendorDropped, unassignedDropped, rosterWeeks, clashes },
     generatedAt: new Date().toISOString(),

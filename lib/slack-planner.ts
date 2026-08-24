@@ -11,7 +11,7 @@ import 'server-only'
 //
 // TONE: this is read by the crew, so it follows the house rule — state the picture, point at the
 // next thing, stay on their side. Never a scoreboard, never a name held up as a problem.
-import { buildTeamSchedule, sunOf, addDays, ymdET, type TeamSchedule } from '@/lib/team-schedule'
+import { buildTeamSchedule, sunOf, addDays, ymdET, type TeamSchedule, type Dept } from '@/lib/team-schedule'
 import { getSlackRules, type SlackRules } from '@/lib/slack-rules'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -34,7 +34,8 @@ function prettyDay(iso: string): string {
  * A market-scoped share link carrying the planner, if one exists — so the Slack post can offer the
  * live version. Jon makes the link in the hub; this just finds it. No link, no line.
  */
-async function plannerLinkFor(market: string): Promise<string | null> {
+async function plannerLinkFor(market: string, dept: Dept): Promise<string | null> {
+  const wantSection = dept === 'maintenance' ? 'team_maint' : 'team'
   try {
     const db = supabaseAdmin()
     const { data } = await db.from('share_links')
@@ -42,7 +43,7 @@ async function plannerLinkFor(market: string): Promise<string | null> {
       .is('revoked_at', null).limit(200)
     for (const row of (data || []) as any[]) {
       const sections = row.sections && typeof row.sections === 'object' ? row.sections : {}
-      if (sections.team !== true) continue
+      if (sections[wantSection] !== true) continue
       if (str(row.scope_type) !== 'market') continue
       const ids: string[] = Array.isArray(row.scope_ids) ? row.scope_ids.map(str) : []
       if (ids.some(m => m.toLowerCase() === market.toLowerCase())) {
@@ -54,8 +55,24 @@ async function plannerLinkFor(market: string): Promise<string | null> {
   return null
 }
 
+/**
+ * Jon, 2026-08-21: "can we post by market in each chat". The routing groups already carry a
+ * housekeeping and a maintenance channel per area, so a market post goes to the room that trade
+ * already lives in rather than to one shared ops channel. Falls back to ops so a market with no
+ * group still reaches somebody.
+ */
+function channelFor(market: string, dept: Dept, rules: SlackRules): string | null {
+  const m = market.toLowerCase()
+  const g = (rules.groups || []).find(x =>
+    String(x.id || '').toLowerCase() === m || String(x.label || '').toLowerCase().indexOf(m) === 0)
+  const ch = g ? (dept === 'maintenance' ? g.maintenance : g.housekeeping) : null
+  return ch || rules.opsChannel || rules.defaultChannel || null
+}
+
 export type PlannerPost = {
   market: string
+  dept: Dept
+  channelId: string | null
   groupKey: string
   summary: string
   body: string
@@ -68,14 +85,14 @@ export type PlannerPost = {
  * One post per market for the week starting `weekStart` (Sunday). Returns nothing for a market with
  * nobody on — an empty rota is not worth a notification.
  */
-export async function buildPlannerPosts(weekStartIn?: string, rulesIn?: SlackRules): Promise<PlannerPost[]> {
+export async function buildPlannerPosts(weekStartIn?: string, rulesIn?: SlackRules, dept: Dept = 'cleaning'): Promise<PlannerPost[]> {
   const rules = rulesIn || (await getSlackRules())
   const today = ymdET(new Date())
   // Default to the week that is about to start, which is what a Sunday-evening post is for.
   const weekStart = weekStartIn || sunOf(addDays(today, 1))
   const weekEnd = addDays(weekStart, 6)
 
-  const plan: TeamSchedule = await buildTeamSchedule({ from: weekStart, to: weekEnd })
+  const plan: TeamSchedule = await buildTeamSchedule({ from: weekStart, to: weekEnd, dept })
   const out: PlannerPost[] = []
 
   for (const m of plan.markets) {
@@ -121,13 +138,16 @@ export async function buildPlannerPosts(weekStartIn?: string, rulesIn?: SlackRul
       .map(d => ({ d, n: (m.perDay[d.date] || { cleans: 0 }).cleans }))
       .sort((a, b) => b.n - a.n)[0]
 
-    const link = await plannerLinkFor(m.market)
+    const link = await plannerLinkFor(m.market, dept)
 
     const lines: string[] = []
-    lines.push('*' + m.market + ' — week of ' + prettyDay(weekStart) + '*')
+    const trade = dept === 'maintenance' ? 'maintenance' : 'cleaning'
+    lines.push('*' + m.market + ' ' + trade + ' — week of ' + prettyDay(weekStart) + '*')
     lines.push('')
-    lines.push(m.cleans + ' cleans across ' + people.length + ' of you' +
-      (busiest && busiest.n ? '. ' + prettyDay(busiest.d.date) + ' is the big one at ' + busiest.n + '.' : '.'))
+    lines.push(dept === 'maintenance'
+      ? m.jobs + ' work orders across ' + people.length + ' of you.'
+      : m.cleans + ' cleans across ' + people.length + ' of you' +
+        (busiest && busiest.n ? '. ' + prettyDay(busiest.d.date) + ' is the big one at ' + busiest.n + '.' : '.'))
     lines.push('')
     lines.push(grid)
     lines.push('_Numbers are jobs booked in so far · on = rostered, — = off, · = nothing set_')
@@ -158,8 +178,10 @@ export async function buildPlannerPosts(weekStartIn?: string, rulesIn?: SlackRul
 
     out.push({
       market: m.market,
-      groupKey: 'weekly_planner:' + m.market.toLowerCase() + ':' + weekStart,
-      summary: m.market + ' week of ' + weekStart + ' — ' + m.cleans + ' cleans, ' + people.length + ' people',
+      dept,
+      channelId: channelFor(m.market, dept, rules),
+      groupKey: 'weekly_planner:' + dept + ':' + m.market.toLowerCase() + ':' + weekStart,
+      summary: m.market + ' ' + dept + ' week of ' + weekStart + ' — ' + (dept === 'maintenance' ? m.jobs + ' orders' : m.cleans + ' cleans') + ', ' + people.length + ' people',
       body: lines.join('\n'),
       threadBody: es,
       people: people.length,
