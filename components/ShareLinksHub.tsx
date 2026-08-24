@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, Plus, Copy, Check, Trash2, Pencil, Link2, Lock, Building2, User, Home, Globe, X,
-  AlertTriangle, ChevronDown, ChevronRight, FileText, BookOpen, Sparkles, ExternalLink,
+  AlertTriangle, ChevronDown, ChevronRight, FileText, BookOpen, Sparkles, ExternalLink, MapPin,
 } from 'lucide-react'
 
 type LinkRow = {
@@ -18,6 +18,7 @@ type LinkRow = {
 }
 type Meta = {
   buildings: string[]
+  markets: string[]
   owners: { id: string; name: string; units: number }[]
   listings: { id: string; name: string; building: string }[]
 }
@@ -42,6 +43,7 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
 ]
 const SCOPES = [
   { key: 'portfolio', label: 'Whole portfolio', Icon: Globe },
+  { key: 'market', label: 'Market', Icon: MapPin },
   { key: 'building', label: 'Building', Icon: Building2 },
   { key: 'owner', label: 'Owner', Icon: User },
   { key: 'listing', label: 'Unit', Icon: Home },
@@ -129,12 +131,14 @@ export function ShareLinksHub() {
   const options = useMemo(() => {
     if (!meta) return []
     const n = q.trim().toLowerCase()
+    if (scopeType === 'market') return (meta.markets || []).filter(b => !n || b.toLowerCase().includes(n)).map(b => ({ id: b, name: b, sub: '' }))
     if (scopeType === 'building') return meta.buildings.filter(b => !n || b.toLowerCase().includes(n)).map(b => ({ id: b, name: b, sub: '' }))
     if (scopeType === 'owner') return meta.owners.filter(o => !n || o.name.toLowerCase().includes(n)).map(o => ({ id: o.id, name: o.name, sub: o.units + ' units' }))
     if (scopeType === 'listing') return meta.listings.filter(l => !n || (l.name + ' ' + l.building).toLowerCase().includes(n)).slice(0, 30).map(l => ({ id: l.id, name: l.name, sub: l.building }))
     return []
   }, [meta, scopeType, q])
   const nameFor = (l: LinkRow, id: string) => {
+    if (l.scope_type === 'market') return id
     if (l.scope_type === 'owner') return meta?.owners.find(o => o.id === id)?.name || id
     if (l.scope_type === 'listing') return meta?.listings.find(x => x.id === id)?.name || id
     return id
@@ -173,7 +177,7 @@ export function ShareLinksHub() {
                   <div className="flex flex-wrap gap-1.5 mb-1.5">
                     {scopeIds.map(id => (
                       <span key={id} className="text-[12px] font-semibold bg-app rounded-lg px-2 py-1 inline-flex items-center gap-1.5">
-                        {scopeType === 'building' ? id
+                        {scopeType === 'building' || scopeType === 'market' ? id
                           : scopeType === 'owner' ? (meta?.owners.find(o => o.id === id)?.name || id)
                             : (meta?.listings.find(l => l.id === id)?.name || id)}
                         <button onClick={() => setScopeIds(ids => ids.filter(x => x !== id))} className="text-muted hover:text-ink"><X size={11} /></button>
@@ -181,11 +185,13 @@ export function ShareLinksHub() {
                     ))}
                   </div>
                 ) : null}
-                <input value={q} onChange={e => setQ(e.target.value)} placeholder={'Search ' + scopeType + 's…'}
-                  className="w-full rounded-xl border border-line px-3 py-2 text-[13px]" />
-                {q.trim() ? (
+                {scopeType !== 'market' ? (
+                  <input value={q} onChange={e => setQ(e.target.value)} placeholder={'Search ' + scopeType + 's…'}
+                    className="w-full rounded-xl border border-line px-3 py-2 text-[13px]" />
+                ) : null}
+                {q.trim() || scopeType === 'market' ? (
                   <div className="mt-1 rounded-xl border border-line divide-y divide-line overflow-hidden">
-                    {options.filter(o => !scopeIds.includes(o.id)).slice(0, 8).map(o => (
+                    {options.filter(o => !scopeIds.includes(o.id)).slice(0, scopeType === 'market' ? 12 : 8).map(o => (
                       <button key={o.id} onClick={() => { setScopeIds(ids => [...ids, o.id]); setQ('') }}
                         className="w-full px-3 py-2 text-left text-[13px] hover:bg-app flex items-center gap-2">
                         <span className="font-semibold text-ink">{o.name}</span>
