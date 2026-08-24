@@ -328,6 +328,9 @@ export async function buildTeamSchedule(opts: {
   // Working is exactly the thing this screen exists to show.
   for (const mk of Object.keys(rosterMembers)) {
     if (wantMarkets && !wantMarkets.has(mk.toLowerCase())) continue
+    // A vendor roster is the vendor's business. Their work only reaches this screen when one of
+    // ours is assigned to it, and seeding their names here would put an empty block on the page.
+    if (/vendor/i.test(mk)) continue
     blocks[mk] = blocks[mk] || { market: mk, people: [], perDay: {}, jobs: 0, cleans: 0 }
     for (const name of rosterMembers[mk]) {
       const key = mk + '|' + name
@@ -349,7 +352,10 @@ export async function buildTeamSchedule(opts: {
       if (/work|on.?call/i.test(st)) p.daysOn++
       // The two disagreements worth a supervisor's attention.
       if (n > 0 && /^off|req/i.test(st)) { p.clashes[d.date] = 'off-but-assigned'; clashes++ }
-      else if (n === 0 && /^working$/i.test(st)) { p.clashes[d.date] = 'on-but-empty'; clashes++ }
+      // "Marked working with nothing on" only means something once the day is here. Breezeway is
+      // assigned a day or two out, so flagging it a fortnight ahead rings every future shift amber
+      // and teaches everyone to ignore the ring.
+      else if (n === 0 && /^working$/i.test(st) && d.date <= today) { p.clashes[d.date] = 'on-but-empty'; clashes++ }
       else p.clashes[d.date] = ''
     }
     const block = blocks[market]
@@ -369,7 +375,7 @@ export async function buildTeamSchedule(opts: {
   }
 
   const ORDER = ['miami', 'broward', 'north']
-  const markets = Object.keys(blocks).map(m => blocks[m]).sort((a, b) => {
+  const markets = Object.keys(blocks).map(m => blocks[m]).filter(b => b.jobs > 0 || b.people.length > 0).sort((a, b) => {
     const ia = ORDER.indexOf(a.market.toLowerCase()); const ib = ORDER.indexOf(b.market.toLowerCase())
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.market.localeCompare(b.market)
   })
