@@ -811,12 +811,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     (x.big ? ' ' + (isField ? pillAmber('VIP') : pillRed('BIG $')) : '')
   const fwdWhen = (x: any) => x.when === d.today ? pillRed('TODAY') : `<span style="${S.muted}">${esc(niceDay(x.when))}</span>`
   // LIGHTHOUSE'S OWN INSPECTIONS RIDE ON THE ROW (Jon, 2026-08-24: "should show automated
-  // inspections created by lighthouse"). Matched by listing + check-in date. A big arrival
-  // inside the automation's 3-day horizon with NO inspection yet prints amber — that is the gap
-  // to close; arrivals further out simply have not been reached by the automation yet.
+  // inspections created by lighthouse"). Matched by listing + check-in date. NO WARNING for big
+  // bookings the automation has not reached yet (Jon: "no need to warn, just share — the
+  // Breezeway tasks will be created"): the automation covers arrivals 3 days out, schedules the
+  // inspection ON the arrival day and assigns it, so a bare big row is simply early, not a gap.
   const inspByKey: Record<string, any> = {}
   for (const i of autoInspWide) if (i.listing_id) inspByKey[String(i.listing_id) + '|' + str(i.check_in)] = i
-  const soon3 = ymdET(new Date(Date.now() + 3 * 86400000))
   const fwdInspLine = (x: any): string => {
     const i = inspByKey[String(x.lid) + '|' + String(x.when)]
     if (i) {
@@ -825,7 +825,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       const started = /progress|start/i.test(st)
       return `<br><span style="font-size:11.5px;color:${done ? '#047857' : started ? '#b45309' : '#6b7280'}">✓ inspection auto-created${Array.isArray(i.assignees) && i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ''} · ${done ? 'done' : started ? 'in progress' : 'open'}</span>`
     }
-    if (x.big && x.when <= soon3) return `<br><span style="font-size:11.5px;color:#b45309">no pre-arrival inspection yet</span>`
+    if (x.big) return `<br><span style="font-size:11.5px;color:#9ca3af">inspection will be auto-created &amp; assigned for arrival day</span>`
     return ''
   }
   const fwdMore = fwdAll.length > FWD_LIMIT
