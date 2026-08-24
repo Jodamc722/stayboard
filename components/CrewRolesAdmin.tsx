@@ -10,8 +10,32 @@
 // Breezeway paints the story. So the Homebase hours and payroll are the spine of each row, the
 // Breezeway task mix sits beside it clearly labelled as context, and PEOPLE NOBODY HAS PLACED ARE
 // SORTED TO THE TOP with the payroll they represent — a visible gap beats a quiet guess.
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Users2, Loader2, Save, Check, AlertTriangle, RotateCcw, Search } from 'lucide-react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Users2, Loader2, Save, Check, AlertTriangle, RotateCcw, Search, Wand2 } from 'lucide-react'
+
+// HOMEBASE'S ROLE TEXT CARRIES THREE FACTS AT ONCE (Jon, 2026-08-24: "In Homebase you should be
+// able to see the roles, the agency in the role section. So HK might be HK Atlantic which would
+// be the agency"). "Housekeeper Miami (Atlantic)" = role Housekeeper, market Miami, agency
+// Atlantic. This parses all three, so one click can pre-fill every blank — the audit made
+// actionable. Order matters: "Supervisor Maintenance …" is a maintenance lead (maintenance),
+// while "Housekeeper Supervisor" is a supervisor.
+function parseHomebaseRole(txt: string | null | undefined): { role?: string; agency?: string; area?: string } {
+  const s = String(txt || '').toLowerCase()
+  if (!s) return {}
+  const out: { role?: string; agency?: string; area?: string } = {}
+  if (/atlantic/.test(s)) out.agency = 'atlantic'
+  else if (/city\s*best/.test(s)) out.agency = 'citybest'
+  else if (/opal/.test(s)) out.agency = 'opal'
+  if (/miami/.test(s)) out.area = 'miami'
+  else if (/broward/.test(s)) out.area = 'broward'
+  else if (/north/.test(s)) out.area = 'north'
+  if (/maint|handy|tech/.test(s)) out.role = 'Maintenance'
+  else if (/supervis|lead/.test(s)) out.role = 'Supervisor'
+  else if (/inspect/.test(s)) out.role = 'Inspector'
+  else if (/housekeep|\bhk\b/.test(s)) out.role = 'Housekeeper'
+  else if (/front|desk/.test(s)) out.role = 'Front desk'
+  return out
+}
 
 type Tasks = { total: number; cleans: number; maintenance: number; inspection: number; other: number }
 type Person = {
@@ -117,6 +141,29 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         </p>
         <div className="flex items-center gap-2 shrink-0">
           {dirty && <span className="text-[11.5px] font-semibold text-amber-700">{new Set([...Object.keys(edits), ...Object.keys(staffEdits)]).size} unsaved</span>}
+          <button
+            onClick={() => {
+              // Fill BLANKS ONLY from Homebase's own role text — never overwrite a stated fact.
+              // Everything lands as pending edits (highlighted below) for review before Save.
+              if (!d) return
+              let filled = 0
+              for (const p of d.people) {
+                const hint = parseHomebaseRole(p.homebaseRole)
+                const patch: { role?: string; agency?: string; area?: string } = {}
+                if (!roleOf(p) && hint.role) patch.role = hint.role
+                if (!agencyOf(p) && hint.agency) patch.agency = hint.agency
+                if (!areaOf(p) && hint.area) patch.area = hint.area
+                if (Object.keys(patch).length) { setStaff(p.name, patch); filled++ }
+              }
+              setMsg(filled
+                ? `${filled} people pre-filled from Homebase role text ("HK Atlantic" → Housekeeper + Atlantic). Review the highlighted picks, then Save.`
+                : 'Nothing to fill — every blank either has no Homebase role text or is already set.')
+            }}
+            disabled={!isOwner}
+            title='Parse Homebase role text like "Housekeeper Miami (Atlantic)" into Role + Market + Agency for anyone not yet set'
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 px-3 py-1.5 text-[12.5px] font-semibold hover:bg-brand-100 disabled:opacity-40">
+            <Wand2 size={13} /> Fill from Homebase
+          </button>
           <button onClick={save} disabled={!isOwner || saving || !dirty}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
@@ -176,7 +223,21 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
           </thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted">Nobody matches that.</td></tr>}
-            {rows.map(p => {
+            {/* GROUPED BY DEPARTMENT (Jon, 2026-08-24: "make sure we separate the departments in
+                Maintenance, Housekeeping, and Supervisors"). A row moves to its new section the
+                moment you change its Crew — before saving — so the separation is always live. */}
+            {([
+              ['housekeeping', 'Housekeeping'], ['supervision', 'Supervisors'], ['maintenance', 'Maintenance'],
+              ['inspection', 'Inspection'], ['other', 'Other / not placed'],
+            ] as [string, string][]).map(([gk, gl]) => {
+              const grp = rows.filter(p => deptOf(p) === gk)
+              if (!grp.length) return null
+              return (
+                <Fragment key={gk}>
+                  <tr className="bg-app/80 border-y border-line">
+                    <td colSpan={8} className="px-2.5 py-1.5 text-[10px] uppercase tracking-[0.12em] font-bold text-ink">{gl} <span className="text-muted font-semibold">· {grp.length}</span></td>
+                  </tr>
+                  {grp.map(p => {
               const cur = deptOf(p)
               const changed = p.name in edits && edits[p.name] !== p.dept
               return (
@@ -241,9 +302,18 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                 </tr>
               )
             })}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
+
+      <p className="text-[11.5px] text-muted mt-2 max-w-[80ch]">
+        <b className="text-ink">Salaried management:</b> Roberto Chiriboga — $80,000/yr (Jon, 2026-08-24). The labor engine
+        carries his salary as a fixed Management line, pro-rated to whatever window you look at, and keeps any hourly
+        punches of his out of the supervisor payroll so he is never counted twice.
+      </p>
 
       <p className="text-[11.5px] text-muted mt-2.5 max-w-[80ch]">
         <b className="text-ink">All three columns move money.</b> <b>Crew</b> decides which margin their wages land in.
