@@ -24,6 +24,13 @@ type Cfg = {
 export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
   const [cfg, setCfg] = useState<Cfg | null>(null)
   const [saved, setSaved] = useState('')
+  // LONG-STAY THRESHOLD (Jon, 2026-08-22: "big arrivals should be long stays… create the user
+  // setting where we can customize these triggers"). One number, one source of truth
+  // (slack_rules.longStayNights): it drives the briefs' Long-stays card, the VIP/LONG-STAY
+  // arrival flags, the GM Decide-today entries and Slack's "Worth knowing" list.
+  const [rulesObj, setRulesObj] = useState<any | null>(null)
+  const [longStay, setLongStay] = useState<number>(14)
+  const [longStaySaved, setLongStaySaved] = useState<number>(14)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const [preview, setPreview] = useState<any[] | null>(null)
@@ -34,13 +41,22 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok && j.config) { setCfg(j.config); setSaved(JSON.stringify(j.config)) }
     } catch { /* stays empty; save still works after a reload */ }
+    try {
+      const r2 = await fetch('/api/settings/slack-rules', { cache: 'no-store' })
+      const j2 = await r2.json()
+      if (r2.ok && j2.rules) {
+        setRulesObj(j2.rules)
+        const n = Number(j2.rules.longStayNights)
+        if (Number.isFinite(n) && n > 0) { setLongStay(n); setLongStaySaved(n) }
+      }
+    } catch { /* the long-stay input simply stays at its default */ }
   }, [])
   useEffect(() => { load() }, [load])
 
   const set = (patch: Partial<Cfg>) => setCfg(c => c ? { ...c, ...patch } : c)
   const setSup = (k: 'Miami' | 'Broward' | 'North', v: string) =>
     setCfg(c => c ? { ...c, supervisors: { ...c.supervisors, [k]: v } } : c)
-  const dirty = cfg ? JSON.stringify(cfg) !== saved : false
+  const dirty = (cfg ? JSON.stringify(cfg) !== saved : false) || longStay !== longStaySaved
 
   async function save() {
     if (!cfg) return
@@ -49,6 +65,14 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/settings/task-automation', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: cfg }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       setCfg(j.config); setSaved(JSON.stringify(j.config))
+      // The long-stay threshold lives on the Slack rules key — send the FULL rules object back
+      // with just this number changed, so a partial write can never clear the rest of the rules.
+      if (rulesObj && longStay !== longStaySaved) {
+        const r3 = await fetch('/api/settings/slack-rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: { ...rulesObj, longStayNights: longStay } }) })
+        const j3 = await r3.json(); if (!r3.ok) throw new Error(j3?.error || 'Could not save the long-stay threshold.')
+        setRulesObj(j3.rules || { ...rulesObj, longStayNights: longStay })
+        setLongStaySaved(Number(j3.rules?.longStayNights) || longStay)
+      }
       setMsg({ tone: 'ok', text: j.config.enabled ? 'Saved — the automation is ON and runs four times a day.' : 'Saved — the automation stays OFF until you enable it.' })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
@@ -93,14 +117,21 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
 
       <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
         <div className="space-y-2">
-          {check('bigArrivals', 'Big arrivals', 'high value or long stays')}
+          {check('bigArrivals', 'Big reservations', 'value only — nights alone never qualify (Jon, 2026-08-22)')}
           <div className="flex items-center gap-2 pl-6">
             <span className="text-[11.5px] text-muted">$</span>
             <input type="number" value={cfg.bigValue} onChange={e => set({ bigValue: Number(e.target.value) })} className={box + ' max-w-[90px]'} disabled={!isOwner || !cfg.bigArrivals} />
-            <span className="text-[11.5px] text-muted">or</span>
-            <input type="number" value={cfg.bigNights} onChange={e => set({ bigNights: Number(e.target.value) })} className={box + ' max-w-[64px]'} disabled={!isOwner || !cfg.bigArrivals} />
-            <span className="text-[11.5px] text-muted">nights+</span>
+            <span className="text-[11.5px] text-muted">+ reservation value</span>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[12.5px] text-muted">Long stay =</span>
+            <input type="number" min={2} max={365} value={longStay} onChange={e => setLongStay(Number(e.target.value) || longStay)} className={box + ' max-w-[64px]'} disabled={!isOwner} />
+            <span className="text-[12.5px] text-muted">nights+</span>
+          </div>
+          <p className="text-[11px] text-muted pl-0.5 -mt-1">
+            Long stays drive the briefs&apos; Long-stays card, the LONG STAY / VIP arrival flags and Slack&apos;s
+            &ldquo;Worth knowing&rdquo; — they do not create inspections; only the $ value above does.
+          </p>
           {check('vip', 'VIP guests', 'a Guesty VIP field or tag')}
           {check('ownerStays', 'Owner stays', 'owner bookings and owner-name matches')}
           <div className="flex items-center gap-2">
