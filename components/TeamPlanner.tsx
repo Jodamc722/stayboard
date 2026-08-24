@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, ChevronLeft, ChevronRight, CalendarDays, Users, RefreshCw } from 'lucide-react'
 
 type Tag = { key: string; label: string; tone: 'amber' | 'violet' | 'emerald' | 'sky' }
-type Job = { id: string; date: string; unit: string; market: string; task: string; dept: string; status: string; isClean: boolean; tags: Tag[] }
+type Job = { id: string; url: string; reportUrl: string | null; date: string; unit: string; market: string; task: string; dept: string; status: string; isClean: boolean; tags: Tag[] }
 type Person = {
   name: string; dept: string; byDay: Record<string, Job[]>
   roster: Record<string, string>; clashes: Record<string, string>; unrostered: boolean
@@ -33,12 +33,13 @@ const DOT: Record<string, string> = {
 }
 // The roster statuses come from the Turnover Schedule, so the colours match what people already
 // read there: on = green, on call = sky, off = flat grey.
-const ROSTER: Record<string, { cell: string; short: string }> = {
-  'Working':  { cell: 'bg-emerald-50', short: 'W' },
-  'On Call':  { cell: 'bg-sky-50', short: 'OC' },
-  'OFF':      { cell: 'bg-neutral-100', short: 'off' },
-  'REQ OFF':  { cell: 'bg-neutral-100', short: 'req' },
+const ROSTER: Record<string, { cell: string; pill: string; short: string }> = {
+  'Working':  { cell: 'bg-emerald-50', pill: 'bg-emerald-500 text-white', short: 'W' },
+  'On Call':  { cell: 'bg-sky-50',     pill: 'bg-sky-500 text-white',     short: 'OC' },
+  'OFF':      { cell: 'bg-neutral-100/70', pill: 'bg-neutral-300 text-white', short: 'OFF' },
+  'REQ OFF':  { cell: 'bg-neutral-100/70', pill: 'bg-neutral-300 text-white', short: 'REQ' },
 }
+const STATUS_SHORT: Record<string, string> = { 'Working': 'working', 'On Call': 'on call', 'OFF': 'off', 'REQ OFF': 'req off' }
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
 function addDays(iso: string, n: number): string { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 function pretty(iso: string): string { return new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
@@ -54,18 +55,19 @@ export function TeamPlanner() {
   const [from, setFrom] = useState(todayET())
   const [view, setView] = useState<'planner' | 'day'>('planner')
   const [market, setMarket] = useState('all')
+  const [dept, setDept] = useState<'cleaning' | 'maintenance'>('cleaning')
   const [day, setDay] = useState(todayET())
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const r = await fetch('/api/team-schedule?days=14&from=' + from, { cache: 'no-store' })
+      const r = await fetch('/api/team-schedule?days=14&dept=' + dept + '&from=' + from, { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || j?.message || 'Could not load the planner.')
       setData(j)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
-  }, [from])
+  }, [from, dept])
   useEffect(() => { load() }, [load])
 
   const blocks = useMemo(() => {
@@ -86,6 +88,11 @@ export function TeamPlanner() {
         <div className="inline-flex rounded-xl border border-line overflow-hidden">
           <button onClick={() => setView('planner')} className={'text-[12.5px] font-semibold px-3 py-1.5 inline-flex items-center gap-1.5 ' + (view === 'planner' ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}><Users size={13} /> Planner</button>
           <button onClick={() => setView('day')} className={'text-[12.5px] font-semibold px-3 py-1.5 inline-flex items-center gap-1.5 border-l border-line ' + (view === 'day' ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}><CalendarDays size={13} /> Day</button>
+        </div>
+
+        <div className="inline-flex rounded-xl border border-line overflow-hidden">
+          <button onClick={() => setDept('cleaning')} className={'text-[12.5px] font-semibold px-3 py-1.5 ' + (dept === 'cleaning' ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>Cleaning</button>
+          <button onClick={() => setDept('maintenance')} className={'text-[12.5px] font-semibold px-3 py-1.5 border-l border-line ' + (dept === 'maintenance' ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>Maintenance</button>
         </div>
 
         <button onClick={() => setMarket('all')} className={'text-[12.5px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (market === 'all' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>All markets</button>
@@ -168,15 +175,15 @@ export function TeamPlanner() {
                         return (
                           <td key={d.date} className={'px-1 py-1.5 border-b border-line text-center align-top ' + (d.weekend ? 'bg-app/40' : '')}>
                             <div title={tip}
-                              className={'rounded-lg py-1 px-1 min-h-[34px] ' + (r ? r.cell : '') +
+                              className={'rounded-lg py-1.5 px-1 min-h-[38px] ' + (r ? r.cell : '') +
                                 (clash ? ' ring-2 ring-amber-400' : '')}>
                               {jobs.length ? (
                                 <>
-                                  <span className={'block text-[13px] font-bold tabular-nums leading-none ' + (cleans ? 'text-ink' : 'text-muted')}>{jobs.length}</span>
-                                  <span className="block text-[9px] leading-tight mt-0.5 text-muted">{cleans ? cleans + ' clean' + (cleans === 1 ? '' : 's') : 'jobs'}</span>
+                                  <span className="inline-block min-w-[26px] rounded-md bg-ink text-white text-[12px] font-bold leading-none px-1.5 py-1 tabular-nums">{jobs.length}</span>
+                                  <span className="block text-[9px] leading-tight mt-0.5 text-muted">{st ? STATUS_SHORT[st] || st : (cleans ? 'clean' : 'job')}</span>
                                 </>
                               ) : (
-                                <span className={'block text-[10px] font-bold leading-none pt-1 ' + (st === 'Working' ? 'text-amber-700' : 'text-faint')}>
+                                <span className={'inline-block min-w-[26px] rounded-md text-[10px] font-bold leading-none px-1.5 py-1 ' + (r ? r.pill : 'text-faint')}>
                                   {r ? r.short : '·'}
                                 </span>
                               )}
@@ -264,6 +271,9 @@ export function TeamPlanner() {
                                   className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">{j.market}</span>
                               ) : null}
                               <span className="text-muted">{j.task}</span>
+                              {dept === 'maintenance' && j.url ? (
+                                <a href={j.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-brand-700 underline">Breezeway ↗</a>
+                              ) : null}
                               {j.tags.map(t => <TagChip key={t.key} t={t} />)}
                             </div>
                           ))}
@@ -279,9 +289,10 @@ export function TeamPlanner() {
       )}
 
       <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted">
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-50 border border-line" /> Working</span>
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-sky-50 border border-line" /> On call</span>
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-neutral-100 border border-line" /> Off</span>
+        <span className="inline-flex items-center gap-1"><span className="px-1 rounded bg-emerald-500 text-white text-[9px] font-bold">W</span> working</span>
+        <span className="inline-flex items-center gap-1"><span className="px-1 rounded bg-sky-500 text-white text-[9px] font-bold">OC</span> on call</span>
+        <span className="inline-flex items-center gap-1"><span className="px-1 rounded bg-neutral-300 text-white text-[9px] font-bold">OFF</span> off</span>
+        <span className="inline-flex items-center gap-1"><span className="px-1 rounded bg-ink text-white text-[9px] font-bold">3</span> jobs booked</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded ring-2 ring-amber-400" /> Roster and work disagree</span>
         {data.counts.clashes ? <span className="font-semibold text-amber-700">{data.counts.clashes} to look at</span> : null}
         {!data.counts.rosterWeeks ? <span className="font-semibold text-amber-700">No roster saved for these weeks — set it on the Turnover Schedule.</span> : null}
