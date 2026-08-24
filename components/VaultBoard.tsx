@@ -61,7 +61,156 @@ function daysUntil(d?: string | null): number | null {
 const field = 'w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-brand-400'
 const lbl = 'block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1'
 
+// ── RECORDS — the verification paper trail (Jon, 2026-08-22): Salato check-ins, Elser
+// registration forms, and a shelf ready for incident reports. Feeds, not copies — links are
+// minted short-lived on demand from the private buckets they already live in. ──
+function RecordsView() {
+  const [data, setData] = useState<any | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  useEffect(() => {
+    fetch('/api/vault/records', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (j.ok) setData(j); else setErr(j.error || j.message || 'Could not load records.') })
+      .catch(e => setErr(String(e)))
+  }, [])
+  const open = async (ref: string) => {
+    setBusy(ref)
+    try {
+      const r = await fetch('/api/vault/records?sign=' + encodeURIComponent(ref), { cache: 'no-store' })
+      const j = await r.json()
+      if (j.ok && j.url) window.open(j.url, '_blank', 'noopener')
+      else setErr(j.error || 'Could not open that file.')
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(null)
+  }
+  if (err) return <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div>
+  if (!data) return <div className="rounded-2xl border border-line bg-white p-8 text-center text-[13px] text-muted">Loading records…</div>
+  const needle = q.trim().toLowerCase()
+  const hit = (s: string) => !needle || s.toLowerCase().includes(needle)
+  const salato = (data.salato || []).filter((v: any) => hit(v.guest + ' ' + v.unit + ' ' + v.id))
+  const forms = (data.forms || []).filter((f: any) => hit(f.guest + ' ' + f.unit + ' ' + f.property + ' ' + (f.confirmation || '')))
+  return (
+    <div className="space-y-4">
+      <div className="relative max-w-sm">
+        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, confirmation…"
+          className="w-full rounded-xl border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] shadow-soft" />
+      </div>
+      <div className="rounded-2xl border border-line bg-white shadow-soft">
+        <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2">
+          <ShieldCheck size={14} className="text-emerald-600" />
+          <span className="text-[13px] font-bold text-ink">Salato verifications</span>
+          <span className="text-[11.5px] text-muted">{salato.length} completed · ID, selfie and signature open as 10-minute links, each open is on the record</span>
+        </div>
+        {salato.length ? salato.slice(0, 100).map((v: any) => (
+          <div key={v.id} className="px-4 py-2 border-b border-line/40 flex items-center gap-3 flex-wrap text-[12.5px]">
+            <span className="font-semibold text-ink">{v.guest || 'Guest'}</span>
+            <span className="text-muted">{v.unit}</span>
+            <span className="text-[10.5px] uppercase tracking-wider font-bold text-emerald-700">{v.status}</span>
+            <span className="text-[11px] text-muted">{String(v.at).slice(0, 10)}</span>
+            <span className="grow" />
+            {v.files.map((f: any) => (
+              <button key={f.ref} onClick={() => open(f.ref)} disabled={busy === f.ref}
+                className="rounded-lg border border-line bg-white px-2 py-0.5 text-[11.5px] font-semibold hover:border-brand-300 disabled:opacity-50">
+                {busy === f.ref ? 'Opening…' : f.label}
+              </button>
+            ))}
+          </div>
+        )) : <div className="px-4 py-6 text-center text-[12.5px] text-muted">No completed verifications yet.</div>}
+      </div>
+      <div className="rounded-2xl border border-line bg-white shadow-soft">
+        <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2">
+          <FileText size={14} className="text-brand-600" />
+          <span className="text-[13px] font-bold text-ink">Elser registration forms</span>
+          <span className="text-[11.5px] text-muted">{forms.length} filed · the exact PDF the building was sent</span>
+        </div>
+        {forms.length ? forms.slice(0, 100).map((f: any) => (
+          <div key={f.id} className="px-4 py-2 border-b border-line/40 flex items-center gap-3 flex-wrap text-[12.5px]">
+            <span className="font-semibold text-ink">{f.guest || 'Guest'}</span>
+            <span className="text-muted">{f.unit}</span>
+            <span className="text-[11px] text-muted">arrives {f.arrival}</span>
+            {f.sentAt ? <span className="text-[10.5px] uppercase tracking-wider font-bold text-emerald-700">sent</span> : <span className="text-[10.5px] uppercase tracking-wider font-bold text-amber-700">not sent</span>}
+            <span className="grow" />
+            <button onClick={() => open(f.ref)} disabled={busy === f.ref}
+              className="rounded-lg border border-line bg-white px-2 py-0.5 text-[11.5px] font-semibold hover:border-brand-300 disabled:opacity-50">
+              {busy === f.ref ? 'Opening…' : 'Open form'}
+            </button>
+          </div>
+        )) : <div className="px-4 py-6 text-center text-[12.5px] text-muted">No filed forms yet.</div>}
+      </div>
+      <div className="rounded-2xl border border-dashed border-line bg-white/60 px-4 py-4 text-[12.5px] text-muted">
+        <b className="text-ink">Incident reports</b> — the shelf is ready; the incident-report flow lands here the day we build it.
+      </div>
+    </div>
+  )
+}
+
+// ── ACTIVITY — per-user app activity (Jon, 2026-08-22): every screen opened and every gated API
+// call, metadata only. Read access = the people who can manage users. ──
+function ActivityView() {
+  const [rows, setRows] = useState<any[]>([])
+  const [users, setUsers] = useState<string[]>([])
+  const [who, setWho] = useState('')
+  const [days, setDays] = useState(7)
+  const [state, setState] = useState<'loading' | 'ok' | 'migration' | 'forbidden' | 'error'>('loading')
+  const [err, setErr] = useState('')
+  const load = useCallback(async (email: string, d: number) => {
+    setState('loading')
+    try {
+      const r = await fetch('/api/activity?days=' + d + (email ? '&email=' + encodeURIComponent(email) : ''), { cache: 'no-store' })
+      const j = await r.json()
+      if (r.status === 403 || r.status === 401) { setState('forbidden'); setErr(j.message || 'Reading activity needs full access on Users & admin.'); return }
+      if (!j.ok) { setState(j.needsMigration ? 'migration' : 'error'); setErr(j.error || ''); return }
+      setRows(j.rows || []); setUsers(j.users || []); setState('ok')
+    } catch (e: any) { setState('error'); setErr(String(e?.message || e)) }
+  }, [])
+  useEffect(() => { load(who, days) }, [who, days, load])
+  if (state === 'forbidden') return <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">{err}</div>
+  if (state === 'migration') return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+      <b>One migration to run:</b> <code>supabase/migrations/047_user_activity.sql</code> in the Supabase SQL editor — activity starts recording the moment the table exists.
+    </div>
+  )
+  const pages = rows.filter(r => r.kind === 'page').length
+  const apis = rows.filter(r => r.kind === 'api').length
+  const refused = rows.filter(r => r.allowed === false).length
+  const fmtAt = (s: string) => new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={who} onChange={e => setWho(e.target.value)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
+          <option value="">Everyone</option>
+          {users.map(u => <option key={u} value={u}>{u}</option>)}
+        </select>
+        <select value={days} onChange={e => setDays(Number(e.target.value))} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
+          <option value={1}>Today-ish (24h)</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option>
+        </select>
+        <span className="text-[12px] text-muted">{pages} screens · {apis} actions{refused ? <span className="text-rose-700 font-semibold"> · {refused} refused</span> : ''}</span>
+        <span className="grow" />
+        <button onClick={() => load(who, days)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5"><RefreshCw size={12} /> Refresh</button>
+      </div>
+      {state === 'error' ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div> : null}
+      <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+        {state === 'loading' ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Loading…</div>
+          : rows.length ? rows.slice(0, 400).map((r, i) => (
+            <div key={i} className="px-4 py-1.5 border-b border-line/40 flex items-center gap-2.5 text-[12.5px]">
+              <span className="text-[11px] text-muted tabular-nums w-[110px] shrink-0">{fmtAt(r.at)}</span>
+              {!who ? <span className="text-[11.5px] font-semibold text-ink truncate max-w-[180px]">{r.email}</span> : null}
+              <span className={'text-[10px] uppercase tracking-wider font-bold ' + (r.kind === 'page' ? 'text-sky-700' : 'text-violet-700')}>{r.kind}</span>
+              <span className="text-ink truncate">{r.kind === 'page' ? r.path : (r.feature || '') + (r.need ? ' · ' + r.need : '')}</span>
+              {r.allowed === false ? <span className="text-[10px] uppercase font-bold text-rose-700">refused</span> : null}
+              {r.meta?.ip ? <span className="ml-auto text-[10.5px] text-muted">{r.meta.ip}</span> : null}
+            </div>
+          )) : <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing recorded in this window yet — activity starts collecting from the moment the migration runs.</div>}
+      </div>
+      <p className="text-[11px] text-muted">Metadata only: who, which screen or feature, when, and with how much power. What was typed or shown is never stored. Vault reveals keep their own separate log on each item.</p>
+    </div>
+  )
+}
+
 export function VaultBoard() {
+  const [view, setView] = useState<'vault' | 'records' | 'activity'>('vault')
   const [items, setItems] = useState<Item[]>([])
   const [grants, setGrants] = useState<Grant[]>([])
   const [loading, setLoading] = useState(true)
@@ -243,6 +392,18 @@ export function VaultBoard() {
 
   return (
     <div className="space-y-4">
+      {/* Vault = the locked shelf · Records = the verification paper trail · Activity = who did what */}
+      <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden w-fit">
+        {([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity']] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setView(k)}
+            className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'records' && <RecordsView />}
+      {view === 'activity' && <ActivityView />}
+      {view === 'vault' && <>
       {needsMigration && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
           <div className="font-semibold flex items-center gap-1.5"><AlertTriangle size={14} /> One migration to run first</div>
@@ -468,6 +629,7 @@ export function VaultBoard() {
         <ShieldCheck size={12} /> Secrets are encrypted before they are stored and are never included when this list loads.
         Every reveal, download and refused attempt is logged against the item.
       </p>
+      </>}
     </div>
   )
 }

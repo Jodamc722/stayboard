@@ -135,6 +135,19 @@ function writeLocal(key: string, value: any) {
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname()
+  // ACTIVITY BEACON (Jon, 2026-08-22: "record all activity in the app"): one metadata row per
+  // screen opened, straight from the shell so every page is covered. keepalive survives quick
+  // navigations; failures are ignored — the app never waits on its own log.
+  useEffect(() => {
+    if (!path) return
+    try {
+      fetch('/api/activity', {
+        method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      }).catch(() => { /* logging never blocks the app */ })
+    } catch { /* ignore */ }
+  }, [path])
   const [email, setEmail] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
