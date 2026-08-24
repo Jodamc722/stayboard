@@ -134,9 +134,10 @@ export type ReportContent = {
   projection?: {
     headline: string; subtitle: string
     monthLabels: string[]
-    units: { name: string; months: number[]; total: number }[]
+    units: { name: string; months: number[]; total: number; health?: number; band?: string; rating?: number | null }[]
     byMonth: number[]
     total: number; nights: number; mgmtPct: number
+    upsides?: { unit: string; text: string; adrPct: number }[]
     note: string
   } | null
   // Listing ids blocked/off-market for the period — dropped from revenue and the occupancy denominator.

@@ -78,11 +78,27 @@ export type MonthCell = {
   edited: boolean
   nights: number; stays: number; grossAccom: number; netOwner: number
 }
+// PROPERTY HEALTH (Jon, 2026-08-22: "Health of property should be a factor, locations,
+// amenities, season, bed type, occupancy, kitchens... embed recommendations of amenities, issues
+// with guest feedback and how marginal improvements and guest reviews can improve adr").
+// Four measured components, 100 points total:
+//   reviews 35 · open issues 25 · occupancy vs building 20 · amenity coverage 20
+export type UnitHealth = {
+  score: number; band: 'excellent' | 'good' | 'fair' | 'needs attention'
+  rating: number | null; reviews: number
+  openIssues: number
+  occGapPts: number | null           // season occupancy vs the building average, in points
+  missingAmenities: string[]
+  recs: { text: string; adrPct: number }[]
+  upsidePct: number                  // sum of the recommendation upsides, capped
+  qualityPct: number                 // the editable lever actually applied to this unit's ADR
+}
 export type UnitProjection = {
   id: string; name: string; building: string; market: string; bedrooms: number | null
   mgmtPct: number
   months: MonthCell[]
   seasonNet: number; seasonGross: number; seasonNights: number
+  health: UnitHealth
 }
 export type ProjectionsPayload = {
   ok: true
@@ -103,6 +119,9 @@ export type ProjSettings = {
   buildingPct?: Record<string, number>
   uplift?: Record<string, { adrPct?: number; occPts?: number }>
   overrides?: Overrides
+  // Per-unit MODEL levers (Jon, 2026-08-22): qualityPct multiplies the unit's suggested ADR in
+  // every month — the knob you turn after fixing what the recommendations point at.
+  unitAdj?: Record<string, { qualityPct?: number }>
   updatedAt?: string; updatedBy?: string
 }
 
@@ -138,11 +157,12 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
     }
   }
   const overrides: Overrides = (cfg?.overrides && typeof cfg.overrides === 'object') ? cfg.overrides : {}
+  const unitAdj: Record<string, { qualityPct?: number }> = (cfg?.unitAdj && typeof cfg.unitAdj === 'object') ? cfg.unitAdj : {}
 
-  // ---- listings ----
+  // ---- listings (amenities ride along for the health model) ----
   const listingRows = await pageAll((a, b) =>
-    db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms').order('id').range(a, b), 3)
-  type Li = { id: string; name: string; building: string; market: string; bedrooms: number | null }
+    db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,amenities').order('id').range(a, b), 3)
+  type Li = { id: string; name: string; building: string; market: string; bedrooms: number | null; amenities: string[] }
   const lmap: Record<string, Li> = {}
   for (const l of listingRows) {
     if (DEAD_LISTING.includes(str(l.status).toLowerCase())) continue
@@ -152,8 +172,47 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
       building: rollupBuilding(l.building, name) || 'Unassigned',
       market: str(marketOf(l.building, l.address_city, name) || 'Miami').toLowerCase(),
       bedrooms: l.bedrooms != null && Number.isFinite(Number(l.bedrooms)) ? Number(l.bedrooms) : null,
+      amenities: Array.isArray(l.amenities) ? l.amenities.map((a: any) => str(a).toLowerCase()) : [],
     }
   }
+
+  // ---- health inputs: reviews (12 months), open glitches, open maintenance ----
+  const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
+  const [reviewRows, glitchRes, maintRes] = await Promise.all([
+    pageAll((a, b) => db.from('guesty_reviews').select('listing_id,rating')
+      .gte('created_at', yearAgo + 'T00:00:00Z').order('created_at').range(a, b), 5),
+    db.from('glitches').select('listing_id,unit,status').not('status', 'in', '("done","resolved","closed")').limit(1000),
+    db.from('breezeway_tasks_sync').select('reference_property_id')
+      .gte('scheduled_date', new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10))
+      .is('finished_at', null)
+      .not('status', 'ilike', '%complet%').not('status', 'ilike', '%close%')
+      .not('status', 'ilike', '%cancel%').not('status', 'ilike', '%delete%').limit(5000),
+  ])
+  const revAgg: Record<string, { n: number; sum: number }> = {}
+  for (const r of reviewRows) {
+    const lid = String(r.listing_id || ''); const rt = Number(r.rating)
+    if (!lid || !Number.isFinite(rt) || rt <= 0) continue
+    const e = (revAgg[lid] = revAgg[lid] || { n: 0, sum: 0 }); e.n += 1; e.sum += rt > 5 ? rt / 2 : rt  // 10-scale channels normalised to 5
+  }
+  const openBy: Record<string, number> = {}
+  for (const g of ((glitchRes.data || []) as any[])) {
+    const lid = String(g.listing_id || '')
+    if (lid) openBy[lid] = (openBy[lid] || 0) + 1
+  }
+  for (const t of ((maintRes.data || []) as any[])) {
+    const lid = String(t.reference_property_id || '')
+    if (lid && lmap[lid]) openBy[lid] = (openBy[lid] || 0) + 1
+  }
+  // Amenities that measurably move ADR, with the upsides we quote (market data + the FIU
+  // longer-stay outlook: full kitchens and laundry matter more when stays get longer).
+  const KEY_AMENITIES: { label: string; match: RegExp; adrPct: number }[] = [
+    { label: 'Full kitchen', match: /kitchen/, adrPct: 3 },
+    { label: 'Washer', match: /washer|laundry/, adrPct: 2 },
+    { label: 'Dryer', match: /dryer|laundry/, adrPct: 0 },     // counted with washer
+    { label: 'Dishwasher', match: /dishwasher/, adrPct: 1 },
+    { label: 'Dedicated workspace', match: /workspace|desk/, adrPct: 1 },
+    { label: 'Air conditioning', match: /air condition|a\/c|central air/, adrPct: 2 },
+  ]
 
   // ---- last season's reservations (whole hist window, one paged read) ----
   const histFrom = histSeason[0] + '-01'
@@ -224,6 +283,47 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
     const up = uplift[mk]
     const md = MARKET_DEFAULTS[mk]
     const pct = buildingPct[li.building] != null ? buildingPct[li.building] : mgmtPct
+
+    // ---- HEALTH ------------------------------------------------------------
+    const rv = revAgg[lid]
+    const rating = rv && rv.n > 0 ? Math.round((rv.sum / rv.n) * 100) / 100 : null
+    const openIssues = openBy[lid] || 0
+    // occupancy gap: this unit's historical season occupancy vs its building's average
+    let uOcc = 0, uOccN = 0, bOcc = 0, bOccN = 0
+    for (const m of season) {
+      const p0 = prelim[lid][m]
+      if (p0.occ != null) { uOcc += p0.occ; uOccN += 1 }
+      const avg0 = (bldAvg[li.building] || {})[m]
+      if (avg0 && avg0.n > 0) { bOcc += avg0.occ / avg0.n; bOccN += 1 }
+    }
+    const occGapPts = uOccN > 0 && bOccN > 0 ? r1(uOcc / uOccN - bOcc / bOccN) : null
+    const hasAmenity = (re: RegExp) => li.amenities.some(a => re.test(a))
+    const missingAmenities: string[] = []
+    for (const ka of KEY_AMENITIES) if (li.amenities.length > 0 && !hasAmenity(ka.match) && ka.label !== 'Dryer') missingAmenities.push(ka.label)
+    const amenityPts = li.amenities.length === 0 ? 14 : Math.round(20 * (1 - Math.min(1, missingAmenities.length / KEY_AMENITIES.length)))
+    const reviewPts = rating == null ? 26 : Math.round(35 * Math.min(1, Math.max(0, (rating - 4.0) / 1.0)))
+    const issuePts = Math.max(0, 25 - openIssues * 6)
+    const occPts = occGapPts == null ? 14 : Math.round(20 * Math.min(1, Math.max(0, (occGapPts + 20) / 20)))
+    const score = Math.min(100, reviewPts + issuePts + occPts + amenityPts)
+    const band: UnitHealth['band'] = score >= 85 ? 'excellent' : score >= 70 ? 'good' : score >= 55 ? 'fair' : 'needs attention'
+    // ---- RECOMMENDATIONS — each with the ADR it can move -------------------
+    const recs: { text: string; adrPct: number }[] = []
+    if (rating != null && rating < 4.8 && rv!.n >= 3) {
+      const up0 = Math.min(6, Math.round((4.8 - rating) * 10))
+      if (up0 > 0) recs.push({ text: 'Lift the review score from ' + rating.toFixed(1) + ' toward 4.8+ by closing the recurring guest-feedback themes — each +0.1 in rating supports roughly +1% ADR', adrPct: up0 })
+    }
+    for (const ka of KEY_AMENITIES) {
+      if (ka.adrPct > 0 && missingAmenities.indexOf(ka.label) >= 0) {
+        recs.push({ text: 'Add ' + ka.label.toLowerCase() + ' — comparable listings with it command about +' + ka.adrPct + '% ADR, and it matters more as stays get longer', adrPct: ka.adrPct })
+      }
+    }
+    if (openIssues > 0) recs.push({ text: 'Close the ' + openIssues + ' open maintenance/guest issue' + (openIssues === 1 ? '' : 's') + ' before the season — open problems become reviews, and reviews become rate', adrPct: Math.min(3, openIssues) })
+    if (occGapPts != null && occGapPts < -10) recs.push({ text: 'Occupancy ran ' + Math.abs(Math.round(occGapPts)) + ' pts under the building last season — refresh photos and pricing before high season', adrPct: 2 })
+    recs.sort((a, b) => b.adrPct - a.adrPct)
+    const upsidePct = Math.min(8, recs.reduce((a, r0) => a + r0.adrPct, 0))
+    const qAdj = Number((unitAdj[lid] || {}).qualityPct)
+    const qualityPct = Number.isFinite(qAdj) && qAdj >= 0 && qAdj <= 15 ? qAdj : 0
+
     const months: MonthCell[] = []
     let seasonNet = 0, seasonGross = 0, seasonNights = 0
     for (let i = 0; i < season.length; i++) {
@@ -236,7 +336,8 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
       const baseOcc = p.occ != null ? p.occ : avg && avg.n > 0 ? avg.occ / avg.n : md.occPct
       const baseAdr = p.adr != null ? p.adr : avg && avg.n > 0 ? avg.adr / avg.n : (md.adr[bedsKey] || md.adr['1'])
       const sugOcc = Math.min(100, Math.max(0, r1(baseOcc + up.occPts)))
-      const sugAdr = r2(baseAdr * (1 + up.adrPct / 100))
+      // market uplift × the unit's quality lever — health improvements you commit to become rate
+      const sugAdr = r2(baseAdr * (1 + up.adrPct / 100) * (1 + qualityPct / 100))
       const sugLos = p.los != null ? r1(p.los) : 4
       const o = ((overrides[lid] || {})[m]) || {}
       const occ = o.occ != null && Number.isFinite(Number(o.occ)) ? Math.min(100, Math.max(0, Number(o.occ))) : sugOcc
@@ -264,6 +365,7 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
       id: lid, name: li.name, building: li.building, market: li.market, bedrooms: li.bedrooms,
       mgmtPct: pct, months,
       seasonNet: r2(seasonNet), seasonGross: r2(seasonGross), seasonNights,
+      health: { score, band, rating, reviews: rv ? rv.n : 0, openIssues, occGapPts, missingAmenities, recs: recs.slice(0, 4), upsidePct, qualityPct },
     })
   }
   units.sort((a, b) => a.building.localeCompare(b.building) || a.name.localeCompare(b.name))
@@ -297,9 +399,12 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
 export type ProjectionSection = {
   headline: string; subtitle: string
   monthLabels: string[]
-  units: { name: string; months: number[]; total: number }[]
+  units: { name: string; months: number[]; total: number; health?: number; band?: string; rating?: number | null }[]
   byMonth: number[]
   total: number; nights: number; mgmtPct: number
+  // Where ADR can improve: unit-level recommendations (amenities, guest-feedback themes, open
+  // issues) with the rate they can move — the owner-facing version of the health model.
+  upsides?: { unit: string; text: string; adrPct: number }[]
   note: string
 }
 
@@ -320,10 +425,17 @@ export async function projectionSectionFor(listingIds: string[]): Promise<Projec
     headline: 'Projected net owner revenue for next season.',
     subtitle: seasonTxt + '  ·  same month last season, adjusted for the market outlook  ·  net of channel and management fee',
     monthLabels,
-    units: units.map(u => ({ name: u.name, months: u.months.map(c => Math.round(c.netOwner)), total: Math.round(u.seasonNet) })),
+    units: units.map(u => ({
+      name: u.name, months: u.months.map(c => Math.round(c.netOwner)), total: Math.round(u.seasonNet),
+      health: u.health?.score, band: u.health?.band, rating: u.health?.rating ?? null,
+    })),
     byMonth: byMonth.map(v => Math.round(v)),
     total: Math.round(total), nights,
     mgmtPct: pcts.length === 1 ? pcts[0] : all.mgmtPct,
+    upsides: units
+      .flatMap(u => (u.health?.recs || []).slice(0, 2).map(r0 => ({ unit: u.name, text: r0.text, adrPct: r0.adrPct })))
+      .sort((a, b) => b.adrPct - a.adrPct)
+      .slice(0, 10),
     note: 'Projection basis: last season’s measured occupancy, net ADR and length of stay per unit, adjusted for the researched market outlook (Miami revenue +4.7% YoY with ~30% more supply; Fort Lauderdale +2.0% with budget-airlift headwinds; international and group demand carrying 2027 spend). Cleaning fees are a guest pass-through and are not owner revenue. These figures are a planning estimate, not a guarantee.',
   }
 }
