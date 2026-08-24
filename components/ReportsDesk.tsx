@@ -63,6 +63,10 @@ export function ReportsDesk() {
   const [buildings, setBuildings] = useState<string[]>([])
   const [picked, setPicked] = useState<string[]>([])
   const defaults = monthDefaults()
+  // 'review' = the full performance review; 'projection' = the next-season projection report
+  // built from Money → Projections (Jon, 2026-08-22). Projection needs no period — the season
+  // IS the period — and skips the AI pass, so it generates in a few seconds.
+  const [kind, setKind] = useState<'review' | 'projection'>('review')
   const [periodStart, setPeriodStart] = useState(defaults.start)
   const [periodEnd, setPeriodEnd] = useState(defaults.end)
   const [showNew, setShowNew] = useState(false)
@@ -180,12 +184,13 @@ export function ReportsDesk() {
 
   async function generate() {
     if (!picked.length) { setMsg('Pick at least one property.'); return }
-    setGenerating(true); setMsg('Pulling data + writing the report… (~30s)')
+    setGenerating(true); setMsg(kind === 'projection' ? 'Building the projection report… (~5s)' : 'Pulling data + writing the report… (~30s)')
     try {
       const r = await fetch('/api/reports/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          kind,
           buildings: picked, periodStart, periodEnd,
           pacingUrl: pacing ? pacing.url : undefined,
           statementIds: stmtPicked.length ? stmtPicked : undefined,
@@ -228,6 +233,25 @@ export function ReportsDesk() {
         {showNew && (
           <div className="mt-4 space-y-4">
             <div>
+              <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Report type</p>
+              <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden w-fit">
+                <button onClick={() => setKind('review')}
+                  className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'review' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                  Owner review
+                </button>
+                <button onClick={() => setKind('projection')}
+                  className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'projection' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                  Season projection
+                </button>
+              </div>
+              {kind === 'projection' && (
+                <p className="mt-1.5 text-[12px] text-muted">
+                  Next season&rsquo;s net owner revenue per unit, with property health and ADR-upside recommendations — numbers come from{' '}
+                  <a href="/projections" className="text-brand-600 font-semibold underline decoration-dotted underline-offset-2">Money → Projections</a>, where every month, unit and lever is adjustable. Generate, then edit any wording in place; hidden sections can be re-enabled on the report.
+                </p>
+              )}
+            </div>
+            <div>
               <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Properties</p>
               <div className="flex flex-wrap gap-2">
                 {buildings.map(b => {
@@ -243,17 +267,23 @@ export function ReportsDesk() {
               </div>
             </div>
             <div className="flex items-end gap-3 flex-wrap">
-              <label className="block">
-                <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Period start</span>
-                <input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
-              </label>
-              <label className="block">
-                <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Period end</span>
-                <input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
-              </label>
+              {kind === 'review' ? (
+                <>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Period start</span>
+                    <input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Period end</span>
+                    <input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                </>
+              ) : (
+                <span className="text-[12.5px] text-muted pb-2">Period: next high season (Nov–Apr), straight from the projection model.</span>
+              )}
               <button onClick={generate} disabled={generating || !picked.length}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-5 py-2 hover:bg-brand-700 disabled:opacity-50">
-                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Generate report
+                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : 'Generate report'}
               </button>
               <button onClick={() => { setShowNew(false); setMsg('') }} className="text-sm text-muted hover:text-ink px-2 py-2">Cancel</button>
             </div>
