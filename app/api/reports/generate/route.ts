@@ -20,6 +20,7 @@ import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
+import { projectionSectionFor } from '@/lib/projections'
 import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -505,6 +506,15 @@ export async function POST(req: NextRequest) {
     feeNum: m.channelFees, occNights: m.occupiedNights, availNights: m.availableNights,
   })
 
+  // NEXT SEASON PROJECTION (Jon, 2026-08-22: "create a owner report with the owner report tab
+  // based on this"). The Projections board's numbers for this report's units, frozen into the
+  // content at generation. ADDITIVE: any failure leaves it null and the report generates as
+  // before. Skippable with body.includeProjection === false.
+  let projection: ReportContent['projection'] = null
+  if (body?.includeProjection !== false) {
+    try { projection = await projectionSectionFor(ids) } catch { projection = null }
+  }
+
   const content: ReportContent = {
     meta: {
       scopeLabel, periodStart, periodEnd, asOf,
@@ -560,6 +570,7 @@ export async function POST(req: NextRequest) {
       subtitle: 'Completed work by reporting period  ·  plus open items we’re tracking',
       weeks, tracking,
     },
+    projection,
     byMonth: byMonth.length >= 2 ? byMonth : undefined,
     // Default revenue basis: big number = accommodation before channel fees (matches PriceLabs),
     // with Gross written beneath on the snapshot. Editable per section in the report UI.
