@@ -10,7 +10,7 @@ type Order = {
   id: string; link_code: string; reservation_id: string; unit: string | null; building: string | null; market: string | null; guest_name: string | null
   check_in: string | null; check_out: string | null; status: string; items: Line[]; subtotal_usd: number; tax_usd: number; total_usd: number; guest_note: string | null
   submitted_at: string; approved_at: string | null; approved_by: string | null; paid_at: string | null; payment_note: string | null; charge_error: string | null; folio_note: string | null
-  delivery_date: string | null; delivery_note: string | null; pushed_at: string | null; breezeway_task_id: string | null; assignee_names: string[]; assign_note: string | null
+  delivery_date: string | null; delivery_note: string | null; requested_delivery?: string; requested_date?: string | null; pushed_at: string | null; breezeway_task_id: string | null; assignee_names: string[]; assign_note: string | null
   push_error: string | null; delivered_at: string | null; delivered_by: string | null; decline_reason: string | null; approve_token: string | null
 }
 type LinkRow = { code: string; url: string; reservation_id: string; unit: string | null; building: string | null; guest_name: string | null; source: string | null; check_in: string | null; check_out: string | null; sent_at: string | null; send_error: string | null; opened_at: string | null; orders: number; created_by: string | null }
@@ -164,6 +164,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                     <div className="flex flex-wrap gap-1.5">
                       {o.items.map((l, i) => <span key={i} className="text-[12.5px] px-2 py-1 rounded-lg bg-app border border-line text-ink"><b>{l.qty}×</b> {l.name}</span>)}
                     </div>
+                    {o.requested_delivery && o.requested_delivery !== 'auto' ? <div className="mt-2 text-[12px] text-ink"><span className="text-muted">Guest asked for:</span> {o.requested_delivery === 'asap' ? 'as soon as possible' : o.requested_delivery === 'arrival' ? 'arrival day' : day(o.requested_date || null)}</div> : null}
                     {o.guest_note ? <div className="mt-2 text-[12.5px] italic text-muted">“{o.guest_note}”</div> : null}
                     {o.payment_note ? <div className="mt-2 text-[12px] text-emerald-800">{o.payment_note}</div> : null}
                     {o.charge_error ? <div className="mt-2 text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.charge_error}</div> : null}
@@ -192,7 +193,11 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                         </>) : null}
                         {o.status === 'paid' ? (<>
                           <button onClick={() => act('push_now', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50">{b('push_now') ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Push to team now</button>
-                          <input type="date" defaultValue={o.delivery_date || ''} onChange={e => { if (e.target.value) act('set_delivery', o.id, { date: e.target.value }) }} className="text-[12px] px-2 py-1.5 rounded-lg border border-line" title="Delivery date" />
+                          <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">Deliver:
+                            {inHouse ? <button onClick={() => act('set_delivery', o.id, { date: 'asap' })} disabled={!!busy} className="px-2 py-1 rounded-lg border border-line bg-white text-ink font-semibold disabled:opacity-50">ASAP</button>
+                              : <button onClick={() => act('set_delivery', o.id, { date: 'arrival' })} disabled={!!busy} className="px-2 py-1 rounded-lg border border-line bg-white text-ink font-semibold disabled:opacity-50">Arrival day</button>}
+                            <input type="date" defaultValue={o.delivery_date || ''} min={o.check_in || undefined} onChange={e => { if (e.target.value) act('set_delivery', o.id, { date: e.target.value }) }} className="px-2 py-1 rounded-lg border border-line text-ink" title="Pick a date" />
+                          </span>
                           {canMoney ? <button onClick={() => { if (window.confirm('Cancel this paid order? Refund it in Guesty separately.')) act('cancel', o.id) }} disabled={!!busy} className="text-[12px] text-muted hover:text-rose-700 px-2">Cancel</button> : null}
                         </>) : null}
                         {o.status === 'pushed' ? (<>
