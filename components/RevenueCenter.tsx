@@ -350,7 +350,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><TrendingUp size={13} /> Money</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Revenue Center</h1>
-          <p className="text-sm text-muted mt-1">{d.from} to {d.to} · {d.days} days · prorated per night · Δ vs {d.prev.from} – {d.prev.to}</p>
+          <p className="text-sm text-muted mt-1">{d.from} to {d.to} · {d.days} days · prorated per night · Δ vs {d.prev.from} – {d.prev.to} · <a href="/revenue/reconcile" className="text-brand-700 font-semibold hover:underline">Money source ↗</a></p>
         </div>
         {/* Two date fields and six presets wrapped to three rows on a phone. One swipeable strip
             instead — the dates lead it, so they are still there without a swipe. `sm:contents`
