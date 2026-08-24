@@ -507,7 +507,20 @@ export async function syncListings(maxPages = 20, since: string | null = null): 
 export async function syncCustomFields(): Promise<number> {
   const sb = supabaseAdmin()
   // Correct Open API path is account-scoped: /accounts/{id}/custom-fields (NOT /custom-fields).
-  const data = await api<any>(`/accounts/${ACCOUNT_ID}/custom-fields`)
+  // The id-scoped path returns nothing parseable (likely because GUESTY_ACCOUNT_ID is unset or that
+  // route behaves differently); the UN-scoped `accounts/custom-fields` demonstrably returns the
+  // account object with all 28 definitions under `customFields`. Try the scoped path first for
+  // accounts where it works, then fall back to the one that is proven.
+  let data: any = null
+  try { data = ACCOUNT_ID ? await api<any>(`/accounts/${ACCOUNT_ID}/custom-fields`) : null } catch { data = null }
+  const looksEmpty = (d: any) => {
+    if (!d) return true
+    const a = Array.isArray(d) ? d : (d.customFields || d.results || d.data || d.fields || d?.account?.customFields)
+    return !Array.isArray(a) || a.length === 0
+  }
+  if (looksEmpty(data)) {
+    try { data = await api<any>(`/accounts/custom-fields`) } catch { /* keep whatever we had */ }
+  }
   // 2026-08-19: this endpoint returns the ACCOUNT OBJECT with the definitions nested under
   // `customFields` — not a bare list. The extraction below only looked for results/data/fields, so
   // it silently found zero, skipped the write, and stamped the feed as a clean sync. The table sat
