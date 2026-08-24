@@ -6,6 +6,7 @@
 // permission decides who mints them.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { marketOf, MARKETS } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { currentSharePassword, currentMarketingPassword, currentAuditPassword } from '@/lib/shareAuth'
 import { randomBytes } from 'crypto'
@@ -109,6 +110,9 @@ export async function GET() {
     },
     meta: {
       buildings,
+      // Scoping a crew link by market is the whole point of the weekly planner section — a Broward
+      // lead should get Broward. Vendor-serviced markets are not offered: we have no crew there.
+      markets: MARKETS.slice(),
       owners: (owners || []).map((o: any) => ({ id: str(o.id), name: str(o.full_name), units: Array.isArray(o.listing_ids) ? o.listing_ids.length : 0 })),
       listings: active.map((l: any) => ({ id: str(l.id), name: str(l.nickname || l.title), building: str(l.building) })),
     },
@@ -130,7 +134,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  const scopeType = ['portfolio', 'building', 'owner', 'listing'].indexOf(str(body.scopeType)) >= 0 ? str(body.scopeType) : 'portfolio'
+  const scopeType = ['portfolio', 'market', 'building', 'owner', 'listing'].indexOf(str(body.scopeType)) >= 0 ? str(body.scopeType) : 'portfolio'
   const scopeIds = (Array.isArray(body.scopeIds) ? body.scopeIds : []).map((x: any) => str(x)).filter(Boolean).slice(0, 100)
   if (scopeType !== 'portfolio' && !scopeIds.length) return NextResponse.json({ ok: false, error: 'Pick at least one ' + scopeType + '.' }, { status: 400 })
   const sections = cleanSections(body.sections)
