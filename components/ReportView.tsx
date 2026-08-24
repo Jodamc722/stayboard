@@ -2292,7 +2292,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <tbody>
                       {(projection.units || []).map((u: Any, i: number) => (
                         <tr key={i} style={{ borderTop: '1px solid ' + t.cardBorder }}>
-                          <td className="py-1.5 font-semibold">{u.name}</td>
+                          <td className="py-1.5 font-semibold">
+                            {u.name}
+                            {u.health != null ? (
+                              <span title={'Property health ' + u.health + '/100 (' + (u.band || '') + ')' + (u.rating != null ? ' · guest rating ' + Number(u.rating).toFixed(1) : '')}
+                                className="ml-1.5 inline-block w-2 h-2 rounded-full align-middle"
+                                style={{ background: u.health >= 85 ? '#059669' : u.health >= 70 ? '#84cc16' : u.health >= 55 ? '#f59e0b' : '#e11d48' }} />
+                            ) : null}
+                          </td>
                           {(u.months || []).map((v: number, j: number) => (
                             <td key={j} className="py-1.5 text-right tabular-nums">${Number(v || 0).toLocaleString()}</td>
                           ))}
@@ -2310,6 +2317,22 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </table>
                 </div>
               </div>
+              {Array.isArray(projection.upsides) && projection.upsides.length > 0 && (
+                <div className="mt-4 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-3" style={{ color: t.muted }}>WHERE ADR CAN IMPROVE</p>
+                  <div className="space-y-2">
+                    {projection.upsides.map((r: Any, i: number) => (
+                      <div key={i} className="flex items-start gap-2.5 text-[13px]" style={{ color: t.body }}>
+                        {edit && (
+                          <button onClick={() => mutate(d => d.projection.upsides.splice(i, 1))} style={{ color: t.accent }} className="mt-0.5"><X size={12} /></button>
+                        )}
+                        <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded-md tabular-nums" style={{ background: t.accentSoft || '#ecfdf5', color: t.accent }}>+{r.adrPct}% ADR</span>
+                        <span><b>{r.unit}:</b> <Ed v={r.text || ''} set={v => patch('projection.upsides.' + i + '.text', v)} edit={edit} multiline /></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {(projection.note || edit) && (
                 <p className="mt-3 text-[12px]" style={{ color: t.sub }}>
                   <Ed v={projection.note || ''} set={v => patch('projection.note', v)} edit={edit} multiline placeholder="Methodology note…" />

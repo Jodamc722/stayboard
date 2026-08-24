@@ -14,10 +14,16 @@ type Cell = {
   edited: boolean
   nights: number; stays: number; grossAccom: number; netOwner: number
 }
+type Health = {
+  score: number; band: string; rating: number | null; reviews: number
+  openIssues: number; occGapPts: number | null; missingAmenities: string[]
+  recs: { text: string; adrPct: number }[]; upsidePct: number; qualityPct: number
+}
 type Unit = {
   id: string; name: string; building: string; market: string; bedrooms: number | null
   mgmtPct: number; months: Cell[]
   seasonNet: number; seasonGross: number; seasonNights: number
+  health: Health
 }
 type Data = {
   ok: boolean; error?: string
@@ -261,8 +267,11 @@ export function ProjectionsBoard() {
                         className="w-full px-4 py-2 grid items-center gap-2 text-left hover:bg-neutral-50"
                         style={{ gridTemplateColumns: '160px repeat(' + season.length + ', minmax(0,1fr)) 110px' }}>
                         <span className="truncate">
+                          <span className={'inline-block w-2 h-2 rounded-full mr-1.5 ' + (u.health.score >= 85 ? 'bg-emerald-500' : u.health.score >= 70 ? 'bg-lime-500' : u.health.score >= 55 ? 'bg-amber-500' : 'bg-rose-500')}
+                            title={'Health ' + u.health.score + '/100 (' + u.health.band + ')'} />
                           <span className="text-[12.5px] font-semibold text-ink">{u.name}</span>
                           {u.bedrooms != null ? <span className="text-[10.5px] text-muted"> · {u.bedrooms}BR</span> : null}
+                          {u.health.upsidePct > 0 ? <span className="text-[10px] text-emerald-700 font-semibold"> · +{u.health.upsidePct}% possible</span> : null}
                         </span>
                         {u.months.map(c => (
                           <span key={c.month} className="text-right">
@@ -274,6 +283,34 @@ export function ProjectionsBoard() {
                       </button>
                       {uo ? (
                         <div className="px-4 pb-3 bg-neutral-50/50">
+                          {/* HEALTH & UPSIDE — the model-level view of this unit (Jon, 2026-08-22). */}
+                          <div className="mb-2 mt-1 rounded-xl border border-line bg-white px-3 py-2.5">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
+                              <span className="font-bold text-ink">Health {u.health.score}/100 <span className="font-normal text-muted">({u.health.band})</span></span>
+                              <span>{u.health.rating != null ? '★ ' + u.health.rating.toFixed(1) + ' · ' + u.health.reviews + ' reviews' : 'no reviews yet'}</span>
+                              <span className={u.health.openIssues ? 'text-rose-700 font-semibold' : ''}>{u.health.openIssues} open issue{u.health.openIssues === 1 ? '' : 's'}</span>
+                              {u.health.occGapPts != null ? <span className={u.health.occGapPts < -5 ? 'text-amber-700 font-semibold' : ''}>occ {u.health.occGapPts >= 0 ? '+' : ''}{u.health.occGapPts}pts vs building</span> : null}
+                              {u.health.missingAmenities.length ? <span>missing: {u.health.missingAmenities.join(', ')}</span> : <span className="text-emerald-700">key amenities ✓</span>}
+                              <span className="grow" />
+                              {canEdit ? (
+                                <span className="flex items-center gap-1.5" title="Applied to this unit's ADR in every month, on top of the market uplift — turn it after committing to the improvements below">
+                                  Quality uplift
+                                  <Field value={u.health.qualityPct} sug={0} w="w-12" suffix="%" onSave={v => save({ unitAdj: { [u.id]: v == null || v === 0 ? null : { qualityPct: v } } })} />
+                                  {u.health.upsidePct > 0 ? <span className="text-emerald-700 font-semibold">up to +{u.health.upsidePct}%</span> : null}
+                                </span>
+                              ) : null}
+                            </div>
+                            {u.health.recs.length ? (
+                              <ul className="mt-1.5 space-y-0.5">
+                                {u.health.recs.map((r0, ri) => (
+                                  <li key={ri} className="text-[11.5px] text-ink flex items-start gap-1.5">
+                                    <span className="shrink-0 text-[10px] font-bold text-emerald-700 bg-emerald-50 rounded px-1 py-px tabular-nums mt-px">+{r0.adrPct}%</span>
+                                    {r0.text}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </div>
                           <div className="grid gap-2" style={{ gridTemplateColumns: '160px repeat(' + season.length + ', minmax(0,1fr)) 110px' }}>
                             <div className="text-[11px] text-muted pt-1.5">
                               assumptions<br /><span className="text-[10px]">occ% · ADR · LOS</span>
