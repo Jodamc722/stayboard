@@ -5,15 +5,7 @@
 // component cannot leak what it was never sent.
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users } from 'lucide-react'
-
-// Same tag tones as the in-app planner, so a crew member sees the same colours in both places.
-const TAG_DOT: Record<string, string> = {
-  amber: 'bg-amber-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', sky: 'bg-sky-500',
-}
-const TAG_CHIP: Record<string, string> = {
-  amber: 'bg-amber-100 text-amber-800', violet: 'bg-violet-100 text-violet-800',
-  emerald: 'bg-emerald-100 text-emerald-800', sky: 'bg-sky-100 text-sky-800',
-}
+import { PlannerView, PlannerLegend } from './PlannerView'
 
 const usd = (n: any) => n == null ? null : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
@@ -156,140 +148,32 @@ export function SharedView({ code }: { code: string }) {
         ) : null}
 
         {s.team ? (
-          <Sec Icon={Users} title={s.team.dept === 'maintenance' ? 'Maintenance planner' : 'Weekly planner'}
-            sub={s.team.from + ' → ' + s.team.to}>
-            <div className="px-4 pt-3 flex items-center gap-2.5 flex-wrap text-[10.5px] text-neutral-500">
-              <span className="inline-flex items-center gap-1"><span className="w-4 h-3.5 rounded bg-emerald-500 text-white text-[8px] font-bold grid place-items-center">W</span> working</span>
-              <span className="inline-flex items-center gap-1"><span className="w-5 h-3.5 rounded bg-sky-500 text-white text-[8px] font-bold grid place-items-center">OC</span> on call</span>
-              <span className="inline-flex items-center gap-1"><span className="w-5 h-3.5 rounded bg-neutral-300 text-white text-[8px] font-bold grid place-items-center">OFF</span> off</span>
-              <span className="inline-flex items-center gap-1"><span className="w-4 h-3.5 rounded bg-neutral-900 text-white text-[8px] font-bold grid place-items-center">3</span> jobs booked</span>
+          <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
+            <div className="px-4 py-3 border-b border-neutral-100 flex items-baseline gap-2 flex-wrap">
+              <Users className="w-3.5 h-3.5 text-neutral-400 self-center" />
+              <p className="text-[14px] font-bold text-neutral-900">
+                {s.team.dept === 'maintenance' ? 'Maintenance planner' : 'Weekly planner'}
+              </p>
+              <p className="text-[11px] text-neutral-400 ml-auto tabular-nums">{s.team.from} → {s.team.to}</p>
             </div>
-
-            {(s.team.markets || []).map((m: any) => (
-              <div key={m.market} className="mt-3 border-t border-neutral-100 pt-3">
-                <div className="px-4 pb-2 flex items-baseline gap-2 flex-wrap">
-                  <p className="text-[14px] font-bold text-neutral-900">{m.market}</p>
-                  <p className="text-[11.5px] text-neutral-500">
-                    {(m.people || []).length} on the schedule
-                    {s.team.dept === 'maintenance' ? ' · ' + m.jobs + ' work orders' : ' · ' + m.cleans + ' cleans'}
-                  </p>
-                </div>
-
-                {!(m.people || []).length ? (
-                  <p className="px-4 pb-3 text-[12.5px] text-neutral-400">Nobody assigned in this window.</p>
-                ) : (
-                  <>
-                    {/* the week at a glance */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr>
-                            <th className="sticky left-0 z-10 bg-white text-left px-4 py-1.5 min-w-[128px]">
-                              <span className="text-[9.5px] uppercase tracking-wider font-bold text-neutral-400">Who</span>
-                            </th>
-                            {(s.team.days || []).map((d: any) => (
-                              <th key={d.date} className={'px-1 py-1.5 text-center min-w-[44px] ' + (d.weekend ? 'bg-neutral-50' : '')}>
-                                <span className={'block text-[9.5px] font-bold uppercase ' + (d.today ? 'text-neutral-900' : 'text-neutral-400')}>{d.dow}</span>
-                                <span className={'block text-[10.5px] tabular-nums ' + (d.today ? 'font-bold text-neutral-900' : 'text-neutral-500')}>{String(d.date).slice(8)}</span>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(m.people || []).map((p: any) => (
-                            <tr key={p.name}>
-                              <td className="sticky left-0 z-10 bg-white px-4 py-1.5 border-t border-neutral-100">
-                                <p className="text-[12.5px] font-semibold text-neutral-900 leading-tight">{p.name}</p>
-                                <p className="text-[10px] text-neutral-400">{p.daysOn ? p.daysOn + ' days on' : p.daysWorked + ' days'}</p>
-                              </td>
-                              {(s.team.days || []).map((d: any) => {
-                                const jobs = (p.byDay || {})[d.date] || []
-                                const st = String((p.roster || {})[d.date] || '')
-                                const badge = jobs.length
-                                  ? { cls: 'bg-neutral-900 text-white', txt: String(jobs.length) }
-                                  : /^working$/i.test(st) ? { cls: 'bg-emerald-500 text-white', txt: 'W' }
-                                  : /on.?call/i.test(st) ? { cls: 'bg-sky-500 text-white', txt: 'OC' }
-                                  : /^off|req/i.test(st) ? { cls: 'bg-neutral-200 text-neutral-500', txt: 'OFF' }
-                                  : null
-                                const seen: Record<string, boolean> = {}
-                                const dots = jobs.reduce((a: any[], j: any) => a.concat(j.tags || []), [])
-                                  .filter((t: any) => (seen[t.key] ? false : (seen[t.key] = true)))
-                                return (
-                                  <td key={d.date} className={'px-1 py-1.5 text-center align-top border-t border-neutral-100 ' + (d.weekend ? 'bg-neutral-50' : '')}>
-                                    {badge ? (
-                                      <span className={'inline-block min-w-[24px] rounded-md text-[11px] font-bold leading-none px-1.5 py-1 ' + badge.cls}>{badge.txt}</span>
-                                    ) : <span className="text-[10px] text-neutral-300">·</span>}
-                                    {dots.length ? (
-                                      <span className="flex justify-center gap-0.5 mt-1">
-                                        {dots.slice(0, 3).map((t: any) => <span key={t.key} title={t.label} className={'w-1 h-1 rounded-full ' + (TAG_DOT[t.tone] || 'bg-neutral-300')} />)}
-                                      </span>
-                                    ) : null}
-                                  </td>
-                                )
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* and the actual work, day by day — the bit that makes this a rota and not a scoreboard */}
-                    <div className="px-4 pt-3 pb-1">
-                      <p className="text-[10px] uppercase tracking-wider font-bold text-neutral-400">
-                        {s.team.dept === 'maintenance' ? 'The work orders' : 'The assignments'}
-                      </p>
-                    </div>
-                    <div className="divide-y divide-neutral-100">
-                      {(s.team.days || []).map((d: any) => {
-                        const rows = (m.people || [])
-                          .map((p: any) => ({ p, jobs: ((p.byDay || {})[d.date] || []) }))
-                          .filter((r: any) => r.jobs.length)
-                        const onOnly = (m.people || []).filter((p: any) =>
-                          !(((p.byDay || {})[d.date] || []).length) && /work|on.?call/i.test(String((p.roster || {})[d.date] || '')))
-                        if (!rows.length && !onOnly.length) return null
-                        return (
-                          <div key={d.date} className="px-4 py-2.5">
-                            <p className={'text-[11.5px] font-bold ' + (d.today ? 'text-neutral-900' : 'text-neutral-500')}>
-                              {d.dow} {String(d.date).slice(5)}{d.today ? ' · today' : ''}
-                            </p>
-                            {rows.map((r: any) => (
-                              <div key={r.p.name} className="mt-1.5">
-                                <p className="text-[12.5px] font-semibold text-neutral-900">{r.p.name}</p>
-                                <div className="mt-0.5 space-y-0.5">
-                                  {r.jobs.map((j: any, i: number) => (
-                                    <div key={i} className="flex items-start gap-1.5 flex-wrap text-[12px]">
-                                      <span className={'text-[9px] font-bold uppercase px-1 py-0.5 rounded shrink-0 ' +
-                                        (j.status === 'done' ? 'bg-emerald-100 text-emerald-700' : j.status === 'in progress' ? 'bg-amber-100 text-amber-800' : 'bg-neutral-100 text-neutral-500')}>{j.status}</span>
-                                      <span className="font-semibold text-neutral-900">{j.unit}</span>
-                                      <span className="text-neutral-600">{j.task}</span>
-                                      {(j.tags || []).map((t: any) => (
-                                        <span key={t.key} className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ' + (TAG_CHIP[t.tone] || 'bg-neutral-100 text-neutral-600')}>{t.label}</span>
-                                      ))}
-                                      {j.url ? (
-                                        <a href={j.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-neutral-900 underline shrink-0">Breezeway ↗</a>
-                                      ) : null}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                            {onOnly.length ? (
-                              <p className="text-[11.5px] text-neutral-500 mt-1.5">
-                                Also on: {onOnly.map((p: any) => p.name).join(', ')} — nothing booked in yet.
-                              </p>
-                            ) : null}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </>
-                )}
+            {/* Same drawing as the staff tab — one component, so what the crew opens and what the
+                office plans on can never drift. Breezeway links only on the maintenance link. */}
+            <div className="p-3 bg-neutral-50">
+              <PlannerView
+                days={s.team.days || []}
+                blocks={s.team.markets || []}
+                dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
+                showLinks={s.team.dept === 'maintenance'}
+              />
+              <div className="px-1 pt-3">
+                <PlannerLegend dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'} />
               </div>
-            ))}
-            <p className="px-4 py-2 text-[10.5px] text-neutral-400">
-              A long stay is {s.team.rules?.longStayNights}+ nights. This page is live — reload it and it is current.
+            </div>
+            <p className="px-4 py-2.5 text-[10.5px] text-neutral-400 border-t border-neutral-100">
+              A long stay is {s.team.rules?.longStayNights}+ nights. Tap any day to see the work on it.
+              This page is live — reload it and it is current.
             </p>
-          </Sec>
+          </div>
         ) : null}
 
         {s.verification ? (
