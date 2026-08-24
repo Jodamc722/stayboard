@@ -310,7 +310,7 @@ export const CORE_TOOLS: EveTool[] = [
         if (isTarget) oneUnit = { unit: row.nickname || row.title, fields: [] as any[] }
         for (const c of cf) {
           const id = String(c?.fieldId?._id || c?.fieldId?.id || c?.fieldId || '')
-          const nm = String(c?.fieldId?.name || c?.name || byId[id] || id)
+          const nm = String(c?.fieldId?.name || c?.name || byId[id] || id)  // byId is populated once syncCustomFields works
           const v = c?.value
           const has = v != null && String(v).trim() !== ''
           const key = id || nm

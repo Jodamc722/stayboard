@@ -518,11 +518,20 @@ async function mineGuestyFields(c: Ctx): Promise<Finding[]> {
   const { data: ls } = await c.db.from('guesty_listings').select('id,status,raw').order('id').limit(400)
   const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   if (!live.length) return out
+  // Resolve ids to human names. The mirror stores fieldId as a BARE STRING on most listings, so
+  // without this map every field reads as a hex id and the finding is useless to a person.
+  const nameById: Record<string, string> = {}
+  try {
+    const { data: defs } = await c.db.from('guesty_custom_fields').select('id, name').limit(500)
+    for (const d of (defs || [])) nameById[String((d as any).id)] = String((d as any).name || '')
+  } catch { /* degrade to ids */ }
+
   const fill: Record<string, number> = {}
   for (const l of live) {
     const cf = Array.isArray((l as any).raw?.customFields) ? (l as any).raw.customFields : []
     for (const cff of cf) {
-      const nm = String(cff?.fieldId?.name || cff?.name || '').trim()
+      const fid = String(cff?.fieldId?._id || cff?.fieldId?.id || cff?.fieldId || '')
+      const nm = String(cff?.fieldId?.name || cff?.name || nameById[fid] || fid || '').trim()
       if (!nm) continue
       const v = cff?.value
       if (v != null && String(v).trim() !== '') fill[nm] = (fill[nm] || 0) + 1
