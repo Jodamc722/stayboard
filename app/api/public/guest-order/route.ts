@@ -22,7 +22,7 @@ async function linkFor(code: string): Promise<LinkRow | null> {
 function publicOrder(o: any) {
   return {
     id: String(o.id).slice(0, 8), status: o.status, items: o.items, subtotal: o.subtotal_usd, tax: o.tax_usd, total: o.total_usd,
-    submittedAt: o.submitted_at, deliveryDate: o.delivery_date, deliveryNote: o.delivery_note, note: o.guest_note,
+    submittedAt: o.submitted_at, deliveryDate: o.delivery_date, deliveryNote: o.delivery_note, note: o.guest_note, requested: o.requested_delivery, requestedDate: o.requested_date,
     paid: !!o.paid_at, declined: o.status === 'declined', delivered: o.status === 'delivered',
   }
 }
@@ -78,7 +78,16 @@ export async function POST(req: NextRequest) {
   // one open basket at a time — a second submit while the first waits is almost always a double tap
   const open = (await ordersForLink(link.code)).filter(o => o.status === 'submitted')
   if (open.length) return NextResponse.json({ ok: false, error: 'Your previous order is still being reviewed — we will be in touch shortly.' }, { status: 409 })
-  const r = await submitOrder(link, basket, String(body?.note || ''), req.nextUrl.origin)
+  const modeRaw = String(body?.delivery?.mode || 'auto')
+  const mode = (['asap', 'arrival', 'date'].indexOf(modeRaw) >= 0 ? modeRaw : 'auto') as any
+  let date: string | null = String(body?.delivery?.date || '') || null
+  if (mode === 'date') {
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ ok: false, error: 'Pick a delivery date.' }, { status: 400 })
+    if (link.check_in && date < link.check_in) return NextResponse.json({ ok: false, error: 'Delivery can’t be before your arrival.' }, { status: 400 })
+    if (link.check_out && date >= link.check_out) return NextResponse.json({ ok: false, error: 'Delivery has to be before your checkout day.' }, { status: 400 })
+    if (date < todayET()) return NextResponse.json({ ok: false, error: 'That date has passed.' }, { status: 400 })
+  } else date = null
+  const r = await submitOrder(link, basket, String(body?.note || ''), req.nextUrl.origin, { mode, date })
   if (!r.ok || !r.order) return NextResponse.json({ ok: false, error: r.error || 'Could not place the order.' }, { status: 400 })
   return NextResponse.json({ ok: true, order: publicOrder(r.order) })
 }
