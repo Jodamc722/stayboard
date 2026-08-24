@@ -119,8 +119,12 @@ export function TeamPlanner() {
             <p className="text-sm font-bold text-ink">{b.market}</p>
             <span className="text-[11.5px] text-muted">{b.people.length} on the schedule · {b.cleans} cleans · {b.jobs} jobs</span>
           </div>
-          {!b.people.length ? (
-            <p className="px-4 py-8 text-center text-[12.5px] text-muted">Nobody assigned in this market for the window.</p>
+          {(() => { const shown = b.people.filter(p => p.jobs > 0 || Object.keys(p.roster).length > 0); const quiet = b.people.length - shown.length; return (
+          !shown.length ? (
+            <p className="px-4 py-8 text-center text-[12.5px] text-muted">
+              Nothing set for this market in the window.
+              {quiet ? ' ' + quiet + ' on the roster with no days marked — set them on the Turnover Schedule.' : ''}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
@@ -138,7 +142,7 @@ export function TeamPlanner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {b.people.map(p => (
+                  {shown.map(p => (
                     <tr key={p.name} className="hover:bg-app/40">
                       <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-line">
                         <p className="text-[13px] font-semibold text-ink leading-tight">
@@ -203,8 +207,13 @@ export function TeamPlanner() {
                   </tr>
                 </tbody>
               </table>
+              {quiet ? (
+                <p className="px-4 py-2 text-[11px] text-muted border-t border-line">
+                  {quiet} more on this roster with no days marked for the fortnight.
+                </p>
+              ) : null}
             </div>
-          )}
+          )) })()}
         </div>
       ))}
 
