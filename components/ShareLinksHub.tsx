@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, Plus, Copy, Check, Trash2, Pencil, Link2, Lock, Building2, User, Home, Globe, X,
+  AlertTriangle, ChevronDown, ChevronRight, FileText, BookOpen, Sparkles, ExternalLink,
 } from 'lucide-react'
 
 type LinkRow = {
@@ -19,6 +20,15 @@ type Meta = {
   buildings: string[]
   owners: { id: string; name: string; units: number }[]
   listings: { id: string; name: string; building: string }[]
+}
+// The links that are not built here: fixed pages that predate this hub, and one-per-record links
+// minted by their own tabs. The hub lists them so that "where is that link again" has one answer.
+type Standing = { key: string; label: string; path: string; gate: 'vendor' | 'marketing' | 'audit' | 'open'; blurb: string }
+type Gen = { code: string; label: string; sub: string; status: string; updated: string }
+type Gates = { vendor: boolean; marketing: boolean; audit: boolean }
+
+const GATE_LABEL: Record<string, string> = {
+  vendor: 'Team password', marketing: 'Marketing password', audit: 'Audit password', open: 'No password',
 }
 
 const SECTIONS: { key: string; label: string; sub: string }[] = [
@@ -43,6 +53,11 @@ export function ShareLinksHub() {
   const [copied, setCopied] = useState('')
   const [busy, setBusy] = useState(false)
   const [origin, setOrigin] = useState('')
+  const [standing, setStanding] = useState<Standing[]>([])
+  const [gates, setGates] = useState<Gates>({ vendor: true, marketing: true, audit: true })
+  const [gen, setGen] = useState<{ reports: Gen[]; guidebooks: Gen[]; guides: Gen[] }>({ reports: [], guidebooks: [], guides: [] })
+  const [openGroup, setOpenGroup] = useState('')
+  const [genQ, setGenQ] = useState('')
 
   // Builder state. editingId set = the builder is repurposed as the editor for that link.
   const [open, setOpen] = useState(false)
@@ -64,6 +79,9 @@ export function ShareLinksHub() {
       const j = await r.json()
       if (!r.ok) throw new Error(j?.message || j?.error || 'Could not load.')
       setLinks(j.links || []); setMeta(j.meta || null)
+      setStanding(j.standing || [])
+      if (j.gates) setGates(j.gates)
+      if (j.generated) setGen({ reports: j.generated.reports || [], guidebooks: j.generated.guidebooks || [], guides: j.generated.guides || [] })
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -101,8 +119,9 @@ export function ShareLinksHub() {
     await fetch('/api/share-links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'revoke', id }) })
     await load()
   }
-  const copy = async (code: string) => {
-    try { await navigator.clipboard.writeText(origin + '/share/' + code); setCopied(code); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
+  const copy = async (code: string) => { copyPath('/share/' + code, code) }
+  const copyPath = async (path: string, key: string) => {
+    try { await navigator.clipboard.writeText(origin + path); setCopied(key); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
   }
 
   // Scope pick-list for the current scope type, filtered by the search box.
@@ -226,7 +245,7 @@ export function ShareLinksHub() {
       {/* the links that exist */}
       <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
         <div className="px-4 py-3 border-b border-line flex items-center">
-          <p className="text-sm font-bold text-ink flex-1">Live links</p>
+          <p className="text-sm font-bold text-ink flex-1">Custom links</p>
           <span className="text-[11px] text-muted tabular-nums">{links.length}</span>
         </div>
         {!links.length ? (
@@ -264,9 +283,129 @@ export function ShareLinksHub() {
         )}
       </div>
 
+      {/* ── STANDING LINKS ─────────────────────────────────────────────────────────────────
+          The fixed pages that existed before this hub. Their URL never changes; what gates them
+          is one of the shared passwords, and every one of those gates FAILS CLOSED — so an unset
+          password means the link is DEAD, not open. That is the loud bit. */}
+      {standing.length > 0 && (
+        <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
+          <div className="px-4 py-3 border-b border-line">
+            <p className="text-sm font-bold text-ink">Standing links</p>
+            <p className="text-[11.5px] text-muted mt-0.5">
+              Always-on pages with a fixed address. Change the password and every one of them changes at once.
+            </p>
+          </div>
+          {(!gates.vendor || !gates.marketing || !gates.audit) && (
+            <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex gap-2 items-start">
+              <AlertTriangle size={14} className="text-amber-700 shrink-0 mt-0.5" />
+              <p className="text-[12px] text-amber-900">
+                <span className="font-bold">
+                  {[!gates.vendor ? 'Team' : null, !gates.marketing ? 'Marketing' : null, !gates.audit ? 'Audit' : null]
+                    .filter(Boolean).join(' and ')} password not set.
+                </span>{' '}
+                These gates fail closed, so the links below that use them are shut — anyone you sent one to
+                sees a locked page. Set them in <a href="/users" className="underline font-semibold">Users → Share links &amp; security</a>.
+              </p>
+            </div>
+          )}
+          <div className="divide-y divide-line">
+            {standing.map(l => {
+              const dead = (l.gate === 'vendor' && !gates.vendor) || (l.gate === 'marketing' && !gates.marketing) || (l.gate === 'audit' && !gates.audit)
+              return (
+                <div key={l.key} className="px-4 py-3 flex items-center gap-2 flex-wrap">
+                  <Link2 size={13} className="text-muted shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[13.5px] font-bold text-ink">{l.label}</p>
+                    <p className="text-[11.5px] text-muted">{l.blurb} <span className="text-faint">· {l.path}</span></p>
+                  </div>
+                  <div className="flex-1" />
+                  <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' +
+                    (dead ? 'bg-amber-100 text-amber-800' : l.gate === 'open' ? 'bg-app text-muted' : 'bg-app text-muted')}>
+                    {dead ? 'password not set' : GATE_LABEL[l.gate]}
+                  </span>
+                  <button onClick={() => copyPath(l.path, l.key)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
+                    {copied === l.key ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                  </button>
+                  <a href={l.path} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink inline-flex items-center gap-1">Open <ExternalLink size={11} /></a>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── GENERATED LINKS ────────────────────────────────────────────────────────────────
+          One link per record, minted by their own tabs. Collapsed by default because there can be
+          hundreds; the point is that the hub can ANSWER "where is that link", not that it owns them. */}
+      <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
+        <div className="px-4 py-3 border-b border-line">
+          <p className="text-sm font-bold text-ink">Generated links</p>
+          <p className="text-[11.5px] text-muted mt-0.5">
+            One per record, created by their own tabs. The unguessable code in the address is the key —
+            there is no password on these.
+          </p>
+        </div>
+        {([
+          { key: 'reports', label: 'Owner reports', path: '/r/', rows: gen.reports, Icon: FileText, made: 'Reports' },
+          { key: 'guidebooks', label: 'Guidebooks', path: '/g/', rows: gen.guidebooks, Icon: BookOpen, made: 'Guidebooks' },
+          { key: 'guides', label: 'Guest guide pages', path: '/guide/', rows: gen.guides, Icon: Sparkles, made: 'Guide pages' },
+        ] as { key: string; label: string; path: string; rows: Gen[]; Icon: any; made: string }[]).map(g => {
+          const isOpen = openGroup === g.key
+          const n = genQ.trim().toLowerCase()
+          const shown = (isOpen && n ? g.rows.filter(r => (r.label + ' ' + r.sub).toLowerCase().includes(n)) : g.rows).slice(0, 40)
+          return (
+            <div key={g.key} className="border-b border-line last:border-b-0">
+              <button onClick={() => { setOpenGroup(isOpen ? '' : g.key); setGenQ('') }}
+                className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-app/50">
+                {isOpen ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
+                <g.Icon size={13} className="text-muted" />
+                <span className="text-[13px] font-bold text-ink">{g.label}</span>
+                <span className="text-[11px] text-muted tabular-nums">{g.rows.length}</span>
+                <div className="flex-1" />
+                <span className="text-[11px] text-faint">{g.path}&lt;code&gt;</span>
+              </button>
+              {isOpen && (
+                <div>
+                  {g.rows.length > 8 && (
+                    <div className="px-4 pb-2">
+                      <input value={genQ} onChange={e => setGenQ(e.target.value)} placeholder={'Search ' + g.label.toLowerCase() + '…'}
+                        className="w-full rounded-xl border border-line px-3 py-1.5 text-[12.5px]" />
+                    </div>
+                  )}
+                  {!g.rows.length ? (
+                    <p className="px-4 py-4 text-[12.5px] text-muted">None yet — they appear here as soon as {g.made} makes one.</p>
+                  ) : (
+                    <div className="divide-y divide-line border-t border-line">
+                      {shown.map(r => (
+                        <div key={r.code} className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-semibold text-ink">{r.label}</p>
+                            {r.sub ? <p className="text-[11.5px] text-muted">{r.sub}</p> : null}
+                          </div>
+                          <div className="flex-1" />
+                          {r.status && r.status !== 'published' ? <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-app text-muted">{r.status}</span> : null}
+                          <button onClick={() => copyPath(g.path + r.code, g.key + r.code)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
+                            {copied === g.key + r.code ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                          </button>
+                          <a href={g.path + r.code} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink inline-flex items-center gap-1">Open <ExternalLink size={11} /></a>
+                        </div>
+                      ))}
+                      {g.rows.length > shown.length && (
+                        <p className="px-4 py-2 text-[11.5px] text-muted">Showing {shown.length} of {g.rows.length} — search to narrow it.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
       <p className="text-[11.5px] text-muted">
-        The FF&amp;E walk links, owner order links, vendor pages and the Marketing partner page keep
-        working exactly as before — this hub is for custom live-data links on top of those.
+        Not listed on purpose: the one-shot job links — a walk, a field request, an owner approval, an
+        audit, a Salato verification. Those are tickets for a single task rather than something you send
+        someone to read, and there are thousands of them.
       </p>
     </div>
   )
