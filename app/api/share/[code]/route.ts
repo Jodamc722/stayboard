@@ -164,7 +164,7 @@ async function handle(code: string, pw: string) {
     })
   }
 
-  if (sections.team) {
+  if (sections.team || sections.team_maint) {
     // The weekly planner, scoped to whatever this link covers. Same builder the in-app tab uses —
     // one set of numbers, two doors — and the same tag vocabulary as Slack and the ops brief.
     // Names are the point here: this is a rota, not guest data, so `guest_names` does not apply.
@@ -173,9 +173,10 @@ async function handle(code: string, pw: string) {
     const plan = await buildTeamSchedule({
       from: today, to: addDaysET(today, Math.min(windowDays, 14) - 1),
       listingIds: idList, markets: scopeMarkets,
+      dept: sections.team_maint ? 'maintenance' : 'cleaning',
     })
     out.sections.team = {
-      from: plan.from, to: plan.to, days: plan.days, rules: plan.rules,
+      from: plan.from, to: plan.to, dept: plan.dept, days: plan.days, rules: plan.rules,
       markets: plan.markets.map(m => ({
         market: m.market,
         jobs: m.jobs, cleans: m.cleans,
@@ -183,7 +184,12 @@ async function handle(code: string, pw: string) {
         people: m.people.slice(0, 60).map(p => ({
           name: p.name, dept: p.dept, daysWorked: p.daysWorked, jobs: p.jobs, cleans: p.cleans,
           byDay: Object.keys(p.byDay).reduce((acc: Record<string, any[]>, d) => {
-            acc[d] = p.byDay[d].slice(0, 12).map(j => ({ unit: j.unit, task: j.task, status: j.status, isClean: j.isClean, tags: j.tags }))
+            acc[d] = p.byDay[d].slice(0, 14).map(j => ({
+              unit: j.unit, task: j.task, status: j.status, isClean: j.isClean, tags: j.tags,
+              market: j.market,
+              // Only the maintenance planner carries the Breezeway link: a cleaner has no login.
+              url: plan.dept === 'maintenance' ? j.url : null,
+            }))
             return acc
           }, {}),
         })),
