@@ -319,11 +319,16 @@ function mapMessage(conversationId: string, m: any) {
 }
 
 function mapCustomField(c: any) {
+  // 2026-08-19: the account payload names the field `displayName` (with `key` as the slug) — NOT
+  // `fieldName` or `name`. Every row therefore mapped to an empty name and was dropped by the
+  // `r.id && r.name` filter downstream, which is why this table sat empty while Guesty happily
+  // served 28 definitions. The scope object is `object`, not `objectType`.
   return {
     id:      c._id || c.id,
-    name:    c.fieldName || c.name || '',
+    name:    c.displayName || c.fieldName || c.name || c.key || '',
+    slug:    c.key || c.slug || null,
     type:    (c.type || 'text').toLowerCase(),
-    target:  String(c.objectType || c.target || 'reservation').toLowerCase().replace(/s$/, ''),
+    target:  String(c.object || c.objectType || c.target || 'reservation').toLowerCase().replace(/s$/, ''),
     options: c.options || c.values || null
   }
 }
