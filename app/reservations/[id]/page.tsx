@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { customFieldNameMap } from '@/lib/custom-fields'
 import { STAGE_LABEL, money, daysUntil, clockRunning } from '@/lib/claims'
+import { ReservationOrders } from '@/components/ReservationOrders'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,6 +58,20 @@ export default async function ReservationDetail({ params }: { params: { id: stri
       .order('created_at', { ascending: false })
     claims = Array.isArray(data) ? data : []
   } catch { claims = [] }
+
+  // GUEST ORDERS ON THIS STAY (2026-08-24): the pre-arrival order link and every basket the
+  // guest sent, on the booking itself. Service-role tables; a failure reads as "no link yet".
+  let orderLink: any = null
+  let guestOrders: any[] = []
+  try {
+    const db = supabaseAdmin()
+    const [{ data: l }, { data: o }] = await Promise.all([
+      db.from('guest_order_links').select('code, sent_at, send_error, opened_at, created_at').eq('reservation_id', params.id).limit(1),
+      db.from('guest_orders').select('id, status, items, total_usd, submitted_at, delivery_date, delivery_note, requested_delivery, requested_date, payment_note, charge_error').eq('reservation_id', params.id).order('submitted_at', { ascending: false }).limit(20),
+    ])
+    orderLink = Array.isArray(l) && l.length ? l[0] : null
+    guestOrders = Array.isArray(o) ? o : []
+  } catch { orderLink = null; guestOrders = [] }
 
   const cfMap = await customFieldNameMap()
   const idOf = (cf: any) => String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
@@ -116,6 +131,9 @@ export default async function ReservationDetail({ params }: { params: { id: stri
               <Link href="/reservation-emails" className="underline">reservation emails</Link>.
             </p>
           )}
+
+          <h2 className="text-sm font-semibold text-slate-900 mt-6 mb-3">Guest orders</h2>
+          <ReservationOrders reservationId={params.id} link={orderLink} orders={guestOrders} />
 
           <h2 className="text-sm font-semibold text-slate-900 mt-6 mb-3">Damage claims</h2>
           {claims.length === 0 ? (
