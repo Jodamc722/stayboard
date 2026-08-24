@@ -217,6 +217,87 @@ export async function GET(req: NextRequest) {
         String(c.cleans || 0) + (c.cpc != null ? ' <span style="' + MUTED + '">&middot; ' + money(c.cpc) + '/clean</span>' : '')) +
       '</table>'
 
+    // ── 2b. CREWS — COMPLETED WORK vs HOURS CLOCKED (Jon, 2026-08-22: "We track departure
+    // cleans completed in a particular day, that's how we should determine effectiveness of the
+    // cleaning model… Cleaning rev, number of cleans, other tasks, full picture… Same for
+    // Maintenance, maybe they assist with cleaning, like stripping units… This is completed vs
+    // actual hours worked, not assumed."). Completions come straight from Breezeway finished
+    // tasks (the shared classifier); hours are the engine's AUDITED Homebase clock — never a
+    // schedule, never an estimate. Additive: a mirror hiccup drops the card, never the email.
+    let crewsCard = ''
+    try {
+      const { getCrew } = await import('@/lib/crew')
+      const crew = await getCrew()
+      const db2 = supabaseAdmin()
+      const rowsT: any[] = []
+      for (let i = 0; i < 6; i++) {
+        const { data, error } = await db2.from('breezeway_tasks_sync')
+          .select('name,type_department,status,finished_at,assignees,finished_by_name')
+          .gte('finished_at', d7 + 'T00:00:00').lte('finished_at', yd + 'T23:59:59.999')
+          .order('finished_at', { ascending: false })
+          .range(i * 1000, i * 1000 + 999)
+        if (error) break
+        rowsT.push(...((data || []) as any[]))
+        if (!data || data.length < 1000) break
+      }
+      const nameOfAny = (v: any): string => {
+        if (!v) return ''
+        if (typeof v === 'string') return v
+        if (typeof v === 'object') return String(v.name || v.full_name || [v.first_name, v.last_name].filter(Boolean).join(' ') || '')
+        return ''
+      }
+      const cleansByDay: Record<string, number> = {}
+      const y = { hkCleans: 0, hkStrips: 0, hkOtherClean: 0, mtTasks: 0, mtCleanAssists: 0, inspections: 0 }
+      for (const t of rowsT) {
+        if (/delete|cancel/.test(String(t.status || '').toLowerCase())) continue
+        const day = dISO(new Date(String(t.finished_at)))
+        const kind = kindOfTask(t)
+        const nm = String(t.name || '')
+        const isStrip = /strip/i.test(nm)
+        const doers = ([] as any[])
+          .concat(Array.isArray(t.assignees) ? t.assignees : [])
+          .concat([t.finished_by_name])
+          .map(nameOfAny).filter(Boolean)
+        const maintDoer = doers.some(n => { try { return crew.deptOf(n) === 'maintenance' } catch { return false } })
+        if (kind === 'clean') {
+          cleansByDay[day] = (cleansByDay[day] || 0) + 1
+          if (day === yd) { y.hkCleans++; if (maintDoer) y.mtCleanAssists++ }
+        } else if (day === yd) {
+          if (kind === 'maintenance') y.mtTasks++
+          else if (kind === 'inspection') y.inspections++
+          else if (isStrip) { y.hkStrips++; if (maintDoer) y.mtCleanAssists++ }
+          else if (/clean|housekeep/i.test(String(t.type_department || '') + ' ' + nm)) y.hkOtherClean++
+        }
+      }
+      const hkHours = Number(KY.housekeeping.hours) || 0
+      const mtHours = Number(KY.maintenance.hours) || 0
+      const perClean = y.hkCleans > 0 && hkHours > 0 ? r1(hkHours / y.hkCleans) : null
+      const dayBits: string[] = []
+      for (let i = 6; i >= 0; i--) {
+        const day = dISO(addDays(now, -(i + 1)))
+        const label = new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ })
+        dayBits.push('<span style="white-space:nowrap"><span style="' + MUTED + '">' + label + '</span> <b>' + (cleansByDay[day] || 0) + '</b></span>')
+      }
+      crewsCard = '<div style="' + cardStyle + '">' +
+        secTitle('Crews &mdash; completed vs hours clocked', 'Breezeway completions &middot; actual Homebase hours') +
+        '<table width="100%" cellspacing="0" cellpadding="0">' +
+        '<tr><th style="' + th + '"></th><th style="' + th + ';text-align:right">Completed yesterday</th><th style="' + th + ';text-align:right">Hours clocked</th><th style="' + th + ';text-align:right">Read</th></tr>' +
+        '<tr><td style="' + td + '"><b>Housekeeping</b><br><span style="' + MUTED + ';font-size:11.5px">effectiveness = departure cleans completed that day</span></td>' +
+        '<td style="' + td + ';text-align:right"><b>' + y.hkCleans + '</b> departure cleans' +
+        ((y.hkStrips || y.hkOtherClean) ? '<br><span style="' + MUTED + ';font-size:11.5px">+ ' + [y.hkStrips ? y.hkStrips + ' strip' + (y.hkStrips === 1 ? '' : 's') : '', y.hkOtherClean ? y.hkOtherClean + ' other cleaning' : ''].filter(Boolean).join(' · ') + '</span>' : '') + '</td>' +
+        '<td style="' + td + ';text-align:right"><b>' + r1(hkHours) + 'h</b></td>' +
+        '<td style="' + td + ';text-align:right">' + (perClean != null ? '<b>' + perClean + 'h</b>/clean' : '&mdash;') + '</td></tr>' +
+        '<tr><td style="' + td + '"><b>Maintenance</b><br><span style="' + MUTED + ';font-size:11.5px">incl. what they did on the cleaning side</span></td>' +
+        '<td style="' + td + ';text-align:right"><b>' + y.mtTasks + '</b> maintenance tasks' +
+        (y.mtCleanAssists ? '<br><span style="' + AMBER + ';font-size:11.5px">+ ' + y.mtCleanAssists + ' cleaning assist' + (y.mtCleanAssists === 1 ? '' : 's') + ' (cleans / strips)</span>' : '') + '</td>' +
+        '<td style="' + td + ';text-align:right"><b>' + r1(mtHours) + 'h</b></td>' +
+        '<td style="' + td + ';text-align:right">' + money(cY.maintRev) + ' billed</td></tr>' +
+        (y.inspections ? '<tr><td style="' + td + '" colspan="4"><span style="' + MUTED + ';font-size:11.5px">' + y.inspections + ' inspection' + (y.inspections === 1 ? '' : 's') + ' also completed yesterday.</span></td></tr>' : '') +
+        '</table>' +
+        '<p style="margin:10px 0 0;font-size:12px;color:#374151"><b>Departure cleans completed by day</b> <span style="' + MUTED + '">&middot; last 7</span> &nbsp; ' + dayBits.join(' &nbsp;&middot;&nbsp; ') + '</p>' +
+        '</div>'
+    } catch { /* additive */ }
+
     // Yesterday's schedule flags — one line, names included.
     let flagsLine = ''
     try {
@@ -263,6 +344,7 @@ export async function GET(req: NextRequest) {
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:13px 18px;margin:12px 0 0">' +
       '<p style="margin:0;font-size:14px;line-height:1.6">' + verdict + '</p></div>' +
       todayCard +
+      crewsCard +
       numbersCard +
       '<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 12px"><tr><td>' +
       '<a href="' + APP_URL + '/labor" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the Labor board &rarr;' +
