@@ -30,6 +30,8 @@ function parseHomebaseRole(txt: string | null | undefined): { role?: string; age
   else if (/broward/.test(s)) out.area = 'broward'
   else if (/north/.test(s)) out.area = 'north'
   if (/maint|handy|tech/.test(s)) out.role = 'Maintenance'
+  else if (/\bccs\b.*manager|manager.*\bccs\b/.test(s)) out.role = 'CCS Manager'
+  else if (/coordinat|\bccs\b/.test(s)) out.role = 'Field Coordinator'
   else if (/supervis|lead/.test(s)) out.role = 'Supervisor'
   else if (/inspect/.test(s)) out.role = 'Inspector'
   else if (/housekeep|\bhk\b/.test(s)) out.role = 'Housekeeper'
@@ -227,8 +229,8 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                 Maintenance, Housekeeping, and Supervisors"). A row moves to its new section the
                 moment you change its Crew — before saving — so the separation is always live. */}
             {([
-              ['housekeeping', 'Housekeeping'], ['supervision', 'Supervisors'], ['maintenance', 'Maintenance'],
-              ['inspection', 'Inspection'], ['other', 'Other / not placed'],
+              ['housekeeping', 'Housekeeping'], ['supervision', 'Supervisors'], ['ccs', 'CCS team'],
+              ['maintenance', 'Maintenance'], ['inspection', 'Inspection'], ['other', 'Other / not placed'],
             ] as [string, string][]).map(([gk, gl]) => {
               const grp = rows.filter(p => deptOf(p) === gk)
               if (!grp.length) return null
@@ -266,7 +268,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                       onChange={e => setStaff(p.name, { role: e.target.value })}
                       title="The job we call them — with Market, this is what the loaded-cost assumptions below break down by."
                       className={`rounded-lg border bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60 ${staffEdits[p.name]?.role !== undefined ? 'border-brand-300 text-brand-700 font-semibold' : roleOf(p) ? 'border-line text-ink' : 'border-amber-300 text-amber-700'}`}>
-                      {['', 'Housekeeper', 'Maintenance', 'Handyman', 'Supervisor', 'Inspector', 'Front desk', 'Office'].map(r => (
+                      {['', 'Housekeeper', 'Maintenance', 'Handyman', 'Supervisor', 'Field Coordinator', 'CCS Manager', 'Operations Manager', 'Inspector', 'Front desk', 'Office'].map(r => (
                         <option key={r} value={r}>{r || 'Not set'}</option>
                       ))}
                     </select>
