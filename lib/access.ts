@@ -139,6 +139,13 @@ export async function requireLevel(featureKey: string, need: 'view' | 'edit' | '
   if (!access.user) return { ok: false, res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }), access }
   if (!access.allowed) return { ok: false, res: NextResponse.json({ error: 'no-access' }, { status: 403 }), access }
   const have = access.levels[featureKey]
+  // ACTIVITY (Jon, 2026-08-22): every gated API call is one metadata row — who, which feature,
+  // how much power, allowed or refused. This is THE choke point every protected endpoint passes
+  // through, so the whole app is covered without touching a single route. Fire-and-forget.
+  try {
+    const { logActivity } = await import('./activity')
+    logActivity({ email: access.email || '', kind: 'api', feature: featureKey, need, allowed: atLeast(have, need) })
+  } catch { /* logging never blocks access */ }
   if (!atLeast(have, need)) {
     const label = FEATURES.find(f => f.key === featureKey)?.label || featureKey
     const msg = need === 'full'
