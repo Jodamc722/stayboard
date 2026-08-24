@@ -200,8 +200,8 @@ export function ProjectionsBoard() {
       </div>
 
       {/* Combined by month */}
-      <div className="rounded-2xl border border-line bg-white shadow-soft px-4 py-3">
-        <div className="grid gap-2" style={{ gridTemplateColumns: '160px repeat(' + season.length + ', minmax(0,1fr)) 110px' }}>
+      <div className="rounded-2xl border border-line bg-white shadow-soft px-4 py-3 overflow-x-auto">
+        <div className="grid gap-2 min-w-[840px]" style={{ gridTemplateColumns: '160px repeat(' + season.length + ', minmax(0,1fr)) 110px' }}>
           <div className="text-[10.5px] uppercase tracking-wide text-muted font-bold self-end">Combined net</div>
           {season.map(m => (
             <div key={m} className="text-right">
@@ -228,8 +228,12 @@ export function ProjectionsBoard() {
         const open = openB[b.building] !== false
         return (
           <div key={b.building} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-            <button onClick={() => setOpenB(s => ({ ...s, [b.building]: !open }))}
-              className="w-full px-4 py-3 flex items-center gap-2 text-left bg-neutral-50/60">
+            {/* A div, not a <button>: the fee editor lives in this bar, and an <input> inside a
+                <button> is invalid HTML — some browsers ate the input, which is what broke the
+                page on first ship. */}
+            <div role="button" tabIndex={0} onClick={() => setOpenB(s => ({ ...s, [b.building]: !open }))}
+              onKeyDown={e => { if (e.key === 'Enter') setOpenB(s => ({ ...s, [b.building]: !open })) }}
+              className="w-full px-4 py-3 flex items-center gap-2 text-left bg-neutral-50/60 cursor-pointer select-none">
               {open ? <ChevronDown className="w-4 h-4 text-muted" /> : <ChevronRight className="w-4 h-4 text-muted" />}
               <span className="text-[13.5px] font-bold text-ink">{b.building}</span>
               <span className="text-[11.5px] text-muted">{b.units} {b.units === 1 ? 'unit' : 'units'}</span>
@@ -245,9 +249,10 @@ export function ProjectionsBoard() {
                 <span key={m} className="hidden lg:inline text-[11.5px] tabular-nums text-muted w-[84px] text-right">{money0(b.byMonth[m] || 0)}</span>
               ))}
               <span className="text-[13px] font-extrabold text-ink tabular-nums w-[100px] text-right">{money0(b.net)}</span>
-            </button>
+            </div>
             {open ? (
-              <div>
+              <div className="overflow-x-auto">
+                <div className="min-w-[880px]">
                 {list.map(u => {
                   const uo = !!openU[u.id]
                   return (
@@ -307,11 +312,18 @@ export function ProjectionsBoard() {
                     </div>
                   )
                 })}
+                </div>
               </div>
             ) : null}
           </div>
         )
       })}
+
+      {!data.units.length ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+          No active listings came back from the sync — the projection has nothing to stand on. Check the Guesty sync, then Refresh.
+        </div>
+      ) : null}
 
       <p className="text-[11.5px] text-muted">
         Net owner = projected nights × ADR (net of channel) × (1 − management fee). Cleaning fees are a guest pass-through and are not owner revenue.

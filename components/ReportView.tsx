@@ -1142,6 +1142,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const snap = c.snapshot || {}
   const plan = c.plan
   const ahead = c.ahead || {}
+  const projection = c.projection || null
   const voices = c.voices || {}
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
@@ -2260,6 +2261,63 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )}
           </div>
         </SectionShell>
+
+        {/* ---------- NEXT SEASON PROJECTION (Jon, 2026-08-22) ---------- */}
+        {projection && Array.isArray(projection.monthLabels) && projection.monthLabels.length > 0 && (
+          <SectionShell id="projection" title="Next Season" hidden={isHidden('projection')} edit={edit} onToggle={() => toggleSection('projection')} onAi={() => openAi('projection')}>
+            <div className="pt-12">
+              <Eyebrow>NEXT SEASON</Eyebrow>
+              <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
+                <Ed v={projection.headline || ''} set={v => patch('projection.headline', v)} edit={edit} multiline />
+              </h2>
+              <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+                <Ed v={projection.subtitle || ''} set={v => patch('projection.subtitle', v)} edit={edit} />
+              </p>
+              <div className="mt-6 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>PROJECTED NET OWNER REVENUE</p>
+                  <p className="text-2xl font-black tabular-nums">${Number(projection.total || 0).toLocaleString()}<span className="text-sm font-semibold ml-2" style={{ color: t.muted }}>season total · after {projection.mgmtPct}% management</span></p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[13px]" style={{ minWidth: 560 }}>
+                    <thead>
+                      <tr>
+                        <th className="text-left font-bold text-[10px] uppercase tracking-wider py-1.5" style={{ color: t.muted }}>Unit</th>
+                        {projection.monthLabels.map((m: string, i: number) => (
+                          <th key={i} className="text-right font-bold text-[10px] uppercase tracking-wider py-1.5" style={{ color: t.muted }}>{m}</th>
+                        ))}
+                        <th className="text-right font-bold text-[10px] uppercase tracking-wider py-1.5" style={{ color: t.muted }}>Season</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(projection.units || []).map((u: Any, i: number) => (
+                        <tr key={i} style={{ borderTop: '1px solid ' + t.cardBorder }}>
+                          <td className="py-1.5 font-semibold">{u.name}</td>
+                          {(u.months || []).map((v: number, j: number) => (
+                            <td key={j} className="py-1.5 text-right tabular-nums">${Number(v || 0).toLocaleString()}</td>
+                          ))}
+                          <td className="py-1.5 text-right tabular-nums font-bold">${Number(u.total || 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ borderTop: '2px solid ' + t.accent }}>
+                        <td className="py-2 font-black">Total</td>
+                        {(projection.byMonth || []).map((v: number, j: number) => (
+                          <td key={j} className="py-2 text-right tabular-nums font-black">${Number(v || 0).toLocaleString()}</td>
+                        ))}
+                        <td className="py-2 text-right tabular-nums font-black">${Number(projection.total || 0).toLocaleString()}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {(projection.note || edit) && (
+                <p className="mt-3 text-[12px]" style={{ color: t.sub }}>
+                  <Ed v={projection.note || ''} set={v => patch('projection.note', v)} edit={edit} multiline placeholder="Methodology note…" />
+                </p>
+              )}
+            </div>
+          </SectionShell>
+        )}
 
         {/* ---------- GUEST VOICES ---------- */}
         <SectionShell id="voices" title="Guest Voices" hidden={isHidden('voices')} edit={edit} onToggle={() => toggleSection('voices')} onAi={() => openAi('voices')}>
