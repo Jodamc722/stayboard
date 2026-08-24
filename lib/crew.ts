@@ -25,13 +25,17 @@ import { getSetting } from './app-settings'
 import { nameMatchesRoster } from './homebase'
 import { staffByName, resolveStaff, type StaffRow } from './staffing'
 
-export type Dept = 'housekeeping' | 'supervision' | 'maintenance' | 'inspection' | 'other'
+export type Dept = 'housekeeping' | 'supervision' | 'ccs' | 'maintenance' | 'inspection' | 'other'
 
-export const DEPTS: Dept[] = ['housekeeping', 'supervision', 'maintenance', 'inspection', 'other']
+export const DEPTS: Dept[] = ['housekeeping', 'supervision', 'ccs', 'maintenance', 'inspection', 'other']
 
 export const DEPT_LABEL: Record<Dept, string> = {
   housekeeping: 'Housekeeping',
   supervision: 'Supervisors',
+  // Jon, 2026-08-24: "Field Coordinator part of CCS team, Karla, Silvia CCS team Manager".
+  // Central coordination — field coordinators and CCS managers. Overhead like supervision:
+  // their wages never touch the cost per clean.
+  ccs: 'CCS team',
   maintenance: 'Maintenance',
   inspection: 'Inspections',
   other: 'Other',
@@ -63,8 +67,13 @@ export const DECLARED: Record<string, Dept> = {
   // Office / not on a field crew. Named so a stray Breezeway task in someone's name never
   // drags the owner or an agency label into a crew's payroll and margin.
   'Jon McGill': 'other',
-  'Karla Valle': 'other',
   'Opal Works Opal Works': 'other',
+  // Jon, 2026-08-24: "Field Coordinator part of CCS team, Karla, Silvia CCS team Manager."
+  // Karla was parked in Other until the CCS team existed as a department. Silvia has no
+  // Homebase timecard yet (no surname known) — listed Ronnie-style so she lands in CCS the
+  // moment she appears in Homebase or Breezeway; tighten to her full name once known.
+  'Karla Valle': 'ccs',
+  'Silvia': 'ccs',
 }
 
 /** Department implied by a free-text role ("Supervisor Maintenance Broward" → maintenance). */
@@ -74,7 +83,10 @@ export function deptOfRoleText(role: string | null | undefined): Dept | null {
   // Order matters: "Supervisor Maintenance Broward Atlantic" is a maintenance tech who leads the
   // crew — his wages belong against maintenance billing, not in the supervisor overhead line.
   if (/maint|tech|repair|handy|hvac|plumb|electric/.test(s)) return 'maintenance'
-  if (/supervis|lead|manager|coordinat/.test(s)) return 'supervision'
+  // CCS before Supervisors: "Field Coordinator" and "CCS Manager" both belong to the CCS team,
+  // even though "manager"/"coordinator" would otherwise read as supervision.
+  if (/\bccs\b|coordinat/.test(s)) return 'ccs'
+  if (/supervis|lead|manager/.test(s)) return 'supervision'
   if (/inspect|audit|quality/.test(s)) return 'inspection'
   if (/clean|housekeep|turn|hk\b/.test(s)) return 'housekeeping'
   return null
