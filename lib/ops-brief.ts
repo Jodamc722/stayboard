@@ -589,17 +589,27 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   // the maintenance story (merged from the retired standalone maintenance emails) and the
   // paperwork/coverage counters. Labor detail lives in the Daily Labor email alone.
   const isField = variant === 'Miami' || variant === 'Broward'
-  // BLOCKED UNITS: GM BRIEF + FULL BRIEF, NEVER THE MARKET CREWS. Jon 2026-08-12 pulled them off
-  // every ops brief ("only go in the GM brief"); 2026-08-17 added them back to the FULL brief —
-  // the ops manager reading it decides what comes back on the calendar, so it is actionable there.
-  // A Miami/Broward crew still cannot act on a block at 7am, so their briefs stay clean.
+  // BLOCKED UNITS: THE LIST LIVES IN THE GM BRIEF ONLY (Jon, 2026-08-24: "For GM should only get
+  // the blocked unit list" — reverting the 2026-08-17 add-back to full). Ops Command keeps the
+  // COUNT (tile, verdict, subject) so the morning picture stays honest, but the unit-by-unit
+  // table is the owner's: releasing a block is a revenue call. Market crews never see blocks.
   let fullBlocked: BlockedRun[] = []
-  let fullBlockedLinked = 0
   let maintMi: Awaited<ReturnType<typeof maintData>> | null = null
   let maintBr: Awaited<ReturnType<typeof maintData>> | null = null
   let comp: Awaited<ReturnType<typeof weekCompliance>> | null = null
+  // WHO IS ON THE SCHEDULE TODAY (Jon, 2026-08-24: "This should be operations focused, show who
+  // is on the schedule, the clean, who is assigned"). Ops Command opens with the people, not the
+  // money: today's Homebase roster, each person cross-checked against the clean assignments below.
+  let todayShifts: any[] = []
+  let todayOpenShifts = 0
+  let shiftsLoaded = true
   if (variant === 'full') {
-    try { const rep = await blockedUnits(30); fullBlocked = rep.runs; fullBlockedLinked = rep.linkedCount } catch { /* brief still sends */ }
+    try {
+      const sh = await getShifts(d.today, 'America/New_York')
+      todayShifts = sh.filter((s: any) => !s.open && s.startAt)
+      todayOpenShifts = sh.filter((s: any) => s.open).length
+    } catch { shiftsLoaded = false }
+    try { const rep = await blockedUnits(30); fullBlocked = rep.runs } catch { /* brief still sends */ }
     // SEQUENTIAL — the two markets share every upstream and the second ride's the first's caches.
     try { maintMi = await maintData('Miami') } catch { maintMi = null }
     try { maintBr = await maintData('Broward') } catch { maintBr = null }
@@ -729,6 +739,44 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <tr><td colspan="3" style="padding:10px 8px 2px;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="${S.muted}">· ${unassigned.length} door${unassigned.length === 1 ? '' : 's'} — assign these first</span></td></tr>` +
       unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
     personOrder.map(personBlock).join('')
+
+  // ── ON THE SCHEDULE TODAY (Ops Command). Each shift is cross-checked against the clean board:
+  // a housekeeper on the clock with zero doors is the day's quietest problem, so it prints amber
+  // right on their row instead of waiting for the staffing check at noon. No dollars — this card
+  // is people and work.
+  let onTodayCard = ''
+  if (variant === 'full') {
+    if (!shiftsLoaded) {
+      onTodayCard = card('On the schedule today', null,
+        `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Homebase did not answer this morning — today's roster is on the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a>.</p>`, '#0891b2')
+    } else if (todayShifts.length || todayOpenShifts) {
+      const cleansFor = (who: string): number =>
+        d.cleans.filter(c => c.assignee.split(',').map((t: string) => t.trim()).some((n: string) => n && nameMatches(n, who))).length
+      const isHK = (s: any) => /housekeep|cleaner|hk/i.test(str(s.role))
+      const shiftRows = todayShifts.slice()
+        .sort((a: any, b: any) => String(a.startAt).localeCompare(String(b.startAt)) || String(a.name).localeCompare(String(b.name)))
+        .map((s: any) => {
+          const n = cleansFor(str(s.name))
+          const work = n
+            ? `<b>${n}</b> clean${n === 1 ? '' : 's'}`
+            : isHK(s) ? `<span style="${S.amber}">no cleans assigned</span>` : `<span style="${S.muted}">—</span>`
+          return `
+    <tr><td style="${S.td}"><b>${esc(str(s.name))}</b>${s.role ? ` <span style="${S.muted};font-size:11.5px">${esc(str(s.role))}</span>` : ''}</td>
+    <td style="${S.td};white-space:nowrap">${esc(str(s.label || ''))}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${work}</td></tr>`
+        }).join('')
+      const idleHK = todayShifts.filter((s: any) => isHK(s) && cleansFor(str(s.name)) === 0).length
+      onTodayCard = card('On the schedule today', todayShifts.length,
+        `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${todayShifts.length}</b> on shift` +
+        (todayOpenShifts ? ` · <span style="${S.red}">${todayOpenShifts} open shift${todayOpenShifts === 1 ? '' : 's'} unfilled</span>` : '') +
+        (idleHK ? ` · <span style="${S.amber}">${idleHK} housekeeper${idleHK === 1 ? '' : 's'} with no doors yet</span>` : '') +
+        `</p><table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}">Person</th><th style="${S.th}">Shift</th><th style="${S.th};text-align:right">On the board</th></tr>${shiftRows}</table>`,
+        '#0891b2', `Homebase · ${niceDay(d.today)} · assignments from the Breezeway board`)
+    } else {
+      onTodayCard = card('On the schedule today', null,
+        `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>`, '#0891b2')
+    }
+  }
 
   // ── DEPARTURES — who leaves today, earliest first, same-day turns flagged.
   const arrivingToday2 = new Set(arrivals.map((a: any) => String(a.listingId)))
@@ -1080,7 +1128,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
           ? `Same-day doors first: ${sameDay.slice(0, 5).map(c => esc(c.unit)).join(', ')}${sameDay.length > 5 ? ` +${sameDay.length - 5}` : ''}.`
           : `No same-day turns — work each run in order.`)
     : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'} · ${fullBlocked.length} blocked${bzPct2 != null ? ` · paperwork ${bzPct2}%` : ''}.</b> ` +
-      `${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.`
+      `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.`
 
   const title = isField ? `${variant} — Day Sheet` : 'Ops Command'
   const subTitle = isField
@@ -1107,14 +1155,12 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${priorities.length
     ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
     : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
+  ${onTodayCard}
   ${card("Cleans — each person's run, in order", d.cleans.length, d.cleans.length ? bare(cleansRows) : emptyLine('No departure cleans today.'))}
   ${autoInsp.length ? card('Arrival inspections — auto-assigned', autoInsp.length, bare(autoInsp.map(i => `
     <tr><td style="${S.td}"><b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(niceDay(str(i.check_in)))}</span><br>
     <span style="font-size:12px;color:#6b7280">${esc(str(i.reason))}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
     <td style="${S.td};text-align:right;white-space:nowrap">${/complet|finish|close|approv/i.test(str(i.status)) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')), '#7c3aed') : ''}
-  ${maintCard}
-  ${paperCard}
-  ${laborCard}
 
   ${eyebrow('Today')}
   ${departures.length ? card('Departures', departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
@@ -1123,6 +1169,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${!isField && glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
   ${fwdCard ? eyebrow('Looking ahead') + fwdCard : ''}
+
+  ${!isField && (maintCard || paperCard || laborCard) ? eyebrow('The shop — maintenance, paperwork, labor') + maintCard + paperCard + laborCard : ''}
 
   ${eyebrow(isField ? 'Yesterday' : 'Good to know')}
   ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
@@ -1134,7 +1182,6 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       d.newSinceYesterday
         ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
         : `Last checked ${niceDay(d.today)}`) : ''}
-  ${variant === 'full' ? blockedCard(fullBlocked, { showMarket: true, limit: 10, linked: fullBlockedLinked }) : ''}
   ${card('Vacant units — what to slot in', vacants.length,
       `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
       + (workRows
@@ -1309,9 +1356,12 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
   const sheet: any = d.sheet || {}
 
-  // Blocked units — a revenue question at this altitude, so it feeds Decide today.
+  // Blocked units — a revenue question at this altitude, so it feeds Decide today AND carries the
+  // full unit-by-unit list (Jon, 2026-08-24: the GM brief is the ONLY brief with the list now —
+  // releasing a block is the owner's call; Ops Command keeps just the count).
   let blocked: BlockedRun[] = []
-  try { const rep = await blockedUnits(30); blocked = rep.runs } catch { /* brief still sends */ }
+  let blockedLinked = 0
+  try { const rep = await blockedUnits(30); blocked = rep.runs; blockedLinked = rep.linkedCount } catch { /* brief still sends */ }
 
   // 30-day KPI window: occupancy, welcome calls, sentiment, glitches, today numbers.
   let k: any = {}
@@ -1365,7 +1415,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     decide.push(dRow('red',
       `<b>${blocked.length} blocked unit${blocked.length === 1 ? '' : 's'}</b> — ${liveBlocked.length} down now, ${nights30} nights off the calendar in 30d${openEnded ? `, <b>${openEnded}</b> with no end date` : ''}`,
       blockedAtStake != null ? `≈${money0(blockedAtStake)}` : `${nights30} nights`,
-      'Release what is finished, chase what is not — full list in Ops Command.'))
+      'Release what is finished, chase what is not — the full list is below.'))
   }
   if (E7 && E7.maintenance.tasksNoCharge > 0) {
     decide.push(dRow('amber',
@@ -1476,6 +1526,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
 
   ${decideCard}
+  ${blockedCard(blocked, { showMarket: true, limit: 12, linked: blockedLinked })}
   ${trendCard}
   ${guestsCard}
 
