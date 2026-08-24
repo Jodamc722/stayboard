@@ -169,11 +169,15 @@ async function gather(variant: BriefVariant) {
     .map(a => ({ unit: str(a.unit) || (meta[String(a.listing_id)]?.name ?? 'Unit'), why: str(a.title).replace(/ at .*$/, ''), action: str(a.action).slice(0, 90) }))
 
   // LONG STAYS arriving in the next 3 days (Jon, 2026-08-22: "big arrivals should be long
-  // stays") — a 14-night-plus guest changes how the unit is prepped and welcomed; the dollar
-  // figure rides along for context but no longer qualifies a booking on its own.
+  // stays") — a long-stay guest changes how the unit is prepped and welcomed; the dollar figure
+  // rides along for context but no longer qualifies a booking on its own. The threshold is the
+  // OPERATOR'S OWN (slack_rules.longStayNights, editable at /users → Task automation), the same
+  // number Slack's "Worth knowing" uses — one definition of a long stay, everywhere.
+  let LONG_N = 14
+  try { const { getSlackRules } = await import('./slack-rules'); LONG_N = (await getSlackRules()).longStayNights || 14 } catch { /* default stands */ }
   const bigArrivals = ((arrRes.data || []) as any[])
     .filter(r => isLiveStay(r.status) && inVariant(String(r.listing_id)))
-    .filter(r => Number(r.nights) >= 14)
+    .filter(r => Number(r.nights) >= LONG_N)
     .sort((a, b) => Number(b.money_total) - Number(a.money_total))
     .slice(0, 8)
     .map(r => ({
@@ -186,7 +190,7 @@ async function gather(variant: BriefVariant) {
   // Live stays only — a cancelled $5k booking must not stamp BIG $ on today's real guest.
   const bigTodayIds = new Set(((arrRes.data || []) as any[])
     .filter(r => isLiveStay(r.status))
-    .filter(r => str(r.check_in).slice(0, 10) === today && Number(r.nights) >= 14)
+    .filter(r => str(r.check_in).slice(0, 10) === today && Number(r.nights) >= LONG_N)
     .map(r => String(r.listing_id)))
 
   // Reputation pulse (30d).
