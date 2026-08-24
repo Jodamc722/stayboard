@@ -24,12 +24,20 @@ import 'server-only'
 // show the two things neither screen could see on its own: somebody marked OFF who has cleans
 // assigned, and somebody marked Working with nothing on their day.
 //
+// NAMES DRIFT AND THAT IS NORMAL. The roster is kept in first names ("Dayrene", "Helem") while
+// Breezeway assigns full ones ("Dayrene Mayari", "Helem RODRIGUEZ") — and the spellings disagree
+// too ("Mileydis" vs "Mileidis gonzalez"). Left alone, every single person appears twice: once
+// rostered with no work and once working with no roster. So every assignee is resolved against
+// that market's roster through `nameMatchesRoster` — the same matcher the staffing check uses —
+// and the ROSTER spelling wins as the row's identity.
+//
 // THE TAGS come from the SAME numbers as Slack and the ops brief — `getSlackRules()`, editable at
 // /users -> Task automation. There is one definition of "long stay" and one of "big booking", and
 // this file does not get to invent its own.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getSlackRules } from '@/lib/slack-rules'
+import { nameMatchesRoster } from '@/lib/homebase'
 
 export type TagKey = 'long-in' | 'long-out' | 'big' | 'walk-in' | 'same-day' | 'vip'
 export type Tag = { key: TagKey; label: string; tone: 'amber' | 'violet' | 'emerald' | 'sky' }
@@ -237,6 +245,18 @@ export async function buildTeamSchedule(opts: {
     }
   } catch { /* the roster is optional — the planner still works off assigned work alone */ }
 
+  // Breezeway spelling -> roster spelling, memoised because the same names repeat across hundreds
+  // of tasks. `nameMatchesRoster` returns null when a first name is ambiguous, which is the right
+  // answer: better two rows than the wrong person credited with someone else's day.
+  const matchCache: Record<string, string> = {}
+  function toRosterName(mk: string, name: string): string {
+    const key = mk + '|' + name
+    if (matchCache[key] !== undefined) return matchCache[key]
+    const members = rosterMembers[mk] || []
+    const hit = members.length ? nameMatchesRoster(name, members) : null
+    return (matchCache[key] = hit || name)
+  }
+
   // VIP is our own layer on top of Guesty, keyed on normalised email (see lib/auto-inspections).
   const vipEmails = new Set<string>()
   try {
@@ -312,7 +332,8 @@ export async function buildTeamSchedule(opts: {
     const block = blocks[u.market] = blocks[u.market] || { market: u.market, people: [], perDay: {}, jobs: 0, cleans: 0 }
     const pd = block.perDay[date] = block.perDay[date] || { jobs: 0, cleans: 0, people: 0 }
 
-    for (const person of who) {
+    for (const raw of who) {
+      const person = toRosterName(u.market, raw)
       const key = u.market + '|' + person
       const p = byPerson[key] = byPerson[key] || { name: person, dept: job.dept, byDay: {}, roster: {}, clashes: {}, unrostered: false, daysWorked: 0, daysOn: 0, jobs: 0, cleans: 0 }
       // Someone doing a clean is Housekeeping even if a stray maintenance ticket came first.
