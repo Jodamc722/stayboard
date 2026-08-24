@@ -99,9 +99,24 @@ export async function GET(req: NextRequest) {
     // store understated payroll as settled truth and poison every comparison until the next run.
     const badAudit = [ecY.payrollAudit, ec7.payrollAudit, ec30.payrollAudit].find(a => a && !a.complete)
     if (badAudit) {
+      const why = 'Homebase did not return timecards for: ' + badAudit.failedWeeks.join(', ')
+      // NEVER QUIET-SKIP (Jon doctrine): the numbers are withheld, but the silence is not.
+      // A one-line note to the owner says the email did not send and why — otherwise a missing
+      // morning email reads as "nothing happened" instead of "the data was incomplete".
+      if (!preview && !test) {
+        const OWNER = 'jon@stay-hospitality.com'
+        await sendGmail({
+          fromEmail: OWNER, to: [OWNER],
+          subject: 'Daily Labor did not send — payroll incomplete',
+          html: '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.6;color:#0b1220">' +
+            'This morning&rsquo;s Daily Labor email was <b>withheld on purpose</b>: ' + esc(why) + '.<br>' +
+            'Partial payroll would print understated numbers and poison every comparison, so nothing was stored or sent. ' +
+            'It will run again tomorrow morning; the <a href="' + APP_URL + '/labor">Labor board</a> has the live picture.</p>',
+        }).catch(() => null)
+      }
       return NextResponse.json({
         ok: false, sent: false, snapshotStored: false,
-        reason: 'payroll incomplete — Homebase did not return timecards for: ' + badAudit.failedWeeks.join(', '),
+        reason: 'payroll incomplete — ' + why,
       }, { status: 503 })
     }
     const KY: any = ecY.kpi, K7: any = ec7.kpi, K30: any = ec30.kpi
@@ -175,7 +190,7 @@ export async function GET(req: NextRequest) {
       todayCard = '<div style="' + cardStyle + '">' +
         secTitle('Today &mdash; shifts &amp; tasks', niceDay(today)) +
         '<p style="margin:0 0 10px;font-size:13.5px;line-height:1.6"><b>' + filled.length + '</b> on shift &middot; <b>' + totalH +
-        'h</b> scheduled <span style="' + MUTED + '">(' + filled.length + ' &times; ' + SHIFT_STANDARD_H + 'h standard = ' + standardH + 'h)</span>' +
+        'h</b> scheduled <span style="' + MUTED + '">vs ' + standardH + 'h standard (' + filled.length + ' &times; ' + SHIFT_STANDARD_H + 'h)</span>' +
         (overStd.length ? ' &middot; <span style="' + AMBER + '">' + overStd.length + ' shift' + (overStd.length === 1 ? '' : 's') + ' over ' + SHIFT_STANDARD_H + 'h</span>' : '') +
         (openShifts ? ' &middot; <span style="' + RED + '">' + openShifts + ' open shift' + (openShifts === 1 ? '' : 's') + ' unfilled</span>' : '') +
         '<br>' + workBits + '</p>' +
@@ -184,7 +199,13 @@ export async function GET(req: NextRequest) {
             '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Hours are worked hours &mdash; shifts over 6h assume one unpaid break hour, so 8:00&ndash;5:00 counts as 8h.</p>'
           : '<p style="margin:0;font-size:13px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>') +
         '</div>'
-    } catch { /* additive */ }
+    } catch {
+      // A DROPPED CARD MUST SAY SO (Jon: "each brief should be robust"). A missing section reads
+      // as "nothing today" — name the gap instead so nobody plans a day on an empty card.
+      todayCard = '<div style="' + cardStyle + '">' + secTitle('Today &mdash; shifts &amp; tasks', niceDay(today)) +
+        '<p style="margin:0;font-size:13px;color:#6b7280">This section could not load this morning (Homebase or the task board did not answer). ' +
+        'The <a href="' + APP_URL + '/labor" style="color:#2563eb">Labor board</a> has the live picture.</p></div>'
+    }
 
     // ── 2. THE NUMBERS — one table, three windows ─────────────────────────────────────────────
     const col = (K: any) => ({
@@ -211,7 +232,7 @@ export async function GET(req: NextRequest) {
       numRow('Cleaning revenue', 'guest fees net of channel cut, incl. paid cleaning work', c => money(c.cleanRev)) +
       numRow('Maintenance revenue', 'charges entered on Breezeway tasks', c => money(c.maintRev) +
         (c.noCharge ? '<br><span style="' + AMBER + ';font-size:11px;font-weight:400">' + c.noCharge + ' tasks no charge entered</span>' : '')) +
-      numRow('Payroll', 'everyone — HK, maintenance, supervisors', c => money(c.payroll)) +
+      numRow('Payroll', 'everyone — HK, maintenance, supervisors &amp; salaried management', c => money(c.payroll)) +
       numRow('Profit', 'revenue minus payroll', profitCell) +
       numRow('Departure cleans', 'cost / clean is housekeepers only', c =>
         String(c.cleans || 0) + (c.cpc != null ? ' <span style="' + MUTED + '">&middot; ' + money(c.cpc) + '/clean</span>' : '')) +
@@ -230,10 +251,14 @@ export async function GET(req: NextRequest) {
       const crew = await getCrew()
       const db2 = supabaseAdmin()
       const rowsT: any[] = []
+      // SAME BOUNDS AND SAME DAY RULE AS THE ENGINE (lib/labor-econ): gte(from) / lte(to+'T23:59:59')
+      // and the day is the RAW STRING'S date prefix — never a timezone conversion. The first version
+      // ran finished_at through new Date() + ET formatting, which shifted early-morning closes onto
+      // the previous day and let this card disagree with the numbers table under it.
       for (let i = 0; i < 6; i++) {
         const { data, error } = await db2.from('breezeway_tasks_sync')
           .select('name,type_department,status,finished_at,assignees,finished_by_name')
-          .gte('finished_at', d7 + 'T00:00:00').lte('finished_at', yd + 'T23:59:59.999')
+          .gte('finished_at', d7).lte('finished_at', yd + 'T23:59:59')
           .order('finished_at', { ascending: false })
           .range(i * 1000, i * 1000 + 999)
         if (error) break
@@ -250,7 +275,7 @@ export async function GET(req: NextRequest) {
       const y = { hkCleans: 0, hkStrips: 0, hkOtherClean: 0, mtTasks: 0, mtCleanAssists: 0, inspections: 0 }
       for (const t of rowsT) {
         if (/delete|cancel/.test(String(t.status || '').toLowerCase())) continue
-        const day = dISO(new Date(String(t.finished_at)))
+        const day = String(t.finished_at || '').slice(0, 10)
         const kind = kindOfTask(t)
         const nm = String(t.name || '')
         const isStrip = /strip/i.test(nm)
@@ -269,6 +294,9 @@ export async function GET(req: NextRequest) {
           else if (/clean|housekeep/i.test(String(t.type_department || '') + ' ' + nm)) y.hkOtherClean++
         }
       }
+      // NO DATA IS NOT ZERO WORK: an empty mirror read would render "0 cleans completed" — a
+      // false alarm about effectiveness when the truth is the data did not load. Name it instead.
+      if (!rowsT.length) throw new Error('no finished tasks returned for the window')
       const hkHours = Number(KY.housekeeping.hours) || 0
       const mtHours = Number(KY.maintenance.hours) || 0
       const perClean = y.hkCleans > 0 && hkHours > 0 ? r1(hkHours / y.hkCleans) : null
@@ -281,7 +309,7 @@ export async function GET(req: NextRequest) {
       crewsCard = '<div style="' + cardStyle + '">' +
         secTitle('Crews &mdash; completed vs hours clocked', 'Breezeway completions &middot; actual Homebase hours') +
         '<table width="100%" cellspacing="0" cellpadding="0">' +
-        '<tr><th style="' + th + '"></th><th style="' + th + ';text-align:right">Completed yesterday</th><th style="' + th + ';text-align:right">Hours clocked</th><th style="' + th + ';text-align:right">Read</th></tr>' +
+        '<tr><th style="' + th + '"></th><th style="' + th + ';text-align:right">Completed yesterday</th><th style="' + th + ';text-align:right">Hours clocked</th><th style="' + th + ';text-align:right">Rate</th></tr>' +
         '<tr><td style="' + td + '"><b>Housekeeping</b><br><span style="' + MUTED + ';font-size:11.5px">effectiveness = departure cleans completed that day</span></td>' +
         '<td style="' + td + ';text-align:right"><b>' + y.hkCleans + '</b> departure cleans' +
         ((y.hkStrips || y.hkOtherClean) ? '<br><span style="' + MUTED + ';font-size:11.5px">+ ' + [y.hkStrips ? y.hkStrips + ' strip' + (y.hkStrips === 1 ? '' : 's') : '', y.hkOtherClean ? y.hkOtherClean + ' other cleaning' : ''].filter(Boolean).join(' · ') + '</span>' : '') + '</td>' +
@@ -295,8 +323,17 @@ export async function GET(req: NextRequest) {
         (y.inspections ? '<tr><td style="' + td + '" colspan="4"><span style="' + MUTED + ';font-size:11.5px">' + y.inspections + ' inspection' + (y.inspections === 1 ? '' : 's') + ' also completed yesterday.</span></td></tr>' : '') +
         '</table>' +
         '<p style="margin:10px 0 0;font-size:12px;color:#374151"><b>Departure cleans completed by day</b> <span style="' + MUTED + '">&middot; last 7</span> &nbsp; ' + dayBits.join(' &nbsp;&middot;&nbsp; ') + '</p>' +
+        // TWO CLEAN COUNTS, ONE EXPLANATION. This card counts every departure clean closed on the
+        // board, whoever closed it — that IS Jon's effectiveness measure. The table below credits
+        // cleans to housekeepers only (that is what cost/clean divides by). Without this line the
+        // same email carries "25" and "18" and somebody has to ask which is wrong. Neither is.
+        '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">Counts here are board completions &mdash; every departure clean closed yesterday, whoever closed it. The table below credits cleans to housekeepers only (for cost/clean), so the two can differ by vendor- and maintenance-closed doors.</p>' +
         '</div>'
-    } catch { /* additive */ }
+    } catch {
+      crewsCard = '<div style="' + cardStyle + '">' + secTitle('Crews &mdash; completed vs hours clocked', '') +
+        '<p style="margin:0;font-size:13px;color:#6b7280">Breezeway completions could not be read this morning, so this card is withheld rather than shown as zeros. ' +
+        'The <a href="' + APP_URL + '/labor" style="color:#2563eb">Labor board</a> has the completed-vs-clocked picture live.</p></div>'
+    }
 
     // Yesterday's schedule flags — one line, names included.
     let flagsLine = ''
@@ -310,7 +347,9 @@ export async function GET(req: NextRequest) {
       if (fl.missedClockOuts.length) bits.push(fl.missedClockOuts.length + ' timecard' + (fl.missedClockOuts.length === 1 ? '' : 's') + ' left open')
       flagsLine = '<p style="margin:10px 0 0;font-size:12px;color:#6b7280"><b>Yesterday&rsquo;s clock:</b> ' + fl.totalHoursWorked + 'h worked by ' + fl.headcount + ' (' + fl.totalScheduledHours + 'h scheduled)' +
         (bits.length ? ' &middot; ' + bits.join(' &middot; ') : ' &middot; <span style="' + GREEN + '">no flags</span>') + '</p>'
-    } catch { /* additive */ }
+    } catch {
+      flagsLine = '<p style="margin:10px 0 0;font-size:12px;color:#9ca3af"><b>Yesterday&rsquo;s clock:</b> could not be read this morning &mdash; no-show and late flags are on the Labor board.</p>'
+    }
 
     // Two honest footnotes, one line each, only when they apply.
     const A: any = ecY.feeAudit || {}
@@ -323,10 +362,18 @@ export async function GET(req: NextRequest) {
     const w17Line = W && W.covered > 0
       ? '<p style="margin:6px 0 0;font-size:11.5px;color:#9ca3af">17WEST covers ' + money(W.covered) + ' of George Paz + Yoslenis&rsquo;s wages this 30-day window &mdash; payroll above is Stay&rsquo;s share only.</p>'
       : ''
+    // SALARIED MANAGEMENT (engine change, 2026-08-24): Roberto's salary is now inside every
+    // payroll figure, pro-rated to the window. Say so once — a fixed line appearing inside
+    // "payroll" with no label would read as a payroll jump nobody can explain.
+    const M30: any = (K30 as any).management
+    const mgmtLine = M30 && Number(M30.salaryWindow) > 0
+      ? '<p style="margin:6px 0 0;font-size:11.5px;color:#9ca3af">Payroll includes salaried management pro-rated to each window (' +
+        (M30.people || []).map((p: any) => esc(p.name)).join(', ') + ' &mdash; ' + money(M30.salaryWindow) + ' over 30 days); their punches are not double-counted.</p>'
+      : ''
 
     const numbersCard = '<div style="' + cardStyle + '">' +
       secTitle('The numbers', 'yesterday &middot; last 7 &middot; last 30 &mdash; same engine as the Labor board') +
-      numbersTable + flagsLine + maturityLine + w17Line + '</div>'
+      numbersTable + flagsLine + maturityLine + w17Line + mgmtLine + '</div>'
 
     // ── header + verdict ──────────────────────────────────────────────────────────────────────
     const verdict =
