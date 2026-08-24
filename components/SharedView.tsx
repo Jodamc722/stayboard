@@ -81,7 +81,7 @@ export function SharedView({ code }: { code: string }) {
         </p>
       </div>
 
-      <div className="px-3 pt-3 space-y-3 max-w-2xl mx-auto">
+      <div className={'px-3 pt-3 space-y-3 mx-auto ' + (s.team ? 'max-w-5xl' : 'max-w-2xl')}>
         {s.revenue ? (
           <Sec Icon={TrendingUp} title="Performance" sub={s.revenue.basis}>
             <div className="grid grid-cols-3 divide-x divide-neutral-100">

@@ -135,9 +135,9 @@ export function PlannerView({ days, blocks, dept, showLinks, marketFilter }: {
               <p className="px-5 pb-6 text-[13px] text-muted">Nothing scheduled here for this week.</p>
             ) : (
               <div className="overflow-x-auto pb-1">
-                <div className="min-w-[720px] px-5 pb-5">
+                <div className="min-w-[640px] px-5 pb-5">
                   {/* day headings */}
-                  <div className="grid gap-1.5 mb-2" style={{ gridTemplateColumns: '168px repeat(7, minmax(0,1fr))' }}>
+                  <div className="grid gap-1.5 mb-2" style={{ gridTemplateColumns: '150px repeat(7, minmax(0,1fr))' }}>
                     <div />
                     {shown.map(d => (
                       <div key={d.date} className="text-center">
@@ -153,7 +153,7 @@ export function PlannerView({ days, blocks, dept, showLinks, marketFilter }: {
                   {/* one row per person */}
                   <div className="space-y-1.5">
                     {people.map(p => (
-                      <div key={p.name} className="grid gap-1.5 items-stretch" style={{ gridTemplateColumns: '168px repeat(7, minmax(0,1fr))' }}>
+                      <div key={p.name} className="grid gap-1.5 items-stretch" style={{ gridTemplateColumns: '150px repeat(7, minmax(0,1fr))' }}>
                         <div className="flex items-center gap-2.5 pr-2 min-w-0">
                           <span className="h-8 w-8 shrink-0 rounded-full bg-app ring-1 ring-line grid place-items-center text-[11px] font-bold text-muted">
                             {initials(p.name)}
