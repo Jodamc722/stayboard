@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type Item = { sku: string; name: string; description: string | null; price: number; unit: string | null; category: string; maxQty: number; image: string | null }
-type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean }
+type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean; requested?: string; requestedDate?: string | null }
 type Data = {
   stay: { guestFirst: string; unit: string; building: string | null; checkIn: string; checkOut: string | null; checkInLabel: string; checkOutLabel: string; inHouse: boolean; departed: boolean }
   copy: { title: string; intro: string; taxPct: number; brand?: string; accent?: string; footer?: string }
@@ -39,6 +39,8 @@ export default function GuestOrderPage({ params }: { params: { code: string } })
   const [review, setReview] = useState(false)
   const [busy, setBusy] = useState(false)
   const [placed, setPlaced] = useState<PastOrder | null>(null)
+  const [when, setWhen] = useState<'asap' | 'arrival' | 'date'>('arrival')
+  const [whenDate, setWhenDate] = useState('')
   const [submitErr, setSubmitErr] = useState('')
 
   const load = useCallback(async () => {
@@ -47,6 +49,7 @@ export default function GuestOrderPage({ params }: { params: { code: string } })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'This link is not valid.'); return }
       setData(j)
+      if (j.stay && j.stay.inHouse) setWhen('asap')
     } catch { setErr('We could not load your order page — please try again in a moment.') }
   }, [code])
   useEffect(() => { load() }, [load])
@@ -66,7 +69,7 @@ export default function GuestOrderPage({ params }: { params: { code: string } })
     if (busy || !lines.length) return
     setBusy(true); setSubmitErr('')
     try {
-      const r = await fetch('/api/public/guest-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, basket: lines.map(l => ({ sku: l.sku, qty: l.qty })), note }) })
+      const r = await fetch('/api/public/guest-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, basket: lines.map(l => ({ sku: l.sku, qty: l.qty })), note, delivery: { mode: when, date: when === 'date' ? whenDate : null } }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setSubmitErr(j.error || 'Could not place the order.'); setBusy(false); return }
       setPlaced(j.order); setQty({}); setNote(''); setReview(false)
@@ -101,7 +104,7 @@ export default function GuestOrderPage({ params }: { params: { code: string } })
       <div className="mt-6 rounded-3xl bg-white shadow-[0_20px_50px_-24px_rgba(27,26,23,.35)] p-7 text-center">
         <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl" style={{ background: '#E9F4EE' }}>🎉</div>
         <h1 className="text-[28px] leading-tight mt-4" style={serif}>Order received, {stay.guestFirst}.</h1>
-        <p className="text-[15px] text-neutral-600 mt-3 leading-relaxed">We will confirm it shortly and charge the card on your reservation. Your items arrive <b className="text-neutral-900">{deadline.nextDelivery}</b>.</p>
+        <p className="text-[15px] text-neutral-600 mt-3 leading-relaxed">We will confirm it shortly and charge the card on your reservation. {when === 'date' && whenDate ? <>You asked for <b className="text-neutral-900">{whenDate}</b> — we confirm once the order is approved.</> : <>Your items arrive <b className="text-neutral-900">{deadline.nextDelivery}</b>.</>}</p>
         <div className="mt-5 text-left rounded-2xl border border-neutral-200/80 divide-y divide-neutral-100">
           {placed.items.map((l, i) => <div key={i} className="flex justify-between px-4 py-2.5 text-[14px]"><span><b>{l.qty}×</b> {l.name}</span><span className="tabular-nums">{money(l.line_total_usd)}</span></div>)}
           <div className="flex justify-between px-4 py-3 text-[15px] font-semibold"><span>Total</span><span className="tabular-nums">{money(placed.total)}</span></div>
@@ -150,7 +153,7 @@ export default function GuestOrderPage({ params }: { params: { code: string } })
                   <span className="text-[13px] tabular-nums font-semibold">{money(o.total)}</span>
                 </div>
                 <div className="text-[13px] text-neutral-700 mt-1.5">{o.items.map(l => l.qty + '× ' + l.name).join(' · ')}</div>
-                {o.deliveryDate ? <div className="text-[12px] text-neutral-500 mt-1">Delivery {o.deliveryDate}{o.deliveryNote ? ' · ' + o.deliveryNote : ''}</div> : null}
+                {o.deliveryDate ? <div className="text-[12px] text-neutral-500 mt-1">Delivery {o.deliveryDate}{o.deliveryNote ? ' · ' + o.deliveryNote : ''}</div> : o.requested === 'date' && o.requestedDate ? <div className="text-[12px] text-neutral-500 mt-1">Requested for {o.requestedDate}</div> : null}
               </div>
             )
           })}
@@ -230,10 +233,32 @@ export default function GuestOrderPage({ params }: { params: { code: string } })
             {tax ? <div className="flex justify-between px-4 py-2 text-[13px] text-neutral-600"><span>Sales tax ({data.copy.taxPct}%)</span><span className="tabular-nums">{money(tax)}</span></div> : null}
             <div className="flex justify-between px-4 py-3 text-[16px] font-semibold"><span>Total</span><span className="tabular-nums">{money(total)}</span></div>
           </div>
-          <textarea value={note} onChange={e => setNote(e.target.value.slice(0, 600))} placeholder="Anything we should know? Allergies, brand preferences, where to leave it…" rows={3} className="mt-4 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-black/10" />
-          <div className="mt-3 text-[12.5px] text-neutral-500 leading-snug">Delivery {deadline.nextDelivery}. We charge the card on your reservation once the order is confirmed — nothing is charged now.</div>
+          <div className="mt-4">
+            <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-neutral-500 mb-2">When would you like it?</div>
+            <div className="grid gap-2">
+              {stay.inHouse ? (
+                <button type="button" onClick={() => setWhen('asap')} className={'text-left rounded-2xl border px-4 py-3 ' + (when === 'asap' ? 'border-neutral-900 bg-neutral-50' : 'border-neutral-200')}>
+                  <div className="text-[14px] font-semibold">As soon as possible</div>
+                  <div className="text-[12px] text-neutral-500">{deadline.nextDelivery}</div>
+                </button>
+              ) : (
+                <button type="button" onClick={() => setWhen('arrival')} className={'text-left rounded-2xl border px-4 py-3 ' + (when === 'arrival' ? 'border-neutral-900 bg-neutral-50' : 'border-neutral-200')}>
+                  <div className="text-[14px] font-semibold">On arrival day · {stay.checkInLabel}</div>
+                  <div className="text-[12px] text-neutral-500">{deadline.arrivalDayStillPossible ? 'Waiting in the suite when you walk in' : 'Arrival-day window has closed — we deliver ' + deadline.nextDelivery}</div>
+                </button>
+              )}
+              <button type="button" onClick={() => setWhen('date')} className={'text-left rounded-2xl border px-4 py-3 ' + (when === 'date' ? 'border-neutral-900 bg-neutral-50' : 'border-neutral-200')}>
+                <div className="text-[14px] font-semibold">Pick a day during my stay</div>
+                {when === 'date' ? (
+                  <input type="date" value={whenDate} min={stay.inHouse ? new Date().toISOString().slice(0, 10) : stay.checkIn} max={stay.checkOut ? new Date(new Date(stay.checkOut + 'T12:00:00Z').getTime() - 86_400_000).toISOString().slice(0, 10) : undefined} onChange={e => setWhenDate(e.target.value)} className="mt-2 w-full rounded-xl border border-neutral-200 px-3 py-2 text-[15px]" />
+                ) : <div className="text-[12px] text-neutral-500">Any day before checkout</div>}
+              </button>
+            </div>
+          </div>
+          <textarea value={note} onChange={e => setNote(e.target.value.slice(0, 600))} placeholder="Anything we should know? Allergies, brand preferences, where to leave it…" rows={3} className="mt-3 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-black/10" />
+          <div className="mt-3 text-[12.5px] text-neutral-500 leading-snug">We confirm the exact day once the order is approved (at least {deadline.leadHours}h after payment). The card on your reservation is charged only when we confirm — nothing is charged now.</div>
           {submitErr ? <div className="mt-3 text-[13px] text-rose-700 bg-rose-50 rounded-xl px-3 py-2">{submitErr}</div> : null}
-          <button onClick={place} disabled={busy || !lines.length} className="mt-4 w-full h-14 rounded-2xl text-white text-[16px] font-semibold disabled:opacity-60 active:scale-[.99] transition" style={{ background: accent }}>{busy ? 'Placing your order…' : 'Place order · ' + money(total)}</button>
+          <button onClick={place} disabled={busy || !lines.length || (when === 'date' && !whenDate)} className="mt-4 w-full h-14 rounded-2xl text-white text-[16px] font-semibold disabled:opacity-60 active:scale-[.99] transition" style={{ background: accent }}>{busy ? 'Placing your order…' : 'Place order · ' + money(total)}</button>
           <button onClick={() => setReview(false)} disabled={busy} className="mt-2 w-full h-11 rounded-2xl text-[14px] font-semibold text-neutral-600">Keep browsing</button>
         </div>
       </div>
