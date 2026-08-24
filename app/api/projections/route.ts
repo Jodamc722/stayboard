@@ -34,6 +34,17 @@ export async function POST(req: NextRequest) {
   const next: ProjSettings = {
     mgmtPct: cur?.mgmtPct, buildingPct: { ...(cur?.buildingPct || {}) },
     uplift: { ...(cur?.uplift || {}) }, overrides: { ...(cur?.overrides || {}) },
+    unitAdj: { ...(cur?.unitAdj || {}) },
+  }
+  // Per-unit model levers: { [unitId]: { qualityPct } } — null clears the unit back to 0.
+  if (body?.unitAdj && typeof body.unitAdj === 'object') {
+    for (const uid of Object.keys(body.unitAdj).slice(0, 500)) {
+      const v = body.unitAdj[uid]
+      if (v == null) { delete next.unitAdj![uid]; continue }
+      const q = numOr(v.qualityPct)
+      if (q != null && q >= 0 && q <= 15) next.unitAdj![uid] = { qualityPct: Math.round(q * 10) / 10 }
+      else if (v.qualityPct === null) delete next.unitAdj![uid]
+    }
   }
   if (body?.mgmtPct !== undefined) {
     const n = numOr(body.mgmtPct)
