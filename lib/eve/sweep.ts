@@ -384,6 +384,165 @@ async function mineSelf(c: Ctx): Promise<Finding[]> {
   return out
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// 9. TASK COMPLETION — do we finish what we start, and who actually closes things out.
+//    Jon named this one directly: "task completions here in app".
+// ---------------------------------------------------------------------------------------------
+async function mineCompletion(c: Ctx): Promise<Finding[]> {
+  const out: Finding[] = []
+  const res: any = await safe(c.db.from('breezeway_tasks_sync')
+    .select('id,reference_property_id,name,status,scheduled_date,assignees,finished_at,started_at,total_minutes,type_department')
+    .gte('scheduled_date', c.from).lte('scheduled_date', c.today)
+    .order('id').limit(6000), { data: [] } as any)
+  const tasks = (res.data || []).filter((t: any) => !/delete|cancel/.test(lc(t.status)))
+  if (tasks.length < 20) return out
+
+  const done = (t: any) => !!t.finished_at || /complete|finish|close|approv/.test(lc(t.status))
+  const byDept: Record<string, { n: number; done: number; late: number }> = {}
+  const byPerson: Record<string, { n: number; done: number }> = {}
+  let neverStarted = 0
+
+  for (const t of tasks) {
+    const d = String(t.type_department || 'other')
+    if (!byDept[d]) byDept[d] = { n: 0, done: 0, late: 0 }
+    byDept[d].n++
+    if (done(t)) {
+      byDept[d].done++
+      // Finished on a later calendar day than it was scheduled = it slipped.
+      const fin = String(t.finished_at || '').slice(0, 10)
+      if (fin && fin > String(t.scheduled_date).slice(0, 10)) byDept[d].late++
+    } else if (String(t.scheduled_date).slice(0, 10) < c.today && !t.started_at) {
+      neverStarted++
+    }
+    const list = Array.isArray(t.assignees) ? t.assignees : []
+    for (const a of list) {
+      const nm = String(a?.name || '').trim()
+      if (!nm) continue
+      if (!byPerson[nm]) byPerson[nm] = { n: 0, done: 0 }
+      byPerson[nm].n++
+      if (done(t)) byPerson[nm].done++
+    }
+  }
+
+  const depts = Object.keys(byDept).map(d => ({
+    dept: d, tasks: byDept[d].n,
+    completion_pct: Math.round((byDept[d].done / byDept[d].n) * 100),
+    slipped_a_day_or_more: byDept[d].late,
+  })).sort((a, b) => a.completion_pct - b.completion_pct)
+
+  out.push({
+    id: 'completion_by_dept', type: 'fact', scope: 'portfolio',
+    title: 'Task completion, by department',
+    content: depts.map(d => `${d.dept}: ${d.completion_pct}% of ${d.tasks} (${d.slipped_a_day_or_more} finished late)`).join(' · ')
+      + `. ${neverStarted} past-dated task(s) were never even started.`,
+    evidence_count: tasks.length, promote: true, memoryKind: 'insight', weight: 6,
+  })
+
+  // Only name people with a real sample — a 0/1 record is not a pattern, it is one bad afternoon.
+  const laggards = Object.keys(byPerson).map(k => ({ name: k, ...byPerson[k], pct: Math.round((byPerson[k].done / byPerson[k].n) * 100) }))
+    .filter(p => p.n >= 8).sort((a, b) => a.pct - b.pct).slice(0, 5)
+  if (laggards.length && laggards[0].pct < 70) {
+    out.push({
+      id: 'completion_people', type: 'insight', scope: 'portfolio',
+      title: 'Completion rate varies a lot by person',
+      content: laggards.map(p => `${p.name} ${p.pct}% of ${p.n}`).join(' · ')
+        + '. Low completion is usually a routing or workload problem before it is an effort problem — check what they were given before drawing a conclusion about them.',
+      evidence_count: laggards.reduce((a, b) => a + b.n, 0), promote: false,
+    })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------------------------
+// 10. REVIEW RESPONSES — are we actually replying, and how fast.
+//     Jon named this one too: "reviews responses".
+// ---------------------------------------------------------------------------------------------
+async function mineReviewResponses(c: Ctx): Promise<Finding[]> {
+  const out: Finding[] = []
+  const res: any = await safe(c.db.from('guesty_reviews')
+    .select('id,listing_id,rating,has_reply,created_at,excluded_from_score,channel')
+    .gte('created_at', c.from + 'T00:00:00Z').eq('excluded_from_score', false)
+    .order('id').limit(4000), { data: [] } as any)
+  const rows = res.data || []
+  if (rows.length < 10) return out
+
+  const byBuilding: Record<string, { n: number; replied: number; lowUnanswered: number }> = {}
+  const byChannel: Record<string, { n: number; replied: number }> = {}
+  for (const r of rows) {
+    const b = bOf(c, r.listing_id)
+    if (!byBuilding[b]) byBuilding[b] = { n: 0, replied: 0, lowUnanswered: 0 }
+    byBuilding[b].n++
+    if (r.has_reply) byBuilding[b].replied++
+    const stars = normStar(r.rating)
+    if (!r.has_reply && stars != null && stars <= 3) byBuilding[b].lowUnanswered++
+    const ch = String(r.channel || 'unknown')
+    if (!byChannel[ch]) byChannel[ch] = { n: 0, replied: 0 }
+    byChannel[ch].n++
+    if (r.has_reply) byChannel[ch].replied++
+  }
+  const total = rows.length
+  const replied = rows.filter((r: any) => r.has_reply).length
+  const lowUnanswered = rows.filter((r: any) => { const st = normStar(r.rating); return !r.has_reply && st != null && st <= 3 }).length
+
+  out.push({
+    id: 'review_response_rate', type: 'fact', scope: 'portfolio',
+    title: `We reply to ${Math.round((replied / total) * 100)}% of reviews`,
+    content: `${replied} of ${total} in ${c.days} days. By channel: ${Object.keys(byChannel).map(k => `${k} ${Math.round((byChannel[k].replied / byChannel[k].n) * 100)}%`).join(', ')}. `
+      + `**${lowUnanswered} review(s) at 3 stars or below have no reply** — those are the ones future guests read.`,
+    evidence_count: total, promote: true, memoryKind: 'insight', weight: 7,
+  })
+
+  const worst = Object.keys(byBuilding).map(b => ({ b, ...byBuilding[b], pct: Math.round((byBuilding[b].replied / byBuilding[b].n) * 100) }))
+    .filter(x => x.n >= 5).sort((a, b) => a.pct - b.pct).slice(0, 4)
+  for (const w of worst) {
+    if (w.pct >= 80 && w.lowUnanswered === 0) continue
+    out.push({
+      id: 'review_resp_' + djb2(w.b), type: 'insight', scope: 'building:' + w.b,
+      title: `${w.b}: ${w.pct}% of reviews answered`,
+      content: `${w.replied} of ${w.n} answered in ${c.days} days` + (w.lowUnanswered ? `, and ${w.lowUnanswered} negative review(s) are sitting unanswered.` : '.')
+        + ' An unanswered bad review costs more than the stay it describes — it is the last thing a prospect reads.',
+      evidence_count: w.n, promote: w.lowUnanswered > 0, memoryKind: 'issue', weight: 6,
+    })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------------------------
+// 11. GUESTY FIELD COVERAGE — what we claim to track vs what is actually filled in.
+//     "custom feilds, how to find info on guesty" — the answer is usually "the field exists, it is
+//     just empty", and that is worth knowing without asking.
+// ---------------------------------------------------------------------------------------------
+async function mineGuestyFields(c: Ctx): Promise<Finding[]> {
+  const out: Finding[] = []
+  const { data: ls } = await c.db.from('guesty_listings').select('id,status,raw').order('id').limit(400)
+  const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  if (!live.length) return out
+  const fill: Record<string, number> = {}
+  for (const l of live) {
+    const cf = Array.isArray((l as any).raw?.customFields) ? (l as any).raw.customFields : []
+    for (const cff of cf) {
+      const nm = String(cff?.fieldId?.name || cff?.name || '').trim()
+      if (!nm) continue
+      const v = cff?.value
+      if (v != null && String(v).trim() !== '') fill[nm] = (fill[nm] || 0) + 1
+    }
+  }
+  const keys = Object.keys(fill)
+  if (!keys.length) return out
+  const ranked = keys.map(k => ({ k, n: fill[k], pct: Math.round((fill[k] / live.length) * 100) })).sort((a, b) => b.n - a.n)
+  const thin = ranked.filter(r => r.pct > 0 && r.pct < 60)
+  out.push({
+    id: 'guesty_field_coverage', type: 'fact', scope: 'portfolio',
+    title: 'Which Guesty fields are actually filled in',
+    content: `Across ${live.length} active units — well covered: ${ranked.filter(r => r.pct >= 60).slice(0, 10).map(r => `${r.k} ${r.pct}%`).join(', ') || 'none'}. `
+      + (thin.length ? `PATCHY (exists but mostly empty): ${thin.slice(0, 10).map(r => `${r.k} ${r.pct}%`).join(', ')}. ` : '')
+      + 'When someone says we do not track something, check here first — usually the field exists and is simply blank.',
+    evidence_count: live.length, promote: true, memoryKind: 'insight', weight: 6,
+  })
+  return out
+}
+
 // ---------------------------------------------------------------------------------------------
 export const MINERS = [
   { key: 'portfolio', run: minePortfolio },
@@ -393,6 +552,9 @@ export const MINERS = [
   { key: 'money', run: mineMoney },
   { key: 'people', run: minePeople },
   { key: 'issues', run: mineIssues },
+  { key: 'completion', run: mineCompletion },
+  { key: 'review_responses', run: mineReviewResponses },
+  { key: 'guesty_fields', run: mineGuestyFields },
   { key: 'self', run: mineSelf },
 ]
 

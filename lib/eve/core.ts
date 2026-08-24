@@ -288,6 +288,64 @@ export const CORE_TOOLS: EveTool[] = [
   },
 
   {
+    name: 'guesty_fields',
+    description: 'HOW TO FIND ANYTHING IN GUESTY. Returns the custom-field map — every field defined on the account by name and id, plus which fields are ACTUALLY populated across the portfolio and how often. Use this when you are not sure where a piece of information lives ("where is the parking info?", "do we track the salto code?"), before telling anyone a field does not exist, and to spot fields that exist but are empty on most units — an unfilled field is usually why the team says "the app does not have it". Optional query to filter by name, and listingId to see one unit\'s populated values.',
+    input_schema: obj({ query: S.str, listingId: S.str, populated_only: S.bool }),
+    run: async (input, ctx) => {
+      const { data: defs } = await ctx.db.from('guesty_custom_fields').select('id, name').order('name').limit(500)
+      const byId: Record<string, string> = {}
+      for (const d of (defs || [])) byId[String((d as any).id)] = String((d as any).name || '')
+
+      // How often is each field actually filled in? A defined-but-empty field is the usual reason
+      // somebody says "we don't track that" when in fact we do, badly.
+      const fill: Record<string, { name: string; filled: number; sample: string | null }> = {}
+      const { data: ls } = await ctx.db.from('guesty_listings').select('id,nickname,title,raw').order('id').limit(400)
+      let scanned = 0
+      let oneUnit: any = null
+      for (const l of (ls || [])) {
+        const row: any = l
+        const cf = Array.isArray(row.raw?.customFields) ? row.raw.customFields : []
+        scanned++
+        const isTarget = input?.listingId && String(row.id) === String(input.listingId)
+        if (isTarget) oneUnit = { unit: row.nickname || row.title, fields: [] as any[] }
+        for (const c of cf) {
+          const id = String(c?.fieldId?._id || c?.fieldId?.id || c?.fieldId || '')
+          const nm = String(c?.fieldId?.name || c?.name || byId[id] || id)
+          const v = c?.value
+          const has = v != null && String(v).trim() !== ''
+          const key = id || nm
+          if (!fill[key]) fill[key] = { name: nm, filled: 0, sample: null }
+          if (has) {
+            fill[key].filled++
+            if (!fill[key].sample) fill[key].sample = String(v).slice(0, 40)
+          }
+          if (isTarget && has) oneUnit.fields.push({ field: nm, value: String(v).slice(0, 120) })
+        }
+      }
+      let rows = Object.keys(fill).map(k => ({
+        field: fill[k].name, field_id: k,
+        filled_on_units: fill[k].filled,
+        coverage_pct: scanned ? Math.round((fill[k].filled / scanned) * 100) : 0,
+        example: fill[k].sample,
+      })).sort((a, b) => b.filled_on_units - a.filled_on_units)
+      if (input?.query) rows = rows.filter(r => has(r.field, input.query))
+      if (input?.populated_only) rows = rows.filter(r => r.filled_on_units > 0)
+
+      const defined = (defs || []).map((d: any) => d.name).filter(Boolean)
+      const neverFilled = defined.filter((n: string) => !rows.some(r => lc(r.field) === lc(n)))
+      return {
+        units_scanned: scanned,
+        fields_defined_on_account: defined.length,
+        fields: rows.slice(0, 60),
+        defined_but_never_populated: neverFilled.slice(0, 30),
+        unit: oneUnit,
+        how_to_go_deeper: 'guesty_config gives one unit\'s full setup; guesty_live with kind="path" hits the raw Guesty API when the mirror does not have something.',
+        note: 'coverage_pct is out of the units scanned. A field with low coverage exists but is mostly empty — that is usually the real answer when someone says we do not track something.',
+      }
+    },
+  },
+
+  {
     name: 'knowledge_search',
     description: 'Eve LEARNED-KNOWLEDGE base, auto-mined nightly from guest messages, reviews and complaints: top FAQs guests ask (with the fix to pre-empt them) and recurring complaint categories (portfolio + per building). Filter by type ("faq"|"complaint"|"insight"|"fact"), query, building. Use it for "what do guests ask most", "biggest complaint drivers", or to ground any recommendation in real patterns.',
     input_schema: obj({ type: S.str, query: S.str, building: S.str, limit: S.num }),
