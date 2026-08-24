@@ -91,6 +91,13 @@ export type TeamSchedule = {
   generatedAt: string
 }
 
+// MARKETS WE DO NOT STAFF OURSELVES (Jon, 2026-08-21: "north is vendor"). A vendor company cleans
+// these, so their work is not our team's day — it only reaches this planner when one of OUR rostered
+// people is on the job, and it lands on that person's row in their own market rather than opening a
+// block for a market we have no crew in. Change this list if a market comes in-house.
+const VENDOR_MARKETS = /vendor|north/i
+function isVendorMarket(mk: string): boolean { return VENDOR_MARKETS.test(mk) }
+
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v: any): number => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
 const DEAD_LISTING = /inactive|disabled|archived|deleted/i
@@ -313,11 +320,10 @@ export async function buildTeamSchedule(opts: {
     if (!u) continue
     if (wantMarkets && !wantMarkets.has(u.market.toLowerCase())) continue
     const who = assigneesOf(t)
-    // THE VENDOR RULE — their work is not our team's day unless one of ours is on it.
-    if (/vendor/i.test(u.market) && !who.length) { vendorDropped++; continue }
+    const vendorUnit = isVendorMarket(u.market)
     // Nobody assigned means there is no row to put it on. The board at /schedule is where unassigned
     // work gets picked up; a planner about people cannot show work that belongs to nobody.
-    if (!who.length) { unassignedDropped++; continue }
+    if (!who.length) { if (vendorUnit) vendorDropped++; else unassignedDropped++; continue }
 
     const date = str(t.scheduled_date).slice(0, 10)
     if (!date) continue
@@ -329,29 +335,56 @@ export async function buildTeamSchedule(opts: {
       tags: tagsFor(li, date),
     }
 
-    const block = blocks[u.market] = blocks[u.market] || { market: u.market, people: [], perDay: {}, jobs: 0, cleans: 0 }
-    const pd = block.perDay[date] = block.perDay[date] || { jobs: 0, cleans: 0, people: 0 }
-
+    // WHOSE DAY IS THIS? Try the unit's own market first — people mostly work their own patch —
+    // then any other roster we keep. `homeMarket` is where the row lives, which is how a Miami
+    // cleaner covering a North unit shows up on their Miami row instead of opening a North block.
+    const placements: { market: string; person: string }[] = []
     for (const raw of who) {
-      const person = toRosterName(u.market, raw)
-      const key = u.market + '|' + person
-      const p = byPerson[key] = byPerson[key] || { name: person, dept: job.dept, byDay: {}, roster: {}, clashes: {}, unrostered: false, daysWorked: 0, daysOn: 0, jobs: 0, cleans: 0 }
+      let homeMarket = ''
+      let person = raw
+      if (!vendorUnit) {
+        const own = toRosterName(u.market, raw)
+        if (own !== raw) { homeMarket = u.market; person = own }
+      }
+      if (!homeMarket) {
+        for (const mk of Object.keys(rosterMembers)) {
+          if (isVendorMarket(mk)) continue
+          const hit = toRosterName(mk, raw)
+          if (hit !== raw) { homeMarket = mk; person = hit; break }
+        }
+      }
+      // THE VENDOR RULE: on a vendor-serviced unit, only OUR rostered people carry the job through.
+      if (vendorUnit && !homeMarket) continue
+      placements.push({ market: homeMarket || u.market, person })
+    }
+    if (!placements.length) { vendorDropped++; continue }
+
+    const touched: Record<string, boolean> = {}
+    for (const pl of placements) {
+      const key = pl.market + '|' + pl.person
+      const p = byPerson[key] = byPerson[key] || { name: pl.person, dept: job.dept, byDay: {}, roster: {}, clashes: {}, unrostered: false, daysWorked: 0, daysOn: 0, jobs: 0, cleans: 0 }
       // Someone doing a clean is Housekeeping even if a stray maintenance ticket came first.
       if (job.dept === 'Housekeeping') p.dept = 'Housekeeping'
       ;(p.byDay[date] = p.byDay[date] || []).push(job)
       p.jobs++; if (job.isClean) p.cleans++
+      // A job with two people on it counts once against the market, not twice.
+      if (!touched[pl.market]) {
+        touched[pl.market] = true
+        const block = blocks[pl.market] = blocks[pl.market] || { market: pl.market, people: [], perDay: {}, jobs: 0, cleans: 0 }
+        const pd = block.perDay[date] = block.perDay[date] || { jobs: 0, cleans: 0, people: 0 }
+        block.jobs++; if (job.isClean) block.cleans++
+        pd.jobs++; if (job.isClean) pd.cleans++
+      }
     }
-    block.jobs++; if (job.isClean) block.cleans++
-    pd.jobs++; if (job.isClean) pd.cleans++
   }
 
   // Everyone on the roster gets a row even with nothing assigned — an empty day for someone marked
   // Working is exactly the thing this screen exists to show.
   for (const mk of Object.keys(rosterMembers)) {
     if (wantMarkets && !wantMarkets.has(mk.toLowerCase())) continue
-    // A vendor roster is the vendor's business. Their work only reaches this screen when one of
-    // ours is assigned to it, and seeding their names here would put an empty block on the page.
-    if (/vendor/i.test(mk)) continue
+    // A vendor market's roster is the vendor's business, and seeding it would put an empty block
+    // on the page for a market we have no crew in.
+    if (isVendorMarket(mk)) continue
     blocks[mk] = blocks[mk] || { market: mk, people: [], perDay: {}, jobs: 0, cleans: 0 }
     for (const name of rosterMembers[mk]) {
       const key = mk + '|' + name
@@ -395,8 +428,8 @@ export async function buildTeamSchedule(opts: {
     }
   }
 
-  const ORDER = ['miami', 'broward', 'north']
-  const markets = Object.keys(blocks).map(m => blocks[m]).filter(b => b.jobs > 0 || b.people.length > 0).sort((a, b) => {
+  const ORDER = ['miami', 'broward']
+  const markets = Object.keys(blocks).map(m => blocks[m]).filter(b => !isVendorMarket(b.market) && (b.jobs > 0 || b.people.length > 0)).sort((a, b) => {
     const ia = ORDER.indexOf(a.market.toLowerCase()); const ib = ORDER.indexOf(b.market.toLowerCase())
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.market.localeCompare(b.market)
   })
