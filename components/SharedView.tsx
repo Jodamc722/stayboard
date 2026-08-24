@@ -4,7 +4,12 @@
 // verified, what the notes say. Only sections the link enables ever arrive from the API — this
 // component cannot leak what it was never sent.
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote } from 'lucide-react'
+import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users } from 'lucide-react'
+
+// Same tag tones as the in-app planner, so a crew member sees the same colours in both places.
+const TAG_DOT: Record<string, string> = {
+  amber: 'bg-amber-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', sky: 'bg-sky-500',
+}
 
 const usd = (n: any) => n == null ? null : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
@@ -143,6 +148,76 @@ export function SharedView({ code }: { code: string }) {
               ))}
               {!s.cleaning.length ? <p className="px-4 py-4 text-[12.5px] text-neutral-400">Nothing scheduled.</p> : null}
             </div>
+          </Sec>
+        ) : null}
+
+        {s.team ? (
+          <Sec Icon={Users} title="Weekly planner" sub={s.team.from + ' → ' + s.team.to}>
+            {(s.team.markets || []).map((m: any) => (
+              <div key={m.market} className="border-b border-neutral-100 last:border-b-0">
+                <div className="px-4 py-2 flex items-center gap-2 flex-wrap bg-neutral-50">
+                  <p className="text-[12.5px] font-bold text-neutral-900">{m.market}</p>
+                  <p className="text-[11px] text-neutral-500">{(m.people || []).length} on · {m.cleans} cleans</p>
+                </div>
+                {!(m.people || []).length ? (
+                  <p className="px-4 py-3 text-[12.5px] text-neutral-400">Nobody assigned in this window.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <th className="sticky left-0 z-10 bg-white text-left px-3 py-1.5 min-w-[130px]">
+                            <span className="text-[9.5px] uppercase tracking-wider font-bold text-neutral-400">Who</span>
+                          </th>
+                          {(s.team.days || []).map((d: any) => (
+                            <th key={d.date} className={'px-1 py-1.5 text-center min-w-[42px] ' + (d.weekend ? 'bg-neutral-50' : '')}>
+                              <span className="block text-[9.5px] font-bold uppercase text-neutral-400">{d.dow}</span>
+                              <span className="block text-[10.5px] tabular-nums text-neutral-500">{String(d.date).slice(8)}</span>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(m.people || []).map((p: any) => (
+                          <tr key={p.name}>
+                            <td className="sticky left-0 z-10 bg-white px-3 py-1.5 border-t border-neutral-100">
+                              <p className="text-[12.5px] font-semibold text-neutral-900 leading-tight">{p.name}</p>
+                              <p className="text-[10px] text-neutral-400">{p.dept} · {p.daysWorked}d</p>
+                            </td>
+                            {(s.team.days || []).map((d: any) => {
+                              const jobs = (p.byDay || {})[d.date] || []
+                              const cleans = jobs.filter((j: any) => j.isClean).length
+                              const seen: Record<string, boolean> = {}
+                              const dots = jobs.reduce((a: any[], j: any) => a.concat(j.tags || []), [])
+                                .filter((t: any) => (seen[t.key] ? false : (seen[t.key] = true)))
+                              return (
+                                <td key={d.date} className={'px-1 py-1.5 text-center align-top border-t border-neutral-100 ' + (d.weekend ? 'bg-neutral-50' : '')}>
+                                  {jobs.length ? (
+                                    <div title={jobs.map((j: any) => j.unit + ' — ' + j.task).join('\n')}
+                                      className={'rounded-md py-0.5 ' + (cleans ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-500')}>
+                                      <span className="block text-[11.5px] font-bold tabular-nums leading-none">{jobs.length}</span>
+                                      {dots.length ? (
+                                        <span className="flex justify-center gap-0.5 mt-0.5">
+                                          {dots.slice(0, 3).map((t: any) => <span key={t.key} title={t.label} className={'w-1 h-1 rounded-full ' + (TAG_DOT[t.tone] || 'bg-neutral-300')} />)}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  ) : <span className="text-[10px] text-neutral-300">·</span>}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+            <p className="px-4 py-2 text-[10.5px] text-neutral-400">
+              A long stay is {s.team.rules?.longStayNights}+ nights. Dots mark a day carrying a tag —
+              hover a cell for the units.
+            </p>
           </Sec>
         ) : null}
 

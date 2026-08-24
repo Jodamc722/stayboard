@@ -105,6 +105,7 @@ const SECTIONS: NavSection[] = [
   {
     title: 'Team',
     items: [
+      { to: '/team',     label: 'Weekly Planner', Icon: CalendarRange },
       { to: '/cleaners', label: 'Cleaners', Icon: Users },
       // Nav diet 2026-08-11 (Jon): ONE Labor entry — the dashboard lives as a tab inside /labor.
       { to: '/labor',    label: 'Labor', Icon: Timer },

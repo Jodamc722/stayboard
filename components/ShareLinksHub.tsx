@@ -38,6 +38,7 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
   { key: 'cleaning', label: 'Cleaning & tasks', sub: 'the next 14 days of scheduled work' },
   { key: 'verification', label: 'Guest verification', sub: 'verified / pending per arrival' },
   { key: 'notes', label: 'Reservation notes', sub: 'notes on current + upcoming stays' },
+  { key: 'team', label: 'Weekly planner', sub: 'who works which days, and the cleans on them' },
 ]
 const SCOPES = [
   { key: 'portfolio', label: 'Whole portfolio', Icon: Globe },
