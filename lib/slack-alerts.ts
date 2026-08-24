@@ -529,7 +529,16 @@ export async function runReadinessCheck(): Promise<any> {
   const { date, units } = await checkReadiness()
   if (!units.length) return { skipped: 'no arrivals today' }
 
-  const buckets = bucketBy(rules, units, u => u.unit, () => 'housekeeping' as Dept)
+  // ONLY ASK HK ABOUT CLEANS THAT EXIST (Jon, 2026-08-22: "when we ask HK about cleans there are
+  // actual cleans"). A turnover with NO clean on the board is a SCHEDULING gap — @here-ing a
+  // housekeeping channel about a task nobody was ever given reads as noise and erodes the alert
+  // that matters. So the 3pm message to each HK channel carries only real cleans (not started /
+  // in progress / done), and the no-clean-scheduled units go to the ops channel instead, where
+  // the person who can actually create the clean reads them.
+  const real = units.filter(u => u.status !== 'no clean scheduled')
+  const gaps = units.filter(u => u.status === 'no clean scheduled')
+
+  const buckets = bucketBy(rules, real, u => u.unit, () => 'housekeeping' as Dept)
   const results: any[] = []
   for (const bucket of buckets) {
     const vendor = !!(bucket.group && bucket.group.vendor)
@@ -537,6 +546,7 @@ export async function runReadinessCheck(): Promise<any> {
     // so every unit there reads as "no clean scheduled" — seven of them did on the first run.
     // We cannot see their readiness, so we do not claim to.
     if (vendor) { results.push({ area: bucket.label, skipped: 'vendor-run — no clean data' }); continue }
+    if (!bucket.rows.length) continue
     // @here + the cleaners named on today's cleans (Jon, 2026-08-20: "tag @Here + the
     // housekeeper... the cleaners that are scheduled for the clean").
     const audience = audienceFor(rules, bucket.group,
@@ -560,6 +570,32 @@ export async function runReadinessCheck(): Promise<any> {
       body, threadBody, summary, audience, itemCount: bucket.rows.length,
     }, rules)
     results.push({ area: bucket.label, count: bucket.rows.length, ...res })
+  }
+
+  // The scheduling gaps, once, to the OPS channel — no @here, no cleaner tags: this is the
+  // scheduler's list, not the crew's. Vendor-run buildings stay excluded (no board to gap).
+  const gapRows = gaps.filter(u => {
+    const g = (rules.groups || []).find(gr => (gr.buildings || []).some(b => u.unit.toLowerCase().indexOf(String(b).toLowerCase()) >= 0))
+    return !(g && g.vendor)
+  })
+  if (gapRows.length) {
+    const gapBody = ':calendar: *Turnovers with no clean on the board* — ' + gapRows.length +
+      ' unit' + (gapRows.length === 1 ? '' : 's') + ' turn over today with no clean scheduled in Breezeway:\n' +
+      gapRows.map(u =>
+        '• *' + u.unit + '* — ' + (u.guest ? String(u.guest).split(' ')[0] : 'guest') + ' arrives ' + (u.at || 'today') +
+        (u.outGuest ? ' · out ' + (u.outAt || 'today') + ' (' + String(u.outGuest).split(' ')[0] + ')' : '') +
+        (u.flags && u.flags.length ? ' · _' + u.flags.join(', ') + '_' : '')).join('\n') +
+      '\nSchedule the clean, or confirm it does not need one (extension / handled off-board).'
+    const res = await draft({
+      eventKey: 'readiness_3pm',
+      groupKey: 'ready3pm:gaps:' + date,
+      channelId: rules.opsChannel || rules.defaultChannel || rules.firehose,
+      body: gapBody,
+      summary: gapRows.length + ' turnovers with no clean scheduled',
+      audience: rules.core,
+      itemCount: gapRows.length,
+    }, rules)
+    results.push({ area: 'scheduling gaps', count: gapRows.length, ...res })
   }
   return { ok: true, groups: results.length, results }
 }

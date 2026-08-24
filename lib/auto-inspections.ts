@@ -5,8 +5,9 @@
 //    supervisor in market please, and be shared in the brief as todo / priorities section."
 //
 // WHAT FIRES ONE. A confirmed reservation arriving in the next three days that is any of:
-//   • BIG    — $1,500+ or 7+ nights. The same bar the Command Center uses for "big reservation",
-//              on purpose: one definition of big, everywhere.
+//   • BIG    — $1,000+ reservation value, and VALUE ONLY (Jon, 2026-08-22: "the automation of
+//              inspection task should only be for reservations 1k or bigger"). Nights no longer
+//              qualify a booking on their own — a long cheap stay does not earn an inspection.
 //   • VIP    — a Guesty custom field or guest tag that says VIP.
 //   • OWNER  — the same signals the daysheet uses: owner source, or the guest name matching
 //              the owner on file. (Manual blocks do NOT fire — most are maintenance holds, and an
@@ -50,7 +51,7 @@ export type TaskAutomationCfg = {
 }
 export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   enabled: false,
-  bigArrivals: true, bigValue: 1500, bigNights: 7,
+  bigArrivals: true, bigValue: 1000, bigNights: 7,
   vip: true,
   ownerStays: true,
   daysAhead: 3,
@@ -185,7 +186,8 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     const isVip = vipFlag(r)
       || vipEmails.has(str((r as any).guest_email).toLowerCase())
       || vipNames.some(n => nameMatches(str((r as any).guest_name), n))
-    const reason = (cfg.bigArrivals && (value >= cfg.bigValue || nights >= cfg.bigNights)) ? 'big arrival'
+    // VALUE ONLY (Jon, 2026-08-22): nights >= bigNights no longer triggers on its own.
+    const reason = (cfg.bigArrivals && value >= cfg.bigValue) ? 'big arrival'
       : (cfg.vip && isVip) ? 'VIP'
         : (cfg.ownerStays && (OWNER_SRC.test(str((r as any).source)) || (ownerName && nameMatches(str((r as any).guest_name), ownerName)))) ? 'owner stay'
           : ''

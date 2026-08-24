@@ -345,7 +345,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
 
   const pById: Record<string, PropertyEmail> = {}
   for (const p of props) pById[p.id] = p
-  const draftedList: { unit: string; guest: string; property: string; form: boolean; safety: boolean; missing: string }[] = []
+  const draftedList: { nid: string; unit: string; guest: string; property: string; form: boolean; safety: boolean; missing: string }[] = []
 
   // jsPDF for the server, loaded lazily on first use (see loadServerJsPdf below — npm first,
   // CDN UMD as the fallback, and a real error message if both fail).
@@ -460,26 +460,45 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       }
       base.drafted++
       if (isSafety) base.safetyDrafted++
-      draftedList.push({ unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments, safety: isSafety, missing: missingOnForm.join(' and ') })
+      draftedList.push({ nid: str(n.id), unit: str(n.unit_no), guest: str(n.guest_name), property: str(p.name), form: !!attachments, safety: isSafety, missing: missingOnForm.join(' and ') })
     } catch (e: any) {
       base.failed++
       if (base.errors.length < 5) base.errors.push(str(n0.unit_no) + ': ' + String(e?.message || e).slice(0, 140))
     }
   }
 
-  // TELL THE TEAM (Jon, 2026-08-19: "draft and then notify in customer care channel"). One message
-  // per run that actually drafted something — the hourly checks between 7am and midnight stay
-  // silent unless a NEW draft landed, so the channel hears news, not heartbeat.
+  // TELL THE TEAM ONCE PER NOTICE (Jon, 2026-08-19: "draft and then notify in customer care
+  // channel"; 2026-08-22: "if you notify ccs about a reservations email we dont keep saying the
+  // same one"). A notice re-drafted by the repair/reopen/trash sweeps used to re-announce
+  // identically every time (unit 4105 was called out at 6pm and again at 7pm) — CCS read the
+  // second message as a new job. Each notice is now announced ONCE per arrival day; the only
+  // re-announcement allowed is a SAFETY COPY, because a possible duplicate send genuinely needs
+  // eyes. The announced-map lives in app_settings and is pruned after 3 days.
   if (base.drafted > 0 && cfg.noticeDrafts.slackChannel) {
     try {
-      const { postToChannel } = await import('./slack')
-      const lines = draftedList.map(x =>
-        `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})${x.missing ? ` — :warning: *form missing the ${x.missing}* — fill it in before sending` : ''}${x.safety ? ' — _safety copy: marked sent but unconfirmed; discard if the building already got it_' : ''}`)
-      const msg = `📬 *Front-desk notice draft${base.drafted === 1 ? '' : 's'} ready* — ${base.drafted} new in ${cfg.noticeDrafts.fromEmail}'s Gmail Drafts for today's arrivals:\n`
-        + lines.join('\n')
-        + `\nReview and send to the building${base.drafted === 1 ? '' : 's'}.`
-      const res = await postToChannel(cfg.noticeDrafts.slackChannel, msg)
-      if (!res.ok) base.errors.push('slack notify: ' + (res.error || 'failed') + (res.error === 'not_in_channel' ? ' — invite the Lighthouse bot to the channel' : ''))
+      const SEEN_KEY = 'notice_drafts_announced'
+      const seen = (await getAppSetting<Record<string, string>>(SEEN_KEY, {}).catch(() => null)) || {}
+      const announceKey = (x: { nid: string }) => 'n:' + x.nid + ':' + today
+      const toAnnounce = draftedList.filter(x => x.safety || !seen[announceKey(x)])
+      if (toAnnounce.length) {
+        const { postToChannel } = await import('./slack')
+        const lines = toAnnounce.map(x =>
+          `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})${x.missing ? ` — :warning: *form missing the ${x.missing}* — fill it in before sending` : ''}${x.safety ? ' — _safety copy: marked sent but unconfirmed; discard if the building already got it_' : ''}`)
+        const msg = `📬 *Front-desk notice draft${toAnnounce.length === 1 ? '' : 's'} ready* — ${toAnnounce.length} new in ${cfg.noticeDrafts.fromEmail}'s Gmail Drafts for today's arrivals:\n`
+          + lines.join('\n')
+          + `\nReview and send to the building${toAnnounce.length === 1 ? '' : 's'}.`
+        const res = await postToChannel(cfg.noticeDrafts.slackChannel, msg)
+        if (!res.ok) base.errors.push('slack notify: ' + (res.error || 'failed') + (res.error === 'not_in_channel' ? ' — invite the Lighthouse bot to the channel' : ''))
+        else {
+          // Remember only after a successful post, pruning entries older than 3 days.
+          const cutoff = new Date(Date.now() - 3 * 86400_000).toISOString()
+          const next: Record<string, string> = {}
+          for (const [k, at] of Object.entries(seen)) if (String(at) > cutoff) next[k] = String(at)
+          const nowIso = new Date().toISOString()
+          for (const x of toAnnounce) next[announceKey(x)] = nowIso
+          await setAppSetting(SEEN_KEY, next, 'notice-drafts announce').catch(() => null)
+        }
+      }
     } catch (e: any) { base.errors.push('slack notify: ' + String(e?.message || e).slice(0, 120)) }
   }
   return base

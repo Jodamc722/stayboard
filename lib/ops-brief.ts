@@ -168,10 +168,12 @@ async function gather(variant: BriefVariant) {
     .slice(0, 8)
     .map(a => ({ unit: str(a.unit) || (meta[String(a.listing_id)]?.name ?? 'Unit'), why: str(a.title).replace(/ at .*$/, ''), action: str(a.action).slice(0, 90) }))
 
-  // Big reservations arriving in the next 3 days — money the team should treat like a VIP.
+  // LONG STAYS arriving in the next 3 days (Jon, 2026-08-22: "big arrivals should be long
+  // stays") — a 14-night-plus guest changes how the unit is prepped and welcomed; the dollar
+  // figure rides along for context but no longer qualifies a booking on its own.
   const bigArrivals = ((arrRes.data || []) as any[])
     .filter(r => isLiveStay(r.status) && inVariant(String(r.listing_id)))
-    .filter(r => Number(r.money_total) >= 2000 || Number(r.nights) >= 14)
+    .filter(r => Number(r.nights) >= 14)
     .sort((a, b) => Number(b.money_total) - Number(a.money_total))
     .slice(0, 8)
     .map(r => ({
@@ -184,7 +186,7 @@ async function gather(variant: BriefVariant) {
   // Live stays only — a cancelled $5k booking must not stamp BIG $ on today's real guest.
   const bigTodayIds = new Set(((arrRes.data || []) as any[])
     .filter(r => isLiveStay(r.status))
-    .filter(r => str(r.check_in).slice(0, 10) === today && (Number(r.money_total) >= 2000 || Number(r.nights) >= 14))
+    .filter(r => str(r.check_in).slice(0, 10) === today && Number(r.nights) >= 14)
     .map(r => String(r.listing_id)))
 
   // Reputation pulse (30d).
@@ -635,7 +637,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const note = (d.arrivalNotes || {})[String(a.listingId)] || ''
     return `
     <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? ` <span style="${S.muted};font-size:12px">· ${esc(str(a.checkInTime))}</span>` : ''}${note ? `<div style="font-size:12px;color:#4338ca;margin-top:3px">📝 ${esc(note)}</div>` : ''}</td>
-    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber(isField ? 'VIP' : 'BIG $') : ''}</td></tr>`
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber(isField ? 'VIP' : 'LONG STAY') : ''}</td></tr>`
   }).join('')
 
   // YESTERDAY — the supervisor's scoreboard. Directional on purpose: hours are Breezeway's recorded
@@ -1030,7 +1032,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       d.newSinceYesterday
         ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
         : `Last checked ${niceDay(d.today)}`) : ''}
-  ${!isField && d.bigArrivals.length ? card('Big reservations — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
+  ${!isField && d.bigArrivals.length ? card('Long stays — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${variant === 'full' ? blockedCard(fullBlocked, { showMarket: true, limit: 10, linked: fullBlockedLinked }) : ''}
   ${card('Vacant units — what to slot in', vacants.length,
       `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
@@ -1286,7 +1288,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     decide.push(dRow('blue',
       `<b>${esc(b.unit)}</b> · ${esc(b.guest)} · ${b.today ? '<b>lands today</b>' : esc(b.when)}${b.nights ? ` · ${b.nights}n` : ''}`,
       money0(b.total),
-      'Big booking — worth a personal touch before arrival.'))
+      'Long stay — extra attention on the clean and the welcome.'))
   }
   const decideCard = decide.length
     ? card('Decide today', decide.length, tbl(decide.join('')), '#dc2626')
