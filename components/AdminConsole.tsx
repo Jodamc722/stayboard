@@ -12,6 +12,7 @@ import { RolesAdmin } from '@/components/RolesAdmin'
 import { OpsPresetsAdmin } from '@/components/OpsPresetsAdmin'
 import { OpsBriefAdmin } from '@/components/OpsBriefAdmin'
 import { TaskAutomationAdmin } from '@/components/TaskAutomationAdmin'
+import { GuestOrdersAdmin } from '@/components/GuestOrdersAdmin'
 import { CrewRolesAdmin } from '@/components/CrewRolesAdmin'
 import { ParAdmin } from '@/components/ParAdmin'
 import { ApprovalLimitsAdmin } from '@/components/ApprovalLimitsAdmin'
@@ -61,6 +62,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
           <Fold title="Today-in-Ops presets" defaultOpen><OpsPresetsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Morning Ops Brief" defaultOpen><OpsBriefAdmin isOwner={isOwner} /></Fold>
           <Fold title="Task automation" defaultOpen><TaskAutomationAdmin isOwner={isOwner} /></Fold>
+          <Fold title="Guest orders (pre-arrival extras)"><GuestOrdersAdmin isOwner={isOwner} /></Fold>
           {/* MERGED (Jon, 2026-08-22): the old "Staffing & agencies" card lives inside People,
               crews & agencies now — one roster, one fee table, one save path feeding the labor
               engine. Two half-overlapping sections was how a person could be W-2 in one place

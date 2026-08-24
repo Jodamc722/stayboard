@@ -10,7 +10,7 @@ import {
   Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, Wrench, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2 } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -71,6 +71,7 @@ const SECTIONS: NavSection[] = [
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
       { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
+      { to: '/guest-orders', label: 'Guest Orders', Icon: ShoppingBag }, // 2026-08-24: the pre-arrival vending machine
       { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
       { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
       // Renamed 2026-08-19 (Jon): "Unit Knowledge" -> "Property FAQ". Same page, same key.
