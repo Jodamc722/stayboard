@@ -318,7 +318,10 @@ export async function buildTeamSchedule(opts: {
     const li = str(t.reference_property_id)
     const u = unit[li]
     if (!u) continue
-    if (wantMarkets && !wantMarkets.has(u.market.toLowerCase())) continue
+    // A market filter must not hide a person's own day: a Broward cleaner covering a vendor-serviced
+    // unit is still working. Vendor units pass through here and get placed on their home-market row;
+    // the block filter at the end is what enforces the requested markets.
+    if (wantMarkets && !wantMarkets.has(u.market.toLowerCase()) && !isVendorMarket(u.market)) continue
     const who = assigneesOf(t)
     const vendorUnit = isVendorMarket(u.market)
     // Nobody assigned means there is no row to put it on. The board at /schedule is where unassigned
@@ -429,7 +432,7 @@ export async function buildTeamSchedule(opts: {
   }
 
   const ORDER = ['miami', 'broward']
-  const markets = Object.keys(blocks).map(m => blocks[m]).filter(b => !isVendorMarket(b.market) && (b.jobs > 0 || b.people.length > 0)).sort((a, b) => {
+  const markets = Object.keys(blocks).map(m => blocks[m]).filter(b => !isVendorMarket(b.market) && (!wantMarkets || wantMarkets.has(b.market.toLowerCase())) && (b.jobs > 0 || b.people.length > 0)).sort((a, b) => {
     const ia = ORDER.indexOf(a.market.toLowerCase()); const ib = ORDER.indexOf(b.market.toLowerCase())
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.market.localeCompare(b.market)
   })
