@@ -29,6 +29,7 @@ export type EventKey =
   | 'repeat_offenders' | 'door_codes' | 'blocked_arrival' | 'market_brief' | 'handover'
   | 'walk_in_risk'
   | 'readiness_3pm' | 'labor_report' | 'notable_arrivals'
+  | 'weekly_planner'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -44,6 +45,7 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   handover: 'Nightly handover draft (leadership)',
   walk_in_risk: 'Could be a walk-in tonight',
   readiness_3pm: '3pm check — ready for 4pm?',
+  weekly_planner: 'Weekly planner (who is working, per market)',
   labor_report: 'Hours, no-shows, over hours',
   notable_arrivals: 'Owner stays & big bookings',
 }
@@ -242,6 +244,11 @@ export const DEFAULT_RULES: SlackRules = {
     labor_report: { enabled: true, approval: false, quietStart: 17 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
     // A heads-up, so it goes out with the morning rather than interrupting the day.
     notable_arrivals: { enabled: true, approval: false, quietStart: 8 * 60, quietEnd: 11 * 60, cooldownMin: 20 * 60 },
+    // THE WEEK AHEAD FOR THE CREW. Sunday evening, so people can plan before Monday. Starts OFF and
+    // behind approval on purpose: market_brief taught us that the first auto-sent version of a new
+    // format goes out before anyone can stop it. Read one, then flip approval off in settings.
+    // Cooldown is a week minus a few hours so a re-run cannot double-post the same week.
+    weekly_planner: { enabled: false, approval: true, quietStart: 16 * 60, quietEnd: 21 * 60, cooldownMin: 6 * 24 * 60 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,
