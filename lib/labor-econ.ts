@@ -125,7 +125,8 @@ export const SEVENTEEN_WEST_ANNUAL = 100000
 // Homebase punches, those wages are REMOVED from their crew's payroll: the salary already pays
 // for that time, and counting both would double their cost.
 export const SALARIED_MANAGERS = [
-  { name: 'Roberto Chiriboga', annual: 80000, title: 'Manager' },
+  // Jon, 2026-08-24: "Roberto is Operations Manager."
+  { name: 'Roberto Chiriboga', annual: 80000, title: 'Operations Manager' },
 ]
 export function seventeenWestCoverage(combinedWages: number, windowDays: number) {
   const r2 = (n: number) => Math.round(n * 100) / 100
@@ -289,6 +290,7 @@ const EMPTY_DEPT = (key: Dept): DeptEcon => ({
 const BASIS: Record<Dept, string> = {
   housekeeping: 'cleaning fees vs housekeeper wages',
   supervision: 'overhead — carried by management fees, not cleaning margin',
+  ccs: 'coordination overhead — carried by management fees, not cleaning margin',
   maintenance: 'billable charges vs maintenance wages',
   inspection: 'quality control — cost only',
   other: 'cost only',
@@ -1090,6 +1092,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   const hk = byDept['housekeeping']
   const sup = byDept['supervision']
+  const ccs = byDept['ccs']
   const mt = byDept['maintenance']
   const cleansTotal = people.reduce((a, p) => a + p.cleans, 0)
   // The headline cost per clean: housekeeper wages over the units housekeepers actually turned,
@@ -1269,6 +1272,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       pctOfManagementFee: pct(sup.payroll, managementFee),
       note: 'fixed cost — carried regardless of revenue',
     },
+    // CCS TEAM (Jon, 2026-08-24: "Field Coordinator part of CCS team, Karla, Silvia CCS team
+    // Manager"). Central coordination — same treatment as supervisors: fixed overhead carried
+    // by management fees, never inside cost per clean, but inside the all-in line below.
+    ccsTeam: {
+      payroll: ccs.payroll,
+      hours: ccs.hours,
+      people: ccs.people,
+      names: ccs.names,
+      pctOfManagementFee: pct(ccs.payroll, managementFee),
+      note: 'coordination overhead — carried regardless of revenue',
+    },
     // THE 17WEST RECEIPT. Every payroll line above already carries only Stay's share of George
     // Paz + Yoslenis — this names what was taken off and why, so the deduction is auditable.
     seventeenWest: {
@@ -1294,9 +1308,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // The whole labor line including the fixed layers, for the one number that hides nothing.
     allIn: {
       revenue: staffRevenue,
-      payroll: round2(staffPayroll + sup.payroll + managementSalary),
-      margin: round2(staffRevenue - staffPayroll - sup.payroll - managementSalary),
-      marginPct: pct(staffRevenue - staffPayroll - sup.payroll - managementSalary, staffRevenue),
+      payroll: round2(staffPayroll + sup.payroll + ccs.payroll + managementSalary),
+      margin: round2(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - managementSalary),
+      marginPct: pct(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - managementSalary, staffRevenue),
     },
   }
 
