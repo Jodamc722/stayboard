@@ -76,7 +76,7 @@ export function LaborPanel() {
   // earned (cleaning fees + the charges typed on their tasks) beside what they cost.
   const econBy: Record<string, any> = {}
   for (const x of ((econ?.people || []) as any[])) econBy[x.name] = x
-  const DEPT_SHORT: Record<string, string> = { housekeeping: 'HK', supervision: 'Sup', maintenance: 'Maint', inspection: 'Insp', other: '—' }
+  const DEPT_SHORT: Record<string, string> = { housekeeping: 'HK', supervision: 'Sup', ccs: 'CCS', maintenance: 'Maint', inspection: 'Insp', other: '—' }
   const tasks = d?.tasks || {}
   const tdy = d?.today
   const attr = d?.attribution || {}
