@@ -116,6 +116,17 @@ export function kindOfTask(t: { name?: any; type_department?: any }): TaskKind {
 // try and bill"); that revenue lands wherever the task lands, untouched.
 export const SEVENTEEN_WEST_PAIR = ['George Paz', 'Yoslenis Rodiguez']  // Homebase spellings; matching is fuzzy
 export const SEVENTEEN_WEST_ANNUAL = 100000
+
+// ── SALARIED MANAGEMENT (Jon, 2026-08-24: "We can also add a manager (Roberto section). He is
+// salaried 80k per year.") ──────────────────────────────────────────────────────────────────
+// A salary is a FIXED cost: it accrues whether or not a single unit turns, so it is pro-rated
+// to the window (annual × days ÷ 365) and carried on its own Management line — never inside
+// cost per clean, never inside the hourly supervisor overhead. If a salaried person also has
+// Homebase punches, those wages are REMOVED from their crew's payroll: the salary already pays
+// for that time, and counting both would double their cost.
+export const SALARIED_MANAGERS = [
+  { name: 'Roberto Chiriboga', annual: 80000, title: 'Manager' },
+]
 export function seventeenWestCoverage(combinedWages: number, windowDays: number) {
   const r2 = (n: number) => Math.round(n * 100) / 100
   const credit = r2((SEVENTEEN_WEST_ANNUAL * windowDays) / 365)
@@ -171,6 +182,8 @@ export type PersonEcon = {
   roomMix?: Record<string, number>
   /** Same-day moves between different BUILDINGS (Rustic 1 → Rustic 2 is not a hop). */
   travel?: { hops: number; minutes: number }
+  /** Paid an annual salary — their hourly punches are excluded from crew payroll (see SALARIED_MANAGERS). */
+  salaried?: boolean
 }
 
 export type DeptEcon = {
@@ -903,6 +916,23 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const d = byDept[p.dept]
     if (d) d.payroll = round2(Math.max(0, d.payroll - p.payroll * w17.ratio))
   }
+  // SALARIED MANAGEMENT comes off the hourly lines here too: the salary is the cost, so any
+  // punches a salaried manager clocked are pulled back out of their crew's payroll, and the
+  // pro-rated salary is carried on its own kpi.management line below.
+  const mgmtPeople: { name: string; title: string; annual: number; windowSalary: number; hours: number; hourlyRemoved: number }[] = []
+  let managementSalary = 0
+  for (const m of SALARIED_MANAGERS) {
+    const windowSalary = round2((m.annual * winDays) / 365)
+    managementSalary = round2(managementSalary + windowSalary)
+    const p = peopleAll.filter(x => nameMatches(x.name, m.name))[0]
+    let removed = 0
+    if (p) {
+      p.salaried = true
+      const d = byDept[p.dept]
+      if (d && p.payroll > 0) { removed = p.payroll; d.payroll = round2(Math.max(0, d.payroll - p.payroll)) }
+    }
+    mgmtPeople.push({ name: m.name, title: m.title, annual: m.annual, windowSalary, hours: p ? p.hours : 0, hourlyRemoved: removed })
+  }
   for (const d of DEPTS) {
     const x = byDept[d]
     x.revenue = round2(x.cleaningRevenue + x.billableRevenue)
@@ -1254,12 +1284,19 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // through Atlantic / CityBest / Opal — already inside every payroll line above. Empty until
     // the agency fees are entered on the People & agencies card.
     agencyLoad,
-    // The whole labor line including the fixed layer, for the one number that hides nothing.
+    // SALARIED MANAGEMENT — a fixed line beside the supervisors, pro-rated to the window.
+    // Their hourly punches were already pulled out of the crew payrolls above.
+    management: {
+      people: mgmtPeople,
+      salaryWindow: managementSalary,
+      note: 'salaried — fixed cost pro-rated to the window; punches excluded from crew payroll',
+    },
+    // The whole labor line including the fixed layers, for the one number that hides nothing.
     allIn: {
       revenue: staffRevenue,
-      payroll: round2(staffPayroll + sup.payroll),
-      margin: round2(staffRevenue - staffPayroll - sup.payroll),
-      marginPct: pct(staffRevenue - staffPayroll - sup.payroll, staffRevenue),
+      payroll: round2(staffPayroll + sup.payroll + managementSalary),
+      margin: round2(staffRevenue - staffPayroll - sup.payroll - managementSalary),
+      marginPct: pct(staffRevenue - staffPayroll - sup.payroll - managementSalary, staffRevenue),
     },
   }
 
