@@ -25,21 +25,24 @@ async function run(req: NextRequest) {
       return NextResponse.json({ ok: true, skipped: 'weekly_planner is switched off in settings', elapsed_ms: Date.now() - started })
     }
     const weekStart = (new URL(req.url).searchParams.get('weekStart') || '').slice(0, 10) || undefined
-    const posts = await buildPlannerPosts(weekStart, rules)
+    // Both trades, each market, each to the channel that trade already lives in.
+    const posts = (await buildPlannerPosts(weekStart, rules, 'cleaning'))
+      .concat(await buildPlannerPosts(weekStart, rules, 'maintenance'))
     const results: any[] = []
     for (const p of posts) {
       const r = await draft({
         eventKey: 'weekly_planner',
         groupKey: p.groupKey,
-        channelId: rules.opsChannel || rules.defaultChannel || null,
+        building: p.market,
+        channelId: p.channelId,
         body: p.body,
         threadBody: p.threadBody,
         summary: p.summary,
         itemCount: p.people,
       }, rules)
-      results.push({ market: p.market, people: p.people, cleans: p.cleans, ...r })
+      results.push({ market: p.market, dept: p.dept, channel: p.channelId, people: p.people, cleans: p.cleans, ...r })
     }
-    return NextResponse.json({ ok: true, markets: results.length, results, elapsed_ms: Date.now() - started })
+    return NextResponse.json({ ok: true, posts: results.length, results, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
