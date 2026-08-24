@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bucketFor, familyFor, FAMILY_LABEL } from '@/lib/marketing'
+import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -152,6 +153,28 @@ async function handle(code: string, pw: string) {
         verified: f ? truthy(f.value) : null,   // null = no verification field on this reservation
       }
     })
+  }
+
+  if (sections.team) {
+    // The weekly planner, scoped to whatever this link covers. Same builder the in-app tab uses —
+    // one set of numbers, two doors — and the same tag vocabulary as Slack and the ops brief.
+    // Names are the point here: this is a rota, not guest data, so `guest_names` does not apply.
+    const plan = await buildTeamSchedule({ from: today, to: addDaysET(today, Math.min(windowDays, 14) - 1), listingIds: idList })
+    out.sections.team = {
+      from: plan.from, to: plan.to, days: plan.days, rules: plan.rules,
+      markets: plan.markets.map(m => ({
+        market: m.market,
+        jobs: m.jobs, cleans: m.cleans,
+        perDay: m.perDay,
+        people: m.people.slice(0, 60).map(p => ({
+          name: p.name, dept: p.dept, daysWorked: p.daysWorked, jobs: p.jobs, cleans: p.cleans,
+          byDay: Object.keys(p.byDay).reduce((acc: Record<string, any[]>, d) => {
+            acc[d] = p.byDay[d].slice(0, 12).map(j => ({ unit: j.unit, task: j.task, status: j.status, isClean: j.isClean, tags: j.tags }))
+            return acc
+          }, {}),
+        })),
+      })),
+    }
   }
 
   if (sections.notes) {
