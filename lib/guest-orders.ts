@@ -243,6 +243,24 @@ export function deliveryDateFor(paidAt: Date, checkIn: string, checkOut: string 
   return { date: candidate, note }
 }
 
+/**
+ * THE GUEST'S CHOICE ON TOP OF THE RULE. deliveryDateFor() gives the EARLIEST day we can deliver
+ * once paid; the guest's request only ever moves it later (a date inside the stay) or picks the
+ * earliest ('asap'). 'arrival' = arrival day when the rule allows, else the earliest with a note.
+ */
+export function resolveDelivery(paidAt: Date, checkIn: string, checkOut: string | null, checkInTime: string | null | undefined, t: Timing, mode: DeliveryMode, requestedDate: string | null): { date: string | null; note: string } {
+  const base = deliveryDateFor(paidAt, checkIn, checkOut, checkInTime, t)
+  if (!base.date) return base
+  if (mode === 'date' && requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+    if (checkOut && requestedDate >= checkOut) return { date: base.date, note: 'guest asked for ' + fmtDay(requestedDate) + ' (after checkout) — earliest instead' }
+    if (requestedDate >= base.date) return { date: requestedDate, note: 'guest asked for ' + fmtDay(requestedDate) }
+    return { date: base.date, note: 'guest asked for ' + fmtDay(requestedDate) + ' — earliest possible is ' + fmtDay(base.date) }
+  }
+  if (mode === 'arrival') return base.date === checkIn ? { date: checkIn, note: 'arrival day (guest’s choice)' } : { date: base.date, note: 'guest asked for arrival day — earliest possible is ' + fmtDay(base.date) }
+  if (mode === 'asap') return { date: base.date, note: 'ASAP — ' + base.note }
+  return base
+}
+
 // ── Catalog ───────────────────────────────────────────────────────────────────────────────────
 
 export type CatalogItem = {
@@ -436,6 +454,7 @@ export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Pr
 
 // ── Orders ────────────────────────────────────────────────────────────────────────────────────
 
+export type DeliveryMode = 'auto' | 'asap' | 'arrival' | 'date'
 export type OrderStatus = 'submitted' | 'approved' | 'paid' | 'awaiting_payment' | 'payment_failed' | 'pushed' | 'delivered' | 'declined' | 'cancelled'
 
 export const STATUS_LABEL: Record<OrderStatus, string> = {
@@ -450,7 +469,7 @@ export type OrderRow = {
   submitted_at: string; approve_token: string | null; approved_at: string | null; approved_by: string | null
   declined_at: string | null; declined_by: string | null; decline_reason: string | null
   paid_at: string | null; paid_via: string | null; payment_note: string | null; guesty_payment_id: string | null; guesty_invoice_item_ids: string[]; folio_lines_done: number; folio_note: string | null; charge_error: string | null
-  delivery_date: string | null; delivery_note: string | null; pushed_at: string | null; breezeway_task_id: string | null
+  delivery_date: string | null; delivery_note: string | null; requested_delivery: DeliveryMode; requested_date: string | null; pushed_at: string | null; breezeway_task_id: string | null
   assignee_names: string[]; assignee_ids: number[]; assign_note: string | null; slack_outbox_id: string | null; push_error: string | null
   email_sent_at: string | null; delivered_at: string | null; delivered_by: string | null; cancelled_at: string | null; cancelled_by: string | null
   created_at: string; updated_at: string
@@ -458,7 +477,7 @@ export type OrderRow = {
 
 function normOrder(r: any): OrderRow {
   return { ...r, items: Array.isArray(r.items) ? r.items : [], subtotal_usd: Number(r.subtotal_usd) || 0, tax_usd: Number(r.tax_usd) || 0, total_usd: Number(r.total_usd) || 0,
-    guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
+    guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
 }
 
 export async function getOrder(id: string): Promise<OrderRow | null> {
@@ -480,7 +499,7 @@ async function patch(id: string, fields: Record<string, any>): Promise<void> {
 }
 
 /** Guest hop: basket → order row → approvers told. */
-export async function submitOrder(link: LinkRow, basket: { sku: string; qty: number }[], guestNote: string, origin: string | null): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
+export async function submitOrder(link: LinkRow, basket: { sku: string; qty: number }[], guestNote: string, origin: string | null, delivery?: { mode: DeliveryMode; date?: string | null }): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
   const cfg = await getGuestOrdersCfg()
   const catalog = await loadCatalog({ building: link.building, market: link.market })
   const priced = priceBasket(catalog, basket, cfg)
@@ -492,6 +511,8 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
     guest_name: link.guest_name, guest_email: link.guest_email, check_in: link.check_in, check_out: link.check_out,
     status: 'submitted', items: priced.lines, subtotal_usd: priced.subtotal, tax_usd: priced.tax, total_usd: priced.total, currency: 'USD',
     guest_note: guestNote ? guestNote.slice(0, 600) : null, approve_token: randomBytes(24).toString('hex'),
+    requested_delivery: delivery && ['asap', 'arrival', 'date'].indexOf(delivery.mode) >= 0 ? delivery.mode : 'auto',
+    requested_date: delivery && delivery.mode === 'date' && delivery.date && /^\d{4}-\d{2}-\d{2}$/.test(delivery.date) ? delivery.date : null,
   }
   const ins = await db.from('guest_orders').insert(row).select('*').limit(1)
   if (ins.error) return { ok: false, error: ins.error.message }
@@ -601,7 +622,7 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
       return { ok: false, order: await getOrder(id) || undefined, error: ch.error }
     }
     const paidAt = new Date()
-    const dd = deliveryDateFor(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market))
+    const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), order.requested_delivery, order.requested_date)
     await patch(id, {
       status: 'paid', paid_at: paidAt.toISOString(), paid_via: 'guesty:' + card.id, charge_error: null, charge_raw: ch.raw || null, guesty_payment_id: ch.paymentId || null,
       payment_note: 'Charged ' + (card.brand ? card.brand + ' ' : '') + (card.last4 ? '•••• ' + card.last4 : 'card on file') + ' via Guesty (' + (ch.status || 'ok') + ')',
@@ -655,7 +676,7 @@ export async function markPaid(id: string, actor: string, note: string, recordIn
     if (r.ok && r.paymentId) await patch(id, { guesty_payment_id: r.paymentId })
   }
   const folioLeft = (order.guesty_invoice_item_ids || []).length
-  const dd = deliveryDateFor(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market))
+  const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), order.requested_delivery, order.requested_date)
   await patch(id, {
     approved_at: order.approved_at || paidAt.toISOString(), approved_by: order.approved_by || actor,
     payment_note: 'Marked paid by ' + actor + (note ? ' — ' + note.slice(0, 200) : '') + extra, charge_error: null,
@@ -692,6 +713,15 @@ export async function markDelivered(id: string, actor: string): Promise<{ ok: bo
   return { ok: true }
 }
 export async function setDeliveryDate(id: string, date: string, actor: string): Promise<{ ok: boolean; error?: string }> {
+  const order = await getOrder(id)
+  if (!order) return { ok: false, error: 'order not found' }
+  // 'asap' / 'arrival' re-run the rule from now; a real date is taken as given (staff override).
+  if (date === 'asap' || date === 'arrival') {
+    const cfg = await getGuestOrdersCfg()
+    const dd = resolveDelivery(new Date(), order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), date, null)
+    await patch(id, { delivery_date: dd.date, delivery_note: dd.note + ' · set by ' + actor })
+    return { ok: true }
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'bad date' }
   await patch(id, { delivery_date: date, delivery_note: 'set by ' + actor })
   return { ok: true }
