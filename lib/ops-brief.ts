@@ -61,7 +61,18 @@ async function gather(variant: BriefVariant) {
   const VENDOR = vendorRegex(presets.vendorBuildings)
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString()
   const dayAgo = new Date(Date.now() - 26 * 3600000).toISOString()   // "new since yesterday's brief"
-  const in3 = ymdET(new Date(Date.now() + 3 * 86400000))
+  // OPERATOR THRESHOLDS (slack_rules — editable at /users): ONE definition of a long stay, a big
+  // booking and the lookahead window, shared with Slack's "Worth knowing" and the trigger
+  // settings page. Loaded up front so the reservation query below can cover the whole window.
+  let LONG_N = 14, BIG_USD = 3000, LOOK_D = 7
+  try {
+    const { getSlackRules } = await import('./slack-rules')
+    const R: any = await getSlackRules()
+    LONG_N = R.longStayNights || 14
+    BIG_USD = R.bigBookingUsd || 3000
+    LOOK_D = Math.min(14, Math.max(3, Number(R.notableLookaheadDays) || 7))
+  } catch { /* defaults stand */ }
+  const inN = ymdET(new Date(Date.now() + LOOK_D * 86400000))
 
   // The daysheet does the heavy lifting — same engine as the boards.
   const sheetMarket = (variant === 'full' || variant === 'GM') ? 'all' : variant
@@ -75,8 +86,8 @@ async function gather(variant: BriefVariant) {
     // write into. A supervisor briefing their crew needs it: "guest arriving 11pm, leave the bag
     // in the closet" changes how the day is run and is invisible everywhere else.
     db.from('guesty_reservations')
-      .select('listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields')
-      .gte('check_in', today).lte('check_in', in3).limit(1500),
+      .select('listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields,source')
+      .gte('check_in', today).lte('check_in', inN).limit(1500),
     db.from('review_actions')
       .select('listing_id,unit,building,title,action,kind,severity,mentions,status')
       .in('status', ['open', 'doing']).limit(300),
@@ -168,13 +179,10 @@ async function gather(variant: BriefVariant) {
     .slice(0, 8)
     .map(a => ({ unit: str(a.unit) || (meta[String(a.listing_id)]?.name ?? 'Unit'), why: str(a.title).replace(/ at .*$/, ''), action: str(a.action).slice(0, 90) }))
 
-  // LONG STAYS arriving in the next 3 days (Jon, 2026-08-22: "big arrivals should be long
-  // stays") — a long-stay guest changes how the unit is prepped and welcomed; the dollar figure
-  // rides along for context but no longer qualifies a booking on its own. The threshold is the
-  // OPERATOR'S OWN (slack_rules.longStayNights, editable at /users → Task automation), the same
-  // number Slack's "Worth knowing" uses — one definition of a long stay, everywhere.
-  let LONG_N = 14
-  try { const { getSlackRules } = await import('./slack-rules'); LONG_N = (await getSlackRules()).longStayNights || 14 } catch { /* default stands */ }
+  // LONG STAYS arriving in the window (Jon, 2026-08-22: "big arrivals should be long stays") — a
+  // long-stay guest changes how the unit is prepped and welcomed; the dollar figure rides along
+  // for context but no longer qualifies a booking on its own. LONG_N is the operator's own
+  // threshold, loaded above.
   const bigArrivals = ((arrRes.data || []) as any[])
     .filter(r => isLiveStay(r.status) && inVariant(String(r.listing_id)))
     .filter(r => Number(r.nights) >= LONG_N)
@@ -192,6 +200,33 @@ async function gather(variant: BriefVariant) {
     .filter(r => isLiveStay(r.status))
     .filter(r => str(r.check_in).slice(0, 10) === today && Number(r.nights) >= LONG_N)
     .map(r => String(r.listing_id)))
+
+  // ── THE WEEK AHEAD (Jon, 2026-08-24: "a section per market, and ops, that shows big
+  // reservations, owner stays, forward looking, maybe 7 days out"). Everything landing inside
+  // the lookahead window that changes how a unit is prepped: verified owner bookings (Guesty
+  // source starts with 'owner' — the daysheet's rule; name-matches are a hint, not a fact, and
+  // stay off a prep list), long stays (LONG_N) and big-dollar bookings (BIG_USD — Slack's
+  // "Worth knowing" number). One reservation can be all three; the pills stack.
+  const forward = ((arrRes.data || []) as any[])
+    .filter(r => isLiveStay(r.status) && inVariant(String(r.listing_id)))
+    .map(r => {
+      const lid = String(r.listing_id)
+      const nights = r.nights != null ? Number(r.nights) : null
+      const total = Math.round(Number(r.money_total) || 0)
+      return {
+        unit: meta[lid]?.name ?? 'Unit',
+        market: meta[lid]?.market || 'Other',
+        when: str(r.check_in).slice(0, 10),
+        nights, total,
+        guest: str(r.guest_name).split(' ')[0] || 'Guest',
+        owner: /^owner/i.test(str(r.source)),
+        long: nights != null && nights >= LONG_N,
+        big: total >= BIG_USD,
+      }
+    })
+    .filter(x => x.when >= today && x.when <= inN)
+    .filter(x => x.owner || x.long || x.big)
+    .sort((a, b) => a.when.localeCompare(b.when) || b.total - a.total)
 
   // Reputation pulse (30d).
   const avg = allRevs.length ? allRevs.reduce((s, r) => s + Number(r.rating), 0) / allRevs.length : null
@@ -306,6 +341,7 @@ async function gather(variant: BriefVariant) {
 
   return {
     today, sheet, cleans, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
+    forward, lookaheadDays: LOOK_D,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
     activeCount: activeIds.length,
@@ -708,10 +744,51 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <tr${r.rating <= 3 ? ' style="background:#fef2f2"' : ''}><td style="${S.td}"><b>${esc(r.unit)}</b>${r.isNew ? ' <span style="font-size:10px;color:#4338ca;font-weight:700">NEW</span>' : ''}<br><span style="color:#6b7280">${esc(r.channel)}${r.guest ? ' · ' + esc(r.guest) : ''} · ${esc(niceDay(r.at))}</span></td>
     <td style="${S.td}"><span style="${revTone(r.rating)}">${stars(r.rating)} <b>${esc(ratingAsGuestSaw(r.rating, r.channel) || String(r.rating))}</b></span>${r.snippet ? `<br><span style="color:#6b7280">${esc(r.snippet)}…</span>` : ''}</td></tr>`).join('')
 
-  const bigRows = d.bigArrivals.map(b => `
-    <tr><td style="${S.td}"><b>${esc(b.unit)}</b>${b.today ? ' ' + pillRed('TODAY') : ''} <span style="${S.muted};font-size:12px">· ${esc(b.guest)} · ${b.when}${b.nights ? ` · ${b.nights}n` : ''}</span></td>
-    <td style="${S.td};text-align:right"><b>$${b.total.toLocaleString()}</b></td></tr>`).join('')
+  // ── THE WEEK AHEAD (Jon, 2026-08-24). Field sheets: their own market, ZERO dollars — the pills
+  // say how the guest is treated, never what they paid. Ops Command: every market, grouped, with
+  // the dollars, because the manager staffs and schedules inspections off this list.
+  const fwdAll: any[] = (d as any).forward || []
+  const lookD: number = (d as any).lookaheadDays || 7
+  const FWD_LIMIT = 18
+  const fwdShown = fwdAll.slice(0, FWD_LIMIT)
+  const fwdPills = (x: any) =>
+    (x.owner ? ' ' + pillBlue('OWNER') : '') +
+    (x.long ? ' ' + pillAmber('LONG STAY') : '') +
+    (x.big ? ' ' + (isField ? pillAmber('VIP') : pillRed('BIG $')) : '')
+  const fwdWhen = (x: any) => x.when === d.today ? pillRed('TODAY') : `<span style="${S.muted}">${esc(niceDay(x.when))}</span>`
+  const fwdMore = fwdAll.length > FWD_LIMIT
+    ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${fwdAll.length - FWD_LIMIT} more inside the window — the boards have the full list.</p>`
+    : ''
+  const fwdTbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
+  let fwdCard = ''
+  if (isField) {
+    // No dollars, no money column — nights and pills carry everything the crew needs.
+    const rows = fwdShown.map(x => `
+    <tr><td style="${S.td}"><b>${esc(x.unit)}</b>${fwdPills(x)}<br><span style="${S.muted};font-size:12px">${esc(x.guest)}${x.nights ? ` · ${x.nights} night${x.nights === 1 ? '' : 's'}` : ''}</span></td>
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top">${fwdWhen(x)}</td></tr>`).join('')
+    fwdCard = fwdAll.length
+      ? card(`Next ${lookD} days — worth preparing for`, fwdAll.length,
+          `<p style="margin:0 0 6px;font-size:12px;color:#6b7280">Owner stays, long stays and VIP bookings landing soon — these units get the extra pass.</p>` + fwdTbl(rows) + fwdMore, '#4338ca')
+      : ''
+  } else {
+    // Grouped per market, dollars on. A market header row keeps one list readable across regions.
+    const byMk: Record<string, any[]> = {}
+    for (const x of fwdShown) (byMk[x.market] = byMk[x.market] || []).push(x)
+    const mkOrder = Object.keys(byMk).sort((a, b) => byMk[b].length - byMk[a].length || a.localeCompare(b))
+    const rows = mkOrder.map(mk => `
+    <tr><td colspan="3" style="padding:10px 8px 2px;border-top:1px solid #e5e7eb;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280">${esc(mk)} <span style="font-weight:400;text-transform:none;letter-spacing:0">· ${byMk[mk].length}</span></td></tr>` +
+      byMk[mk].map(x => `
+    <tr><td style="${S.td}"><b>${esc(x.unit)}</b>${fwdPills(x)}<br><span style="${S.muted};font-size:12px">${esc(x.guest)}${x.nights ? ` · ${x.nights}n` : ''}</span></td>
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top">${fwdWhen(x)}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><b>$${x.total.toLocaleString()}</b></td></tr>`).join('')).join('')
+    fwdCard = fwdAll.length
+      ? card(`Next ${lookD} days — big reservations & owner stays, by market`, fwdAll.length, fwdTbl(rows) + fwdMore, '#4338ca')
+      : card(`Next ${lookD} days — big reservations & owner stays`, null,
+          `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing outsized in the window.</span> <span style="${S.muted}">No owner stays, long stays or big bookings landing in the next ${lookD} days.</span></p>`, '#059669')
+  }
 
+  // (The old "Long stays — next 3 days" card was superseded by the week-ahead card above —
+  // two of a thing is worse than one. d.bigArrivals still feeds the GM decide list.)
   const glitchRows = glitches.slice(0, 10).map((g: any) => `
     <tr><td style="${S.td};white-space:nowrap"><b>${esc(str(g.unit))}</b> <span style="${S.muted};font-size:12px">· ${esc(str(g.at).slice(5))}</span></td>
     <td style="${S.td}"><span style="${S.muted}">${esc(str(g.overview))}</span></td></tr>`).join('')
@@ -1045,6 +1122,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, bare(ownerRows), '#4338ca') : ''}
   ${!isField && glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
+  ${fwdCard ? eyebrow('Looking ahead') + fwdCard : ''}
+
   ${eyebrow(isField ? 'Yesterday' : 'Good to know')}
   ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
   ${!isField && d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
@@ -1055,7 +1134,6 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       d.newSinceYesterday
         ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
         : `Last checked ${niceDay(d.today)}`) : ''}
-  ${!isField && d.bigArrivals.length ? card('Long stays — next 3 days', d.bigArrivals.length, bare(bigRows), '#d97706') : ''}
   ${variant === 'full' ? blockedCard(fullBlocked, { showMarket: true, limit: 10, linked: fullBlockedLinked }) : ''}
   ${card('Vacant units — what to slot in', vacants.length,
       `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
