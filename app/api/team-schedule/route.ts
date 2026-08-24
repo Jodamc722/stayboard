@@ -14,8 +14,10 @@ export async function GET(req: NextRequest) {
   const from = (sp.get('from') || '').slice(0, 10) || ymdET(new Date())
   const days = Math.min(28, Math.max(7, Number(sp.get('days')) || 14))
   const markets = (sp.get('markets') || '').split(',').map(s => s.trim()).filter(Boolean)
+  const deptRaw = String(sp.get('dept') || 'cleaning')
+  const dept = deptRaw === 'maintenance' || deptRaw === 'all' ? deptRaw : 'cleaning'
   try {
-    const data = await buildTeamSchedule({ from, to: addDays(from, days - 1), markets })
+    const data = await buildTeamSchedule({ from, to: addDays(from, days - 1), markets, dept })
     return NextResponse.json({ ok: true, ...data })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
