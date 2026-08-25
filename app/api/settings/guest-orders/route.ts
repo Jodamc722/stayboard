@@ -5,7 +5,7 @@ import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog } from '@/lib/guest-orders'
 import { getSlackRules } from '@/lib/slack-rules'
-import { KNOWN_BUILDINGS, MARKETS } from '@/lib/segments'
+import { KNOWN_BUILDINGS, MARKETS, buildingOf, marketOf } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,8 +13,17 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
-  const [config, catalog, rules] = await Promise.all([getGuestOrdersCfg(), loadCatalog({ activeOnly: false }), getSlackRules()])
-  return NextResponse.json({ ok: true, config, catalog, slack: rules.events.guest_orders || null, isOwner: isSuperadmin(access.email), buildings: KNOWN_BUILDINGS, markets: MARKETS })
+  // Listings come along so a hub can be built from individual units, not only whole properties
+  // (Jon, 2026-08-25: "hub is a group of listings or properties").
+  const [config, catalog, rules, units] = await Promise.all([
+    getGuestOrdersCfg(), loadCatalog({ activeOnly: false }), getSlackRules(),
+    supabaseAdmin().from('guesty_listings').select('id,nickname,title,building,address_city').limit(500),
+  ])
+  const listings = ((units.data || []) as any[]).map(l => {
+    const name = l.nickname || l.title || 'Unit'
+    return { id: String(l.id), name, building: buildingOf(l.building, name) || '', market: marketOf(l.building, l.address_city, name) }
+  }).sort((a, b) => (a.building || 'zz').localeCompare(b.building || 'zz') || a.name.localeCompare(b.name))
+  return NextResponse.json({ ok: true, config, catalog, slack: rules.events.guest_orders || null, isOwner: isSuperadmin(access.email), buildings: KNOWN_BUILDINGS, markets: MARKETS, listings })
 }
 
 const FEE_RE = /^[A-Z_\-]{2,40}$/
