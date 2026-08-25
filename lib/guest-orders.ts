@@ -68,9 +68,13 @@ export type GuestOrdersCfg = {
   skipSourcesRe: string
   /** Per-market overrides (Miami | Broward | North): switch a whole location off or change its timing. */
   marketRules: Record<string, ScopeRule>
-  /** Per-building overrides (canonical labels from lib/segments). Building beats market beats global. */
+  /** Per-building overrides (canonical labels from lib/segments). Building beats hub beats market beats global. */
   buildingRules: Record<string, ScopeRule>
+  /** LOCATION HUBS (Jon, 2026-08-24): named groups of buildings — where supplies sit, and a scope for catalog/timing/stock. */
+  hubs: Hub[]
+  hubRules: Record<string, ScopeRule>
 }
+export type Hub = { id: string; label: string; buildings: string[] }
 /** What can differ by building / location (Jon, 2026-08-24: "customizable by building and by location"). */
 export type ScopeRule = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number }
 export type Timing = { enabled: boolean; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number; checkInHour: number; source: string }
@@ -95,6 +99,8 @@ export const GUEST_ORDERS_DEFAULTS: GuestOrdersCfg = {
   skipSourcesRe: '^(owner|manual|block|blocked)',
   marketRules: {},
   buildingRules: {},
+  hubs: [],
+  hubRules: {},
 }
 
 const num = (v: any, fb: number, lo: number, hi: number) => { const n = Number(v); return Number.isFinite(n) && n >= lo && n <= hi ? n : fb }
@@ -120,6 +126,22 @@ function normScopes(m: any, allowed: string[]): Record<string, ScopeRule> {
   return out
 }
 function safeRe(src: string, fb: string): string { try { new RegExp(src, 'i'); return src } catch { return fb } }
+function normHubs(v: any): Hub[] {
+  if (!Array.isArray(v)) return []
+  const out: Hub[] = []
+  const seen: Record<string, boolean> = {}
+  for (const h of v) {
+    const label = String(h?.label || '').trim().slice(0, 60)
+    if (!label) continue
+    const id = String(h?.id || '').trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').slice(0, 40) || label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    if (!id || seen[id]) continue
+    seen[id] = true
+    const known = KNOWN_BUILDINGS.map(b => b.label)
+    const buildings = Array.isArray(h?.buildings) ? h.buildings.map((b: any) => known.find(k => k.toLowerCase() === String(b).trim().toLowerCase())).filter(Boolean) as string[] : []
+    out.push({ id, label, buildings: Array.from(new Set(buildings)) })
+  }
+  return out
+}
 
 export function normalizeCfg(s: any): GuestOrdersCfg {
   const d = GUEST_ORDERS_DEFAULTS
@@ -145,23 +167,39 @@ export function normalizeCfg(s: any): GuestOrdersCfg {
     skipSourcesRe: safeRe(str(s.skipSourcesRe, d.skipSourcesRe, 200), d.skipSourcesRe),
     marketRules: normScopes(s.marketRules, MARKETS as string[]),
     buildingRules: normScopes(s.buildingRules, KNOWN_BUILDINGS.map(b => b.label)),
+    hubs: normHubs(s.hubs),
+    hubRules: normScopes(s.hubRules, normHubs(s.hubs).map(h => h.id)),
   }
+}
+
+/** The hub a building belongs to (first match), or null. */
+export function hubOf(cfg: GuestOrdersCfg, building: string | null | undefined): Hub | null {
+  const b = String(building || '').toLowerCase()
+  if (!b) return null
+  return cfg.hubs.find(h => h.buildings.some(x => x.toLowerCase() === b)) || null
+}
+/** Where an order's stock is counted: its hub, else the global shelf. */
+export function stockScopeFor(cfg: GuestOrdersCfg, building: string | null | undefined): string {
+  const h = hubOf(cfg, building)
+  return h ? 'hub:' + h.id : 'global'
 }
 
 /** The timing that applies to one stay: building override → market override → global. */
 export function timingFor(cfg: GuestOrdersCfg, building: string | null | undefined, market: string | null | undefined): Timing {
   const b = building ? cfg.buildingRules[building] : undefined
+  const hub = hubOf(cfg, building)
+  const h = hub ? cfg.hubRules[hub.id] : undefined
   const m = market ? cfg.marketRules[market] : undefined
   const pick = <K extends keyof ScopeRule>(k: K, fb: NonNullable<ScopeRule[K]>): NonNullable<ScopeRule[K]> =>
-    (b && b[k] !== undefined ? b[k] : m && m[k] !== undefined ? m[k] : fb) as NonNullable<ScopeRule[K]>
-  const enabled = b && b.enabled === false ? false : m && m.enabled === false ? false : true
+    (b && b[k] !== undefined ? b[k] : h && h[k] !== undefined ? h[k] : m && m[k] !== undefined ? m[k] : fb) as NonNullable<ScopeRule[K]>
+  const enabled = b && b.enabled === false ? false : h && h.enabled === false ? false : m && m.enabled === false ? false : true
   return {
     enabled,
     orderByHoursBefore: pick('orderByHoursBefore', cfg.orderByHoursBefore),
     leadHours: pick('leadHours', cfg.leadHours),
     sameDayCutoffHour: pick('sameDayCutoffHour', cfg.sameDayCutoffHour),
     checkInHour: cfg.checkInHour,
-    source: b && Object.keys(b).length ? 'building rule' : m && Object.keys(m).length ? 'market rule' : 'default',
+    source: b && Object.keys(b).length ? 'building rule' : h && Object.keys(h).length ? 'hub rule (' + (hub ? hub.label : '') + ')' : m && Object.keys(m).length ? 'market rule' : 'default',
   }
 }
 
@@ -265,8 +303,12 @@ export function resolveDelivery(paidAt: Date, checkIn: string, checkOut: string 
 
 export type CatalogItem = {
   id: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null
-  category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; image_url: string | null
+  category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs: string[] | null; image_url: string | null
+  track_stock: boolean
+  /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
+  available?: number | null
 }
+export type StockRow = { item_id: string; scope: string; on_hand: number; reserved: number; low_at: number; updated_at: string; updated_by: string | null }
 
 /**
  * The catalog one stay sees. An item limited to buildings / markets only shows there — and a
@@ -275,24 +317,117 @@ export type CatalogItem = {
  * building without a second pricing table (Jon, 2026-08-24: "customizable by building and by
  * location").
  */
-export async function loadCatalog(opts?: { building?: string | null; market?: string | null; activeOnly?: boolean }): Promise<CatalogItem[]> {
+export async function loadCatalog(opts?: { building?: string | null; market?: string | null; hub?: string | null; activeOnly?: boolean; withStock?: boolean; hideOutOfStock?: boolean }): Promise<CatalogItem[]> {
   const db = supabaseAdmin()
   let q = db.from('guest_order_catalog').select('*').order('sort', { ascending: true }).order('name', { ascending: true })
   if (opts?.activeOnly !== false) q = q.eq('active', true)
   const { data } = await q.limit(500)
-  const rows = (data || []).map((r: any) => ({ ...r, price_usd: Number(r.price_usd) || 0, max_qty: Number(r.max_qty) || 10, sort: Number(r.sort) || 100 })) as CatalogItem[]
-  if (!opts || (!opts.building && !opts.market)) return rows
-  const b = String(opts.building || '').toLowerCase()
-  const m = String(opts.market || '').toLowerCase()
-  const has = (list: string[] | null | undefined, v: string) => !!list && list.length > 0 && list.some(x => String(x).toLowerCase() === v)
-  const scoped = rows.filter(r => {
-    if (r.buildings && r.buildings.length && !has(r.buildings, b)) return false
-    if (r.markets && r.markets.length && !has(r.markets, m)) return false
-    return true
-  })
-  const specificNames: Record<string, boolean> = {}
-  for (const r of scoped) if ((r.buildings && r.buildings.length) || (r.markets && r.markets.length)) specificNames[r.name.trim().toLowerCase()] = true
-  return scoped.filter(r => ((r.buildings && r.buildings.length) || (r.markets && r.markets.length)) || !specificNames[r.name.trim().toLowerCase()])
+  let rows = (data || []).map((r: any) => ({ ...r, price_usd: Number(r.price_usd) || 0, max_qty: Number(r.max_qty) || 10, sort: Number(r.sort) || 100, track_stock: r.track_stock === true, hubs: r.hubs || null, available: null })) as CatalogItem[]
+  const b = String(opts?.building || '').toLowerCase()
+  const m = String(opts?.market || '').toLowerCase()
+  const hb = String(opts?.hub || '').toLowerCase()
+  if (b || m || hb) {
+    const has = (list: string[] | null | undefined, v: string) => !!list && list.length > 0 && list.some(x => String(x).toLowerCase() === v)
+    const scopedItem = (r: CatalogItem) => !!((r.buildings && r.buildings.length) || (r.markets && r.markets.length) || (r.hubs && r.hubs.length))
+    const scoped = rows.filter(r => {
+      if (r.buildings && r.buildings.length && !has(r.buildings, b)) return false
+      if (r.hubs && r.hubs.length && !has(r.hubs, hb)) return false
+      if (r.markets && r.markets.length && !has(r.markets, m)) return false
+      return true
+    })
+    // a scoped item REPLACES the general item of the same name (per-building/hub pricing)
+    const specificNames: Record<string, boolean> = {}
+    for (const r of scoped) if (scopedItem(r)) specificNames[r.name.trim().toLowerCase()] = true
+    rows = scoped.filter(r => scopedItem(r) || !specificNames[r.name.trim().toLowerCase()])
+  }
+  if (opts?.withStock || opts?.hideOutOfStock) {
+    const scope = hb ? 'hub:' + hb : 'global'
+    const tracked = rows.filter(r => r.track_stock)
+    if (tracked.length) {
+      const { data: st } = await db.from('guest_order_stock').select('*').in('item_id', tracked.map(r => r.id)).in('scope', [scope, 'global'])
+      const byItem: Record<string, StockRow | undefined> = {}
+      for (const row of (st || []) as StockRow[]) {
+        // the hub row wins; the global row is the fallback shelf when a hub has no row yet
+        if (!byItem[row.item_id] || row.scope === scope) byItem[row.item_id] = row
+      }
+      for (const r of rows) {
+        if (!r.track_stock) continue
+        const row = byItem[r.id]
+        r.available = row ? Math.max(0, Number(row.on_hand) - Number(row.reserved)) : 0
+      }
+      if (opts.hideOutOfStock) rows = rows.filter(r => !r.track_stock || (r.available || 0) > 0)
+    }
+  }
+  return rows
+}
+
+// ── Inventory ─────────────────────────────────────────────────────────────────────────────────
+
+export async function listStock(): Promise<StockRow[]> {
+  const { data } = await supabaseAdmin().from('guest_order_stock').select('*').limit(5000)
+  return (data || []).map((r: any) => ({ ...r, on_hand: Number(r.on_hand) || 0, reserved: Number(r.reserved) || 0, low_at: Number(r.low_at) || 0 }))
+}
+
+async function stockLog(row: { item_id: string; scope: string; delta_on_hand: number; delta_reserved: number; reason: string; order_id?: string | null; actor?: string | null }) {
+  try { await supabaseAdmin().from('guest_order_stock_log').insert(row) } catch { /* the count is what matters */ }
+}
+
+/** Stock-take: set what is on the shelf (and the low-stock line) for one item in one scope. */
+export async function setStock(itemId: string, scope: string, onHand: number, lowAt: number | null, actor: string): Promise<{ ok: boolean; error?: string }> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('guest_order_stock').select('*').eq('item_id', itemId).eq('scope', scope).limit(1)
+  const cur: any = (data || [])[0]
+  const next = { item_id: itemId, scope, on_hand: Math.max(0, Math.floor(onHand)), reserved: cur ? Number(cur.reserved) || 0 : 0, low_at: lowAt === null || lowAt === undefined ? (cur ? Number(cur.low_at) : 3) : Math.max(0, Math.floor(lowAt)), updated_at: new Date().toISOString(), updated_by: actor }
+  const r = await db.from('guest_order_stock').upsert(next, { onConflict: 'item_id,scope' })
+  if (r.error) return { ok: false, error: r.error.message }
+  await stockLog({ item_id: itemId, scope, delta_on_hand: next.on_hand - (cur ? Number(cur.on_hand) || 0 : 0), delta_reserved: 0, reason: 'stock_take', actor })
+  return { ok: true }
+}
+
+/** Move reserved/on_hand for every tracked line of an order. Idempotency lives in the callers (status transitions). */
+async function moveStock(order: OrderRow, scope: string, kind: 'reserve' | 'release' | 'consume', actor: string): Promise<string> {
+  const db = supabaseAdmin()
+  const skus = order.items.map(l => l.sku)
+  const { data: items } = await db.from('guest_order_catalog').select('id,sku,name,track_stock').in('sku', skus)
+  const tracked = ((items || []) as any[]).filter(i => i.track_stock === true)
+  if (!tracked.length) return ''
+  const notes: string[] = []
+  for (const it of tracked) {
+    const line = order.items.find(l => l.sku === it.sku)
+    if (!line) continue
+    const { data } = await db.from('guest_order_stock').select('*').eq('item_id', it.id).eq('scope', scope).limit(1)
+    let row: any = (data || [])[0]
+    if (!row) {
+      // no hub row yet — fall back to the global shelf so a reservation is never silently lost
+      const g = await db.from('guest_order_stock').select('*').eq('item_id', it.id).eq('scope', 'global').limit(1)
+      row = (g.data || [])[0]
+    }
+    const useScope = row ? row.scope : scope
+    const onHand = row ? Number(row.on_hand) || 0 : 0
+    const reserved = row ? Number(row.reserved) || 0 : 0
+    let dOn = 0, dRes = 0
+    if (kind === 'reserve') dRes = line.qty
+    if (kind === 'release') dRes = -Math.min(reserved, line.qty)
+    if (kind === 'consume') { dRes = -Math.min(reserved, line.qty); dOn = -Math.min(onHand, line.qty) }
+    await db.from('guest_order_stock').upsert({ item_id: it.id, scope: useScope, on_hand: onHand + dOn, reserved: Math.max(0, reserved + dRes), low_at: row ? row.low_at : 3, updated_at: new Date().toISOString(), updated_by: actor }, { onConflict: 'item_id,scope' })
+    await stockLog({ item_id: it.id, scope: useScope, delta_on_hand: dOn, delta_reserved: dRes, reason: kind, order_id: order.id, actor })
+    if (kind === 'reserve') notes.push(line.qty + '× ' + it.name + (onHand - reserved - line.qty < 0 ? ' (SHORT — only ' + Math.max(0, onHand - reserved) + ' on hand)' : ''))
+  }
+  return kind === 'reserve' ? 'reserved ' + notes.join(', ') : ''
+}
+export async function reserveStockFor(order: OrderRow, cfg: GuestOrdersCfg, actor: string): Promise<void> {
+  const scope = stockScopeFor(cfg, order.building)
+  const note = await moveStock(order, scope, 'reserve', actor)
+  await patch(order.id, { stock_scope: scope, stock_note: note || null })
+}
+export async function releaseStockFor(order: OrderRow, actor: string): Promise<void> {
+  if (!order.stock_scope) return
+  await moveStock(order, order.stock_scope, 'release', actor)
+  await patch(order.id, { stock_note: (order.stock_note ? order.stock_note + ' · ' : '') + 'released' })
+}
+export async function consumeStockFor(order: OrderRow, actor: string): Promise<void> {
+  if (!order.stock_scope) return
+  await moveStock(order, order.stock_scope, 'consume', actor)
 }
 
 export type OrderLine = { sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; fee_code: string; unit_label?: string | null }
@@ -306,6 +441,7 @@ export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: 
     if (!item) { problems.push('"' + b.sku + '" is no longer available'); continue }
     if (qty <= 0) continue
     if (qty > item.max_qty) { problems.push(item.name + ': max ' + item.max_qty); continue }
+    if (item.track_stock && item.available !== null && item.available !== undefined && qty > item.available) { problems.push(item.name + ': only ' + item.available + ' left'); continue }
     const line = Math.round(item.price_usd * qty * 100) / 100
     lines.push({ sku: item.sku, name: item.name, qty, unit_price_usd: item.price_usd, line_total_usd: line, fee_code: item.fee_code || 'GUEST_SERVICE', unit_label: item.unit_label })
   }
@@ -469,7 +605,7 @@ export type OrderRow = {
   submitted_at: string; approve_token: string | null; approved_at: string | null; approved_by: string | null
   declined_at: string | null; declined_by: string | null; decline_reason: string | null
   paid_at: string | null; paid_via: string | null; payment_note: string | null; guesty_payment_id: string | null; guesty_invoice_item_ids: string[]; folio_lines_done: number; folio_note: string | null; charge_error: string | null
-  delivery_date: string | null; delivery_note: string | null; requested_delivery: DeliveryMode; requested_date: string | null; pushed_at: string | null; breezeway_task_id: string | null
+  delivery_date: string | null; delivery_note: string | null; requested_delivery: DeliveryMode; requested_date: string | null; stock_scope: string | null; stock_note: string | null; pushed_at: string | null; breezeway_task_id: string | null
   assignee_names: string[]; assignee_ids: number[]; assign_note: string | null; slack_outbox_id: string | null; push_error: string | null
   email_sent_at: string | null; delivered_at: string | null; delivered_by: string | null; cancelled_at: string | null; cancelled_by: string | null
   created_at: string; updated_at: string
@@ -477,7 +613,7 @@ export type OrderRow = {
 
 function normOrder(r: any): OrderRow {
   return { ...r, items: Array.isArray(r.items) ? r.items : [], subtotal_usd: Number(r.subtotal_usd) || 0, tax_usd: Number(r.tax_usd) || 0, total_usd: Number(r.total_usd) || 0,
-    guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
+    guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, stock_scope: r.stock_scope || null, stock_note: r.stock_note || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
 }
 
 export async function getOrder(id: string): Promise<OrderRow | null> {
@@ -501,7 +637,8 @@ async function patch(id: string, fields: Record<string, any>): Promise<void> {
 /** Guest hop: basket → order row → approvers told. */
 export async function submitOrder(link: LinkRow, basket: { sku: string; qty: number }[], guestNote: string, origin: string | null, delivery?: { mode: DeliveryMode; date?: string | null }): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
   const cfg = await getGuestOrdersCfg()
-  const catalog = await loadCatalog({ building: link.building, market: link.market })
+  const hub = hubOf(cfg, link.building)
+  const catalog = await loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true })
   const priced = priceBasket(catalog, basket, cfg)
   if (priced.problems.length) return { ok: false, error: priced.problems.join(' · ') }
   if (!priced.lines.length) return { ok: false, error: 'Pick at least one item.' }
@@ -628,6 +765,7 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
       payment_note: 'Charged ' + (card.brand ? card.brand + ' ' : '') + (card.last4 ? '•••• ' + card.last4 : 'card on file') + ' via Guesty (' + (ch.status || 'ok') + ')',
       delivery_date: dd.date, delivery_note: dd.note, folio_note: null,
     })
+    try { const paid = await getOrder(id); if (paid) await reserveStockFor(paid, cfg, actor) } catch (e) { console.error('guest-orders: reserve failed', e) }
     return { ok: true, order: await getOrder(id) || undefined }
   } catch (e: any) {
     // Never leave a row sitting in 'approved' with no reason.
@@ -683,6 +821,7 @@ export async function markPaid(id: string, actor: string, note: string, recordIn
     delivery_date: dd.date, delivery_note: dd.note,
     folio_note: folioLeft && !recordInGuesty ? folioLeft + ' folio line' + (folioLeft === 1 ? '' : 's') + ' on the Guesty reservation are still unpaid there — record the payment or remove them so Guesty does not collect twice' : null,
   })
+  try { const paid = await getOrder(id); if (paid) await reserveStockFor(paid, cfg, actor) } catch (e) { console.error('guest-orders: reserve failed', e) }
   return { ok: true, order: await getOrder(id) || undefined }
 }
 
@@ -703,13 +842,16 @@ export async function cancelOrder(id: string, actor: string): Promise<{ ok: bool
   await patch(id, { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: actor })
   if (!order.paid_at) await cleanFolio(order)
   else await patch(id, { folio_note: 'Paid ' + money(order.total_usd) + ' — refund it in Guesty if the guest is owed the money' })
+  if (order.paid_at && ['paid', 'pushed'].indexOf(order.status) >= 0) { try { await releaseStockFor(order, actor) } catch { /* stock-take fixes it */ } }
   return { ok: true }
 }
 export async function markDelivered(id: string, actor: string): Promise<{ ok: boolean; error?: string }> {
   const order = await getOrder(id)
   if (!order) return { ok: false, error: 'order not found' }
   if (['paid', 'pushed'].indexOf(order.status) < 0) return { ok: false, error: 'only a paid order can be delivered (it is ' + order.status.replace('_', ' ') + ')' }
-  await patch(id, { status: 'delivered', delivered_at: new Date().toISOString(), delivered_by: actor })
+  const claim = await supabaseAdmin().from('guest_orders').update({ status: 'delivered', delivered_at: new Date().toISOString(), delivered_by: actor, updated_at: new Date().toISOString() }).eq('id', id).in('status', ['paid', 'pushed']).select('id')
+  if (claim.error || !claim.data || !claim.data.length) return { ok: false, error: 'already handled' }
+  try { await consumeStockFor(order, actor) } catch { /* stock-take fixes it */ }
   return { ok: true }
 }
 export async function setDeliveryDate(id: string, date: string, actor: string): Promise<{ ok: boolean; error?: string }> {
