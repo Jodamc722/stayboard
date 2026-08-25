@@ -32,7 +32,7 @@ function splitTask(raw: string): { tag: '' | 'GUEST' | 'FIELD'; text: string } {
   return { tag: '', text: s }
 }
 
-type Tab = 'crew' | 'cleans' | 'work' | 'issues'
+type Tab = 'today' | 'crew' | 'cleans' | 'arrivals' | 'vacant' | 'work' | 'issues'
 
 export default function FieldBoardPage({ params }: { params: { code: string } }) {
   const code = params.code
@@ -43,6 +43,18 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('crew')
   const [showDone, setShowDone] = useState<Record<string, boolean>>({})
+  // ADD A JOB (Jon, 2026-08-25). The person who finds the problem files it, from the unit, on
+  // their phone — so the sheet asks four things and nothing else.
+  const [addOpen, setAddOpen] = useState(false)
+  const [addUnit, setAddUnit] = useState('')
+  const [addTitle, setAddTitle] = useState('')
+  const [addDept, setAddDept] = useState('maintenance')
+  const [addPrio, setAddPrio] = useState('normal')
+  const [addWho, setAddWho] = useState('')
+  const [addNote, setAddNote] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+  const [addMsg, setAddMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  useEffect(() => { try { setAddWho(window.localStorage.getItem('board:who') || '') } catch { /* private */ } }, [])
 
   const load = useCallback(async (pw?: string) => {
     setLoading(true)
@@ -82,9 +94,28 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   // Default to the tab that has something to say.
   useEffect(() => {
     if (!d) return
-    const first: Tab | null = sec.crew ? 'crew' : sec.cleans ? 'cleans' : sec.work ? 'work' : sec.issues ? 'issues' : null
-    if (first) setTab(t => (sec[t] ? t : first))
+    const first: Tab | null = sec.today ? 'today' : sec.crew ? 'crew' : sec.cleans ? 'cleans'
+      : sec.verify ? 'arrivals' : sec.vacant ? 'vacant' : sec.work ? 'work' : sec.issues ? 'issues' : null
+    if (first) setTab(t => (sec[t === 'arrivals' ? 'verify' : t] ? t : first))
   }, [d, sec])
+
+  const submitAdd = async () => {
+    setAddBusy(true); setAddMsg(null)
+    try {
+      const pw = (() => { try { return window.localStorage.getItem('board:' + code) || '' } catch { return '' } })()
+      const r = await fetch(`/api/public/field-board/${code}/add`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pass: pw, listingId: addUnit, title: addTitle, department: addDept, priority: addPrio, who: addWho, description: addNote }),
+      })
+      const j = await r.json()
+      if (!j.ok) { setAddMsg({ ok: false, text: j.error || 'Could not add it.' }); setAddBusy(false); return }
+      try { window.localStorage.setItem('board:who', addWho) } catch { /* private */ }
+      setAddMsg({ ok: true, text: 'Added to ' + (j.unit || 'the unit') + ' — it is on the board.' })
+      setAddTitle(''); setAddNote('')
+      load()
+    } catch { setAddMsg({ ok: false, text: 'Could not reach the office — try again.' }) }
+    setAddBusy(false)
+  }
 
   if (locked) {
     return (
@@ -108,13 +139,18 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   }
 
   const dateNice = d?.date ? new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ''
+  const prios: any[] = d?.priorities || []
+  const vacs: any[] = d?.vacants || []
   const ALL_TABS: { key: Tab; label: string; n: number }[] = [
+    { key: 'today', label: 'Today', n: prios.length },
     { key: 'crew', label: 'Crew', n: crew?.onShift ?? 0 },
     { key: 'cleans', label: 'Cleans', n: deps.length },
+    { key: 'arrivals', label: 'Arrivals', n: arrs.length },
+    { key: 'vacant', label: 'Vacant', n: vacs.length },
     { key: 'work', label: 'Work', n: work.filter((w: any) => w.status !== 'done').length },
     { key: 'issues', label: 'Issues', n: issues.length },
   ]
-  const TABS = ALL_TABS.filter(t => sec[t.key])
+  const TABS = ALL_TABS.filter(t => sec[t.key === 'arrivals' ? 'verify' : t.key])
 
   return (
     <div className="fb">
@@ -161,6 +197,67 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
                 {t.label}<span className="fb-tabn">{t.n}</span>
               </button>
             ))}
+          </div>
+        ) : null}
+
+        {/* ── TODAY: the brief's Act-now list, for these units ──────────────── */}
+        {tab === 'today' && sec.today ? (
+          <>
+            {prios.map((p: any, i: number) => (
+              <div key={i} className={'fb-card fb-pad fb-prio ' + p.tone}>
+                <div className="fb-unittop"><b>{p.unit}</b><span className={'fb-pill ' + (p.tone === 'red' ? 'hot' : 'warn')}>{p.tone === 'red' ? 'do first' : 'watch'}</span></div>
+                <p className="fb-issue">{p.what}</p>
+                {p.how ? <p className="fb-do">→ {p.how}</p> : null}
+              </div>
+            ))}
+            {!prios.length && (
+              <div className="fb-card fb-pad">
+                <p className="fb-good">Nothing on fire.</p>
+                <p className="fb-note" style={{ padding: 0 }}>Every clean has a name on it and nothing is waiting on a decision. Work the runs in order.</p>
+              </div>
+            )}
+          </>
+        ) : null}
+
+        {/* ── ARRIVALS ─────────────────────────────────────────────────────── */}
+        {tab === 'arrivals' && sec.verify ? (
+          <div className="fb-card">
+            <div className="fb-cardhead"><b>Arriving today</b><span className="fb-cnt">{arrs.length}</span></div>
+            {arrs.map((a: any, i: number) => (
+              <div key={i} className="fb-unit">
+                <div className="fb-unittop">
+                  <b>{a.unit}</b>
+                  <span className="fb-pill off">{a.checkInTime || 'today'}</span>
+                </div>
+                <div className="fb-unitsub">
+                  <span>{String(a.guest || 'Guest').split(' ')[0]}{a.nights ? ' · ' + a.nights + ' nights' : ''}</span>
+                  {sameDayIds.has(String(a.listingId)) ? <span className="fb-hotword">after a clean today</span> : null}
+                </div>
+              </div>
+            ))}
+            {!arrs.length && <p className="fb-note">Nobody arriving on these units today.</p>}
+          </div>
+        ) : null}
+
+        {/* ── VACANT — the window for work nobody can do with a guest inside ── */}
+        {tab === 'vacant' && sec.vacant ? (
+          <div className="fb-card">
+            <div className="fb-cardhead"><b>Empty tonight</b><span className="fb-cnt">{vacs.length}</span></div>
+            {vacs.map((v: any, i: number) => (
+              <div key={i} className="fb-unit">
+                <div className="fb-unittop">
+                  <b>{v.unit}</b>
+                  <span className={'fb-pill ' + (v.arrivingSoon ? 'warn' : 'off')}>
+                    {v.nextArrival ? 'guest in ' + (v.daysUntilArrival ?? '?') + 'd' : 'no booking'}
+                  </span>
+                </div>
+                <div className="fb-unitsub">
+                  {v.idleDays != null ? <span>empty {v.idleDays} days</span> : null}
+                  {v.lastClean?.at ? <span>last clean {String(v.lastClean.at).slice(5)}</span> : null}
+                </div>
+              </div>
+            ))}
+            {!vacs.length && <p className="fb-note">Every unit on this board is occupied tonight.</p>}
           </div>
         ) : null}
 
@@ -277,6 +374,55 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
               </div>
             ))}
             {!issues.length && <div className="fb-card fb-pad fb-note">Nothing open.</div>}
+          </>
+        ) : null}
+
+        {sec.add ? (
+          <>
+            <button className="fb-add" onClick={() => { setAddOpen(true); setAddMsg(null) }}>+ Add a job</button>
+            {addOpen ? (
+              <div className="fb-sheet" onClick={e => { if (e.target === e.currentTarget) setAddOpen(false) }}>
+                <div className="fb-sheetbox">
+                  <div className="fb-sheettop"><b>Add a job</b><button className="fb-x" onClick={() => setAddOpen(false)}>✕</button></div>
+                  <label className="fb-lab">Unit</label>
+                  <select className="fb-input" value={addUnit} onChange={e => setAddUnit(e.target.value)}>
+                    <option value="">Pick the unit…</option>
+                    {(d?.units || []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                  <label className="fb-lab">What needs doing</label>
+                  <input className="fb-input" value={addTitle} onChange={e => setAddTitle(e.target.value)} placeholder="e.g. Shower head leaking" />
+                  <div className="fb-two">
+                    <span>
+                      <label className="fb-lab">Team</label>
+                      <select className="fb-input" value={addDept} onChange={e => setAddDept(e.target.value)}>
+                        <option value="maintenance">Maintenance</option>
+                        <option value="housekeeping">Housekeeping</option>
+                        <option value="inspection">Inspection</option>
+                        <option value="safety">Safety</option>
+                      </select>
+                    </span>
+                    <span>
+                      <label className="fb-lab">Priority</label>
+                      <select className="fb-input" value={addPrio} onChange={e => setAddPrio(e.target.value)}>
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                        <option value="low">Low</option>
+                      </select>
+                    </span>
+                  </div>
+                  <label className="fb-lab">Anything else (optional)</label>
+                  <textarea className="fb-input" rows={2} value={addNote} onChange={e => setAddNote(e.target.value)} placeholder="What you saw, where it is" />
+                  <label className="fb-lab">Your name</label>
+                  <input className="fb-input" value={addWho} onChange={e => setAddWho(e.target.value)} placeholder="So the office knows who found it" />
+                  {addMsg ? <p className={addMsg.ok ? 'fb-good' : 'fb-err'}>{addMsg.text}</p> : null}
+                  <button className="fb-btn" disabled={addBusy || !addUnit || !addTitle} onClick={submitAdd}>
+                    {addBusy ? 'Adding…' : 'Add it to Breezeway'}
+                  </button>
+                  <p className="fb-note" style={{ padding: '8px 0 0' }}>It lands on today's board for this unit, and the office sees it straight away.</p>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
 
@@ -399,6 +545,19 @@ function Style() {
 .fb-do{margin:4px 0 0;font-size:12.5px;color:#b45309}
 .fb-note{font-size:12.5px;color:#9ca3af;padding:8px 16px}
 .fb-foot{font-size:11px;color:#9ca3af;text-align:center;margin-top:14px}
+.fb-prio{border-left:4px solid #e5e7eb}
+.fb-prio.red{border-left-color:#dc2626}
+.fb-prio.amber{border-left-color:#d97706}
+.fb-good{font-size:14px;font-weight:700;color:#047857;margin:0 0 4px}
+.fb-hotword{color:#b91c1c;font-weight:600}
+.fb-add{position:sticky;bottom:12px;width:100%;margin-top:6px;background:#4338ca;color:#fff;border:0;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(67,56,202,.28)}
+.fb-sheet{position:fixed;inset:0;background:rgba(11,18,32,.55);display:flex;align-items:flex-end;justify-content:center;z-index:20;padding:12px}
+.fb-sheetbox{background:#fff;border-radius:16px;padding:16px;width:100%;max-width:520px;max-height:88dvh;overflow:auto}
+.fb-sheettop{display:flex;justify-content:space-between;align-items:center;font-size:16px;margin-bottom:8px}
+.fb-x{border:0;background:#f3f4f6;border-radius:9px;width:30px;height:30px;font-size:14px;cursor:pointer;color:#6b7280}
+.fb-lab{display:block;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+.fb-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fb-btn:disabled{opacity:.5}
 .fb-input{width:100%;font-size:16px;padding:11px 12px;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:10px}
 .fb-btn{width:100%;background:#0b1220;color:#fff;border:0;border-radius:11px;padding:13px;font-size:14.5px;font-weight:700;cursor:pointer}
 .fb-err{color:#b91c1c;font-size:13px;margin:10px 0 0}
