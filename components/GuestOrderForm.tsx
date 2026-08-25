@@ -13,7 +13,7 @@ export type PastOrder = { id: string; status: string; items: { name: string; qty
 export type FormData = {
   stay: { guestFirst: string; unit: string; building: string | null; checkIn: string; checkOut: string | null; checkInLabel: string; checkOutLabel: string; inHouse: boolean; departed: boolean }
   copy: { title: string; intro: string; taxPct: number; brand?: string; accent?: string; footer?: string }
-  deadline: { orderBy: string; orderByLabel: string; arrivalDayStillPossible: boolean; nextDelivery: string; hoursBefore: number; leadHours: number; offered?: boolean }
+  deadline: { orderBy: string; orderByLabel: string; arrivalDayStillPossible: boolean; nextDelivery: string; hoursBefore: number; leadHours: number; offered?: boolean; taxPct?: number; taxSource?: string; source?: string }
   catalog: FormItem[]
   orders: PastOrder[]
 }

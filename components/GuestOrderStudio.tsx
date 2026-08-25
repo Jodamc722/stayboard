@@ -70,6 +70,26 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
   }, [])
   useEffect(() => { load() }, [load])
 
+  // WHAT THE SERVER SAYS ABOUT *THIS* BUILDING — availability, timing, and the tax rate for its
+  // area — refetched whenever the building or the in-house toggle changes. It replaces `srv` ONLY:
+  // cfg/items/stock stay exactly as the person left them, so unsaved edits survive a building
+  // switch. (Before this, only the reload button refetched, so switching building re-scoped the
+  // ITEMS but left the panel showing the FIRST building's answers — a Broward property could quote
+  // a Miami rate, and a building that was switched on could still read "not available".)
+  const [scoping, setScoping] = useState(false)
+  useEffect(() => {
+    if (!building) return
+    let stale = false
+    setScoping(true)
+    const qs = new URLSearchParams({ building }); if (inHouse) qs.set('inHouse', '1')
+    fetch('/api/guest-orders/preview?' + qs.toString(), { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!stale && j?.ok) setSrv(j) })
+      .catch(() => { /* keep the last answer rather than blanking the panel */ })
+      .finally(() => { if (!stale) setScoping(false) })
+    return () => { stale = true }
+  }, [building, inHouse])
+
   const market = useMemo(() => srv ? (srv.buildings.find(b => b.label === building)?.market || srv.market) : '', [srv, building])
   const hub = useMemo(() => cfg ? cfg.hubs.find(h => h.buildings.some(x => x.toLowerCase() === building.toLowerCase())) || null : null, [cfg, building])
   const preview: FormData | null = useMemo(() => {
@@ -77,7 +97,8 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
     return {
       ...srv.data,
       stay: { ...srv.data.stay, unit: building + ' 406', building, inHouse },
-      copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: cfg.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote },
+      // the rate for THIS building's area, not the global default
+      copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: srv.data.deadline?.taxPct ?? cfg.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote },
       catalog: previewCatalog(items, stock, building, market, hub ? hub.id : null),
     }
   }, [srv, cfg, items, stock, building, market, hub, inHouse])
@@ -156,7 +177,8 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
           <select value={building} onChange={e => { setBuilding(e.target.value) }} className={box}>
             {srv.buildings.map(b => <option key={b.label} value={b.label}>{b.label} · {b.market}</option>)}
           </select>
-          <div className="text-[11.5px] text-muted">{hub ? 'Hub: ' + hub.label : 'No hub — uses the global shelf'} · timing: {preview.deadline.hoursBefore}h before / {preview.deadline.leadHours}h lead</div>
+          <div className="text-[11.5px] text-muted">{hub ? 'Hub: ' + hub.label : 'No hub — uses the global shelf'} · timing: {preview.deadline.hoursBefore}h before / {preview.deadline.leadHours}h lead · tax {preview.deadline.taxPct ?? 0}%{preview.deadline.taxSource ? ' (' + preview.deadline.taxSource + ')' : ''}{scoping ? ' · checking…' : ''}</div>
+          <div className={'mt-1 text-[11.5px] font-semibold ' + (preview.deadline.offered === false ? 'text-amber-700' : 'text-emerald-700')}>{preview.deadline.offered === false ? 'Not offered here — switch this building on in Users → Guest orders' : 'Offered here' + (preview.deadline.source ? ' · ' + preview.deadline.source : '')}</div>
           <label className="flex items-center gap-2 text-[12.5px]"><input type="checkbox" checked={inHouse} onChange={e => setInHouse(e.target.checked)} /> Guest is already in-house</label>
           <div className="flex gap-2">
             <button onClick={() => setReview(r => !r)} className="flex-1 inline-flex items-center justify-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white hover:border-brand-300"><Eye size={13} /> {review ? 'Close sheet' : 'Review the sheet'}</button>
