@@ -65,7 +65,7 @@ async function crewNow(date: string, market: string) {
     .map(c => str((c as any).name)))
   const clockedIn = (name: string) => Array.from(openNow).some(n => nameMatches(n, name))
   const namesOnShift = (shifts as any[]).filter(s => !s.open && s.startAt)
-  const people = namesOnShift.map(s => {
+  const allPeople = namesOnShift.map(s => {
     const name = str(s.name)
     const jobs = Object.keys(jobsFor).filter(k => nameMatches(k, name)).flatMap(k => jobsFor[k])
     const seen = new Set<string>()
@@ -78,8 +78,19 @@ async function crewNow(date: string, market: string) {
       jobs: uniq,
     }
   }).sort((a, b) => (b.clockedIn ? 1 : 0) - (a.clockedIn ? 1 : 0) || a.name.localeCompare(b.name))
+  // HOMEBASE IS ONE LOCATION — a shift carries no market, so an unfiltered list puts Miami's
+  // housekeepers on Broward's board reading "0 left", which is worse than not listing them.
+  // On a market board a person belongs when they hold work in that market, or when Homebase's own
+  // role text says so ("Housekeeper broward Atlantic") — that second rule is what keeps somebody
+  // on shift here with NOTHING assigned visible, which is the whole point of the idle check.
+  const belongs = (p: any) => !market || market === 'all'
+    || p.jobs.length > 0
+    || new RegExp(market, 'i').test(p.role || '')
+  const people = allPeople.filter(belongs)
+  const elsewhere = allPeople.length - people.length
   return {
     people,
+    elsewhere,
     onShift: people.length,
     clockedIn: people.filter(p => p.clockedIn).length,
     openShifts: (shifts as any[]).filter(s => s.open).length,
