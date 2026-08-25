@@ -82,6 +82,12 @@ export async function POST(req: NextRequest) {
     const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
     const homeId = Number(((props || [])[0] || {}).home_id)
     const payload: Record<string, any> = { name: title, type_department: department, type_priority: priority, scheduled_date: date, description }
+    // TEMPLATE — when the sheet picked one of OUR Breezeway templates, the created task carries
+    // that template's checklist into the field app (Jon, 2026-08-25). Breezeway owns what the
+    // checklist contains; we only pass the id, so editing a template there changes what the crew
+    // sees here with no deploy.
+    const templateId = Number(body?.templateId)
+    if (Number.isFinite(templateId) && templateId > 0) payload.template_id = templateId
     if (Number.isFinite(homeId)) payload.home_id = homeId
     else payload.reference_property_id = listingId
     const r = await createBreezewayTask(payload)
