@@ -27,9 +27,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const db = supabaseAdmin()
-    const { data: item } = await db.from(ITEMS).select('id, owner_email').eq('id', id).is('deleted_at', null).maybeSingle()
+    const { data: item } = await db.from(ITEMS).select('id, owner_email, collection_id').eq('id', id).is('deleted_at', null).maybeSingle()
     if (!item) return NextResponse.json({ ok: false, error: 'That item no longer exists.' }, { status: 404 })
-    const level = await accessFor(item as any, me, isSuperadmin(access.email))
+    const level = await accessFor(item as any, me, isSuperadmin(access.email), { accessRole: access.accessRole })
     // The history of who opened an item is itself sensitive — only managers see it.
     if (level !== 'manage') return NextResponse.json({ ok: false, error: 'You cannot manage sharing on this item.' }, { status: 403 })
 
@@ -58,9 +58,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const db = supabaseAdmin()
-    const { data: item } = await db.from(ITEMS).select('id, owner_email, title').eq('id', id).is('deleted_at', null).maybeSingle()
+    const { data: item } = await db.from(ITEMS).select('id, owner_email, collection_id, title').eq('id', id).is('deleted_at', null).maybeSingle()
     if (!item) return NextResponse.json({ ok: false, error: 'That item no longer exists.' }, { status: 404 })
-    const mine = await accessFor(item as any, me, isSuperadmin(access.email))
+    const mine = await accessFor(item as any, me, isSuperadmin(access.email), { accessRole: access.accessRole })
     if (mine !== 'manage') {
       await logAccess({ itemId: id, email: me, action: 'denied', detail: 'grant', ip: ipOf(req) })
       return NextResponse.json({ ok: false, error: 'You cannot share this item.' }, { status: 403 })
@@ -94,9 +94,9 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const db = supabaseAdmin()
-    const { data: item } = await db.from(ITEMS).select('id, owner_email').eq('id', id).is('deleted_at', null).maybeSingle()
+    const { data: item } = await db.from(ITEMS).select('id, owner_email, collection_id').eq('id', id).is('deleted_at', null).maybeSingle()
     if (!item) return NextResponse.json({ ok: false, error: 'That item no longer exists.' }, { status: 404 })
-    const mine = await accessFor(item as any, me, isSuperadmin(access.email))
+    const mine = await accessFor(item as any, me, isSuperadmin(access.email), { accessRole: access.accessRole })
     if (mine !== 'manage') return NextResponse.json({ ok: false, error: 'You cannot change sharing on this item.' }, { status: 403 })
 
     const { error } = await db.from(GRANTS).delete().eq('item_id', id).ilike('email', who)
