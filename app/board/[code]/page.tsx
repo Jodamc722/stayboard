@@ -28,6 +28,9 @@ const ORDER_WORD: Record<string, string> = {
   submitted: 'waiting on approval', approved: 'waiting on payment', awaiting_payment: 'waiting on payment',
   paid: 'to deliver', pushed: 'to deliver', delivered: 'delivered',
 }
+const DEPT_WORD: Record<string, string> = {
+  maintenance: 'Maintenance', housekeeping: 'Housekeeping', inspection: 'Inspection', safety: 'Safety',
+}
 const ORDER_TONE: Record<string, string> = {
   submitted: 'off', approved: 'off', awaiting_payment: 'warn', paid: 'warn', pushed: 'warn', delivered: 'ok',
 }
@@ -65,6 +68,9 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   const [addPrio, setAddPrio] = useState('normal')
   const [addWho, setAddWho] = useState('')
   const [addNote, setAddNote] = useState('')
+  const [addWhoTo, setAddWhoTo] = useState('')          // Breezeway person id, '' = leave unassigned
+  const [addDate, setAddDate] = useState('')            // '' = today
+  const [addDone, setAddDone] = useState<any>(null)     // the created job, so it can be clicked into
   const [addBusy, setAddBusy] = useState(false)
   const [addMsg, setAddMsg] = useState<{ ok: boolean; text: string } | null>(null)
   useEffect(() => { try { setAddWho(window.localStorage.getItem('board:who') || '') } catch { /* private */ } }, [])
@@ -145,7 +151,13 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
     if (!unitIndex[id] && name) unitIndex[id] = { id, name: String(name), jobs: [], clean: null, arrival: null, vacant: null }
     setUnitOpen(id)
   }
-  const addHere = (lid: string) => { setAddUnit(lid); setUnitOpen(''); setAddOpen(true); setAddMsg(null) }
+  // The picker, narrowed to the team the form is set to — switching Team re-narrows it with no
+  // round trip. Someone already on shift is offered first: they can pick the job up now.
+  const roster: any[] = (d?.people || []).filter((p: any) =>
+    !p.departments?.length || p.departments.includes(addDept))
+  const crewFirst = roster.filter((p: any) => p.here)
+  const crewRest = roster.filter((p: any) => !p.here)
+  const addHere = (lid: string) => { setAddUnit(lid); setUnitOpen(''); setAddOpen(true); setAddMsg(null); setAddDone(null) }
 
   const submitAdd = async () => {
     setAddBusy(true); setAddMsg(null)
@@ -153,12 +165,20 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
       const pw = (() => { try { return window.localStorage.getItem('board:' + code) || '' } catch { return '' } })()
       const r = await fetch(`/api/public/field-board/${code}/add`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pass: pw, listingId: addUnit, title: addTitle, department: addDept, priority: addPrio, who: addWho, description: addNote }),
+        body: JSON.stringify({
+          pass: pw, listingId: addUnit, title: addTitle, department: addDept, priority: addPrio,
+          who: addWho, description: addNote,
+          assignees: addWhoTo ? [Number(addWhoTo)] : [],
+          date: addDate || undefined,
+        }),
       })
       const j = await r.json()
       if (!j.ok) { setAddMsg({ ok: false, text: j.error || 'Could not add it.' }); setAddBusy(false); return }
       try { window.localStorage.setItem('board:who', addWho) } catch { /* private */ }
-      setAddMsg({ ok: true, text: 'Added to ' + (j.unit || 'the unit') + ' — it is on the board.' })
+      // The job stays on screen after it is filed, so the person who found it can open it,
+      // check the date and the name landed, and only then move on.
+      setAddDone({ ...j, title: addTitle })
+      setAddMsg(j.warning ? { ok: false, text: j.warning } : null)
       setAddTitle(''); setAddNote('')
       load()
     } catch { setAddMsg({ ok: false, text: 'Could not reach the office — try again.' }) }
@@ -589,7 +609,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
 
         {sec.add ? (
           <>
-            <button className="fb-add" onClick={() => { setAddUnit(''); setAddOpen(true); setAddMsg(null) }}>+ Add a job</button>
+            <button className="fb-add" onClick={() => { setAddUnit(''); setAddOpen(true); setAddMsg(null); setAddDone(null) }}>+ Add a job</button>
             {addOpen ? (
               <div className="fb-sheet" onClick={e => { if (e.target === e.currentTarget) setAddOpen(false) }}>
                 <div className="fb-sheetbox">
@@ -628,15 +648,59 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
                       </select>
                     </span>
                   </div>
+                  {/* WHO AND WHEN (Jon, 2026-08-25). Both optional: an unassigned job filed today
+                      is still better than a job nobody filed, so neither blocks the button. */}
+                  <div className="fb-two">
+                    <span>
+                      <label className="fb-lab">Assign to</label>
+                      <select className="fb-input" value={addWhoTo} onChange={e => setAddWhoTo(e.target.value)}>
+                        <option value="">Leave for the office</option>
+                        {crewFirst.length ? <optgroup label="On shift today">
+                          {crewFirst.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </optgroup> : null}
+                        {crewRest.length ? <optgroup label={DEPT_WORD[addDept] || 'Everyone else'}>
+                          {crewRest.map((p: any) => <option key={p.id} value={p.id}>{p.name}{p.region ? ' · ' + p.region : ''}</option>)}
+                        </optgroup> : null}
+                      </select>
+                    </span>
+                    <span>
+                      <label className="fb-lab">Do it on</label>
+                      <input className="fb-input" type="date" value={addDate || d?.date || ''}
+                        min={d?.date || undefined} onChange={e => setAddDate(e.target.value)} />
+                    </span>
+                  </div>
                   <label className="fb-lab">Anything else (optional)</label>
                   <textarea className="fb-input" rows={2} value={addNote} onChange={e => setAddNote(e.target.value)} placeholder="What you saw, where it is" />
                   <label className="fb-lab">Your name</label>
                   <input className="fb-input" value={addWho} onChange={e => setAddWho(e.target.value)} placeholder="So the office knows who found it" />
                   {addMsg ? <p className={addMsg.ok ? 'fb-good' : 'fb-err'}>{addMsg.text}</p> : null}
+
+                  {/* FILED — and still on screen, so it can be opened and checked. */}
+                  {addDone ? (
+                    <div className="fb-filed">
+                      <div className="fb-unittop">
+                        <b>{addDone.unit}</b>
+                        <span className="fb-pill ok">filed</span>
+                        {addDone.assigned?.length
+                          ? <span className="fb-pill blue">{addDone.assigned.join(', ')}</span>
+                          : <span className="fb-pill off">unassigned</span>}
+                        <span className="fb-pill off">{addDone.date === d?.date ? 'today' : addDone.date}</span>
+                      </div>
+                      <p className="fb-order">{addDone.title}</p>
+                      <div className="fb-filedrow">
+                        <button className="fb-mini" onClick={() => { setAddOpen(false); openUnit(addDone.listingId, addDone.unit) }}>Open the unit</button>
+                        {addDone.reportUrl
+                          ? <a className="fb-mini" href={addDone.reportUrl} target="_blank" rel="noreferrer">Open in Breezeway</a>
+                          : null}
+                        <button className="fb-mini" onClick={() => setAddDone(null)}>Add another</button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <button className="fb-btn" disabled={addBusy || !addUnit || !addTitle} onClick={submitAdd}>
-                    {addBusy ? 'Adding…' : 'Add it to Breezeway'}
+                    {addBusy ? 'Adding…' : addDone ? 'Add another job' : 'Add it to Breezeway'}
                   </button>
-                  <p className="fb-note" style={{ padding: '8px 0 0' }}>It lands on today's board for this unit, and the office sees it straight away.</p>
+                  <p className="fb-note" style={{ padding: '8px 0 0' }}>Leave the date on today unless it has to wait. The office sees it straight away either way.</p>
                 </div>
               </div>
             ) : null}
@@ -786,6 +850,10 @@ function Style() {
 /* What is actually being asked for — the basket, or the request in one line. Reads first. */
 .fb-order{margin:5px 0 0;font-size:14px;font-weight:600;color:#0b1220;line-height:1.45}
 .fb-dim{opacity:.55}
+/* The job you just filed, still on screen and openable. */
+.fb-filed{margin-top:12px;padding:12px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:12px}
+.fb-filedrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.fb-filedrow a.fb-mini{text-decoration:none;display:inline-block}
 .fb-pill.blue{background:#e0e7ff;color:#4338ca}
 .fb-chip{font-size:11px;font-weight:600;background:#f3f4f6;color:#6b7280;border-radius:7px;padding:2px 8px}
 .fb-chip.hot{background:#fee2e2;color:#b91c1c}
