@@ -12,7 +12,9 @@ type Cfg = {
   marketRules: Record<string, Scope>; buildingRules: Record<string, Scope>
   hubs: Hub[]; hubRules: Record<string, Scope>
 }
-type Hub = { id: string; label: string; buildings: string[] }
+type Hub = { id: string; label: string; buildings: string[]; listings: string[] }
+type Listing = { id: string; name: string; building: string; market: string }
+type HubStock = { itemId: string; sku: string; name: string; onHand: number; reserved: number; lowAt: number; available: number; state: string }
 type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs?: string[] | null; image_url: string | null; track_stock?: boolean }
 type Bldg = { label: string; market: string; vendor: boolean }
 
@@ -30,15 +32,53 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
   const [buildings, setBuildings] = useState<Bldg[]>([])
   const [markets, setMarkets] = useState<string[]>(['Miami', 'Broward', 'North'])
   const [scopeOpen, setScopeOpen] = useState<number | null>(null)
+  const [listings, setListings] = useState<Listing[]>([])
+  const [unitOpen, setUnitOpen] = useState<number | null>(null)   // hub index whose unit picker is open
+  const [unitQ, setUnitQ] = useState('')
+  const [stock, setStock] = useState<Record<string, HubStock[]>>({})   // scope -> rows
+  const [stockEdits, setStockEdits] = useState<Record<string, { onHand?: number; lowAt?: number }>>({})
 
   const load = useCallback(async () => {
     try {
       const r = await fetch('/api/settings/guest-orders', { cache: 'no-store' })
       const j = await r.json()
-      if (r.ok && j.config) { setCfg(j.config); setCatalog(j.catalog || []); setSaved(JSON.stringify({ c: j.config, k: j.catalog })); setBuildings(j.buildings || []); if (Array.isArray(j.markets) && j.markets.length) setMarkets(j.markets) }
+      if (r.ok && j.config) { setCfg(j.config); setCatalog(j.catalog || []); setSaved(JSON.stringify({ c: j.config, k: j.catalog })); setBuildings(j.buildings || []); setListings(j.listings || []); if (Array.isArray(j.markets) && j.markets.length) setMarkets(j.markets) }
     } catch { /* stays empty */ }
   }, [])
   useEffect(() => { load() }, [load])
+
+  // THE COUNTS LIVE INSIDE THE HUB (Jon, 2026-08-25). One read of the stock endpoint, re-shaped
+  // scope-first so each hub card can show and edit its own shelf without a second request.
+  const loadStock = useCallback(async () => {
+    try {
+      const j = await fetch('/api/guest-orders/stock', { cache: 'no-store' }).then(r => r.json())
+      if (!j?.ok) return
+      const by: Record<string, HubStock[]> = {}
+      for (const sc of (j.scopes || [])) {
+        by[sc.id] = (j.items || []).map((it: any) => {
+          const p = (it.per || []).find((x: any) => x.scope === sc.id) || { onHand: 0, reserved: 0, lowAt: 3, available: 0, state: 'unset' }
+          return { itemId: it.id, sku: it.sku, name: it.name, onHand: p.onHand, reserved: p.reserved, lowAt: p.lowAt, available: p.available, state: p.state }
+        })
+      }
+      setStock(by); setStockEdits({})
+    } catch { /* the hub card simply shows no shelf */ }
+  }, [])
+  useEffect(() => { loadStock() }, [loadStock])
+
+  async function saveHubStock(scope: string) {
+    const rows = Object.entries(stockEdits).filter(([k]) => k.startsWith(scope + '|')).map(([k, v]) => {
+      const itemId = k.slice(scope.length + 1)
+      const cur = (stock[scope] || []).find(r => r.itemId === itemId)
+      return { itemId, scope, onHand: v.onHand ?? cur?.onHand ?? 0, lowAt: v.lowAt ?? cur?.lowAt ?? 3 }
+    })
+    if (!rows.length) return
+    setBusy('stock:' + scope)
+    try {
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }) }).then(r => r.json())
+      setMsg(j?.ok ? { tone: 'ok', text: 'Counted ' + rows.length + ' item' + (rows.length === 1 ? '' : 's') } : { tone: 'bad', text: j?.error || 'Could not save the count' })
+      await loadStock()
+    } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
+  }
 
   const set = (patch: Partial<Cfg>) => setCfg(c => c ? { ...c, ...patch } : c)
   const setScope = (kind: 'marketRules' | 'buildingRules' | 'hubRules', key: string, patch: Scope) => setCfg(c => {
@@ -197,9 +237,9 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
       <div>
         <div className="flex items-center justify-between mb-1">
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Location hubs · {cfg.hubs.length}</div>
-          {!ro ? <button onClick={() => set({ hubs: [...cfg.hubs, { id: 'hub-' + Date.now().toString(36), label: 'New hub', buildings: [] }] })} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add hub</button> : null}
+          {!ro ? <button onClick={() => set({ hubs: [...cfg.hubs, { id: 'hub-' + Date.now().toString(36), label: 'New hub', buildings: [], listings: [] }] })} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add hub</button> : null}
         </div>
-        <p className="text-[12px] text-muted mb-2">A hub is where supplies physically sit — a group of buildings that share a shelf. Stock is counted per hub; catalog and timing can be scoped to a hub. A building outside every hub uses the global shelf.</p>
+        <p className="text-[12px] text-muted mb-2">A hub is where supplies physically sit — <b>a group of listings or whole properties that share one shelf</b>. Add a property to take all of its units, or pick individual units. <b>A unit named directly wins over its property</b>, so one apartment can sit on a different shelf than the rest of its building. Counts are kept per hub right here, and <b>an item at zero disappears from the guest form</b>. Anything outside every hub uses the global shelf.</p>
         {cfg.hubs.length === 0 ? <div className="text-[12px] text-muted rounded-xl border border-dashed border-line px-3 py-3">No hubs yet — everything counts against one global shelf.</div> : (
           <div className="space-y-2">
             {cfg.hubs.map((h, hi) => (
@@ -209,10 +249,73 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                   <span className="text-[11px] text-muted font-mono">{h.id}</span>
                   {!ro ? <button onClick={() => set({ hubs: cfg.hubs.filter((_, i) => i !== hi) })} className="ml-auto text-muted hover:text-rose-600" title="Remove hub"><Trash2 size={13} /></button> : null}
                 </div>
-                <div className="flex flex-wrap gap-1 mt-2">
+                <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mt-2.5">Whole properties</div>
+                <div className="flex flex-wrap gap-1 mt-1">
                   {buildings.map(b => { const on = h.buildings.indexOf(b.label) >= 0; const elsewhere = !on && cfg.hubs.some((o, oi) => oi !== hi && o.buildings.indexOf(b.label) >= 0); return (
                     <button key={b.label} type="button" disabled={ro || elsewhere} title={elsewhere ? 'already in another hub' : ''} onClick={() => set({ hubs: cfg.hubs.map((x, i) => i === hi ? { ...x, buildings: on ? x.buildings.filter(y => y !== b.label) : [...x.buildings, b.label] } : x) })} className={'px-2 py-0.5 rounded-full border text-[11.5px] ' + (on ? 'bg-ink text-white border-ink' : elsewhere ? 'bg-app text-muted border-line opacity-50' : 'bg-white border-line text-ink')}>{b.label}</button>) })}
                 </div>
+
+                <div className="flex items-center gap-2 mt-2.5">
+                  <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Individual units · {(h.listings || []).length}</div>
+                  {!ro ? <button type="button" onClick={() => { setUnitOpen(unitOpen === hi ? null : hi); setUnitQ('') }} className="text-[11.5px] font-semibold text-brand-700 hover:underline">{unitOpen === hi ? 'done' : '+ pick units'}</button> : null}
+                </div>
+                {(h.listings || []).length ? (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {(h.listings || []).map(id => { const u = listings.find(x => x.id === id); return (
+                      <button key={id} type="button" disabled={ro} onClick={() => set({ hubs: cfg.hubs.map((x, i) => i === hi ? { ...x, listings: x.listings.filter(y => y !== id) } : x) })} className="px-2 py-0.5 rounded-full border border-ink bg-ink text-white text-[11.5px] inline-flex items-center gap-1" title="Remove from this hub">{u ? u.name : id.slice(0, 8)} <X size={10} /></button>) })}
+                  </div>
+                ) : <div className="text-[11.5px] text-muted mt-1">None — this hub covers whole properties only.</div>}
+
+                {unitOpen === hi ? (
+                  <div className="mt-2 rounded-lg border border-line bg-app/40 p-2">
+                    <input value={unitQ} onChange={e => setUnitQ(e.target.value)} placeholder="Search units by name or building…" className={box + ' mb-2'} />
+                    <div className="max-h-52 overflow-y-auto space-y-0.5">
+                      {listings.filter(u => !unitQ || (u.name + ' ' + u.building).toLowerCase().indexOf(unitQ.toLowerCase()) >= 0).slice(0, 120).map(u => {
+                        const on = (h.listings || []).indexOf(u.id) >= 0
+                        const elsewhere = !on && cfg.hubs.some((o, oi) => oi !== hi && (o.listings || []).indexOf(u.id) >= 0)
+                        const viaBuilding = !on && h.buildings.indexOf(u.building) >= 0
+                        return (
+                          <button key={u.id} type="button" disabled={elsewhere} title={elsewhere ? 'already in another hub' : viaBuilding ? 'already included via its property' : ''}
+                            onClick={() => set({ hubs: cfg.hubs.map((x, i) => i === hi ? { ...x, listings: on ? x.listings.filter(y => y !== u.id) : [...(x.listings || []), u.id] } : x) })}
+                            className={'w-full text-left px-2 py-1 rounded text-[12px] flex items-center gap-2 ' + (on ? 'bg-ink text-white' : elsewhere ? 'text-muted opacity-50' : 'hover:bg-white text-ink')}>
+                            <span className="flex-1 truncate">{u.name}</span>
+                            <span className={'text-[10.5px] ' + (on ? 'text-white/70' : 'text-muted')}>{u.building || u.market}{viaBuilding ? ' · via property' : ''}</span>
+                          </button>
+                        )
+                      })}
+                      {listings.length === 0 ? <div className="text-[12px] text-muted px-1 py-2">No listings loaded.</div> : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {(stock['hub:' + h.id] || []).length ? (
+                  <div className="mt-3 rounded-lg border border-line overflow-hidden">
+                    <div className="px-2 py-1.5 bg-app/60 text-[10.5px] uppercase tracking-wide text-muted font-semibold flex items-center justify-between">
+                      <span>What is on this shelf</span>
+                      {!ro ? <button type="button" onClick={() => saveHubStock('hub:' + h.id)} disabled={busy === 'stock:hub:' + h.id || !Object.keys(stockEdits).some(k => k.startsWith('hub:' + h.id + '|'))} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border border-line bg-white disabled:opacity-40">{busy === 'stock:hub:' + h.id ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />} Save count</button> : null}
+                    </div>
+                    <table className="w-full text-[12px]">
+                      <thead><tr className="text-left text-[10px] uppercase tracking-wide text-muted"><th className="px-2 py-1">Item</th><th className="px-2 py-1 w-20">On hand</th><th className="px-2 py-1 w-16">Held</th><th className="px-2 py-1 w-20">Warn at</th><th className="px-2 py-1 w-24">Guest sees</th></tr></thead>
+                      <tbody>
+                        {(stock['hub:' + h.id] || []).map(rw => {
+                          const k = 'hub:' + h.id + '|' + rw.itemId
+                          const onHand = stockEdits[k]?.onHand ?? rw.onHand
+                          const lowAt = stockEdits[k]?.lowAt ?? rw.lowAt
+                          const avail = Math.max(0, onHand - rw.reserved)
+                          return (
+                            <tr key={rw.itemId} className="border-t border-line/60">
+                              <td className="px-2 py-1 text-ink">{rw.name}</td>
+                              <td className="px-2 py-1"><input type="number" min={0} value={onHand} disabled={ro} onChange={e => setStockEdits(x => ({ ...x, [k]: { ...x[k], onHand: Number(e.target.value) } }))} className="w-16 text-[12px] px-1.5 py-0.5 rounded border border-line" /></td>
+                              <td className="px-2 py-1 text-muted tabular-nums">{rw.reserved || 0}</td>
+                              <td className="px-2 py-1"><input type="number" min={0} value={lowAt} disabled={ro} onChange={e => setStockEdits(x => ({ ...x, [k]: { ...x[k], lowAt: Number(e.target.value) } }))} className="w-14 text-[12px] px-1.5 py-0.5 rounded border border-line" /></td>
+                              <td className={'px-2 py-1 font-semibold ' + (avail <= 0 ? 'text-rose-700' : avail <= lowAt ? 'text-amber-700' : 'text-emerald-700')}>{avail <= 0 ? 'hidden — 0 left' : avail + ' left'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <div className="text-[11.5px] text-muted mt-2">No stock-tracked items yet — tick <b>Stock</b> on an item below to count it here.</div>}
               </div>
             ))}
           </div>

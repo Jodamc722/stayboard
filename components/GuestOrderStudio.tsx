@@ -11,7 +11,7 @@ import { Loader2, Save, Eye, Trash2, ImagePlus, X, Plus, AlertTriangle, Check, R
 import { GuestOrderForm, type FormData, type FormItem } from '@/components/GuestOrderForm'
 
 type Scope = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number }
-type Hub = { id: string; label: string; buildings: string[] }
+type Hub = { id: string; label: string; buildings: string[]; listings?: string[] }
 type Cfg = { enabled: boolean; taxPct: number; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; hubs: Hub[]; hubRules: Record<string, Scope>; [k: string]: any }
 type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs: string[] | null; image_url: string | null; track_stock: boolean; _new?: boolean }
 type StockRow = { item_id: string; scope: string; on_hand: number; reserved: number; low_at: number }
