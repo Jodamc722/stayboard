@@ -22,7 +22,7 @@ const SECTION_KEYS = ['reservations', 'revenue', 'marketing', 'cleaning', 'verif
   // FIELD BOARD sections (Jon, 2026-08-25). Tick any of these and the link renders as a live crew
   // board at /board/<code> instead of a report at /share/<code> — same row, same scope picker,
   // same passcode and revoke. Keep in step with BOARD_SECTIONS in lib/field-board.ts.
-  'crew', 'cleans', 'verify', 'work', 'issues'] as const
+  'today', 'crew', 'cleans', 'verify', 'vacant', 'work', 'issues', 'add'] as const
 
 function cleanSections(v: any): Record<string, boolean> {
   const out: Record<string, boolean> = {}
