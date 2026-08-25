@@ -1,15 +1,16 @@
 // VAULT IMPORT — many logins in one go, from a CSV (the Asana "Login Credentials" export, cleaned;
 // or a CSV backup this app produced — same columns, so a backup is a restore).
 //
-// Admins only, and the vault code is required: an import writes secrets, which is the biggest
-// single thing anyone can do to this table. Every row lands encrypted exactly as if typed by hand,
-// owned by the importer (deny-by-default sharing still applies — share from the item afterwards).
+// Admins only. Jon 2026-08-25: no vault code on import — an import WRITES entries and never reveals
+// one, so the code (which guards reading) stays on reveal/copy/open/export; the import itself is
+// role-gated and written to the log. Every row lands encrypted exactly as if typed by hand, owned
+// by the importer (deny-by-default sharing still applies — share from the item afterwards).
 // A row whose title + username already exists (not deleted) is skipped, so re-running an import
 // never doubles the shelf. One 'import' audit row + one sealed snapshot per run.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ITEMS, CATEGORY_IDS, encryptSecret, maskHint, vaultKeyReady, logAccess, checkVaultCode, codeFrom, codeEntered, isMissingTable } from '@/lib/vault'
+import { ITEMS, CATEGORY_IDS, encryptSecret, maskHint, vaultKeyReady, logAccess, isMissingTable } from '@/lib/vault'
 import { csvToImportRows, snapshotVault } from '@/lib/vault-backup'
 
 export const dynamic = 'force-dynamic'
@@ -28,9 +29,6 @@ export async function POST(req: NextRequest) {
   const csv = typeof b.csv === 'string' ? b.csv : ''
   if (!csv.trim()) return NextResponse.json({ ok: false, error: 'No CSV was sent.' }, { status: 400 })
   if (csv.length > 4 * 1024 * 1024) return NextResponse.json({ ok: false, error: 'That file is larger than 4 MB.' }, { status: 400 })
-
-  const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), purpose: 'import' })
-  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode }, { status: gate.status })
 
   const { rows, problems } = csvToImportRows(csv)
   if (!rows.length) return NextResponse.json({ ok: false, error: problems[0] || 'Nothing to import.', problems }, { status: 400 })
@@ -78,7 +76,7 @@ export async function POST(req: NextRequest) {
       created += (ins.data || []).length
     }
 
-    await logAccess({ itemId: null, email: me, action: 'import', detail: codeEntered(created + ' created, ' + skipped + ' already there'), ip: ipOf(req) })
+    await logAccess({ itemId: null, email: me, action: 'import', detail: created + ' created, ' + skipped + ' already there', ip: ipOf(req) })
     await snapshotVault('import', me)
     return NextResponse.json({ ok: true, created, skipped, total: rows.length, problems })
   } catch (e: any) {
