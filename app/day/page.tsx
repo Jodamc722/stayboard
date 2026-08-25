@@ -5,7 +5,15 @@
 // Tap through to the Guesty reservation or the Breezeway task; prints from the phone too.
 import { useCallback, useEffect, useState } from 'react'
 
-type Tab = 'cleans' | 'verify' | 'work' | 'issues'
+// CREW is a tab, not a footnote (Jon, 2026-08-25: "shows active status, who clocked in, what
+// people are working on"). The market comes off the URL — /day?market=Miami is Miami's board —
+// so each crew opens their own link and sees only their own day.
+type Tab = 'crew' | 'cleans' | 'verify' | 'work' | 'issues'
+function marketFromUrl(): string {
+  if (typeof window === 'undefined') return ''
+  const m = new URLSearchParams(window.location.search).get('market') || ''
+  return /^(miami|broward|north)$/i.test(m) ? m[0].toUpperCase() + m.slice(1).toLowerCase() : ''
+}
 function todayET() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
 function shortDate(d: string | null) { if (!d) return '—'; const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? d : x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 function ago(iso: string | null) { if (!iso) return 'unknown'; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); if (isNaN(m)) return 'unknown'; if (m < 60) return m + ' min ago'; return Math.floor(m / 60) + 'h ' + (m % 60) + 'm ago' }
@@ -19,6 +27,8 @@ export default function DayLinkPage() {
   const [d, setD] = useState<any>(null)
   const [tab, setTab] = useState<Tab>('cleans')
   const [date, setDate] = useState(todayET())
+  const [market, setMarket] = useState('')
+  useEffect(() => { setMarket(marketFromUrl()) }, [])
   const [loading, setLoading] = useState(false)
   const [noteFor, setNoteFor] = useState('')
   const [noteBy, setNoteBy] = useState('')
@@ -28,7 +38,8 @@ export default function DayLinkPage() {
   const load = useCallback(async (dt: string) => {
     setLoading(true)
     try {
-      const r = await fetch('/api/public/daysheet?date=' + encodeURIComponent(dt), { cache: 'no-store' })
+      const mk = marketFromUrl()
+      const r = await fetch('/api/public/daysheet?date=' + encodeURIComponent(dt) + (mk ? '&market=' + encodeURIComponent(mk) : ''), { cache: 'no-store' })
       if (r.status === 401) { setAuthed(false); setLoading(false); return }
       const j = await r.json()
       if (j.ok) { setD(j); setAuthed(true) }
@@ -86,6 +97,7 @@ export default function DayLinkPage() {
   const work = (d?.work || [])
   const issues = (d?.exceptions || [])
   const c = d?.counts || {}
+  const crew = d?.crew || null
   // Both feeds decide whether this page can be trusted: Breezeway for the work, Guesty for who is
   // actually arriving. A stale reservation feed is how a walk-in gets missed.
   const sync = d?.sync || {}
@@ -109,7 +121,7 @@ export default function DayLinkPage() {
     <div className="dl-root">
       <div className="dl-top">
         <div>
-          <div className="dl-brand">STAY HOSPITALITY {'·'} THE DAY</div>
+          <div className="dl-brand">STAY HOSPITALITY {'·'} {market ? market.toUpperCase() : 'THE DAY'}</div>
           <div className="dl-date">{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
           <div className={'dl-fresh ' + (stale ? 'dl-stale' : '')}>Tasks {ago(sync.breezewayAt || d?.lastSync)} {'·'} bookings {ago(sync.reservationsAt)}</div>
           {stale && <div className="dl-stalebar">{sync.staleReason || 'a feed is behind'} — anything booked since then is not on this page</div>}
@@ -122,11 +134,49 @@ export default function DayLinkPage() {
       </div>
 
       <div className="dl-tabs">
+        <button onClick={() => setTab('crew')} className={'dl-tab ' + (tab === 'crew' ? 'dl-tabon' : '')}>Crew <b>{crew?.clockedIn ?? 0}/{crew?.onShift ?? 0}</b></button>
         <button onClick={() => setTab('cleans')} className={'dl-tab ' + (tab === 'cleans' ? 'dl-tabon' : '')}>Cleans <b>{departures.length}</b></button>
         <button onClick={() => setTab('verify')} className={'dl-tab ' + (tab === 'verify' ? 'dl-tabon' : '')}>Verify <b>{noClean.length}</b></button>
         <button onClick={() => setTab('work')} className={'dl-tab ' + (tab === 'work' ? 'dl-tabon' : '')}>Work <b>{work.length}</b></button>
         <button onClick={() => setTab('issues')} className={'dl-tab ' + (tab === 'issues' ? 'dl-tabon' : '')}>Issues <b>{issues.length + (d?.glitches || []).length}</b></button>
       </div>
+
+      {tab === 'crew' && (
+        <div className="dl-list">
+          {!crew ? (
+            <div className="dl-sec">Live crew status is only available for today.</div>
+          ) : (
+            <>
+              <div className="dl-sec">
+                {crew.clockedIn} of {crew.onShift} clocked in
+                {crew.openShifts ? ' · ' + crew.openShifts + ' shift' + (crew.openShifts === 1 ? '' : 's') + ' unfilled' : ''}
+                {crew.notClocked?.length ? ' · not clocked in: ' + crew.notClocked.join(', ') : ''}
+              </div>
+              {(crew.people || []).map((p: any, i: number) => (
+                <div key={i} className="dl-card">
+                  <div className="dl-row">
+                    <b>{p.name}</b>
+                    <span className={p.clockedIn ? 'dl-pill dl-pill-ok' : 'dl-pill'}>{p.clockedIn ? 'clocked in' : 'not clocked in'}</span>
+                  </div>
+                  <div className="dl-sub">{p.role || 'crew'}{p.shift ? ' · ' + p.shift : ''} · {p.done} done · {p.left} left</div>
+                  {p.onNow?.length ? p.onNow.map((j: any, k: number) => (
+                    <div key={k} className="dl-sub"><b>on now:</b> {j.unit} — {j.task} <a href={bzUrl(j.id)} target="_blank" rel="noreferrer">open task ↗</a></div>
+                  )) : <div className="dl-sub">nothing started right now</div>}
+                  {/* Tap any job to open it in Breezeway — the link is the whole point of a live board. */}
+                  {(p.jobs || []).slice(0, 8).map((j: any, k: number) => (
+                    <div key={'j' + k} className="dl-row">
+                      <span>{j.unit} <span className="dl-sub">{j.task}</span></span>
+                      <span className="dl-sub">{j.state === 'done' ? 'done' : j.state === 'running' ? 'in progress' : 'to do'} <a href={bzUrl(j.id)} target="_blank" rel="noreferrer">↗</a></span>
+                    </div>
+                  ))}
+                  {(p.jobs || []).length > 8 && <div className="dl-sub">+{p.jobs.length - 8} more</div>}
+                </div>
+              ))}
+              {!(crew.people || []).length && <div className="dl-sec">Nobody on the schedule for today.</div>}
+            </>
+          )}
+        </div>
+      )}
 
       {tab === 'cleans' && (
         <div className="dl-list">
