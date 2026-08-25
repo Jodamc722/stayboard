@@ -30,6 +30,7 @@ import { upcomingAutoInspections } from './auto-inspections'
 import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 import { maintData } from './maint-brief'
 import { translator, type BriefLang } from './brief-lang'
+import { catOfTask, stateOfTask, CAT_ORDER, CAT_LABEL, type TaskCat } from './task-categories'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -376,6 +377,9 @@ async function gather(variant: BriefVariant) {
   const watch30 = { low: low30, lowTotal: lowRevs.length, repeatUnits, themes, unanswered: owed, since: monthAgo.slice(0, 10) }
 
   return {
+    // THE BOARD, IN THE BRIEF (Jon, 2026-08-25). Computed here because this is where today's
+    // Breezeway rows and the variant's market scope already are — no second query.
+    board: boardAtAGlance((tRes.data || []) as any[], inVariant),
     today, sheet, cleans, hkOther, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
     forward, lookaheadDays: LOOK_D,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
@@ -442,6 +446,65 @@ function card(title: string, count: number | null, inner: string, accent = '#636
     <div style="${S.cardBody}">${inner}</div>
   </div>`
 }
+// ── THE BOARD, IN THE BRIEF (Jon, 2026-08-25: "this mode should also show in the Daily Briefs") ──
+//
+// The same seven counters the Grid leads with in Today in Ops — Departure, Cleaning, Guest issues,
+// Glitches, Maintenance, Housekeeping audit, Inspection — each split finished / in progress / not
+// started. Categories come from lib/task-categories, the one rule the board uses, so the email and
+// the screen can never disagree about what a glitch is.
+//
+// It is scoped by whatever the brief is already scoped to: the Broward day sheet counts Broward's
+// board, the full brief counts the portfolio. Rows with nothing on them are dropped — a table of
+// zeroes teaches nobody anything.
+type BoardRow = { cat: TaskCat; total: number; done: number; running: number; open: number }
+function boardAtAGlance(rows: any[], inScope: (lid: string) => boolean): BoardRow[] {
+  const by: Record<string, BoardRow> = {}
+  for (const c of CAT_ORDER) by[c] = { cat: c, total: 0, done: 0, running: 0, open: 0 }
+  for (const t of rows) {
+    const status = str(t.status).toLowerCase()
+    if (/delete|cancel/.test(status)) continue
+    if (!inScope(String(t.reference_property_id))) continue
+    const cat = catOfTask({ name: str(t.name), dept: str(t.type_department) })
+    const st = stateOfTask({ status, started_at: t.started_at, finished_at: t.finished_at })
+    const r = by[cat]
+    r.total++
+    if (st === 'done') r.done++
+    else if (st === 'running') r.running++
+    else r.open++
+  }
+  return CAT_ORDER.map(c => by[c]).filter(r => r.total > 0)
+}
+
+function boardCard(rows: BoardRow[], when: string, href: string): string {
+  if (!rows.length) return ''
+  const total = rows.reduce((n, r) => n + r.total, 0)
+  const done = rows.reduce((n, r) => n + r.done, 0)
+  const open = rows.reduce((n, r) => n + r.open, 0)
+  const bar = (r: BoardRow) => {
+    const pct = (n: number) => r.total ? Math.round((n / r.total) * 100) : 0
+    return `<table width="100%" cellspacing="0" cellpadding="0" style="border-radius:3px;overflow:hidden"><tr style="height:6px">
+      ${r.done ? `<td style="width:${pct(r.done)}%;background:#10b981"></td>` : ''}
+      ${r.running ? `<td style="width:${pct(r.running)}%;background:#f59e0b"></td>` : ''}
+      ${r.open ? `<td style="width:${pct(r.open)}%;background:#e5e7eb"></td>` : ''}
+    </tr></table>`
+  }
+  const body = rows.map(r => `
+    <tr><td style="${S.td};width:42%">
+      <b style="font-size:13px">${CAT_LABEL[r.cat]}</b>
+      <div style="margin-top:4px">${bar(r)}</div>
+    </td>
+    <td style="${S.td};text-align:right;white-space:nowrap;font-size:12px">
+      <span style="${S.green}">${r.done} done</span>
+      ${r.running ? ` &middot; <span style="${S.amber}">${r.running} doing</span>` : ''}
+      ${r.open ? ` &middot; <span style="${r.open && !r.done ? S.red : S.muted}">${r.open} not started</span>` : ''}
+    </td></tr>`).join('')
+  const table = `<table width="100%" cellspacing="0" cellpadding="0">${body}</table>`
+  return card('The board today — every kind of work', total, table +
+    `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${done} of ${total} finished${open ? ` &middot; ${open} not started yet` : ''}. ` +
+    `<a href="${href}" style="color:#4338ca;text-decoration:none;font-weight:600">Open the Grid &rarr;</a></p>`,
+    '#0f766e', when)
+}
+
 // ── BAD-REVIEW INSPECTIONS ON THE BRIEF (Jon, 2026-08-24) ───────────────────────────────────────
 // The engine is `runLowReviewInspections` in lib/auto-inspections: a review at or below the bar
 // creates a Breezeway inspection ON THE UNIT'S NEXT CHECKOUT (the unit has to be empty to walk it)
@@ -1258,6 +1321,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   }
 
   // ── PAPERWORK & COVERAGE — why every other number can be trusted ────────────────────────────
+  const theBoardCard = boardCard(d.board || [], dateNice, `${APP_URL}/plan`)
+
   let paperCard = ''
   if (variant === 'full' && comp) {
     const bzPct = comp.winCheckouts ? Math.round((comp.winBzClosed / comp.winCheckouts) * 1000) / 10 : null
@@ -1310,6 +1375,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
         'Who is clocked in, what each person is on right now, and every job — tap one to open it in Breezeway. This email is the 7am snapshot; that board is live all day.',
         'Quién marcó entrada, en qué está cada persona ahora mismo y todos los trabajos — toque uno para abrirlo en Breezeway. Este correo es la foto de las 7am; ese tablero está en vivo todo el día.')) : ''}
   ${accessNotice(lang)}
+
+  ${theBoardCard}
 
   ${eyebrow(t('Act now'))}
   ${priorities.length
