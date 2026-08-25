@@ -195,10 +195,10 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
         </div>
       </div>
 
-      {/* RIGHT — item drawer */}
-      <div className="lg:col-span-2 xl:col-span-1">
+      {/* RIGHT — item drawer (slides over on narrower screens, sits in its own column on wide ones) */}
+      <div className="xl:col-span-1">
         {cur ? (
-          <div className="rounded-2xl border border-line bg-white p-4 space-y-3 sticky top-4">
+          <div className="fixed inset-y-0 right-0 z-40 w-[380px] max-w-full overflow-y-auto bg-white border-l border-line shadow-lifted p-4 space-y-3 xl:static xl:inset-auto xl:w-auto xl:max-w-none xl:overflow-visible xl:rounded-2xl xl:border xl:shadow-none xl:sticky xl:top-4">
             <div className="flex items-center justify-between">
               <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{cur._new ? 'New item' : 'Edit item'}</div>
               <button onClick={() => setSel(null)} className="text-muted hover:text-ink"><X size={16} /></button>
@@ -257,7 +257,7 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
             {!ro ? <button onClick={removeItem} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-rose-600"><Trash2 size={12} /> Remove item</button> : null}
           </div>
         ) : (
-          <div className="rounded-2xl border border-dashed border-line bg-white p-5 text-[13px] text-muted sticky top-4">
+          <div className="hidden xl:block rounded-2xl border border-dashed border-line bg-white p-5 text-[13px] text-muted sticky top-4">
             <div className="font-semibold text-ink mb-1">Tap a card on the phone to edit it.</div>
             Name, price, photo, where it is offered, and stock per hub. Tap the headline or intro to edit the copy. Use <b>+ Add item</b> under any category to add one.
             {!ro ? <button onClick={() => addItem('')} className="mt-3 inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={13} /> New item</button> : null}
