@@ -10,8 +10,10 @@ type Cfg = {
   enabled: boolean; createDaysBefore: number; customFieldName: string; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number
   checkInHour: number; taxPct: number; chargeMode: 'auto' | 'manual'; emailRecipients: string[]; publicBase: string; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; skipSourcesRe: string
   marketRules: Record<string, Scope>; buildingRules: Record<string, Scope>
+  hubs: Hub[]; hubRules: Record<string, Scope>
 }
-type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; image_url: string | null }
+type Hub = { id: string; label: string; buildings: string[] }
+type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs?: string[] | null; image_url: string | null; track_stock?: boolean }
 type Bldg = { label: string; market: string; vendor: boolean }
 
 const FEES = ['GUEST_SERVICE', 'BEVERAGE', 'FOOD', 'BREAKFAST', 'MEAL', 'MINIBAR', 'TOWELS', 'LINENS', 'TOILETRIES', 'BABY_BED', 'ADDITIONAL_BED', 'EQUIPMENT_RENTAL', 'LAUNDRY', 'PARKING', 'CONCIERGE', 'GIFT_BASKET', 'MISCELLANEOUS']
@@ -39,7 +41,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
   useEffect(() => { load() }, [load])
 
   const set = (patch: Partial<Cfg>) => setCfg(c => c ? { ...c, ...patch } : c)
-  const setScope = (kind: 'marketRules' | 'buildingRules', key: string, patch: Scope) => setCfg(c => {
+  const setScope = (kind: 'marketRules' | 'buildingRules' | 'hubRules', key: string, patch: Scope) => setCfg(c => {
     if (!c) return c
     const cur = { ...(c[kind][key] || {}), ...patch }
     for (const k of Object.keys(cur) as (keyof Scope)[]) if (cur[k] === undefined || (cur[k] as any) === '') delete cur[k]
@@ -95,6 +97,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
         <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (cfg.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-500')}>{cfg.enabled ? 'On' : 'Off'}</span>
       </div>
       <p className="text-[12px] text-muted -mt-2">
+        <a href="/guest-orders/design" className="font-semibold text-brand-700 underline">Open the Design studio</a> to edit the form on a live phone preview — items, photos, copy, colours, stock. This card holds the plumbing.
         Hourly: every confirmed arrival within <b>{cfg.createDaysBefore} days</b> gets a private order link written into the Guesty reservation field
         <b> “{cfg.customFieldName}”</b> — add that field to your Guesty pre-arrival message and the guest receives it. Approved orders are charged to the
         card Guesty holds, then pushed to Breezeway + Slack + email on their delivery day.
@@ -138,11 +141,11 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Catalog · {catalog.filter(c => c.active).length} live</div>
-          {!ro ? <button onClick={() => setCatalog(k => [...k, { sku: '', name: '', description: '', price_usd: 0, unit_label: '', category: 'Extras', fee_code: 'GUEST_SERVICE', max_qty: 10, sort: (k.length + 1) * 10, active: true, buildings: null, markets: null, image_url: null }])} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add item</button> : null}
+          {!ro ? <button onClick={() => setCatalog(k => [...k, { sku: '', name: '', description: '', price_usd: 0, unit_label: '', category: 'Extras', fee_code: 'GUEST_SERVICE', max_qty: 10, sort: (k.length + 1) * 10, active: true, buildings: null, markets: null, hubs: null, image_url: null, track_stock: false }])} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add item</button> : null}
         </div>
         <div className="rounded-xl border border-line overflow-x-auto">
-          <table className="w-full text-[12px] min-w-[940px]">
-            <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5 w-8">On</th><th className="px-2 py-1.5 w-16">Photo</th><th className="px-2 py-1.5">Name</th><th className="px-2 py-1.5">Description</th><th className="px-2 py-1.5 w-20">Price</th><th className="px-2 py-1.5 w-24">Unit</th><th className="px-2 py-1.5 w-24">Category</th><th className="px-2 py-1.5 w-36">Guesty fee</th><th className="px-2 py-1.5 w-14">Max</th><th className="px-2 py-1.5 w-40">Offered in</th><th className="px-2 py-1.5 w-8"></th></tr></thead>
+          <table className="w-full text-[12px] min-w-[1000px]">
+            <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5 w-8">On</th><th className="px-2 py-1.5 w-16">Photo</th><th className="px-2 py-1.5">Name</th><th className="px-2 py-1.5">Description</th><th className="px-2 py-1.5 w-20">Price</th><th className="px-2 py-1.5 w-24">Unit</th><th className="px-2 py-1.5 w-24">Category</th><th className="px-2 py-1.5 w-36">Guesty fee</th><th className="px-2 py-1.5 w-14">Max</th><th className="px-2 py-1.5 w-40">Offered in</th><th className="px-2 py-1.5 w-12" title="Track stock — out of stock hides the item">Stock</th><th className="px-2 py-1.5 w-8"></th></tr></thead>
             <tbody>
               {catalog.map((it, i) => (
                 <tr key={it.id || 'new' + i} className="border-t border-line/60">
@@ -163,11 +166,13 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                   <td className="px-2 py-1"><input type="number" min={1} max={99} value={it.max_qty} onChange={e => setItem(i, { max_qty: Number(e.target.value) })} className={box} disabled={ro} /></td>
                   <td className="px-2 py-1 relative">
                     <button type="button" onClick={() => setScopeOpen(scopeOpen === i ? null : i)} className={box + ' text-left truncate ' + ((it.buildings && it.buildings.length) || (it.markets && it.markets.length) ? 'text-brand-700 font-semibold' : 'text-muted')} disabled={ro} title={[...(it.markets || []), ...(it.buildings || [])].join(', ')}>
-                      {(it.markets && it.markets.length) || (it.buildings && it.buildings.length) ? [...(it.markets || []), ...(it.buildings || [])].join(', ') : 'Everywhere'}
+                      {(it.hubs && it.hubs.length) || (it.markets && it.markets.length) || (it.buildings && it.buildings.length) ? [...(it.hubs || []).map(h => '⌂ ' + (cfg.hubs.find(x => x.id === h)?.label || h)), ...(it.markets || []), ...(it.buildings || [])].join(', ') : 'Everywhere'}
                     </button>
                     {scopeOpen === i ? (
                       <div className="absolute z-20 right-0 mt-1 w-72 rounded-xl border border-line bg-white shadow-lifted p-3 text-[12px]">
                         <div className="flex items-center justify-between mb-1.5"><span className="font-semibold text-ink">Where this item is offered</span><button onClick={() => setScopeOpen(null)} className="text-muted">Done</button></div>
+                        {cfg.hubs.length ? <><div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mb-1">Hubs</div>
+                        <div className="flex flex-wrap gap-1 mb-2">{cfg.hubs.map(h => <button key={h.id} type="button" onClick={() => setItem(i, { hubs: toggleIn(it.hubs || null, h.id) })} className={'px-2 py-0.5 rounded-full border ' + ((it.hubs || []).indexOf(h.id) >= 0 ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink')}>⌂ {h.label}</button>)}</div></> : null}
                         <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mb-1">Locations</div>
                         <div className="flex flex-wrap gap-1 mb-2">{markets.map(m => <button key={m} type="button" onClick={() => setItem(i, { markets: toggleIn(it.markets, m) })} className={'px-2 py-0.5 rounded-full border ' + ((it.markets || []).indexOf(m) >= 0 ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink')}>{m}</button>)}</div>
                         <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mb-1">Buildings</div>
@@ -177,6 +182,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                       </div>
                     ) : null}
                   </td>
+                  <td className="px-2 py-1"><input type="checkbox" checked={!!it.track_stock} onChange={e => setItem(i, { track_stock: e.target.checked })} disabled={ro} /></td>
                   <td className="px-2 py-1">{!ro ? <button onClick={() => { if (it.id) setDeleted(d => [...d, it.id as string]); setCatalog(k => k.filter((_, idx) => idx !== i)) }} className="text-muted hover:text-rose-600" title="Remove"><Trash2 size={13} /></button> : null}</td>
                 </tr>
               ))}
@@ -187,8 +193,33 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
       </div>
 
       <div>
-        <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-1">By location & building</div>
-        <p className="text-[12px] text-muted mb-2">Switch the whole program off somewhere, or give a location / building its own timing. Blank = use the default above. Building beats location beats default.</p>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Location hubs · {cfg.hubs.length}</div>
+          {!ro ? <button onClick={() => set({ hubs: [...cfg.hubs, { id: 'hub-' + Date.now().toString(36), label: 'New hub', buildings: [] }] })} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add hub</button> : null}
+        </div>
+        <p className="text-[12px] text-muted mb-2">A hub is where supplies physically sit — a group of buildings that share a shelf. Stock is counted per hub; catalog and timing can be scoped to a hub. A building outside every hub uses the global shelf.</p>
+        {cfg.hubs.length === 0 ? <div className="text-[12px] text-muted rounded-xl border border-dashed border-line px-3 py-3">No hubs yet — everything counts against one global shelf.</div> : (
+          <div className="space-y-2">
+            {cfg.hubs.map((h, hi) => (
+              <div key={h.id} className="rounded-xl border border-line bg-white p-3">
+                <div className="flex items-center gap-2">
+                  <input value={h.label} onChange={e => set({ hubs: cfg.hubs.map((x, i) => i === hi ? { ...x, label: e.target.value } : x) })} className={box + ' font-semibold max-w-[240px]'} disabled={ro} />
+                  <span className="text-[11px] text-muted font-mono">{h.id}</span>
+                  {!ro ? <button onClick={() => set({ hubs: cfg.hubs.filter((_, i) => i !== hi) })} className="ml-auto text-muted hover:text-rose-600" title="Remove hub"><Trash2 size={13} /></button> : null}
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {buildings.map(b => { const on = h.buildings.indexOf(b.label) >= 0; const elsewhere = !on && cfg.hubs.some((o, oi) => oi !== hi && o.buildings.indexOf(b.label) >= 0); return (
+                    <button key={b.label} type="button" disabled={ro || elsewhere} title={elsewhere ? 'already in another hub' : ''} onClick={() => set({ hubs: cfg.hubs.map((x, i) => i === hi ? { ...x, buildings: on ? x.buildings.filter(y => y !== b.label) : [...x.buildings, b.label] } : x) })} className={'px-2 py-0.5 rounded-full border text-[11.5px] ' + (on ? 'bg-ink text-white border-ink' : elsewhere ? 'bg-app text-muted border-line opacity-50' : 'bg-white border-line text-ink')}>{b.label}</button>) })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-1">By location, hub & building</div>
+        <p className="text-[12px] text-muted mb-2">Switch the whole program off somewhere, or give a location / hub / building its own timing. Blank = use the default above. Building beats hub beats location beats default.</p>
         <div className="rounded-xl border border-line overflow-x-auto">
           <table className="w-full text-[12px] min-w-[640px]">
             <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5">Scope</th><th className="px-2 py-1.5 w-20">Offered</th><th className="px-2 py-1.5 w-32">Order by (h before)</th><th className="px-2 py-1.5 w-32">Lead (h after pay)</th><th className="px-2 py-1.5 w-32">Same-day before (h)</th></tr></thead>
@@ -202,6 +233,18 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                     <td className="px-2 py-1"><input type="number" min={0} max={240} value={r.orderByHoursBefore ?? ''} placeholder={String(cfg.orderByHoursBefore)} onChange={e => setScope('marketRules', m, { orderByHoursBefore: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={168} value={r.leadHours ?? ''} placeholder={String(cfg.leadHours)} onChange={e => setScope('marketRules', m, { leadHours: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={23} value={r.sameDayCutoffHour ?? ''} placeholder={String(cfg.sameDayCutoffHour)} onChange={e => setScope('marketRules', m, { sameDayCutoffHour: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
+                  </tr>
+                )
+              })}
+              {cfg.hubs.map(h => {
+                const r = cfg.hubRules[h.id] || {}
+                return (
+                  <tr key={'h:' + h.id} className="border-t border-line/60 bg-emerald-50/30">
+                    <td className="px-2 py-1 font-semibold text-ink">⌂ {h.label} <span className="text-[10.5px] text-muted font-normal">hub · {h.buildings.length} bldg</span></td>
+                    <td className="px-2 py-1"><input type="checkbox" checked={r.enabled !== false} onChange={e => setScope('hubRules', h.id, { enabled: e.target.checked ? undefined : false })} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="number" min={0} max={240} value={r.orderByHoursBefore ?? ''} placeholder={String(cfg.orderByHoursBefore)} onChange={e => setScope('hubRules', h.id, { orderByHoursBefore: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="number" min={0} max={168} value={r.leadHours ?? ''} placeholder={String(cfg.leadHours)} onChange={e => setScope('hubRules', h.id, { leadHours: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="number" min={0} max={23} value={r.sameDayCutoffHour ?? ''} placeholder={String(cfg.sameDayCutoffHour)} onChange={e => setScope('hubRules', h.id, { sameDayCutoffHour: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                   </tr>
                 )
               })}

@@ -3,7 +3,7 @@
 // approving, what is paid and scheduled, what is with the crew today, what failed and why.
 // Every row is a card with the ONLY buttons that make sense for its status.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ShoppingBag, Check, X, RefreshCw, Copy, Send, Loader2, AlertTriangle, ExternalLink, Truck, Link2, Zap } from 'lucide-react'
+import { ShoppingBag, Check, X, RefreshCw, Copy, Send, Loader2, AlertTriangle, ExternalLink, Truck, Link2, Zap, Palette, Package, Save } from 'lucide-react'
 
 type Line = { sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; unit_label?: string | null }
 type Order = {
@@ -11,9 +11,13 @@ type Order = {
   check_in: string | null; check_out: string | null; status: string; items: Line[]; subtotal_usd: number; tax_usd: number; total_usd: number; guest_note: string | null
   submitted_at: string; approved_at: string | null; approved_by: string | null; paid_at: string | null; payment_note: string | null; charge_error: string | null; folio_note: string | null
   delivery_date: string | null; delivery_note: string | null; requested_delivery?: string; requested_date?: string | null; pushed_at: string | null; breezeway_task_id: string | null; assignee_names: string[]; assign_note: string | null
-  push_error: string | null; delivered_at: string | null; delivered_by: string | null; decline_reason: string | null; approve_token: string | null
+  stock_note?: string | null; push_error: string | null; delivered_at: string | null; delivered_by: string | null; decline_reason: string | null; approve_token: string | null
 }
 type LinkRow = { code: string; url: string; reservation_id: string; unit: string | null; building: string | null; guest_name: string | null; source: string | null; check_in: string | null; check_out: string | null; sent_at: string | null; send_error: string | null; opened_at: string | null; orders: number; created_by: string | null }
+type StockScope = { id: string; label: string }
+type StockPer = { scope: string; label: string; onHand: number; reserved: number; lowAt: number; available: number; state: 'unset' | 'out' | 'low' | 'ok' }
+type StockItem = { id: string; sku: string; name: string; category: string | null; image: string | null; active: boolean; per: StockPer[] }
+type StockData = { scopes: StockScope[]; items: StockItem[]; alerts: { item: string; scope: string; state: string; available: number }[]; untracked: number }
 type Data = { today: string; config: { enabled: boolean; chargeMode: string; customFieldName: string; createDaysBefore: number }; orders: Order[]; links: LinkRow[] }
 
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(2)
@@ -42,7 +46,9 @@ const LANES: { key: string; label: string; statuses: string[] }[] = [
 export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canMoney: boolean }) {
   const [data, setData] = useState<Data | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState<'orders' | 'links'>('orders')
+  const [tab, setTab] = useState<'orders' | 'links' | 'stock'>(typeof window !== 'undefined' && /[?&]tab=stock/.test(window.location.search) ? 'stock' : 'orders')
+  const [stockData, setStockData] = useState<StockData | null>(null)
+  const [stockEdits, setStockEdits] = useState<Record<string, { onHand?: number; lowAt?: number }>>({})
   const [lane, setLane] = useState<string>('all')
   const [busy, setBusy] = useState<string | null>(null)
   const [flash, setFlash] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
@@ -59,6 +65,22 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
   }, [])
   useEffect(() => { load() }, [load])
   useEffect(() => { const t = setInterval(load, 60_000); return () => clearInterval(t) }, [load])
+  const loadStock = useCallback(async () => {
+    try { const r = await fetch('/api/guest-orders/stock', { cache: 'no-store' }); const j = await r.json(); if (r.ok && j.ok) { setStockData(j); setStockEdits({}) } } catch { /* tab shows loading */ }
+  }, [])
+  useEffect(() => { if (tab === 'stock') loadStock() }, [tab, loadStock])
+  async function saveStock() {
+    if (!stockData) return
+    setBusy('stock:save'); setFlash(null)
+    const rows = Object.keys(stockEdits).map(k => { const [itemId, scope] = k.split('|'); const it = stockData.items.find(i => i.id === itemId); const cur = it?.per.find(p => p.scope === scope); return { itemId, scope, onHand: stockEdits[k].onHand ?? cur?.onHand ?? 0, lowAt: stockEdits[k].lowAt ?? cur?.lowAt ?? 3 } })
+    try {
+      const r = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }) })
+      const j = await r.json()
+      setFlash(r.ok && j.ok ? { tone: 'ok', text: 'Stock updated (' + j.saved + ')' } : { tone: 'bad', text: (j.errors || [j.error || 'Failed']).join(', ') })
+      await loadStock()
+    } catch { setFlash({ tone: 'bad', text: 'Network error' }) }
+    setBusy(null)
+  }
 
   async function act(action: string, id: string, extra: Record<string, any> = {}) {
     if (busy) return
@@ -120,9 +142,10 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          {(['orders', 'links'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold ' + (tab === t ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{t === 'orders' ? 'Orders' : 'Links · upcoming arrivals'}</button>)}
+          {(['orders', 'links', 'stock'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold ' + (tab === t ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{t === 'orders' ? 'Orders' : t === 'links' ? 'Links · upcoming arrivals' : 'Stock'}</button>)}
         </div>
         <div className="flex items-center gap-2">
+          {canEdit ? <a href="/guest-orders/design" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><Palette size={13} /> Design studio</a> : null}
           <a href="/orders-live" target="_blank" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><ExternalLink size={13} /> Live link for the team</a>
           {canMoney ? <button onClick={() => act('run_cron', '')} disabled={!!busy} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50"><Zap size={13} /> Run now</button> : null}
         </div>
@@ -130,7 +153,43 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
 
       {flash ? <div className={'rounded-xl px-3.5 py-2.5 text-[13px] ' + (flash.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200')}>{flash.text}</div> : null}
 
-      {tab === 'orders' ? (
+      {tab === 'stock' ? (
+        !stockData ? <div className="text-sm text-muted py-6 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading stock…</div> : (
+          <div className="space-y-3">
+            {stockData.alerts.length ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+                <b>{stockData.alerts.filter(a => a.state === 'out').length} out · {stockData.alerts.filter(a => a.state === 'low').length} low.</b> {stockData.alerts.map(a => a.item + ' @ ' + a.scope + (a.state === 'out' ? ' (out — hidden from guests)' : ' (' + a.available + ' left)')).join(' · ')}
+              </div>
+            ) : null}
+            {stockData.items.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-line bg-white px-4 py-10 text-center text-[13px] text-muted">No item is tracking stock yet. Turn on <b>Track stock</b> on an item in the <a href="/guest-orders/design" className="underline">Design studio</a>; the {stockData.untracked} untracked item{stockData.untracked === 1 ? '' : 's'} always show.</div>
+            ) : (
+              <div className="rounded-2xl border border-line bg-white overflow-x-auto">
+                <table className="w-full text-[12.5px] min-w-[640px]">
+                  <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted border-b border-line"><th className="px-3 py-2">Item</th>{stockData.scopes.map(sc => <th key={sc.id} className="px-3 py-2">{sc.label}<div className="text-[10px] normal-case font-normal">on hand · held · low at</div></th>)}</tr></thead>
+                  <tbody>
+                    {stockData.items.map(it => (
+                      <tr key={it.id} className="border-b border-line/60 last:border-0 align-top">
+                        <td className="px-3 py-2"><div className="flex items-center gap-2">{it.image ? <img src={it.image} alt="" className="w-8 h-8 rounded-lg object-cover" /> : null}<div><div className="font-semibold text-ink">{it.name}</div><div className="text-[11px] text-muted">{it.category || ''}{!it.active ? ' · off' : ''}</div></div></div></td>
+                        {it.per.map(p => { const k = it.id + '|' + p.scope; const e = stockEdits[k] || {}; const onHand = e.onHand ?? p.onHand; const lowAt = e.lowAt ?? p.lowAt; const avail = Math.max(0, onHand - p.reserved); const state = avail <= 0 ? 'out' : avail <= lowAt ? 'low' : 'ok'; return (
+                          <td key={p.scope} className="px-3 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <input type="number" min={0} value={onHand} disabled={!canEdit} onChange={ev => setStockEdits(x => ({ ...x, [k]: { ...x[k], onHand: Number(ev.target.value) } }))} className="w-16 text-[12.5px] px-2 py-1 rounded-lg border border-line" />
+                              <span className="text-muted tabular-nums w-6 text-center" title="held by paid orders">{p.reserved}</span>
+                              <input type="number" min={0} value={lowAt} disabled={!canEdit} onChange={ev => setStockEdits(x => ({ ...x, [k]: { ...x[k], lowAt: Number(ev.target.value) } }))} className="w-12 text-[12.5px] px-2 py-1 rounded-lg border border-line" />
+                              <span className={'text-[10.5px] font-bold px-1.5 py-0.5 rounded ' + (state === 'out' ? 'bg-rose-100 text-rose-800' : state === 'low' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800')}>{state === 'out' ? 'OUT' : state === 'low' ? 'LOW' : avail}</span>
+                            </div>
+                          </td>) })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {canEdit && stockData.items.length ? <div className="flex items-center gap-2"><button onClick={saveStock} disabled={!!busy || !Object.keys(stockEdits).length} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50">{busy === 'stock:save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save stock-take</button><span className="text-[11.5px] text-muted">Held = reserved by paid orders, released if cancelled, consumed when delivered. Hub rows fall back to the global shelf when empty.</span></div> : null}
+          </div>
+        )
+      ) : tab === 'orders' ? (
         shown.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-line bg-white px-4 py-10 text-center">
             <ShoppingBag size={22} className="mx-auto text-muted" />
@@ -170,6 +229,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                     {o.charge_error ? <div className="mt-2 text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.charge_error}</div> : null}
                     {o.push_error ? <div className="mt-2 text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2">Push failed: {o.push_error}</div> : null}
                     {o.folio_note ? <div className="mt-2 text-[12.5px] text-amber-800 bg-amber-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.folio_note}</div> : null}
+                    {o.stock_note ? <div className={'mt-2 text-[12px] ' + (/SHORT/.test(o.stock_note) ? 'text-rose-700 font-semibold' : 'text-muted')}><Package size={12} className="inline mr-1 -mt-0.5" />{o.stock_note}</div> : null}
                     {o.status === 'pushed' || o.status === 'delivered' ? (
                       <div className="mt-2 text-[12px] text-muted"><Truck size={12} className="inline mr-1 -mt-0.5" />{o.assignee_names.length ? o.assignee_names.join(' + ') : 'unassigned'}{o.assign_note ? ' — ' + o.assign_note : ''}{o.breezeway_task_id ? ' · Breezeway #' + o.breezeway_task_id : ''}{o.delivered_at ? ' · delivered ' + when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : ''}</div>
                     ) : null}
