@@ -96,7 +96,7 @@ async function crewFor(ids: Set<string> | null, scopeWords: string[]) {
   ])
   const unitOf: Record<string, string> = {}
   for (const l of ((lRows || []) as any[])) unitOf[str(l.id)] = l.nickname || l.title || 'Unit'
-  type Job = { id: string; unit: string; task: string; state: 'done' | 'running' | 'open' }
+  type Job = { id: string; lid: string; unit: string; task: string; state: 'done' | 'running' | 'open' }
   const jobsFor: Record<string, Job[]> = {}
   for (const t of ((tRows || []) as any[])) {
     const st = str(t.status).toLowerCase()
@@ -104,7 +104,7 @@ async function crewFor(ids: Set<string> | null, scopeWords: string[]) {
     const lid = str(t.reference_property_id)
     if (ids && !ids.has(lid)) continue
     const job: Job = {
-      id: str(t.id), unit: unitOf[lid] || 'Unit', task: str(t.name).slice(0, 80),
+      id: str(t.id), lid, unit: unitOf[lid] || 'Unit', task: str(t.name).slice(0, 80),
       state: (t.finished_at || /complete|finish|close|approv/.test(st)) ? 'done'
         : (t.started_at || /progress|started/.test(st)) ? 'running' : 'open',
     }
@@ -151,7 +151,7 @@ async function crewFor(ids: Set<string> | null, scopeWords: string[]) {
  * unit — the three things that break a field day.
  */
 function boardPriorities(sheet: any, keep: (r: any) => boolean) {
-  const out: { tone: 'red' | 'amber'; unit: string; what: string; how: string }[] = []
+  const out: { tone: 'red' | 'amber'; lid: string; unit: string; what: string; how: string }[] = []
   const arrivingToday = new Set(((sheet.arrivals || []) as any[]).filter(keep).map((a: any) => String(a.listingId)))
   const deps = ((sheet.departures || []) as any[]).filter(keep)
 
@@ -160,11 +160,11 @@ function boardPriorities(sheet: any, keep: (r: any) => boolean) {
     const st = String(d.clean?.status || '')
     const who = (d.clean?.assignees || []).filter(Boolean)
     if (!d.clean) {
-      out.push({ tone: 'red', unit: String(d.unit), what: hot ? 'checks out today and a guest arrives — nothing on the board to clean it' : 'checks out today with no clean scheduled', how: 'Book the clean and put a name on it.' })
+      out.push({ tone: 'red', lid: String(d.listingId || ''), unit: String(d.unit), what: hot ? 'checks out today and a guest arrives — nothing on the board to clean it' : 'checks out today with no clean scheduled', how: 'Book the clean and put a name on it.' })
     } else if (!who.length) {
-      out.push({ tone: 'red', unit: String(d.unit), what: 'clean has nobody assigned', how: hot ? 'Guest lands today — assign it first.' : 'Assign it before the crew splits up.' })
+      out.push({ tone: 'red', lid: String(d.listingId || ''), unit: String(d.unit), what: 'clean has nobody assigned', how: hot ? 'Guest lands today — assign it first.' : 'Assign it before the crew splits up.' })
     } else if (hot && /not started/i.test(st)) {
-      out.push({ tone: 'amber', unit: String(d.unit), what: 'same-day turn, not started', how: 'With ' + who.join(', ') + '. The guest lands this afternoon.' })
+      out.push({ tone: 'amber', lid: String(d.listingId || ''), unit: String(d.unit), what: 'same-day turn, not started', how: 'With ' + who.join(', ') + '. The guest lands this afternoon.' })
     }
   }
   // The day sheet's own exceptions — high severity first, and never duplicating a unit already named.
@@ -172,7 +172,7 @@ function boardPriorities(sheet: any, keep: (r: any) => boolean) {
   for (const e of ((sheet.exceptions || []) as any[]).filter(keep)) {
     const unit = String(e.unit || '')
     if (named.has(unit)) continue
-    out.push({ tone: e.severity === 'high' ? 'red' : 'amber', unit, what: String(e.detail || ''), how: String(e.action || '') })
+    out.push({ tone: e.severity === 'high' ? 'red' : 'amber', lid: String(e.listingId || ''), unit, what: String(e.detail || ''), how: String(e.action || '') })
     named.add(unit)
   }
   return out.slice(0, 12)
@@ -190,8 +190,9 @@ export async function buildFieldBoard(link: BoardLink) {
   const crew = sections.crew ? await crewFor(ids, link.scope_type === 'listing' ? [] : link.scope_ids).catch(() => null) : null
 
   // The units this board may act on — the picker for Add, and the guard the add route enforces.
+  // Always sent: a unit sheet needs names even when the board cannot add work.
   let units: { id: string; name: string }[] = []
-  if (sections.add) {
+  {
     const db = supabaseAdmin()
     const { data } = await db.from('guesty_listings').select('id,nickname,title').limit(3000)
     units = ((data || []) as any[])
