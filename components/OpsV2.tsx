@@ -270,9 +270,14 @@ export function OpsV2() {
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, 5 * 60 * 1000); return () => clearInterval(t) }, [refresh])
 
   // Which tab. Remembered per person — the research point about role-shaped views, cheaply.
-  const [tab, setTab] = useState<'board' | 'grid' | 'people' | 'push'>('board')
-  useEffect(() => { try { const t = localStorage.getItem('opsv2_tab'); if (t === 'people' || t === 'push' || t === 'grid') setTab(t) } catch {} }, [])
-  const pick = (t: 'board' | 'grid' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab', t) } catch {} }
+  // GRID IS THE LANDING (Jon, 2026-08-25: "the Today in Ops board that I created with the Breezeway
+  // should be the default mode"). The storage key is deliberately a NEW one: the old key already
+  // holds 'board' for everyone who used this page before today, and there is no way to tell "chose
+  // Board" apart from "never chose". Bumping the key gives everybody the new landing once, and
+  // whatever they pick after that is theirs and sticks.
+  const [tab, setTab] = useState<'board' | 'grid' | 'people' | 'push'>('grid')
+  useEffect(() => { try { const t = localStorage.getItem('opsv2_tab_v2'); if (t === 'people' || t === 'push' || t === 'board') setTab(t) } catch {} }, [])
+  const pick = (t: 'board' | 'grid' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab_v2', t) } catch {} }
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
@@ -300,8 +305,8 @@ export function OpsV2() {
           the whole strip one swipeable line below 640px; from sm: up it is the same one-line row it
           always was. gap-4 on phone keeps all four items within a thumb's reach of the edge. */}
       <div className="lh-actions flex items-center gap-4 sm:gap-6 flex-wrap border-b border-line mb-4">
-        {([['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
-           ['grid', 'Grid', null, 'bg-app text-muted'],
+        {([['grid', 'Grid', null, 'bg-app text-muted'],
+           ['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
            ['people', 'Staffing', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
            ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (
           <button key={k} onClick={() => pick(k as any)}

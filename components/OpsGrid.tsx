@@ -14,23 +14,25 @@
 // ── ONE PASS OVER THE DAY, SEVEN COUNTERS ───────────────────────────────────────────────────────
 // The old strip counted Cleans / Maintenance / Inspections, which put a departure clean, a strip
 // and a linen drop in one number and buried guest-reported problems entirely. Jon asked for the
-// real breakdown: Departure, Cleaning, Guest issues, Glitches, Maintenance, Housekeeping audit,
-// Inspection. `catOf` is the single definition, used by the tiles, the chips and the filter — so a
+// real breakdown: Departure, Cleaning, Glitches, Maintenance, Housekeeping audit, Inspection.
+// `catOf` is the single definition (lib/task-categories.ts, shared with the daily briefs) — so a
 // task can never be counted in one place and coloured as something else in another.
 //
-// Guest issues and glitches are the exception to "today": both are open-until-fixed, carry no
-// scheduled date in Breezeway, and matter on the day they are open rather than the day they were
-// filed. Their tiles read the open-glitch feed and merge by task id so a glitch that IS scheduled
-// today is not counted twice.
+// Glitches are the exception to "today": they are open-until-fixed, carry no scheduled date in
+// Breezeway, and matter on the day they are open rather than the day they were filed. That tile
+// reads the open-glitch feed and merges by task id so a glitch that IS scheduled today is not
+// counted twice.
 //
 // Everything actionable here reuses machinery that already works: /api/breezeway/assign for
 // assignment, /api/ops-today/add-task for creation (which now carries a Breezeway template_id),
 // /api/breezeway/comments for the last comment on a row you open.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
-  LayoutGrid, Users, X,
+  LayoutGrid, Users, X, MapPin,
+  DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
 } from 'lucide-react'
+import { catOfTask, type TaskCat } from '@/lib/task-categories'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -50,42 +52,29 @@ export type GUnit = {
 }
 export type GVacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number; needsClean?: boolean }
 export type GData = { ok: boolean; today: string; units: GUnit[]; vacants?: GVacant[] }
-export type GGlitch = { id: string; unit: string; issue: string; rawName?: string; ageDays?: number | null; running?: boolean; unassigned?: boolean; assignees?: string[]; reportUrl?: string | null; done?: boolean }
+export type GGlitch = { id: string; unit: string; issue: string; rawName?: string; market?: string | null; market2?: string | null; ageDays?: number | null; running?: boolean; unassigned?: boolean; assignees?: string[]; reportUrl?: string | null; done?: boolean }
 export type GRoster = { id: number; name: string; departments: string[] }
 
 // ── CATEGORIES — the one definition ─────────────────────────────────────────────────────────────
-export type Cat = 'departure' | 'cleaning' | 'hkaudit' | 'inspection' | 'maintenance' | 'guest' | 'glitch'
-const CATS: { key: Cat; label: string; short: string; dot: string; soft: string }[] = [
-  { key: 'departure', label: 'Departure', short: 'Dep', dot: 'bg-rose-500', soft: 'bg-rose-50 text-rose-700 border-rose-200' },
-  { key: 'cleaning', label: 'Cleaning', short: 'Clean', dot: 'bg-sky-500', soft: 'bg-sky-50 text-sky-700 border-sky-200' },
-  { key: 'guest', label: 'Guest issues', short: 'Guest', dot: 'bg-pink-500', soft: 'bg-pink-50 text-pink-700 border-pink-200' },
-  { key: 'glitch', label: 'Glitches', short: 'Glitch', dot: 'bg-orange-500', soft: 'bg-orange-50 text-orange-700 border-orange-200' },
-  { key: 'maintenance', label: 'Maintenance', short: 'Maint', dot: 'bg-amber-500', soft: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'hkaudit', label: 'Housekeeping audit', short: 'HK audit', dot: 'bg-teal-500', soft: 'bg-teal-50 text-teal-700 border-teal-200' },
-  { key: 'inspection', label: 'Inspection', short: 'Inspect', dot: 'bg-violet-500', soft: 'bg-violet-50 text-violet-700 border-violet-200' },
+export type Cat = TaskCat
+// EVERY CATEGORY CARRIES A GLYPH (Jon, 2026-08-25: "can you do symbols"). Seven colours alone put
+// the reader in front of a legend they have to memorise — and colour is the first thing to go on a
+// dim phone screen or for anyone colour-blind. The icon says what the work IS; the colour and the
+// fill say which category and how far along it is. Colour is now the second signal, not the only one.
+const CATS: { key: Cat; label: string; short: string; dot: string; ink: string; soft: string; Icon: any }[] = [
+  { key: 'departure', label: 'Departure', short: 'Dep', dot: 'bg-rose-500', ink: 'text-rose-600', soft: 'bg-rose-50 text-rose-700 border-rose-200', Icon: DoorOpen },
+  { key: 'cleaning', label: 'Cleaning', short: 'Clean', dot: 'bg-sky-500', ink: 'text-sky-600', soft: 'bg-sky-50 text-sky-700 border-sky-200', Icon: Sparkles },
+  // One category, not two (Jon, 2026-08-25): Breezeway files these as "Guest Reported / Glitch — ",
+  // so splitting on which half of that prefix a task used was counting one queue twice.
+  { key: 'glitch', label: 'Glitches', short: 'Glitch', dot: 'bg-orange-500', ink: 'text-orange-600', soft: 'bg-orange-50 text-orange-700 border-orange-200', Icon: Zap },
+  { key: 'maintenance', label: 'Maintenance', short: 'Maint', dot: 'bg-amber-500', ink: 'text-amber-600', soft: 'bg-amber-50 text-amber-800 border-amber-200', Icon: Wrench },
+  { key: 'hkaudit', label: 'Housekeeping audit', short: 'HK audit', dot: 'bg-teal-500', ink: 'text-teal-600', soft: 'bg-teal-50 text-teal-700 border-teal-200', Icon: ClipboardCheck },
+  { key: 'inspection', label: 'Inspection', short: 'Inspect', dot: 'bg-violet-500', ink: 'text-violet-600', soft: 'bg-violet-50 text-violet-700 border-violet-200', Icon: ClipboardList },
 ]
 const CAT_BY: Record<Cat, typeof CATS[number]> = CATS.reduce((m, c) => { m[c.key] = c; return m }, {} as any)
 
-/**
- * Which counter a task belongs to. ORDER MATTERS and is not arbitrary:
- * a glitch is filed as a maintenance task named "Guest Reported / Glitch — ...", so matching on
- * department first would file every guest-impacting problem under Maintenance, which is exactly
- * the burial Jon asked to undo. Name wins over department here, deliberately.
- */
-export function catOf(t: { name?: string; dept?: string; type?: string }): Cat {
-  const n = String(t.name || '').toLowerCase()
-  const dept = String(t.dept || '').toLowerCase()
-  const type = String(t.type || '')
-  if (/glitch/.test(n)) return 'glitch'
-  if (/guest\s*reported/.test(n)) return 'guest'
-  if (type === 'departure_clean' || /departure clean|turnover clean/.test(n)) return 'departure'
-  // "Housekeeping Audit" is a cleanliness score, not a maintenance walk — its own counter because
-  // it is the number the housekeeping standard is measured on.
-  if (/housekeep\w*\s*audit|audit\s*\W*\s*housekeep/.test(n) || (type === 'audit' && dept === 'housekeeping')) return 'hkaudit'
-  if (dept === 'housekeeping' || type === 'strip' || type === 'deep_clean') return 'cleaning'
-  if (type === 'inspection' || type === 'audit' || dept === 'inspection' || /unit check|inspect/.test(n)) return 'inspection'
-  return 'maintenance'
-}
+/** The board's category rule is lib/task-categories.ts, so the daily briefs count the same way. */
+export const catOf = catOfTask
 
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
 const isReal = (t: GTask) => !t.guestyOnly && /^\d+$/.test(String(t.id))
@@ -155,17 +144,87 @@ function unitStatus(u: GUnit): { label: string; cls: string } {
   return { label: 'Open', cls: 'bg-app text-muted border-line' }
 }
 
-/** One task, as the little coloured square Breezeway puts in the Tasks-today column. */
-function TaskChip({ t, onOpen }: { t: GTask; onOpen: () => void }) {
+// ── ONE TASK, AS A CHIP ─────────────────────────────────────────────────────────────────────────
+// Jon, 2026-08-25, looking at a row of five identical coloured squares: "can you do symbols and
+// when I hover over should show details, not automatically go to task when click into it."
+//
+// Both halves of that matter. The squares were unreadable — a colour with no glyph is a legend you
+// have to hold in your head — so every category now carries its own icon. And CLICKING NO LONGER
+// NAVIGATES: a click on a 20px square that throws you into Breezeway is a trap, because the thing
+// you wanted was almost always just to know what the square meant. Hover opens the detail card;
+// click PINS it open (which is also how this works on a phone, where there is no hover); and
+// Breezeway is an explicit link inside the card, so leaving the page is always a deliberate act.
+//
+// The card is position:fixed off the chip's own rect because the rows live inside an
+// overflow-hidden container that would otherwise clip it.
+function TaskChip({ t }: { t: GTask }) {
   const c = CAT_BY[catOf(t)]
-  const title = t.name + (t.assignees.length ? ' — ' + t.assignees.join(', ') : ' — unassigned') +
-    ' · ' + (t.done ? 'finished' + (t.finishedAt ? ' ' + shortTime(t.finishedAt) : '') : t.running ? 'in progress' : 'not started')
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+  const [pinned, setPinned] = useState(false)
+  const ref = useRef<HTMLButtonElement | null>(null)
+  const Glyph = c.Icon
+
+  const place = () => {
+    const r = ref.current?.getBoundingClientRect()
+    if (r) setAt({ x: r.left + r.width / 2, y: r.bottom + 6 })
+  }
+  const state = t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
+  const open = pinned || !!at
+
   return (
-    <button onClick={onOpen} title={title}
-      className={'w-5 h-5 rounded-[5px] border-2 shrink-0 transition-transform hover:scale-110 ' +
-        (t.done ? c.dot + ' border-transparent opacity-90'
-          : t.running ? 'border-amber-400 bg-amber-100'
-            : t.assignees.length ? 'border-slate-300 bg-white' : 'border-dashed border-rose-300 bg-white')} />
+    <>
+      <button ref={ref}
+        onMouseEnter={place}
+        onMouseLeave={() => { if (!pinned) setAt(null) }}
+        onClick={ev => { ev.stopPropagation(); place(); setPinned(p => !p) }}
+        aria-label={c.label + ': ' + t.name}
+        className={'w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
+          (state === 'done' ? c.dot + ' border-transparent text-white'
+            : state === 'running' ? 'border-amber-400 bg-amber-50 ' + c.ink
+              : state === 'unassigned' ? 'border-dashed border-rose-400 bg-white ' + c.ink
+                : 'border-slate-300 bg-white ' + c.ink)}>
+        <Glyph size={12} strokeWidth={2.4} />
+      </button>
+
+      {open && at && (
+        <>
+          {/* Click-away for the pinned state. Transparent, below the card, above everything else. */}
+          {pinned && <div className="fixed inset-0 z-[60]" onClick={ev => { ev.stopPropagation(); setPinned(false); setAt(null) }} />}
+          <div className="fixed z-[61] w-64 rounded-xl border border-line bg-white shadow-xl p-2.5 text-left"
+            style={{ left: Math.min(Math.max(at.x - 128, 8), (typeof window !== 'undefined' ? window.innerWidth : 1200) - 264), top: at.y }}
+            onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className={'w-4 h-4 rounded-[4px] inline-flex items-center justify-center ' + c.dot + ' text-white'}><Glyph size={10} strokeWidth={2.6} /></span>
+              <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' + c.soft}>{c.label}</span>
+            </div>
+            <p className="text-[12.5px] font-bold text-ink leading-snug">{t.name}</p>
+            <p className="text-[11.5px] text-muted mt-0.5">{t.unit}</p>
+            <p className="text-[11.5px] mt-1">
+              {t.done
+                ? <span className="font-bold text-emerald-700">Finished{t.finishedAt ? ' ' + shortTime(t.finishedAt) : ''}{t.minutes ? ' \u00b7 ' + t.minutes + 'm' : ''}</span>
+                : t.running
+                  ? <span className="font-bold text-amber-700">In progress{t.startedAt ? ' since ' + shortTime(t.startedAt) : ''}</span>
+                  : <span className="font-bold text-muted">Not started</span>}
+            </p>
+            <p className="text-[11.5px] mt-0.5">
+              {t.assignees.length
+                ? <span className="text-muted">{t.assignees.join(', ')}</span>
+                : <span className="font-bold text-rose-600">Nobody assigned</span>}
+            </p>
+            {t.late && <p className="text-[11px] font-bold text-rose-700 mt-1">Past the 4pm deadline.</p>}
+            {isReal(t) && (
+              <div className="mt-2 pt-2 border-t border-line flex items-center gap-3">
+                <a href={bzTask(t.id)} target="_blank" rel="noreferrer"
+                  className="text-[11.5px] font-bold text-brand-700 inline-flex items-center gap-1 hover:underline">
+                  Open in Breezeway <ExternalLink size={11} />
+                </a>
+                {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-muted hover:underline">Field report</a>}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </>
   )
 }
 
@@ -177,7 +236,7 @@ type Row = {
   reservation: string
   status: { label: string; cls: string }
   tasks: GTask[]
-  issues: { text: string; kind: 'qc' | 'glitch' | 'guest' }[]
+  issues: { text: string; kind: 'qc' | 'glitch' }[]
   gapNights: number | null
   urgent: number
   listingId?: string
@@ -237,9 +296,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
         <div className="lg:col-span-3 flex items-center gap-1 flex-wrap">
           {row.tasks.length === 0
             ? <span className="text-[11px] text-muted">No tasks today</span>
-            : row.tasks.slice(0, 14).map(t => (
-              <TaskChip key={t.id} t={t} onOpen={() => { if (isReal(t)) window.open(bzTask(t.id), '_blank') }} />
-            ))}
+            : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
           {row.tasks.length > 14 && <span className="text-[10.5px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
         </div>
         {/* issues + gap */}
@@ -374,11 +431,40 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
   const [cat, setCat] = useState<Cat | null>(null)
   const [q, setQ] = useState('')
   const [activeOnly, setActiveOnly] = useState(true)
-  useEffect(() => { try { const m = localStorage.getItem('opsgrid_mode'); if (m === 'people') setMode('people') } catch {} }, [])
+  // MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Remembered per
+  // device, because whoever runs Broward runs Broward every morning and should not re-pick it.
+  const [mkt, setMkt] = useState<string>('all')
+  useEffect(() => {
+    try {
+      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people') setMode('people')
+      const k = localStorage.getItem('opsgrid_market'); if (k) setMkt(k)
+    } catch {}
+  }, [])
   const pickMode = (m: 'units' | 'people') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
+  const pickMkt = (m: string) => { setMkt(m); try { localStorage.setItem('opsgrid_market', m) } catch {} }
 
-  const units: GUnit[] = Array.isArray(data?.units) ? data!.units : []
+  const allUnits: GUnit[] = Array.isArray(data?.units) ? data!.units : []
   const today = data?.today || ''
+
+  // A unit belongs to its market AND, for vendor buildings, to the geography behind it — same
+  // two-market rule the board and the API use, so picking North here shows what North shows there.
+  const inMkt = (m?: string | null, m2?: string | null) => mkt === 'all' || m === mkt || m2 === mkt
+  const units = useMemo(() => allUnits.filter(u => inMkt(u.market, u.market2)), [allUnits, mkt])
+  const glitchesInMkt = useMemo(() => glitches.filter(g => inMkt(g.market, g.market2)), [glitches, mkt])
+
+  // The chips are built from the WHOLE day, not the filtered slice — otherwise picking a market
+  // hides every other market and you cannot get back without knowing the names.
+  const markets = useMemo(() => {
+    const RANK: Record<string, number> = { Miami: 0, Broward: 1, North: 2, Vendor: 3 }
+    const seen: Record<string, number> = {}
+    for (const u of allUnits) for (const m of [u.market, u.market2]) {
+      if (!m) continue
+      seen[m] = (seen[m] || 0) + u.tasks.filter(t => !t.done).length
+    }
+    return Object.keys(seen).sort((a, b) => (RANK[a] ?? 9) - (RANK[b] ?? 9) || a.localeCompare(b))
+      .map(m => ({ key: m, open: seen[m] }))
+  }, [allUnits])
+
   const allTasks = useMemo(() => units.flatMap(u => u.tasks), [units])
 
   // ── COUNTERS ────────────────────────────────────────────────────────────────────────────────
@@ -397,26 +483,24 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
       bump('all', t.done, t.running)
       bump(catOf(t), t.done, t.running)
     }
-    for (const g of glitches) {
+    for (const g of glitchesInMkt) {
       if (seen[g.id] || g.done) continue
-      const k: Cat = /glitch/i.test(String(g.rawName || g.issue || '')) ? 'glitch' : 'guest'
       bump('all', false, !!g.running)
-      bump(k, false, !!g.running)
+      bump('glitch', false, !!g.running)
     }
     return m
-  }, [allTasks, glitches])
+  }, [allTasks, glitchesInMkt])
 
   // Open issues per unit: the QC items the board already carries plus the open guest/glitch feed.
   const issuesByUnit = useMemo(() => {
-    const m: Record<string, { text: string; kind: 'qc' | 'glitch' | 'guest' }[]> = {}
+    const m: Record<string, { text: string; kind: 'qc' | 'glitch' }[]> = {}
     for (const u of units) for (const q2 of (u.qc || [])) (m[u.unit] = m[u.unit] || []).push({ text: q2.issue, kind: 'qc' })
-    for (const g of glitches) {
+    for (const g of glitchesInMkt) {
       if (g.done) continue
-      const kind: 'glitch' | 'guest' = /glitch/i.test(String(g.rawName || g.issue || '')) ? 'glitch' : 'guest'
-      ;(m[g.unit] = m[g.unit] || []).push({ text: g.issue, kind })
+      ;(m[g.unit] = m[g.unit] || []).push({ text: g.issue, kind: 'glitch' })
     }
     return m
-  }, [units, glitches])
+  }, [units, glitchesInMkt])
 
   const gapByListing = useMemo(() => {
     const m: Record<string, number> = {}
@@ -439,8 +523,8 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
               : 'In-house / no movement'
         // Under a Guest issues / Glitches filter the row should show only the issues of that
         // kind — otherwise tapping "Glitches" hands back a row whose badge is counting QC items.
-        const issues = (cat === 'guest' || cat === 'glitch')
-          ? (issuesByUnit[u.unit] || []).filter(i => i.kind === cat)
+        const issues = cat === 'glitch'
+          ? (issuesByUnit[u.unit] || []).filter(i => i.kind === 'glitch')
           : (issuesByUnit[u.unit] || [])
         return {
           key: 'u:' + u.listingId, title: u.unit,
@@ -458,10 +542,10 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
       // row of their own, carrying the issue and no task strip.
       const have: Record<string, true> = {}
       for (const u of units) have[u.unit] = true
-      for (const g of glitches) {
+      for (const g of glitchesInMkt) {
         if (g.done || have[g.unit]) continue
         have[g.unit] = true
-        const issues = (issuesByUnit[g.unit] || []).filter(i => (cat === 'guest' || cat === 'glitch') ? i.kind === cat : true)
+        const issues = (issuesByUnit[g.unit] || []).filter(i => cat === 'glitch' ? i.kind === 'glitch' : true)
         if (!issues.length) continue
         rowsForUnits.push({
           key: 'g:' + g.unit, title: g.unit, sub: 'open issue \u00b7 nothing scheduled today',
@@ -509,7 +593,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
       tasks: unassigned, issues: [], gapNights: null, urgent: 1e6,
     })
     return out
-  }, [mode, units, cat, issuesByUnit, gapByListing, roster, glitches])
+  }, [mode, units, cat, issuesByUnit, gapByListing, roster, glitchesInMkt])
 
   const shown = useMemo(() => {
     const n = q.trim().toLowerCase()
@@ -538,8 +622,28 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         ))}
       </div>
 
+      {/* ── MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Above the
+          other controls because it scopes everything below it, counters included — a filter that
+          silently changes the numbers has to be the most visible thing on the screen. ── */}
+      {markets.length > 1 && (
+        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+          <MapPin size={13} className="text-muted shrink-0" />
+          <button onClick={() => pickMkt('all')}
+            className={'px-2.5 py-1 rounded-full border text-[12px] font-bold ' + (mkt === 'all' ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
+            All areas
+          </button>
+          {markets.map(m => (
+            <button key={m.key} onClick={() => pickMkt(m.key)}
+              className={'px-2.5 py-1 rounded-full border text-[12px] font-bold inline-flex items-center gap-1.5 ' + (mkt === m.key ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
+              {m.key}
+              {m.open > 0 && <span className={'text-[10px] font-bold ' + (mkt === m.key ? 'text-white/70' : 'text-muted')}>{m.open}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── CONTROLS ── */}
-      <div className="mt-3 flex items-center gap-2 flex-wrap">
+      <div className="mt-2.5 flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
           {([['units', 'Units', LayoutGrid], ['people', 'People', Users]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
@@ -590,10 +694,31 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         ))}
       </div>
 
+      {/* THE LEGEND. Symbols only work if you can learn them once — this is that once. */}
+      <div className="mt-2 flex items-center gap-x-3 gap-y-1.5 flex-wrap">
+        {CATS.map(c => {
+          const G = c.Icon
+          return (
+            <span key={c.key} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+              <span className={'w-4 h-4 rounded-[4px] border border-slate-300 bg-white inline-flex items-center justify-center ' + c.ink}><G size={9} strokeWidth={2.6} /></span>
+              {c.label}
+            </span>
+          )
+        })}
+        <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+          <span className="w-4 h-4 rounded-[4px] bg-slate-400 inline-flex items-center justify-center text-white"><Check size={9} strokeWidth={3} /></span>
+          filled = finished
+        </span>
+        <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+          <span className="w-4 h-4 rounded-[4px] border-2 border-dashed border-rose-400 bg-white" />
+          nobody assigned
+        </span>
+      </div>
+
       <p className="mt-2 text-[11px] text-muted">
         {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown ·
-        squares are the day&rsquo;s tasks, filled when finished · tap a row to open it, tap a square to open the task in Breezeway.
-        {' '}Guest issues and glitches count everything still open, not only what is scheduled today &mdash; they stay open until somebody fixes them.
+        each symbol is one task, filled in when it is finished · hover or tap a symbol for its detail, tap a row to work it.
+        {' '}Glitches count everything still open, not only what is scheduled today &mdash; they stay open until somebody fixes them.
       </p>
     </div>
   )
