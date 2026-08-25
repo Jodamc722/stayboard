@@ -14,6 +14,8 @@ export const VAULT_BUCKET = 'vault'
 export const ITEMS = 'vault_items'
 export const GRANTS = 'vault_grants'
 export const LOG = 'vault_access_log'
+export const COLLECTIONS = 'vault_collections'
+export const COLLECTION_MEMBERS = 'vault_collection_members'
 
 export type VaultKind = 'secret' | 'file' | 'note'
 export type VaultLevel = 'view' | 'manage'
@@ -85,25 +87,94 @@ export function maskHint(plain: string): string {
 
 const lower = (s: any) => String(s || '').trim().toLowerCase()
 
+/** One collection, as the access check needs it. */
+export type CollectionRef = {
+  id: string; name: string; slug: string; color?: string | null
+  roles: string[]; level: VaultLevel
+}
+
+/**
+ * Every collection this person can open, and at what level.
+ *
+ * Two independent doors, and the WIDER one wins: their email is on the member list, or their
+ * access_role is named in the collection's roles[]. Roles exist so "the managers" keeps meaning
+ * the right people after somebody is promoted, without anyone remembering to edit a vault.
+ */
+export async function collectionsFor(email: string, accessRole: string | null, isSuperadmin: boolean):
+  Promise<Map<string, VaultLevel>> {
+  const out = new Map<string, VaultLevel>()
+  const me = lower(email)
+  if (!me) return out
+  const db = supabaseAdmin()
+  const { data: cols, error } = await db.from(COLLECTIONS)
+    .select('id, roles, level').is('deleted_at', null).limit(500)
+  // The table only exists after migration 052. Until then there are no collections, which means
+  // the old per-item rules are the whole story — correct, and quiet.
+  if (error || !cols) return out
+
+  const role = lower(accessRole)
+  // Superadmin opens every vault; that is already true of every item, so this only saves a query.
+  if (isSuperadmin) {
+    for (const c of cols as any[]) out.set(String(c.id), 'manage')
+    return out
+  }
+
+  const byRole = new Set<string>()
+  if (role) {
+    for (const c of cols as any[]) {
+      const roles = Array.isArray(c.roles) ? c.roles.map((r: any) => lower(r)) : []
+      if (roles.includes(role)) byRole.add(String(c.id))
+    }
+  }
+
+  const { data: mem } = await db.from(COLLECTION_MEMBERS).select('collection_id').ilike('email', me)
+  const byMember = new Set(((mem || []) as any[]).map(r => String(r.collection_id)))
+
+  for (const c of cols as any[]) {
+    const id = String(c.id)
+    if (!byRole.has(id) && !byMember.has(id)) continue
+    out.set(id, (c as any).level === 'manage' ? 'manage' : 'view')
+  }
+  return out
+}
+
 /**
  * Can this person touch this item, and how much?
  *
- * Deny by default. Owner of the item and the workspace superadmin get 'manage'; everyone else gets
- * exactly what a grant row says, and nothing if there isn't one.
+ * Deny by default, widest door wins:
+ *   superadmin            -> manage
+ *   owner of the item     -> manage
+ *   named on the item     -> whatever the grant says
+ *   in the item's vault   -> whatever the vault says
+ * ...and nothing at all if none of those matched. An item with no collection_id is private to its
+ * owner plus its named grants, which is where every imported login starts.
  */
 export async function accessFor(
-  item: { id: string; owner_email?: string | null },
+  item: { id: string; owner_email?: string | null; collection_id?: string | null },
   email: string,
   isSuperadmin: boolean,
+  opts?: { accessRole?: string | null; collections?: Map<string, VaultLevel> },
 ): Promise<VaultLevel | null> {
   const me = lower(email)
   if (!me) return null
   if (isSuperadmin) return 'manage'
   if (lower(item.owner_email) === me) return 'manage'
+
+  let best: VaultLevel | null = null
   const { data } = await supabaseAdmin().from(GRANTS)
     .select('level').eq('item_id', item.id).ilike('email', me).maybeSingle()
   const lvl = (data as any)?.level
-  return lvl === 'manage' ? 'manage' : lvl === 'view' ? 'view' : null
+  if (lvl === 'manage') best = 'manage'
+  else if (lvl === 'view') best = 'view'
+
+  const cid = item.collection_id ? String(item.collection_id) : ''
+  if (cid && best !== 'manage') {
+    const map = opts?.collections || await collectionsFor(me, opts?.accessRole ?? null, false)
+    const via = map.get(cid)
+    if (via === 'manage') best = 'manage'
+    else if (via === 'view' && !best) best = 'view'
+  }
+  return best
 }
 
 /** Item ids this person has been granted, for filtering the list. */
@@ -157,6 +228,7 @@ export function publicItem(row: any, level: VaultLevel | null) {
     doc_bytes: row.doc_bytes,
     doc_mime: row.doc_mime,
     hasFile: !!row.doc_path,
+    collection_id: row.collection_id || null,
     expires_on: row.expires_on,
     tags: Array.isArray(row.tags) ? row.tags : [],
     owner_email: row.owner_email,
@@ -233,4 +305,49 @@ export async function vaultWideLog(days = 30, limit = 500): Promise<any[]> {
     for (const it of (items || []) as any[]) titles[String(it.id)] = String(it.title || '')
   }
   return rows.map(r => ({ ...r, title: r.item_id ? (titles[String(r.item_id)] || '(deleted item)') : null }))
+}
+
+// ── THE 60-SECOND UNLOCK ────────────────────────────────────────────────────────────────────────
+// Jon 2026-08-25: *"when you type a code in at top give us 1 min, still have to click reveal,
+// that's how we can track."*
+//
+// So the code stops being a per-item toll and becomes a short session — but revealing stays a
+// deliberate, per-item CLICK, and every one of those clicks still writes its own audit row naming
+// the person and the item. The window changes how often you type; it changes nothing about what
+// gets recorded, which is the entire point.
+//
+// Enforced SERVER-SIDE. The cookie is an HMAC over the person's own email and an expiry, signed
+// with VAULT_KEY, so it cannot be forged, cannot be lent to a colleague, and dies on its own.
+// A client-side countdown would be decoration.
+export const UNLOCK_COOKIE = 'vault_open'
+export const UNLOCK_SECONDS = 60
+
+function unlockSecret(): Buffer {
+  // Reuses VAULT_KEY rather than adding a second secret to lose: same blast radius, one thing to set.
+  return crypto.createHash('sha256').update('vault-unlock:' + (process.env.VAULT_KEY || ''), 'utf8').digest()
+}
+
+export function mintUnlock(email: string, seconds = UNLOCK_SECONDS): { token: string; expires: number } {
+  const expires = Date.now() + seconds * 1000
+  const body = lower(email) + '.' + expires
+  const sig = crypto.createHmac('sha256', unlockSecret()).update(body).digest('base64url')
+  return { token: body + '.' + sig, expires }
+}
+
+/** Constant-time check that this cookie is this person's, and still alive. */
+export function unlockValid(token: string | undefined | null, email: string): boolean {
+  const raw = String(token || '')
+  const cut = raw.lastIndexOf('.')
+  if (cut < 0) return false
+  const body = raw.slice(0, cut)
+  const sig = raw.slice(cut + 1)
+  const dot = body.lastIndexOf('.')
+  if (dot < 0) return false
+  const who = body.slice(0, dot)
+  const expires = Number(body.slice(dot + 1))
+  if (who !== lower(email)) return false            // somebody else's window is not yours
+  if (!Number.isFinite(expires) || expires < Date.now()) return false
+  const want = crypto.createHmac('sha256', unlockSecret()).update(body).digest('base64url')
+  const a = Buffer.from(sig), b = Buffer.from(want)
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
