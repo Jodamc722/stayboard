@@ -6,7 +6,7 @@
 //   POST { code, basket, note }   submit a basket (priced server-side, never from the client)
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, type LinkRow } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, hubOf, type LinkRow } from '@/lib/guest-orders'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -33,7 +33,8 @@ export async function GET(req: NextRequest) {
   if (!link) return NextResponse.json({ ok: false, error: 'This order link is not valid.' }, { status: 404 })
   const cfg = await getGuestOrdersCfg()
   const timing = timingFor(cfg, link.building, link.market)
-  const [catalog, orders] = await Promise.all([loadCatalog({ building: link.building, market: link.market }), ordersForLink(link.code)])
+  const hub = hubOf(cfg, link.building)
+  const [catalog, orders] = await Promise.all([loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true }), ordersForLink(link.code)])
   // first open, remembered once — the board shows "opened" so the team knows the guest saw it
   if (!link.opened_at) { try { await supabaseAdmin().from('guest_order_links').update({ opened_at: new Date().toISOString() }).eq('code', link.code) } catch { /* cosmetic */ } }
 
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
     },
     copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: cfg.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote },
     deadline: { orderBy: orderBy.toISOString(), orderByLabel: fmtTimeET(orderBy) + ' ET', arrivalDayStillPossible, nextDelivery, hoursBefore: timing.orderByHoursBefore, leadHours: timing.leadHours, offered: timing.enabled },
-    catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, unit: c.unit_label, category: c.category || 'Extras', maxQty: c.max_qty, image: c.image_url })),
+    catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, unit: c.unit_label, category: c.category || 'Extras', maxQty: c.track_stock && c.available !== null && c.available !== undefined ? Math.min(c.max_qty, c.available) : c.max_qty, image: c.image_url, fewLeft: c.track_stock && c.available !== null && c.available !== undefined && c.available <= 3 ? c.available : null })),
     orders: orders.map(publicOrder),
   })
 }
