@@ -13,16 +13,25 @@ import { setSetting } from '@/lib/app-settings'
 import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'
 import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
+import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 export const OPS_BRIEF_KEY = 'ops_brief'
-type BriefCfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: Partial<Record<VendorGroup, string[]>> }
+type BriefCfg = {
+  enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]
+  vendors?: Partial<Record<VendorGroup, string[]>>
+  // THE CREW'S LANGUAGE, PER BRIEF (Jon, 2026-08-25). Only the field day sheets take one — Ops
+  // Command and the GM brief are management documents and stay English.
+  lang?: { miami?: string; broward?: string }
+}
 
 // One builder for every variant, so preview / test / cron can never drift apart.
-const build = (v: BriefVariant) => v === 'GM' ? buildGmBrief() : buildOpsBrief(v)
+const build = (v: BriefVariant, lang: BriefLang = 'en') => v === 'GM' ? buildGmBrief() : buildOpsBrief(v, lang)
+const langFor = (cfg: BriefCfg, v: BriefVariant): BriefLang =>
+  v === 'Miami' ? asLang(cfg.lang?.miami) : v === 'Broward' ? asLang(cfg.lang?.broward) : 'en'
 const ALL_VARIANTS: BriefVariant[] = ['Miami', 'Broward', 'full', 'GM']
 
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
@@ -64,7 +73,8 @@ export async function GET(req: NextRequest) {
       return new NextResponse(vb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     }
     const v = ALL_VARIANTS.find(x => x.toLowerCase() === preview.toLowerCase()) || 'full'
-    const b = await build(v)
+    // ?lang=es previews the Spanish copy without saving the setting.
+    const b = await build(v, asLang(sp.get('lang') || langFor(cfg, v)))
     return new NextResponse(b.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
   }
 
@@ -76,7 +86,7 @@ export async function GET(req: NextRequest) {
     const only = String(sp.get('only') || '').toLowerCase()
     const pick = only ? ALL_VARIANTS.filter(v => v.toLowerCase() === only) : ALL_VARIANTS
     for (const v of pick) {
-      const b = await build(v)
+      const b = await build(v, langFor(cfg, v))
       const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html })
       out.push({ variant: v, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
     }
@@ -102,7 +112,7 @@ export async function GET(req: NextRequest) {
   for (const { v, to } of lists) {
     if (!to.length) { out.push({ variant: v, skipped: 'no recipients' }); continue }
     try {
-      const b = await build(v)
+      const b = await build(v, langFor(cfg, v))
       const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
       out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
     } catch (e: any) {
