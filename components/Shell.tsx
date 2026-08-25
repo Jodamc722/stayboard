@@ -99,8 +99,11 @@ const SECTIONS: NavSection[] = [
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
       { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
-      // Owner Reports · Owner Audit · Projections = one Owners hub (lib/hubs.ts), 2026-08-24.
+      // Owner Reports · Projections = one Owners hub (lib/hubs.ts), 2026-08-24.
       { to: '/reports',  label: 'Owners', Icon: FileText, hub: 'owners' },
+      // Owner Statement Audit stands alone (Jon, 2026-08-25). It is an hour-long working session
+      // against Guesty, not a tab you pass through on the way to a report.
+      { to: '/owner-audit', label: 'Owner Statement Audit', Icon: ClipboardList },
     ],
   },
   {
