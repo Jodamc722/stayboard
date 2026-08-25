@@ -534,7 +534,20 @@ export function linkUrl(code: string, cfg: GuestOrdersCfg, origin?: string | nul
 
 let _fieldCache: { id: string | null; name: string; at: number } | null = null
 /** The Guesty RESERVATION custom field id for "Order form" (re-syncs the field list once if missing). */
+/**
+ * The Guesty custom field the link is written into.
+ *
+ * TAKES A NAME **OR THE FIELD'S OWN ID**. Resolving by name needs `guesty_custom_fields`, and that
+ * mirror is filled from the account custom-fields endpoint — which has been empty before (the
+ * definitions are nested in the account payload) and on 2026-08-25 answered **429 Too Many
+ * Requests** on every attempt, recording a misleading "shape may have changed" and leaving the
+ * whole feature unable to find a field that exists. An id pasted from Guesty skips all of that:
+ * no mirror, no lookup, no rate limit. Guesty ids are 24 hex characters.
+ */
+const FIELD_ID_RE = /^[a-f0-9]{24}$/i
 export async function orderFormFieldId(name: string): Promise<string | null> {
+  const direct = String(name || '').trim()
+  if (FIELD_ID_RE.test(direct)) return direct
   if (_fieldCache && _fieldCache.name === name && Date.now() - _fieldCache.at < 10 * 60_000 && _fieldCache.id) return _fieldCache.id
   const db = supabaseAdmin()
   const find = async () => {
@@ -552,7 +565,7 @@ export async function orderFormFieldId(name: string): Promise<string | null> {
 /** Write the link into the reservation's "Order form" custom field. Idempotent. */
 export async function writeLinkToGuesty(link: LinkRow, cfg: GuestOrdersCfg): Promise<{ ok: boolean; note: string }> {
   const fieldId = await orderFormFieldId(cfg.customFieldName)
-  if (!fieldId) return { ok: false, note: 'Guesty reservation custom field "' + cfg.customFieldName + '" not found — create it in Guesty (Settings → Custom fields → Reservation) and the link fills on the next run' }
+  if (!fieldId) return { ok: false, note: 'Guesty reservation custom field "' + cfg.customFieldName + '" could not be resolved. Either it does not exist (Guesty → Settings → Custom fields → Reservation), or Guesty is rate-limiting the field list. Fastest fix: paste the field\'s own ID (24 hex characters, from its URL in Guesty) into "Custom field name" — that skips the lookup entirely.' }
   let token = ''
   try { token = await getToken() } catch (e: any) { return { ok: false, note: 'Guesty token: ' + String(e?.message || e).slice(0, 80) } }
   const url = linkUrl(link.code, cfg)

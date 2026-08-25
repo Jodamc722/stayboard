@@ -536,8 +536,14 @@ export async function syncCustomFields(): Promise<number> {
   }
   // Finding NOTHING on an account that has custom fields is a bug, not a quiet success. Record it as
   // an error so the feed shows red instead of a reassuring timestamp.
+  // 2026-08-25: every one of these endpoints answered 429 for an extended period, and the message
+  // below claimed the SHAPE had changed — sending the next reader hunting through the payload for a
+  // parser bug that was not there. Say which it is.
   await recordSync('custom_fields', rows.length,
-    rows.length ? null : 'parsed 0 field definitions from the account payload — shape may have changed again')
+    rows.length ? null
+      : data === null
+        ? 'Guesty returned nothing for the account custom-fields endpoints (rate limit or auth) — the mirror was left as it was'
+        : 'parsed 0 field definitions from the account payload — shape may have changed again')
   return rows.length
 }
 
