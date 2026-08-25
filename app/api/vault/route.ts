@@ -9,6 +9,8 @@ import {
   ITEMS, GRANTS, accessFor, grantedItemIds, logAccess, publicItem, encryptSecret, maskHint,
   vaultKeyReady, isMissingTable, type VaultKind,
 } from '@/lib/vault'
+import { snapshotVault } from '@/lib/vault-backup'
+import { currentVaultCode } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -65,8 +67,10 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      ok: true, items, grants, me, isOwner: owner,
+      ok: true, items, grants, me, isOwner: owner, isAdmin: access.role === 'admin',
       keyReady: vaultKeyReady(),
+      // Whether the second lock exists yet. Without it nothing can be revealed — say so up front.
+      codeSet: !!(await currentVaultCode()),
       counts: {
         total: items.length,
         expiring: items.filter(i => i.expires_on && daysUntil(i.expires_on) !== null && daysUntil(i.expires_on)! <= 30).length,
@@ -126,6 +130,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, needsMigration: isMissingTable(error.message), error: error.message }, { status: 500 })
     }
     await logAccess({ itemId: (data as any).id, email: me, action: 'create', detail: kind + ': ' + title, ip: ipOf(req) })
+    await snapshotVault('create', me)
     return NextResponse.json({ ok: true, item: publicItem(data, 'manage') })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
@@ -167,6 +172,7 @@ export async function PATCH(req: NextRequest) {
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     // The DETAIL says which fields moved, never what they moved to.
     await logAccess({ itemId: id, email: me, action: 'update', detail: Object.keys(patch).filter(k => k !== 'updated_at').join(', '), ip: ipOf(req) })
+    await snapshotVault('update', me)
     return NextResponse.json({ ok: true, item: publicItem(data, 'manage') })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
@@ -194,6 +200,7 @@ export async function DELETE(req: NextRequest) {
     const { error } = await db.from(ITEMS).update({ deleted_at: new Date().toISOString() }).eq('id', id)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     await logAccess({ itemId: id, email: me, action: 'delete', detail: str((item as any).title, 120), ip: ipOf(req) })
+    await snapshotVault('delete', me)
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
