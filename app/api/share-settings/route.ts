@@ -3,8 +3,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { currentSharePassword, currentAdminPassword, currentMarketingPassword, currentAuditPassword, currentRulesPassword } from '@/lib/shareAuth'
-import { isSuperadmin } from '@/lib/access'
+import { currentSharePassword, currentAdminPassword, currentMarketingPassword, currentAuditPassword, currentRulesPassword, currentVaultCode } from '@/lib/shareAuth'
+import { isSuperadmin, getAccess } from '@/lib/access'
+import { logAccess } from '@/lib/vault'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,8 +39,9 @@ export async function GET() {
   const marketing = await currentMarketingPassword()
   const audit = await currentAuditPassword()
   const rules = await currentRulesPassword()
-  const payload: Record<string, any> = { ok: true, password, adminSet, links: LINKS, marketingLinks: MARKETING_LINKS, marketingSet: !!marketing, marketingPassword: marketing, auditLinks: AUDIT_LINKS, auditSet: !!audit, auditPassword: audit, rulesSet: !!rules, rulesPassword: rules }
-  if (isSuperadmin(user.email)) payload.adminPassword = adminCur
+  const vault = await currentVaultCode()
+  const payload: Record<string, any> = { vaultSet: !!vault, ok: true, password, adminSet, links: LINKS, marketingLinks: MARKETING_LINKS, marketingSet: !!marketing, marketingPassword: marketing, auditLinks: AUDIT_LINKS, auditSet: !!audit, auditPassword: audit, rulesSet: !!rules, rulesPassword: rules }
+  if (isSuperadmin(user.email)) { payload.adminPassword = adminCur; payload.vaultCode = vault }
   return NextResponse.json(payload)
 }
 
@@ -50,6 +52,18 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
     const db = supabaseAdmin()
+    // VAULT code (row id=6) — asked on every reveal in the vault. Admins only may set it, and the
+    // change itself is written to the vault log: everyone's next reveal will need the new code.
+    if (body.vaultCode !== undefined) {
+      const access = await getAccess()
+      if (access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Only an admin can set the vault code.' }, { status: 403 })
+      const vc = String(body.vaultCode || '').trim()
+      if (vc.length < 4) return NextResponse.json({ ok: false, error: 'Vault code must be at least 4 characters.' }, { status: 400 })
+      const { error } = await db.from('share_settings').upsert({ id: 6, password: vc, updated_at: new Date().toISOString() })
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      await logAccess({ itemId: null, email: user.email, action: 'code-set', detail: 'vault code changed', ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null })
+      return NextResponse.json({ ok: true, vaultSet: true, vaultCode: isSuperadmin(user.email) ? vc : undefined })
+    }
     // ADMIN password (row id=2) — gates destructive actions like Delete
     if (body.adminPassword !== undefined) {
       const ap = String(body.adminPassword || '').trim()
