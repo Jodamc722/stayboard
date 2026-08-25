@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
   const link = await linkFor(code)
   if (!link) return NextResponse.json({ ok: false, error: 'This order link is not valid.' }, { status: 404 })
   const cfg = await getGuestOrdersCfg()
-  const timing = timingFor(cfg, link.building, link.market)
-  const hub = hubOf(cfg, link.building)
+  const timing = timingFor(cfg, link.building, link.market, link.listing_id)
+  const hub = hubOf(cfg, link.building, link.listing_id)
   const [catalog, orders] = await Promise.all([loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true }), ordersForLink(link.code)])
   // first open, remembered once — the board shows "opened" so the team knows the guest saw it
   if (!link.opened_at) { try { await supabaseAdmin().from('guest_order_links').update({ opened_at: new Date().toISOString() }).eq('code', link.code) } catch { /* cosmetic */ } }
