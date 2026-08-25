@@ -76,6 +76,9 @@ const SECTIONS: NavSection[] = [
       // Guest Orders moved into the Orders hub (Operations) 2026-08-24 — same page, same key.
       // Front-Desk Notices · Guidebooks · Property FAQ = one Guest Comms hub (lib/hubs.ts).
       { to: '/reservation-emails', label: 'Guest Comms', Icon: Mail, hub: 'guest-comms' },
+      // Guidebooks is its own row again (Jon, 2026-08-25) — it was a tab inside Guest Comms and
+      // that made it unfindable from the sidebar.
+      { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
       // Guests directory (2026-08-18, Jon, parallel session): guest profiles aggregated from
       // reservations; VIP on a profile feeds auto-inspections.
       { to: '/guests',       label: 'Guests',       Icon: Contact },
