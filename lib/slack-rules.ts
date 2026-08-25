@@ -48,7 +48,7 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   walk_in_risk: 'Could be a walk-in tonight',
   readiness_3pm: '3pm check — ready for 4pm?',
   weekly_planner: 'Weekly planner (who is working, per market)',
-  guest_orders: 'Guest orders (new basket → approvers; delivery day → housekeeping)',
+  guest_orders: 'Guest orders (new order → CCS/ops channel as a notice; delivery day → housekeeping)',
   labor_report: 'Hours, no-shows, over hours',
   notable_arrivals: 'Owner stays & big bookings',
 }

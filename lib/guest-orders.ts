@@ -5,7 +5,8 @@
 //   ensureLink(reservation)      one unguessable /order/<code> per reservation, written into the
 //                                Guesty reservation custom field "Order form" so Guesty's own
 //                                pre-arrival automation carries it to the guest
-//   submitOrder(code, basket)    guest's basket → guest_orders (status submitted) → approvers told
+//   submitOrder(code, basket)    guest's basket → guest_orders (status submitted) → CCS told in Slack
+//                                (a notice only — approval happens on /guest-orders in the app)
 //   approveOrder(id, actor)      folio lines + charge the card Guesty holds → paid, or
 //                                awaiting_payment with the exact reason when there is no card
 //   pushDue(today)               every paid order whose delivery date has arrived → ONE Breezeway
@@ -28,7 +29,7 @@ import { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson } from '
 import { getTaskAutomation } from './auto-inspections'
 import { draft } from './slack-queue'
 import { getSlackRules, groupForBuilding, channelFor, audienceFor, resolveSlackId } from './slack-rules'
-import { getDirectory, dmUser } from './slack'
+import { getDirectory } from './slack'
 import { sendResendEmail } from './resend-send'
 
 // ── Settings ──────────────────────────────────────────────────────────────────────────────────
@@ -620,11 +621,6 @@ export async function getOrder(id: string): Promise<OrderRow | null> {
   const { data } = await supabaseAdmin().from('guest_orders').select('*').eq('id', id).limit(1)
   return data && data[0] ? normOrder(data[0]) : null
 }
-export async function getOrderByToken(token: string): Promise<OrderRow | null> {
-  if (!token) return null
-  const { data } = await supabaseAdmin().from('guest_orders').select('*').eq('approve_token', token).limit(1)
-  return data && data[0] ? normOrder(data[0]) : null
-}
 export async function ordersForLink(code: string): Promise<OrderRow[]> {
   const { data } = await supabaseAdmin().from('guest_orders').select('*').eq('link_code', code).order('submitted_at', { ascending: false }).limit(50)
   return (data || []).map(normOrder)
@@ -647,7 +643,7 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
     link_code: link.code, reservation_id: link.reservation_id, listing_id: link.listing_id, unit: link.unit, building: link.building, market: link.market,
     guest_name: link.guest_name, guest_email: link.guest_email, check_in: link.check_in, check_out: link.check_out,
     status: 'submitted', items: priced.lines, subtotal_usd: priced.subtotal, tax_usd: priced.tax, total_usd: priced.total, currency: 'USD',
-    guest_note: guestNote ? guestNote.slice(0, 600) : null, approve_token: randomBytes(24).toString('hex'),
+    guest_note: guestNote ? guestNote.slice(0, 600) : null, approve_token: null,
     requested_delivery: delivery && ['asap', 'arrival', 'date'].indexOf(delivery.mode) >= 0 ? delivery.mode : 'auto',
     requested_date: delivery && delivery.mode === 'date' && delivery.date && /^\d{4}-\d{2}-\d{2}$/.test(delivery.date) ? delivery.date : null,
   }
@@ -668,26 +664,25 @@ async function notifyNewOrder(order: OrderRow, cfg: GuestOrdersCfg, origin: stri
   const rule = rules.events.guest_orders
   if (!rule || !rule.enabled) return
   const base = (cfg.publicBase || origin || '').replace(/\/+$/, '')
-  const approveUrl = base + '/approve/order/' + order.approve_token
   const boardUrl = base + '/guest-orders'
   const first = String(order.guest_name || 'Guest').split(' ')[0]
+  const when = order.requested_delivery === 'asap' ? 'ASAP (in-house)'
+    : order.requested_delivery === 'date' && order.requested_date ? fmtDay(order.requested_date)
+    : 'arrival day'
   const core = ':shopping_trolley: *New guest order — ' + slackSafe(order.unit || 'unit') + '* · ' + money(order.total_usd) + '\n' +
-    slackSafe(first) + ' arrives ' + fmtDay(order.check_in) + (order.check_out ? ' → ' + fmtDay(order.check_out) : '') + '\n' +
+    slackSafe(first) + ' arrives ' + fmtDay(order.check_in) + (order.check_out ? ' → ' + fmtDay(order.check_out) : '') + ' · wants it ' + when + '\n' +
     order.items.map(l => '• ' + l.qty + '× ' + slackSafe(l.name) + ' — ' + money(l.line_total_usd)).join('\n') +
     (order.guest_note ? '\n_"' + slackSafe(order.guest_note.slice(0, 200)) + '"_' : '')
-  // THE CHARGE LINK ONLY EVER TRAVELS IN A DM TO AN APPROVER. The outbox copies every message to
-  // the firehose, so it cannot carry the token; the approvers are DM'd directly, like the outbox
-  // does for its own approve links.
-  for (const approver of rules.approvers) {
-    try { await dmUser(approver, core + '\n\n<' + approveUrl + '|✅ Approve & charge ' + money(order.total_usd) + '>   ·   <' + boardUrl + '|Open Guest Orders>') } catch { /* board still works */ }
-  }
+  // Slack is a NOTICE for the CCS team (Jon, 2026-08-25): "approval should live in the app". No
+  // approve link, no token, no DM — the message points at the board, where a signed-in person with
+  // FULL on guest-orders approves, marks paid or declines. Nothing in Slack can move money.
   const group = groupForBuilding(rules, order.building)
   const res = await draft({
     eventKey: 'guest_orders',
     groupKey: 'guest_order:' + order.id + ':new',
     building: order.building,
     channelId: rules.opsChannel || rules.defaultChannel || rules.firehose,
-    body: core + '\n\n<' + boardUrl + '|Open Guest Orders to approve>',
+    body: core + '\n\n<' + boardUrl + '|Review in Lighthouse → Guest Orders>',
     summary: 'New guest order · ' + (order.unit || '') + ' · ' + money(order.total_usd),
     audience: audienceFor(rules, group, []),
     itemCount: order.items.length,
