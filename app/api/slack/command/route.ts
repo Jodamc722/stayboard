@@ -14,7 +14,8 @@
 // five minutes (replay protection).
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { runCheck, createRequest } from '@/lib/eve/door-code'
+import { runCheck, createRequest, attachSlackPost } from '@/lib/eve/door-code'
+import { postDoorCodeApproval } from '@/lib/eve/approvals'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -61,5 +62,19 @@ export async function POST(req: NextRequest) {
   const quote = check.permissionQuotes?.length
     ? `\n\n> _"${check.permissionQuotes[0].text.slice(0, 180)}"_ — the guest, ${String(check.permissionQuotes[0].at).slice(0, 10)}\nRead that before you tap.`
     : ''
-  return say(`✅ *${check.headline}*\n${check.note}${quote}\n\nTap to reveal the code (works once, expires in 4h):\n${link}`)
+
+  // Also drop it in the approvals channel, so whoever approves sees it without being asked.
+  const posted = await postDoorCodeApproval({
+    unit: check.unit || unit, building: check.building, address: check.address,
+    verdict: check.verdict, headline: check.headline, occupancy: check.occupancy, note: check.note,
+    quote: check.permissionQuotes?.[0] || null, taskToday: check.taskToday, vacancyScan: check.vacancyScan, calendar: check.calendar, confidence: check.confidence, arrivalWarning: check.arrivalWarning,
+    requestedBy: `@${userName}`, reason: null, link,
+  })
+  if (posted.ok && posted.channelId && posted.ts && parked.requestId) {
+    await attachSlackPost(parked.requestId, posted.channelId, posted.ts)
+  }
+  const where = posted.ok ? `\n\n_Also posted in ${posted.channel} for approval._` : ''
+
+  const addr = check.address ? `\n📍 ${check.address}` : ''
+  return say(`✅ *${check.headline}*${addr}\n${check.note}${quote}\n\nTap to reveal the code (works once, expires in 4h):\n${link}${where}`)
 }

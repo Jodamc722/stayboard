@@ -257,3 +257,51 @@ export async function pruneStaleMemories(): Promise<number> {
     return (data || []).length
   } catch { return 0 }
 }
+
+
+/**
+ * RE-VALIDATION — the fix for a belief that outlived its evidence.
+ *
+ * Jon, 2026-08-24: "run a clean audit of memory of Eve, clean it up, get rid of useless memory."
+ *
+ * The nightly sweep writes its findings into memory with source 'system'. Every one of those was
+ * true on the night it was written, and NOTHING ever checked it again. pruneStaleMemories only
+ * touches source 'eve', so a swept memory was immortal by accident: "Botanica runs hot on
+ * maintenance" could keep asserting itself for a year after Botanica stopped running hot, taking up
+ * prompt space every single turn and quietly making Eve wrong with confidence.
+ *
+ * The evidence to fix it was already there. Every swept memory carries evidence.finding — the id of
+ * the deterministic finding that produced it. So the test is simply: did that finding come back in
+ * this sweep? If a finding stops appearing, the records that produced it no longer say what they
+ * said, and the memory is a claim the data has withdrawn.
+ *
+ * It EXPIRES rather than deletes, with a grace period, because miners fail and a single bad night
+ * must not wipe what Eve knows. Anything a human wrote is never touched: humans retire human
+ * knowledge.
+ */
+export async function revalidateSweptMemories(currentFindingIds: string[], graceDays = 10): Promise<{ checked: number; expired: number }> {
+  const db = supabaseAdmin()
+  const live = new Set(currentFindingIds.map(String))
+  try {
+    const { data } = await db.from('eve_memory')
+      .select('id,evidence,updated_at')
+      .eq('source', 'system').is('superseded_by', null).is('expires_on', null)
+      .order('updated_at', { ascending: false }).limit(1000)
+    const rows = (data || []) as any[]
+    const cutoff = Date.now() - graceDays * 864e5
+    const stale = rows.filter(r => {
+      const fid = r?.evidence?.finding
+      if (!fid) return false                       // not from a miner — leave it alone
+      if (live.has(String(fid))) return false      // the evidence still says it
+      return Date.parse(String(r.updated_at)) < cutoff
+    })
+    if (!stale.length) return { checked: rows.length, expired: 0 }
+    const today = new Date().toISOString().slice(0, 10)
+    for (let i = 0; i < stale.length; i += 100) {
+      await db.from('eve_memory')
+        .update({ expires_on: today, updated_at: new Date().toISOString() })
+        .in('id', stale.slice(i, i + 100).map(r => r.id))
+    }
+    return { checked: rows.length, expired: stale.length }
+  } catch { return { checked: 0, expired: 0 } }
+}

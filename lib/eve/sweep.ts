@@ -21,7 +21,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING } from './ctx'
-import { saveMemory } from './memory'
+import { saveMemory, revalidateSweptMemories } from './memory'
 
 export function djb2(s: string): string {
   let h = 5381
@@ -553,6 +553,130 @@ async function mineGuestyFields(c: Ctx): Promise<Finding[]> {
 }
 
 // ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
+// 12. GUEST KNOWLEDGE — what we tell guests, and the questions we have never written an answer to.
+//     (Jon, 2026-08-24: "she should study the guest app and house rules and learn all faq related
+//     things, scan all photos to learn properties.")
+//
+//     THE FINDING THAT MATTERS MOST IS THE GAP. Counting FAQ rows is trivia. Crossing the themes
+//     guests keep raising in MESSAGES against the answers we have actually written is not: every
+//     match is a question answered before it was asked, and every miss is a question the team is
+//     retyping by hand, from memory, differently each time, forever.
+// ---------------------------------------------------------------------------------------------
+async function mineGuestKnowledge(c: Ctx): Promise<Finding[]> {
+  const out: Finding[] = []
+
+  const [faqRes, bookRes, listRes, sentRes] = await Promise.all([
+    safe(c.db.from('listing_faq').select('listing_id,category,question,answer,status').order('created_at', { ascending: false }).limit(3000), { data: [] } as any),
+    safe(c.db.from('guidebooks').select('listing_id,status,sections').order('updated_at', { ascending: false }).limit(600), { data: [] } as any),
+    safe(c.db.from('guesty_listings').select('id,nickname,title,status,pictures,raw').order('id').limit(400), { data: [] } as any),
+    safe(c.db.from('guesty_conversation_sentiment').select('top_issue,listing_id,last_message_at')
+      .gte('last_message_at', c.from).order('conversation_id').limit(3000), { data: [] } as any),
+  ])
+  const faqs: any[] = faqRes.data || []
+  const books: any[] = bookRes.data || []
+  const live: any[] = (listRes.data || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  if (!live.length) return out
+
+  // ---- coverage ----
+  const faqByListing: Record<string, number> = {}
+  for (const f of faqs) faqByListing[String(f.listing_id)] = (faqByListing[String(f.listing_id)] || 0) + 1
+  const noFaq = live.filter((l: any) => !faqByListing[String(l.id)])
+  const bookIds = new Set(books.map((b: any) => String(b.listing_id)))
+  const noBook = live.filter((l: any) => !bookIds.has(String(l.id)))
+  const noRules = live.filter((l: any) => !String(l.raw?.publicDescription?.houseRules || '').trim())
+  const noArrival = live.filter((l: any) => !String(l.raw?.checkInInstructions || l.raw?.publicDescription?.access || '').trim())
+
+  out.push({
+    id: 'guest_knowledge_coverage', type: 'fact', scope: 'portfolio',
+    title: 'What we have written down for guests',
+    content: `Across ${live.length} live units: ${faqs.length} FAQ answers on file, ${live.length - noFaq.length} units with at least one. `
+      + `${noBook.length} have no guidebook, ${noRules.length} have no house rules, ${noArrival.length} have no arrival instructions. `
+      + 'Every gap here is a question that reaches the team as a message instead of being answered before it was asked.',
+    evidence_count: live.length, promote: true, memoryKind: 'insight', weight: 6,
+  })
+
+  // ---- the themes we HAVE answered ----
+  const catCount: Record<string, number> = {}
+  for (const f of faqs) {
+    const k = lc(f.category).slice(0, 40)
+    if (k) catCount[k] = (catCount[k] || 0) + 1
+  }
+  const topCats = Object.keys(catCount).sort((a, b) => catCount[b] - catCount[a]).slice(0, 10)
+  if (topCats.length) {
+    out.push({
+      id: 'faq_shape', type: 'faq', scope: 'portfolio',
+      title: 'What the FAQ bank actually covers',
+      content: topCats.map(k => `${k} (${catCount[k]})`).join(', ')
+        + '. When a guest asks about one of these, our own written answer exists — use it rather than composing a new one.',
+      evidence_count: faqs.length, promote: true, memoryKind: 'insight', weight: 5,
+    })
+  }
+
+  // ---- THE GAP: raised in messages, never written down ----
+  const issueCount: Record<string, number> = {}
+  for (const r of (sentRes.data || [])) {
+    const k = lc((r as any).top_issue).slice(0, 40)
+    if (k) issueCount[k] = (issueCount[k] || 0) + 1
+  }
+  const faqText = lc(faqs.map((f: any) => `${f.question} ${f.answer} ${f.category}`).join(' '))
+  const gaps = Object.keys(issueCount)
+    .filter(k => issueCount[k] >= 3)
+    .filter(k => {
+      // A theme counts as answered if its meaningful words show up in the bank at all. Deliberately
+      // generous: a false "we have covered that" is cheap to check and a false gap wastes a person.
+      const words = k.split(/\W+/).filter(w => w.length > 3)
+      if (!words.length) return false
+      return !words.some(w => faqText.includes(w))
+    })
+    .sort((a, b) => issueCount[b] - issueCount[a])
+    .slice(0, 8)
+
+  if (gaps.length) {
+    out.push({
+      id: 'faq_gaps', type: 'complaint', scope: 'portfolio',
+      title: `${gaps.length} thing(s) guests keep raising that we have never written an answer for`,
+      content: gaps.map(g => `${g} (${issueCount[g]} threads)`).join(' · ')
+        + '. Each of these is being answered by hand, from memory, slightly differently every time. Writing one FAQ row each is the cheapest quality improvement available.',
+      evidence_count: gaps.reduce((a, g) => a + issueCount[g], 0), promote: true, memoryKind: 'issue', weight: 8,
+    })
+  }
+
+  // ---- photos: what we can and cannot see ----
+  let picTotal = 0, seen = 0, blind = 0
+  const applianceWords: Record<string, number> = {}
+  const metaByListing: Record<string, any[]> = {}
+  for (const b of books) {
+    const m = b?.sections?._photoMeta
+    if (Array.isArray(m) && m.length) metaByListing[String(b.listing_id)] = m
+  }
+  for (const l of live) {
+    const pics = Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(l.raw?.pictures) ? l.raw.pictures.length : 0)
+    picTotal += pics
+    const m = metaByListing[String(l.id)]
+    if (m) {
+      seen += m.length
+      for (const p of m) {
+        if (String(p?.category) === 'appliance' && p?.label) {
+          const k = lc(p.label).slice(0, 40)
+          applianceWords[k] = (applianceWords[k] || 0) + 1
+        }
+      }
+    } else if (pics) blind++
+  }
+  out.push({
+    id: 'photo_knowledge', type: 'fact', scope: 'portfolio',
+    title: 'How much of the portfolio we can actually see',
+    content: `${picTotal} photos across ${live.length} live units. ${seen} have been categorised by the guidebook vision pass; ${blind} unit(s) have photos and NO record of what any of them show. `
+      + (Object.keys(applianceWords).length ? `Appliances photographed and labelled: ${Object.keys(applianceWords).sort((a, b) => applianceWords[b] - applianceWords[a]).slice(0, 10).join(', ')}. ` : '')
+      + 'For a blind unit, do not describe what is in it — say we have photos but no record of their contents.',
+    evidence_count: picTotal, promote: true, memoryKind: 'insight', weight: 6,
+  })
+
+  return out
+}
+
 export const MINERS = [
   { key: 'portfolio', run: minePortfolio },
   { key: 'ops', run: mineOps },
@@ -564,6 +688,7 @@ export const MINERS = [
   { key: 'completion', run: mineCompletion },
   { key: 'review_responses', run: mineReviewResponses },
   { key: 'guesty_fields', run: mineGuestyFields },
+  { key: 'guest_knowledge', run: mineGuestKnowledge },
   { key: 'self', run: mineSelf },
 ]
 
@@ -618,5 +743,12 @@ export async function runSweep(days = 45): Promise<any> {
     } catch { /* one bad promotion must not stop the sweep */ }
   }
 
-  return { ok: true, windowDays: c.days, miners: per, findings: all.length, knowledgeWritten: written, promotedToMemory: promoted, errors }
+  // A finding that stopped coming back is a belief the data has withdrawn. Only run this when the
+  // sweep actually worked: if half the miners threw, their findings are missing for a reason that
+  // has nothing to do with whether they are still true, and expiring on that basis would delete
+  // what Eve knows because of an outage.
+  let revalidated: any = { skipped: 'miners errored' }
+  if (!errors.length) revalidated = await revalidateSweptMemories(all.map(f => f.id))
+
+  return { ok: true, windowDays: c.days, miners: per, findings: all.length, knowledgeWritten: written, promotedToMemory: promoted, revalidated, errors }
 }

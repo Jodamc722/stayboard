@@ -22,7 +22,83 @@ function weekStart(ymd: string): string {
   return shiftDay(ymd, -d.getUTCDay())
 }
 
+import { crewScorecard, crewPerson, crewCoaching, maintenanceScorecard } from './accountability'
+
 export const LABOR_TOOLS: EveTool[] = [
+  {
+    name: 'maintenance_scorecard',
+    description: 'MAINTENANCE: HOURS, BILLABLE HOURS AND TASK COMPLETION. Per technician and for the whole crew — tasks assigned, completed and still open, completion rate, hours actually logged against tasks, median days to close, jobs open more than a week, what we can bill an owner or guest versus what the labour cost us (the recovery rate), how many units came back for more maintenance within a fortnight, and TURNAROUND ON TURNOVER WORK: issues flagged on a turnover day that were still open when the guest arrived. That last number is the other side of the crew scorecard — it is the maintenance failure that a cleaner was about to be blamed for, so quote it here as OURS. Params: days (default 30, max 90), person, building. TWO CAVEATS YOU MUST REPEAT: billable totals are a FLOOR because costs and bill_to only exist on tasks whose billing detail has been pulled, and the missingDetail count says how many are missing; and hours are logged task time, not payroll hours, so name the sample.',
+    input_schema: obj({ days: S.num, person: S.str, building: S.str }),
+    money: true,
+    run: async (input: any) => {
+      const r = await maintenanceScorecard({ days: Number(input?.days) || 30, person: input?.person, building: input?.building })
+      return {
+        ...r,
+        how_to_read: [
+          'completionPct alone means nothing: a 95% completion rate with a 30-day median close is a queue, not a service. Read it with medianDaysToClose and overSevenDays.',
+          'recoveryPct is billed against labour cost. Maintenance runs as a cost centre until this is healthy — but read missingDetail first, because an unpulled task looks unbillable.',
+          'turnoverMissed is the number that matters most to a guest, and it is ours. Anything flagged on a turnover day has a deadline, not a backlog position.',
+          'repeatVisits is a question, not a verdict. Units break twice.',
+        ],
+      }
+    },
+  } as EveTool,
+
+  {
+    name: 'crew_coaching',
+    description: 'THE VERSION YOU CAN SAY TO SOMEBODY\'S FACE. Real feedback for one cleaner or inspector, built from their last cleans: what is going well, what to work on, and what is NOT their fault — each line anchored to a real unit on a real date and quoting the guest or the inspector in their own words. Reviews their last 5-6 jobs with the guest review text, our own logged inspection of that clean, and whether anything was reported. Use this whenever anyone asks how a person is doing, wants to give feedback, is preparing a one-to-one, or is considering letting somebody go. ALWAYS read out the notYourFault section — those are problems the person reported that nobody fixed before a guest arrived, and skipping them is how you lose a good cleaner over somebody else\'s failure. Params: person (required), role ("clean" default or "inspect"), days (default 90), recent (how many recent jobs, default 6).',
+    input_schema: obj({ person: S.str, role: S.str, days: S.num, recent: S.num }),
+    money: true,
+    run: async (input: any) => {
+      const person = String(input?.person || '').trim()
+      if (!person) return { error: 'Name the person.' }
+      const c = await crewCoaching(person, input?.role === 'inspect' ? 'inspect' : 'clean', Number(input?.days) || 90, Number(input?.recent) || 6)
+      return {
+        ...c,
+        delivery_note: 'Lead with what is going well and quote it. Give the not-your-fault items BEFORE the criticism, not after — they change how everything else lands. Every point here names a unit and a date, so it can be checked; do not add a single judgement that cannot be.',
+      }
+    },
+  } as EveTool,
+
+  {
+    name: 'crew_scorecard',
+    description: 'HOW A CLEANER OR INSPECTOR IS ACTUALLY PERFORMING — the full picture, not one number. For every completed departure clean (role "clean") or inspection (role "inspect") it finds the arrival that visit was preparing for, then asks what happened next: what the guest paid, what the visit cost us, how long it took, what the guest scored the stay, whether a problem was reported that day, and whether the guest hit a problem nobody had reported. Params: role ("clean" default, or "inspect"), days (default 60), person, building. READ THE CAVEATS AND REPEAT THEM. Times are partial because people forget to start and stop tasks, so quote the sample every average rests on and never the average alone. Most important: "caughtNotFixed" is the number of issues that person REPORTED that were still open when the guest walked in — those are maintenance failures, not theirs, and you must say so out loud rather than letting a low review score sit against their name.',
+    input_schema: obj({ role: S.str, days: S.num, person: S.str, building: S.str }),
+    money: true,
+    run: async (input: any) => {
+      const r = await crewScorecard({
+        role: input?.role === 'inspect' ? 'inspect' : 'clean',
+        days: Number(input?.days) || 60, person: input?.person, building: input?.building,
+      })
+      return {
+        ...r,
+        how_to_read: [
+          'catchRate: share of visits where something was reported that day. For an inspector this is close to the whole job — an inspection that never finds anything is either a perfect unit or somebody who did not look.',
+          'missRate: share where the guest hit a problem on day one and nobody had reported it. This is the real failure.',
+          'caughtNotFixed: they found it, we did not fix it before check-in. Credit them, chase maintenance.',
+          'costPctOfRevenue: what the visit cost against what the stay it prepared actually earned.',
+        ],
+      }
+    },
+  } as EveTool,
+
+  {
+    name: 'crew_person',
+    description: 'ONE PERSON, VISIT BY VISIT — the receipts behind their scorecard. Every clean or inspection they completed with the unit, the date, the minutes and cost recorded, the arrival it prepared, what that guest scored, whether anything was reported that day, and whether the guest found something anyway. Use this before ANY conversation about somebody\'s performance: nobody should be judged on an aggregate they cannot see the working for, and half the apparent bad results turn out to be issues they reported that nobody fixed. Params: person (required), role ("clean" or "inspect"), days.',
+    input_schema: obj({ person: S.str, role: S.str, days: S.num }),
+    money: true,
+    run: async (input: any) => {
+      const person = String(input?.person || '').trim()
+      if (!person) return { error: 'Name the person.' }
+      const r = await crewPerson(person, input?.role === 'inspect' ? 'inspect' : 'clean', Number(input?.days) || 60)
+      if (!r.score) return { person, found: false, note: `No completed ${input?.role === 'inspect' ? 'inspections' : 'cleans'} for anyone matching "${person}" in that window.` }
+      return {
+        ...r,
+        note: 'Go through the exonerations before the failures. A visit with caughtNotFixed above zero is a visit where they did their job and somebody else did not.',
+      }
+    },
+  } as EveTool,
+
   {
     name: 'staffing_today',
     description: 'Who is ON THE CLOCK right now versus who has Breezeway work assigned, joined with the fuzzy name matcher (Homebase and Breezeway spell people differently). The headline is IDLE: anyone clocked in with zero tasks assigned. Also flags people with tasks who never clocked in. Optional date.',
@@ -240,6 +316,6 @@ export const LABOR_TOOLS: EveTool[] = [
 export const LABOR_DOMAIN: EveDomain = {
   key: 'labor',
   label: 'Labor',
-  blurb: 'Who is clocked in versus who has work, the cost/hours per clean and labor margin, overtime risk, and the roster with agency fee structures.',
+  blurb: 'Who is clocked in versus who has work, the cost/hours per clean and labor margin, overtime risk, the roster with agency fee structures, MAINTENANCE hours/billable/completion, and the CREW SCORECARD — how each cleaner and inspector is actually performing, judged on what the guest found after they left rather than on the clean alone.',
   tools: LABOR_TOOLS,
 }

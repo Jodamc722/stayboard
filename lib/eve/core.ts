@@ -18,7 +18,10 @@ import { METRICS, METRIC_BY_KEY } from './metrics'
 import { computeTrend, anomalyScan } from './trends'
 import { createRecommendation, scorecard } from './recommendations'
 import { upcomingEvents, stormRisk } from './signals'
-import { runCheck as doorCodeCheck } from './door-code'
+import { runCheck as doorCodeCheck, createRequest as createDoorRequest, attachSlackPost } from './door-code'
+import { postDoorCodeApproval } from './approvals'
+import { runAudit, listAudits } from './audit'
+import { askQuestion } from './questions'
 
 const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
@@ -228,6 +231,48 @@ export const CORE_TOOLS: EveTool[] = [
   },
 
   {
+    name: 'ask_jon',
+    description: 'ASK WHEN YOU DO NOT KNOW, instead of guessing. Records a question for a person to answer; their answer becomes a memory written by them, which outranks anything you worked out yourself. Use it when you hit something the data cannot tell you — why a building is run differently, what a term the team uses actually means, whether something is policy or just habit, why the same problem keeps coming back. TWO RULES. You must say what you would DO differently if you knew: a question that changes nothing is curiosity, and curiosity does not get to interrupt anyone. And never ask something you could look up — asking about a number you can query is how you get ignored. Asking the same thing twice is fine; it is deduped and counted, not re-asked.',
+    input_schema: obj({ question: S.str, why: S.str, scope: S.str }),
+    run: async (input: any, ctx: any) => {
+      const r = await askQuestion({
+        question: String(input?.question || ''), why: String(input?.why || ''),
+        scope: String(input?.scope || 'portfolio'), kind: 'gap', source: 'eve',
+      })
+      if (!r.ok) return { ok: false, error: r.error }
+      return {
+        ok: true, repeated: !!r.repeated,
+        note: r.repeated
+          ? 'You have asked this before and it is still unanswered — the count went up rather than a second copy being made. Tell the person you have asked before, and carry on without the answer.'
+          : 'Recorded. It shows up in Settings, Eve, Memory. Say you have noted the question, then answer as best you can WITHOUT it and be explicit about what you are assuming.',
+      }
+    },
+  },
+
+  {
+    name: 'audit_status',
+    description: 'WHAT IS BROKEN RIGHT NOW. The standing audit tab: stale or dead data feeds, missing scheduled jobs, guests waiting on a reply, negative reviews unanswered past three days, past-dated tasks still open, arrivals with no clean scheduled, units with no door code, and Eve\'s own loops that nobody answered. Each item has a stable id, so it carries how many DAYS it has been open — an item open for six days is a different conversation from one found this morning. Use this for "what should I worry about", "is everything running", "anything broken", and ALWAYS before you make a confident claim about live data: if the pipeline area has anything open, your numbers are stale and you must say so. Optional area filter (pipeline, guests, reviews, ops, listings, eve) and status (open, all). Set run=true to re-run the checks first rather than reading the last result.',
+    input_schema: obj({ area: S.str, status: S.str, run: S.bool }),
+    run: async (input: any) => {
+      if (input?.run) await runAudit()
+      const items = await listAudits({ status: String(input?.status || 'open'), limit: 120 })
+      const filtered = input?.area ? items.filter((i: any) => i.area === String(input.area)) : items
+      const bySeverity: Record<string, number> = {}
+      for (const i of filtered) bySeverity[i.severity] = (bySeverity[i.severity] || 0) + 1
+      return {
+        open_count: filtered.length,
+        by_severity: bySeverity,
+        data_is_trustworthy: !filtered.some((i: any) => i.area === 'pipeline' && i.severity === 'critical'),
+        items: filtered.slice(0, 40).map((i: any) => ({
+          id: i.id, area: i.area, severity: i.severity, title: i.title,
+          detail: i.detail, fix: i.fix, open_for_days: i.ageDays, count: i.count, status: i.status,
+        })),
+        note: filtered.length ? 'Say how long each has been open. A problem open for days is a process failure, not a blip.' : 'Nothing is on the tab. That is a real answer — say it plainly rather than hunting for something to report.',
+      }
+    },
+  },
+
+  {
     name: 'anomaly_scan',
     description: 'Sweep EVERY metric across every building and return only what is genuinely off its own normal range. Use this for "what should I be worried about", "anything unusual", or to open a morning brief. Params: days (window, default 7), sigma (threshold, default 2), scope (optional, to scan one building). Returning nothing is a real answer — say "nothing is out of range" rather than hunting for something to report.',
     input_schema: obj({ days: S.num, sigma: S.num, scope: S.str }),
@@ -277,13 +322,45 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'door_code_check',
-    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now, and — if there is — did the guest actually give permission to enter. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence. If the verdict is blocked_occupied or blocked_inconclusive, say NO plainly and say why; do not soften it and do not look for another route to the code. If it clears, tell the person the check passed and that an admin has to tap to release it. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
+    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now (it reads the LIVE Guesty calendar for today, not just our cached reservations, so an extension or an owner block that has not synced yet still blocks the request), and — if there is — did the guest actually give permission to enter. When the calendar says VACANT it still reads the message threads for the last checkout and the next arrival as a double-check, and a message that contradicts vacancy (still here, asked to extend, arriving early) BLOCKS the request even though the reservations look clear. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence, including "confidence" — whether this code has ever actually opened the door, whether the field disagrees with the check-in instructions, and whether the same code is on other units. If confidence says suspect or reported_wrong, SAY SO BEFORE anyone travels: a wasted trip is the thing that warning prevents. IMPORTANT ABOUT HOW CODES CHANGE HERE: a new code is entered in Guesty at turnover, but housekeeping physically changes the keypad only at the END of the clean — so until that clean is finished the OLD code is the one that opens the door. Both codes are handed over on release, in the right order; "confidence.transition" says which we expect to work and why. Never tell anyone there is only one code. And if "arrivalWarning" is set, repeat it verbatim: after check-in time on an arrival day the unit belongs to that guest whether or not our records show them in it. If the verdict starts with blocked_ (blocked_occupied, blocked_inconclusive, blocked_contradicted), say NO plainly and say why; do not soften it and do not look for another route to the code. If it clears, this tool AUTOMATICALLY parks the request and posts it to the Slack approvals channel with a Release button — so tell the person it is now waiting on an admin there, and never imply you can speed that up. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
     input_schema: obj({ unit: S.str, listingId: S.str, reason: S.str }),
-    run: async (input) => {
-      const c: any = await doorCodeCheck({ unit: input?.unit, listingId: input?.listingId, reason: input?.reason })
+    run: async (input, ctx) => {
+      const c: any = await doorCodeCheck({ unit: input?.unit, listingId: input?.listingId, requestedBy: ctx.email, reason: input?.reason })
       // Belt and braces: strip anything code-shaped before it can reach the model.
       const { codeHint, ...rest } = c
-      return { ...rest, code_visible_to_you: false, code_on_file: c.hasCode ? codeHint : 'none', release: 'An admin releases it from /eve or the Slack link — you cannot, and neither can I show it to you.' }
+      const out: any = { ...rest, code_visible_to_you: false, code_on_file: c.hasCode ? codeHint : 'none' }
+      // Whether the code is RIGHT is a separate question from whether it may be released, and the
+      // person asking deserves the warning before they drive there rather than after.
+      if (c.confidence?.suspect) out.warn_code_may_be_wrong = c.confidence.label
+      if (c.confidence?.conflicts?.length) out.warn_code_conflict = `Guesty states a different code in ${c.confidence.conflicts.join(' and ')}.`
+      if (!c.canRelease) {
+        out.release = 'Blocked. There is nothing to approve and no route around this.'
+        return out
+      }
+
+      // The check clearing is not the end of it — somebody still has to say yes. Park the request
+      // and put it in front of them, because an approval nobody is shown is just a stalled job.
+      const parked = await createDoorRequest(c, { email: ctx.email, reason: input?.reason })
+      if (!parked.ok) {
+        out.release = 'The check passed, but I could not park the request: ' + parked.error
+        return out
+      }
+      const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+      const link = base + '/doorcode/' + parked.token
+      const posted = await postDoorCodeApproval({
+        unit: c.unit || String(input?.unit || 'unit'), building: c.building, address: c.address,
+        verdict: c.verdict, headline: c.headline, occupancy: c.occupancy, note: c.note,
+        quote: c.permissionQuotes?.[0] || null, taskToday: c.taskToday, vacancyScan: c.vacancyScan, calendar: c.calendar, confidence: c.confidence, arrivalWarning: c.arrivalWarning,
+        requestedBy: ctx.email, reason: input?.reason || null, link,
+      })
+      if (posted.ok && posted.channelId && posted.ts && parked.requestId) {
+        await attachSlackPost(parked.requestId, posted.channelId, posted.ts)
+      }
+      out.sent_for_approval = true
+      out.release = posted.ok
+        ? 'Parked for approval and posted in ' + posted.channel + ' with a Release button. It expires in 4 hours. Tell the person it is now waiting on an admin, and name the channel — do not offer any other route to the code.'
+        : 'Parked for approval, but it did NOT post to Slack (' + posted.error + '). Say so plainly: an admin has to open Settings -> Eve -> Approvals to release it.'
+      return out
     },
   },
 
@@ -412,12 +489,12 @@ export const RELOCATED = {
 
   search_listings: {
     name: 'search_listings',
-    description: 'List/search listings (units). Filter by building, status, query (name match). Returns id, name, building, status, beds/baths/sleeps, city.',
+    description: 'List/search listings (units). Filter by building, status, query (name match). Returns id, name, building, status, beds/baths/sleeps, STREET ADDRESS and city. Use this when anyone asks where a unit is.',
     input_schema: obj({ building: S.str, status: S.str, query: S.str, limit: S.num }),
     run: async (input: any, ctx: any) => {
       const lim = clampLimit(input?.limit, 50, 100)
-      const { data } = await ctx.db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_city').order('id')
-      let rows = (data || []).map((l: any) => ({ id: l.id, name: l.nickname || l.title, building: rollupBuilding(l.building, l.nickname || l.title), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city }))
+      const { data } = await ctx.db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_full,address_city,address_state').order('id')
+      let rows = (data || []).map((l: any) => ({ id: l.id, name: l.nickname || l.title, building: rollupBuilding(l.building, l.nickname || l.title), status: l.status, beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, address: l.address_full || null, city: l.address_city, state: l.address_state }))
       if (input?.building) rows = rows.filter((x: any) => has(x.building, input.building))
       if (input?.status) rows = rows.filter((x: any) => has(x.status, input.status))
       if (input?.query) rows = rows.filter((x: any) => has(x.name, input.query))
@@ -427,10 +504,10 @@ export const RELOCATED = {
 
   listing_detail: {
     name: 'listing_detail',
-    description: 'Full detail for ONE listing by name or id: amenities count, photo count, description sections filled, review count + avg rating (/5), last optimized.',
+    description: 'Full detail for ONE listing by name or id: STREET ADDRESS, amenities count, photo count, description sections filled, review count + avg rating (/5), last optimized.',
     input_schema: obj({ name: S.str, id: S.str }),
     run: async (input: any, ctx: any) => {
-      let q = ctx.db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_city,amenities,pictures,raw,last_optimized')
+      let q = ctx.db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_full,address_city,address_state,amenities,pictures,raw,last_optimized')
       if (input?.id) q = q.eq('id', input.id)
       else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
       const { data } = await q.order('id').limit(1)
@@ -441,7 +518,8 @@ export const RELOCATED = {
       const rr = (revs || []).map((x: any) => normStar(x.rating)).filter((v: any): v is number => v != null)
       return {
         name: l.nickname || l.title, building: rollupBuilding(l.building, l.nickname || l.title), status: l.status,
-        beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy, city: l.address_city,
+        beds: l.bedrooms, baths: l.bathrooms, sleeps: l.max_occupancy,
+        address: l.address_full || raw?.address?.full || null, city: l.address_city, state: l.address_state,
         amenities_count: Array.isArray(l.amenities) ? l.amenities.length : (Array.isArray(raw.amenities) ? raw.amenities.length : 0),
         photo_count: Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(raw.pictures) ? raw.pictures.length : 0),
         has_title: !!l.title, description_sections_filled: Object.keys(pub).filter(k => pub[k]),
@@ -456,7 +534,7 @@ export const RELOCATED = {
     description: 'Deep Guesty operational config for ONE listing (by name or id): check-in/out times, min/max nights, instant book, cancellation policy, property/room type, tags, address, house rules, whether check-in instructions exist, and CUSTOM FIELDS (door/access codes often live here). Use this to answer anything about how a unit is set up in Guesty.',
     input_schema: obj({ name: S.str, id: S.str }),
     run: async (input: any, ctx: any) => {
-      let q = ctx.db.from('guesty_listings').select('id,nickname,title,building,address_city,raw')
+      let q = ctx.db.from('guesty_listings').select('id,nickname,title,building,address_full,address_city,raw')
       if (input?.id) q = q.eq('id', input.id)
       else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
       const { data } = await q.order('id').limit(1)
@@ -481,7 +559,7 @@ export const RELOCATED = {
         cancellation: terms.cancellation ?? intField('cancellationPolicy') ?? raw?.prices?.guestyCancellationPolicy ?? null,
         property_type: raw.propertyType || null, room_type: raw.roomType || null,
         tags: Array.isArray(raw.tags) ? raw.tags : [],
-        address: raw?.address?.full || l.address_city || null,
+        address: l.address_full || raw?.address?.full || l.address_city || null,
         has_checkin_instructions: !!(raw.checkInInstructions || raw?.publicDescription?.access),
         house_rules: String(raw?.publicDescription?.houseRules || '').slice(0, 400),
         custom_fields: Array.isArray(raw.customFields) ? raw.customFields.map((c: any) => ({ name: c?.fieldId?.name || c?.name, value: typeof c?.value === 'string' ? c.value.slice(0, 160) : c?.value })).slice(0, 40) : [],

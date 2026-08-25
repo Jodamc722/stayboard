@@ -5,6 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runSweep } from '@/lib/eve/sweep'
 import { pruneStaleMemories } from '@/lib/eve/memory'
+import { nightlyVision } from '@/lib/eve/vision'
+import { generateQuestions } from '@/lib/eve/questions'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -58,8 +60,23 @@ export async function POST(req: NextRequest) {
   try { pruned = await pruneStaleMemories() } catch { /* hygiene must never block learning */ }
   if (sweep && typeof sweep === 'object') sweep.pruned = pruned
 
+  // A LITTLE MORE OF THE PORTFOLIO GETS LOOKED AT, EVERY NIGHT (Jon, 2026-08-24: "get smart slowly
+  // but daily... what makes you better is you can see things too"). A fixed quota, worst-covered
+  // units first. No big-bang scan: the estate comes into focus over weeks, new photos get picked up
+  // without anyone remembering to re-run anything, and a bad night costs one night. Runs after the
+  // sweep so a vision failure can never cost us the learning that does not need a model.
+  // Look for what she cannot explain and ask about it. Runs after the sweep, because the gaps
+  // worth asking about are the ones that survive everything she can work out for herself.
+  let questions: any = null
+  try { questions = await generateQuestions() }
+  catch (e: any) { questions = { error: String(e?.message || e).slice(0, 160) } }
+
+  let vision: any = null
+  try { vision = await nightlyVision() }
+  catch (e: any) { vision = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return NextResponse.json({ ok: true, sweep, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+  if (!key) return NextResponse.json({ ok: true, sweep, vision, questions, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
 
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
   const sb = supabaseAdmin()
@@ -89,7 +106,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (guestMsgs.length === 0 && reviewText.length === 0) {
-    return NextResponse.json({ ok: true, sweep, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
+    return NextResponse.json({ ok: true, sweep, vision, questions, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
   }
 
   const SYSTEM = `You analyze a short-term-rental manager's recent GUEST MESSAGES and REVIEWS to extract reusable operational knowledge. Return STRICT minified JSON only:
@@ -131,6 +148,6 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     if (error) return NextResponse.json({ error: `eve_knowledge upsert: ${error.message}. Run migration 008.` }, { status: 200 })
     learned = rows.length
   }
-  return NextResponse.json({ ok: true, sweep, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
+  return NextResponse.json({ ok: true, sweep, vision, questions, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST

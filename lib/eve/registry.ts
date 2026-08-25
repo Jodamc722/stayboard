@@ -20,6 +20,7 @@ import { QUALITY_DOMAIN } from './quality'
 import { LABOR_DOMAIN } from './labor'
 import { GUESTS_DOMAIN } from './guests'
 import { SLACK_DOMAIN } from './slack'
+import { PROPERTY_DOMAIN } from './property'
 
 // The five tools that were core before and now live alongside their siblings. Built as NEW objects
 // rather than by mutating the imported domain — a module-level `.tools = .tools.concat(...)` runs
@@ -33,7 +34,7 @@ const QUALITY: EveDomain = {
 }
 const OPS: EveDomain = { ...OPS_DOMAIN, tools: OPS_DOMAIN.tools.concat([RELOCATED.field_work]) }
 
-export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS_DOMAIN, SLACK_DOMAIN]
+export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS_DOMAIN, SLACK_DOMAIN, PROPERTY_DOMAIN]
 export const DOMAIN_KEYS = DOMAINS.map(d => d.key)
 
 const OPEN_DOMAIN: EveTool = {
