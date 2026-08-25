@@ -46,6 +46,8 @@ export async function PUT(req: NextRequest) {
       active: c?.active !== false,
       buildings: Array.isArray(c?.buildings) && c.buildings.length ? c.buildings.map((b: any) => String(b).trim()).filter(Boolean) : null,
       markets: Array.isArray(c?.markets) && c.markets.length ? c.markets.map((b: any) => String(b).trim()).filter(Boolean) : null,
+      hubs: Array.isArray(c?.hubs) && c.hubs.length ? c.hubs.map((b: any) => String(b).trim()).filter(Boolean) : null,
+      track_stock: c?.track_stock === true,
       image_url: /^https?:\/\//.test(String(c?.image_url || '')) ? String(c.image_url).slice(0, 400) : null,
       updated_at: new Date().toISOString(),
     }))
