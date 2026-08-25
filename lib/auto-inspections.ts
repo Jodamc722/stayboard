@@ -312,6 +312,118 @@ async function lowReviewSince(dryRun?: boolean): Promise<string> {
   return today
 }
 
+// WHAT THE REVIEW ACTUALLY SAID (Jon, 2026-08-25: "It should also add any other notes as well,
+// things to check, should be specific in description"). A generic "walk the unit" line teaches an
+// inspector nothing. These map the guest's own words to the specific thing to open, run or
+// measure — so the task says CHECK THE A/C AT THE THERMOSTAT, not "check the unit".
+const REVIEW_THEMES: { match: RegExp; check: string }[] = [
+  { match: /\b(dirty|filth|unclean|not clean|stain|hair|dust|grime|mold|mould|mildew)\b/i,
+    check: 'CLEANLINESS — white-glove the bathroom grout, shower door, under the bed, behind the toilet, inside the microwave and fridge. Photograph anything a paying guest would flinch at.' },
+  { match: /\b(a\/?c|air ?con|hvac|hot in|too warm|not cool|cooling|thermostat)\b/i,
+    check: 'A/C — run it 15 minutes and measure the vent temperature against the thermostat set point. Check the filter, the drain line and that the return is not blocked.' },
+  { match: /\b(hot water|no water|water pressure|shower|cold shower|plumb|leak|drain|clog|toilet)\b/i,
+    check: 'WATER — run every shower and tap to full hot, time how long it takes. Check pressure, drains for slow flow, and look under every sink for leaks.' },
+  { match: /\b(wifi|wi-fi|internet|router|streaming|connection)\b/i,
+    check: 'WIFI — connect a phone, run a speed test, and confirm the network name and password match the guidebook and the door card.' },
+  { match: /\b(noise|noisy|loud|construction|thin wall|hear)\b/i,
+    check: 'NOISE — stand in the bedroom with everything off and listen. Check window and door seals, and note any construction or mechanical source we can warn future guests about.' },
+  { match: /\b(smell|odor|odour|musty|stink|smoke)\b/i,
+    check: 'ODOR — check the A/C drain pan, under-sink traps, the washer drum, the trash cabinet and soft furnishings. Find the source; do not mask it.' },
+  { match: /\b(bed|mattress|pillow|sheet|linen|towel|uncomfortable|sag)\b/i,
+    check: 'BEDDING — check the mattress for sagging or stains, count and inspect pillows, sheets and towels, and replace anything thin, greying or pilled.' },
+  { match: /\b(kitchen|dish|cook|pan|pot|utensil|coffee|stove|oven|microwave|fridge|freezer)\b/i,
+    check: 'KITCHEN — inventory pots, pans, utensils, glassware and coffee supplies against the standard, and test the stove, oven, microwave and fridge/freezer temperature.' },
+  { match: /\b(check-?in|door ?code|lock|key|keypad|access|entry|couldn.t get in|locked out)\b/i,
+    check: 'ACCESS — test the door code end to end from the guest instructions, check lock battery level, and confirm the building/elevator access steps still match reality.' },
+  { match: /\b(parking|garage|valet|spot)\b/i,
+    check: 'PARKING — walk the route a guest takes, confirm the spot number, clearance and any pass or fob works, and check the instructions still match the building.' },
+  { match: /\b(bug|roach|ant|pest|insect|rodent|mice|mouse)\b/i,
+    check: 'PEST — inspect under sinks, behind appliances, along baseboards and in cabinets. If there is any evidence, raise pest control before the next arrival, not after.' },
+  { match: /\b(tv|television|remote|cable|netflix|channel)\b/i,
+    check: 'TV — power on every set, test the remote and batteries, and confirm streaming apps sign in.' },
+  { match: /\b(light|lamp|bulb|dark|electric|outlet|switch)\b/i,
+    check: 'ELECTRICAL — switch every light and lamp, replace dead bulbs, and test outlets and USB points the guest would reach for.' },
+  { match: /\b(broken|damage|missing|not work|doesn.t work|didn.t work|out of order)\b/i,
+    check: 'FUNCTION — operate every appliance, fixture, blind and door in the unit. Anything that does not work becomes a work order today, not a note.' },
+  { match: /\b(photo|picture|look like|not as described|misleading|smaller)\b/i,
+    check: 'LISTING ACCURACY — compare the room to the listing photos and description. Flag anything that no longer matches so marketing can reshoot or reword it.' },
+  { match: /\b(pool|gym|amenit|elevator|lobby|common)\b/i,
+    check: 'BUILDING AMENITIES — check the amenities the guest named are open and accessible, and that our instructions match the building rules and hours.' },
+]
+function themesIn(text: string): string[] {
+  const t = str(text)
+  const out: string[] = []
+  for (const th of REVIEW_THEMES) if (th.match.test(t) && out.indexOf(th.check) < 0) out.push(th.check)
+  return out.slice(0, 6)
+}
+
+/**
+ * EVERYTHING ELSE WE ALREADY KNOW ABOUT THIS UNIT. An inspector standing in the room should not
+ * have to remember that the same unit drew two other bad reviews this quarter and has an open
+ * A/C ticket — the task carries it. One batched read per source.
+ */
+type UnitCtx = {
+  glitches: { text: string; ageDays: number | null }[]
+  maint: { name: string; date: string }[]
+  priorLow: { rating: number; at: string; quote: string }[]
+}
+async function unitContext(db: any, listingIds: string[], excludeReviewIds: string[]): Promise<Record<string, UnitCtx>> {
+  const out: Record<string, UnitCtx> = {}
+  if (!listingIds.length) return out
+  for (const id of listingIds) out[id] = { glitches: [], maint: [], priorLow: [] }
+  const since90 = ymdET(new Date(Date.now() - 90 * 86400000))
+  const since45 = ymdET(new Date(Date.now() - 45 * 86400000))
+  const today = ymdET(new Date())
+  const [g, m, r] = await Promise.all([
+    db.from('glitches').select('listing_id, overview, category, created_at, status')
+      .in('listing_id', listingIds)
+      .not('status', 'in', '("done","resolved","closed")').limit(300)
+      .then((x: any) => x, () => ({ data: [] })),
+    db.from('breezeway_tasks_sync').select('reference_property_id, name, scheduled_date, status, finished_at, type_department')
+      .in('reference_property_id', listingIds)
+      .gte('scheduled_date', since45).lte('scheduled_date', today)
+      .is('finished_at', null).limit(500)
+      .then((x: any) => x, () => ({ data: [] })),
+    db.from('guesty_reviews').select('id, listing_id, rating, content, created_at')
+      .in('listing_id', listingIds).gte('created_at', since90 + 'T00:00:00Z')
+      .order('created_at', { ascending: false }).limit(400)
+      .then((x: any) => x, () => ({ data: [] })),
+  ])
+  for (const row of ((g.data || []) as any[])) {
+    const lid = str(row.listing_id); if (!out[lid]) continue
+    const created = row.created_at ? Date.parse(row.created_at) : 0
+    out[lid].glitches.push({
+      text: (str(row.overview) || str(row.category) || 'Open issue').replace(/\s+/g, ' ').trim().slice(0, 120),
+      ageDays: created ? Math.floor((Date.now() - created) / 86400000) : null,
+    })
+  }
+  for (const row of ((m.data || []) as any[])) {
+    const lid = str(row.reference_property_id); if (!out[lid]) continue
+    const st = str(row.status).toLowerCase()
+    if (/complet|finish|close|approv|cancel|delete/.test(st)) continue
+    // Cleans are the turn itself, not a standing problem — they are noise on this list.
+    if (/housekeep/i.test(str(row.type_department)) || /departure clean|turnover clean/i.test(str(row.name))) continue
+    out[lid].maint.push({ name: str(row.name).slice(0, 90), date: str(row.scheduled_date).slice(0, 10) })
+  }
+  const excl = new Set(excludeReviewIds.map(String))
+  for (const row of ((r.data || []) as any[])) {
+    const lid = str(row.listing_id); if (!out[lid]) continue
+    if (excl.has(str(row.id))) continue
+    const n = Number(row.rating); const norm = Number.isFinite(n) ? (n > 5 ? n / 2 : n) : NaN
+    if (!Number.isFinite(norm) || norm > 3) continue
+    out[lid].priorLow.push({
+      rating: Math.round(norm * 10) / 10, at: str(row.created_at).slice(0, 10),
+      quote: str(row.content).replace(/\s+/g, ' ').trim().slice(0, 110),
+    })
+  }
+  for (const id of listingIds) {
+    out[id].glitches = out[id].glitches.slice(0, 5)
+    out[id].maint = out[id].maint.slice(0, 5)
+    out[id].priorLow = out[id].priorLow.slice(0, 4)
+  }
+  return out
+}
+
 /** The unit's next upcoming checkout on the calendar, per listing — batched in one read. */
 async function nextCheckouts(db: any, listingIds: string[], today: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
@@ -377,7 +489,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
       guest_name: str(r.guest_name) || 'Guest',
       rating: Math.round(norm(r.rating) * 10) / 10,
       channel: str(r.channel), at: str(r.created_at).slice(0, 10),
-      quote: str(r.content).replace(/\s+/g, ' ').trim().slice(0, 240),
+      quote: str(r.content).replace(/\s+/g, ' ').trim().slice(0, 400),
       market: marketOf(meta.building, meta.address_city, meta.nickname || meta.title),
       nextCheckout: nextOut[lid] || null,
       hasBreezeway: Number.isFinite(homeOf[lid]),
@@ -426,6 +538,12 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   const idOf: Record<string, number | null> = {}
   for (const n of names) { try { idOf[n] = await matchBreezewayPerson(n) } catch { idOf[n] = null } }
 
+  // Pull the unit's own history once for the whole batch, so each description can carry it.
+  let ctx: Record<string, UnitCtx> = {}
+  try {
+    ctx = await unitContext(db, Array.from(new Set(candidates.map(c => str(c.listing_id)).filter(Boolean))), candidates.map(c => c.reviewId))
+  } catch { ctx = {} }
+
   let created = 0, failed = 0, waitingForCheckout = 0
   for (const c of candidates) {
     if (!c.hasBreezeway) continue
@@ -438,14 +556,39 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
     const assignedNames = wanted.filter(n => Number.isFinite(idOf[n] as any))
 
     const name = `Quality inspection — ${c.unit_name} (${c.rating}★ review)`
+    // A SPECIFIC BRIEF, NOT A REMINDER (Jon, 2026-08-25). Four blocks: what the guest said,
+    // what that means to check, what else we already know is wrong with this unit, and the
+    // baseline everyone walks anyway.
+    const cx = ctx[str(c.listing_id)] || { glitches: [], maint: [], priorLow: [] }
+    const themes = themesIn(c.quote + ' ' + c.unit_name)
+    const notes: string[] = []
+    if (cx.priorLow.length) {
+      notes.push('REPEAT: ' + cx.priorLow.length + ' other review' + (cx.priorLow.length === 1 ? '' : 's') +
+        ' at or under 3\u2605 on this unit in 90 days \u2014 ' +
+        cx.priorLow.map(p => p.rating + '\u2605 ' + p.at + (p.quote ? ' "' + p.quote + '"' : '')).join(' | '))
+    }
+    if (cx.glitches.length) {
+      notes.push('OPEN GUEST ISSUES: ' + cx.glitches.map(x => x.text + (x.ageDays != null ? ' (' + x.ageDays + 'd old)' : '')).join(' | '))
+    }
+    if (cx.maint.length) {
+      notes.push('OPEN MAINTENANCE ON THIS UNIT: ' + cx.maint.map(x => x.name + ' (' + x.date + ')').join(' | '))
+    }
     const description =
-      `AUTO-CREATED: guest review scored ${c.rating}/5 on ${c.channel || 'the channel'} (${c.at}).\n` +
-      (c.quote ? `"${c.quote}"\n` : '') +
-      `— ${c.guest_name}\n\n` +
-      `Walk the unit at this checkout, against what the review calls out: cleanliness to standard, ` +
-      `AC, hot water, wifi, furnishings, anything the guest named. Photograph and file what you find.\n\n` +
-      `Scheduled on the unit's next checkout; if it is not completed by then, Lighthouse moves it ` +
-      `to the following checkout automatically. (Low-review rule, Task automation.)`
+      `AUTO-CREATED from a ${c.rating}/5 guest review on ${c.channel || 'the channel'} (${c.at}).\n\n` +
+      `WHAT THE GUEST SAID\n` +
+      (c.quote ? `"${c.quote}"\n\u2014 ${c.guest_name}\n\n` : `${c.guest_name} left the rating without written comments.\n\n`) +
+      (themes.length
+        ? `CHECK SPECIFICALLY \u2014 drawn from the review\n` + themes.map(t => '\u2022 ' + t).join('\n') + '\n\n'
+        : `CHECK SPECIFICALLY\n\u2022 No specific complaint in the text \u2014 the score is the signal. Walk the unit as a first-time guest and find what earned ${c.rating}/5.\n\n`) +
+      (notes.length ? `ALSO ON THIS UNIT \u2014 already on our books\n` + notes.map(n => '\u2022 ' + n).join('\n') + '\n\n' : '') +
+      `BASELINE (every quality inspection)\n` +
+      `\u2022 A/C cooling, hot water, wifi connects, door code works, TV and lights on\n` +
+      `\u2022 Cleanliness to standard \u2014 bathroom, kitchen, floors, linens, under and behind furniture\n` +
+      `\u2022 Linen and towel par levels, consumables restocked, guidebook and codes accurate\n` +
+      `\u2022 Photograph EVERYTHING you find \u2014 good and bad \u2014 and file it on this task\n\n` +
+      `Anything that needs a trade becomes a work order today, not a note. Scheduled on this unit's ` +
+      `next checkout; if it is not completed by then, Lighthouse moves it to the following checkout ` +
+      `automatically. (Low-review rule, Users & admin \u2192 Task automation.)`
 
     try {
       const r = await createBreezewayTask({
