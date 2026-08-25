@@ -548,11 +548,12 @@ function quoteOfDay(ymd: string): { text: string; who: string } {
 // better"). It sits directly under the masthead, before a single number — the first thing anyone
 // reads is why the work matters, not how much of it there is. Built as a bordered table cell with
 // a heavy left rule: Outlook drops background-image and CSS borders on divs, but honours these.
-export const quoteBanner = (ymd: string): string => {
+export const quoteBanner = (ymd: string, lang: BriefLang = 'en'): string => {
   const q = quoteOfDay(ymd)
+  const eyebrowText = lang === 'es' ? 'Pensamiento de hoy' : 'Today&rsquo;s thought'
   return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 4px">
     <tr><td style="background:#fffbeb;border-left:4px solid #d97706;border-top:1px solid #fde68a;border-right:1px solid #fde68a;border-bottom:1px solid #fde68a;border-radius:0 10px 10px 0;padding:14px 18px">
-      <p style="margin:0 0 6px;font-size:9.5px;font-weight:700;letter-spacing:.18em;color:#b45309;text-transform:uppercase">Today&rsquo;s thought</p>
+      <p style="margin:0 0 6px;font-size:9.5px;font-weight:700;letter-spacing:.18em;color:#b45309;text-transform:uppercase">${eyebrowText}</p>
       <p style="margin:0 0 7px;font-size:16px;line-height:1.55;color:#0b1220;font-style:italic;font-weight:500">${'“'}${esc(q.text)}${'”'}</p>
       <p style="margin:0;font-size:11.5px;color:#92400e;letter-spacing:.03em">${'—'} ${esc(q.who)}</p>
     </td></tr>
@@ -657,7 +658,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets can render in Spanish per market;
   // Ops Command and the GM brief stay English — they are management documents. Furniture
   // translates, data never does (see lib/brief-lang).
-  const { t, locale } = translator(lang)
+  const { t, pick, locale } = translator(lang)
   const d = await gather(variant)
   // THE MORNING SYSTEM (Jon approved 2026-08-22): Miami/Broward are FIELD DAY SHEETS — run the
   // day, zero dollars, five cards. 'full' is OPS COMMAND — the manager's worklist, now carrying
@@ -742,12 +743,12 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // things that ARE urgent. The turns are named once, in one line; the door list below carries
   // per-unit detail.
   if (sameDay.length)
-    priorities.push(prio('red', `${sameDay.length} same-day turn${sameDay.length === 1 ? '' : 's'} today`,
-      `guest lands the same day — these doors first: ${sameDay.slice(0, 8).map(c => esc(c.unit)).join(', ')}${sameDay.length > 8 ? ` +${sameDay.length - 8} more` : ''}`))
-  for (const c of unassigned) priorities.push(prio('red', c.unit, 'clean has <b>no one assigned</b>'))
-  for (const a of walkIns.slice(0, 4)) priorities.push(prio('amber', str(a.unit), `walk-in arriving today (${esc(str(a.guest).split(' ')[0])})`, 'Booked last minute — confirm the unit is guest-ready.'))
+    priorities.push(prio('red', `${sameDay.length} ${sameDay.length === 1 ? t('same-day turn today') : t('same-day turns today')}`,
+      `${t('guest lands the same day — these doors first:')} ${sameDay.slice(0, 8).map(c => esc(c.unit)).join(', ')}${sameDay.length > 8 ? ` +${sameDay.length - 8}` : ''}`))
+  for (const c of unassigned) priorities.push(prio('red', c.unit, t('clean has <b>no one assigned</b>')))
+  for (const a of walkIns.slice(0, 4)) priorities.push(prio('amber', str(a.unit), `${t('walk-in arriving today')} (${esc(str(a.guest).split(' ')[0])})`, t('Booked last minute — confirm the unit is guest-ready.')))
   for (const e of highExceptions) priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
-  for (const g of glitches.slice(0, 3)) priorities.push(prio('amber', str(g.unit), `open guest issue`, str(g.overview)))
+  for (const g of glitches.slice(0, 3)) priorities.push(prio('amber', str(g.unit), t('open guest issue'), str(g.overview)))
   // AUTO-CREATED ARRIVAL INSPECTIONS (Jon, 2026-08-18: "shared in the brief as todo / priorities").
   // The ones not yet done for arrivals today/tomorrow go straight into the priority list with who
   // holds them; the full window gets its own card below. Market variants only see their market.
@@ -779,8 +780,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   const inspOpen = autoInsp.filter(i => !/complet|finish|close|approv/i.test(str(i.status)))
   for (const i of inspOpen.filter(x => x.check_in <= ymdET(new Date(Date.now() + 86400000))).slice(0, 4)) {
     priorities.push(prio('amber', str(i.unit_name),
-      `pre-arrival inspection — <b>${esc(str(i.reason))}</b> lands ${esc(niceDay(str(i.check_in)))}`,
-      i.assignees.length ? 'With ' + i.assignees.join(' and ') + '.' : 'Not assigned — pick it up.'))
+      `${t('pre-arrival inspection')} — <b>${esc(str(i.reason))}</b> ${t('lands')} ${esc(niceDay(str(i.check_in)))}`,
+      i.assignees.length ? t('With') + ' ' + i.assignees.join(', ') + '.' : t('Not assigned — pick it up.')))
   }
   // A unit a guest scored badly gets walked on its next checkout — and it stays on this list
   // until somebody does it. Only the ones due today or already overdue reach the priorities.
@@ -1187,10 +1188,10 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     </tr></table>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
   const tiles: Tile[] = isField ? [
-    { label: 'Cleans', value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} same-day` : 'today', tone: sameDay.length ? 'amber' : undefined },
-    { label: 'Unassigned', value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
-    { label: 'Arrivals', value: String(arrivals.length) },
-    { label: 'Departures', value: String(departures.length), note: 'check-outs' },
+    { label: t('Cleans'), value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} ${t('same-day')}` : t('today'), tone: sameDay.length ? 'amber' : undefined },
+    { label: t('Unassigned'), value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
+    { label: t('Arrivals'), value: String(arrivals.length) },
+    { label: t('Departures'), value: String(departures.length), note: t('check-outs') },
   ] : (() => {
     const carryTot = (maintMi ? maintMi.carryover.length : 0) + (maintBr ? maintBr.carryover.length : 0)
     const bzPct = comp && comp.winCheckouts ? Math.round((comp.winBzClosed / comp.winCheckouts) * 1000) / 10 : null
@@ -1275,12 +1276,12 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   const carryTot2 = (maintMi ? maintMi.carryover.length : 0) + (maintBr ? maintBr.carryover.length : 0)
   const bzPct2 = comp && comp.winCheckouts ? Math.round((comp.winBzClosed / comp.winCheckouts) * 1000) / 10 : null
   const verdict = isField
-    ? `<b>${d.cleans.length} cleans${sameDay.length ? ` (${sameDay.length} same-day)` : ''} · ${arrivals.length} in · ${departures.length} out.</b> ` +
+    ? `<b>${d.cleans.length} ${t('cleans')}${sameDay.length ? ` (${sameDay.length} ${t('same-day')})` : ''} · ${arrivals.length} ${pick('in', 'entran')} · ${departures.length} ${pick('out', 'salen')}.</b> ` +
       (unassigned.length
-        ? `<span style="${S.red}">${unassigned.length} door${unassigned.length === 1 ? '' : 's'} need a name — assign first.</span>`
+        ? `<span style="${S.red}">${unassigned.length} ${unassigned.length === 1 ? t('needs a name — assign first.') : t('need a name — assign first.')}</span>`
         : sameDay.length
-          ? `Same-day doors first: ${sameDay.slice(0, 5).map(c => esc(c.unit)).join(', ')}${sameDay.length > 5 ? ` +${sameDay.length - 5}` : ''}.`
-          : `No same-day turns — work each run in order.`)
+          ? `${t('Same-day doors first:')} ${sameDay.slice(0, 5).map(c => esc(c.unit)).join(', ')}${sameDay.length > 5 ? ` +${sameDay.length - 5}` : ''}.`
+          : t('No same-day turns — work each run in order.'))
     : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'} · ${fullBlocked.length} blocked${bzPct2 != null ? ` · ${bzPct2}% of cleans closed in Breezeway` : ''}.</b> ` +
       `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.`
 
@@ -1298,7 +1299,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <p style="${S.bandTitle}">${title}</p>
     <p style="${S.bandSub}">${subTitle}</p>
   </div>
-  ${quoteBanner(d.today)}
+  ${quoteBanner(d.today, lang)}
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:10px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
@@ -1307,7 +1308,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 
   ${eyebrow(t('Act now'))}
   ${priorities.length
-    ? card(t('Top priorities — in order'), priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
+    ? card(t('Top priorities — in order'), priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} ${t('more on the boards')}</p>` : ''), '#dc2626')
     : card(t('Top priorities'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing on fire.')}</span> <span style="${S.muted}">${t('Work the list below and keep the 4pm deadline in sight.')}</span></p>`, '#059669')}
   ${!isField && fwdCard ? fwdCard : ''}
   ${onTodayCard}
