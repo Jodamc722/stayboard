@@ -18,7 +18,11 @@ const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 // Every section a link can carry. Keep in lockstep with the builder UI and /api/share/[code] —
 // adding a shareable data set later means adding a line in each. (Local const: Next route files
 // may only export HTTP handlers.)
-const SECTION_KEYS = ['reservations', 'revenue', 'marketing', 'cleaning', 'verification', 'notes', 'team', 'team_maint'] as const
+const SECTION_KEYS = ['reservations', 'revenue', 'marketing', 'cleaning', 'verification', 'notes', 'team', 'team_maint',
+  // FIELD BOARD sections (Jon, 2026-08-25). Tick any of these and the link renders as a live crew
+  // board at /board/<code> instead of a report at /share/<code> — same row, same scope picker,
+  // same passcode and revoke. Keep in step with BOARD_SECTIONS in lib/field-board.ts.
+  'crew', 'cleans', 'verify', 'work', 'issues'] as const
 
 function cleanSections(v: any): Record<string, boolean> {
   const out: Record<string, boolean> = {}
