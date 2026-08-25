@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady } from '@/lib/vault'
+import { ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady, checkVaultCode, codeFrom, codeEntered } from '@/lib/vault'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 20
@@ -41,8 +41,13 @@ export async function POST(req: NextRequest) {
     }
     if (!(item as any).secret_cipher) return NextResponse.json({ ok: false, error: 'This item has no stored secret.' }, { status: 404 })
 
+    // THE VAULT CODE — asked on every reveal (Jon, 2026-08-25). A wrong code is logged inside the
+    // check; a right one is logged here, against the person's login, as the record of who entered it.
+    const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), itemId: id, purpose: 'reveal' })
+    if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode }, { status: gate.status })
+
     // Log BEFORE answering: if the response never arrives, the attempt still happened.
-    await logAccess({ itemId: id, email: me, action: 'reveal', detail: reason || null, ip: ipOf(req) })
+    await logAccess({ itemId: id, email: me, action: 'reveal', detail: codeEntered(reason), ip: ipOf(req) })
 
     let secret: string
     try {
