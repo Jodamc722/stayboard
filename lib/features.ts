@@ -83,7 +83,9 @@ export const FEATURES: Feature[] = [
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Money' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
-  { key: 'owner-audit',   label: 'Owner Audit',       path: '/owner-audit', group: 'Money' },
+  // Jon, 2026-08-25: "owner statement audit ... its own standalone tab" — out of the Owners hub
+  // (lib/hubs.ts) and named in full, because "Owner Audit" reads like an audit OF an owner.
+  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Money' },
   { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Team' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
