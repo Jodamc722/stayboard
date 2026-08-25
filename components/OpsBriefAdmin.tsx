@@ -166,8 +166,39 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
         </div>
 
-        {/* Maintenance briefs merged into Ops Command (Jon approved 2026-08-22) — the old
-            standalone emails are retired; preview the maintenance section via Ops Command above. */}
+        {/* MAINTENANCE BRIEFS, BACK AS THEIR OWN EMAILS (Jon, 2026-08-25: "we should have
+            maintenance brief for broward and Miami"). They go to the maintenance crew AND their
+            supervisors; Ops Command keeps its two-market summary card for the ops manager.
+            No payroll in these — the crew reads them. */}
+        <div className="rounded-xl border border-line p-3 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12px] font-bold text-ink">Maintenance briefs · 7:46am ET</span>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" disabled={!isOwner} checked={cfg.maint?.enabled !== false}
+                onChange={e => setCfg(c => ({ ...c, maint: { ...(c.maint || {}), enabled: e.target.checked } }))} />
+              <span className="text-[11.5px] text-muted">on</span>
+            </label>
+          </div>
+          <div className="text-[11px] text-muted -mt-0.5">
+            One per market: today&rsquo;s board by person (with a guest-in-house warning), what carried over
+            oldest first, units that keep coming back, and finished / billed / no-charge / hours for
+            yesterday, 7 and 30 days. Goes to the owner until a list is saved.
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {([['m_miami', 'Miami', 'Miami'], ['m_broward', 'Broward', 'Broward']] as const).map(([k, label, mk]) => (
+              <div key={k}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11.5px] font-semibold text-ink">{label}</span>
+                  <a href={`/api/cron/maint-brief?preview=${mk}`} target="_blank" rel="noreferrer"
+                    className="text-[11px] text-brand-600 hover:underline">preview</a>
+                </div>
+                <textarea rows={2} disabled={!isOwner} value={raw[k] ?? ''} onChange={e => setRaw(x => ({ ...x, [k]: e.target.value }))}
+                  placeholder="emails, comma separated"
+                  className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* STAFFING PLANNER TARGET (Jon, 2026-08-18): the margin the Weekly planner's hours
             budget protects. Blank = automatic — the settled 30-day HK margin plus 3 points. */}
