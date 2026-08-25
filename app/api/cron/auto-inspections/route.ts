@@ -8,7 +8,7 @@
 // lib/auto-inspections.ts for the rules (big arrival / VIP / owner stay) and who gets assigned.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { runAutoInspections } from '@/lib/auto-inspections'
+import { runAutoInspections, runLowReviewInspections } from '@/lib/auto-inspections'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -39,11 +39,19 @@ export async function GET(req: NextRequest) {
 
   try {
     const out = await runAutoInspections({ dryRun: preview })
+    // Low-review inspections ride the same cron (Jon, 2026-08-25): bad reviews fire a quality
+    // inspection on the unit's next checkout, and unfinished ones roll forward. Its own try —
+    // a review hiccup never blocks the arrival inspections.
+    let lowReviews: any = null
+    try { lowReviews = await runLowReviewInspections({ dryRun: preview }) } catch (e: any) { lowReviews = { ok: false, error: String(e?.message || e).slice(0, 200) } }
     // The cron's own response carries counts only — no guest data on the unauthenticated path.
     if (!preview && isCron && !(await signedIn())) {
-      return NextResponse.json({ ok: out.ok, enabled: out.enabled !== false, scanned: out.scanned, created: out.created, failed: out.failed, skippedNoBreezeway: out.skippedNoBreezeway, candidates: out.candidates.length })
+      return NextResponse.json({
+        ok: out.ok, enabled: out.enabled !== false, scanned: out.scanned, created: out.created, failed: out.failed, skippedNoBreezeway: out.skippedNoBreezeway, candidates: out.candidates.length,
+        lowReviews: lowReviews ? { ok: lowReviews.ok, created: lowReviews.created, movedForward: lowReviews.movedForward, waitingForCheckout: lowReviews.waitingForCheckout, failed: lowReviews.failed } : null,
+      })
     }
-    return NextResponse.json(out)
+    return NextResponse.json({ ...out, lowReviews })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
