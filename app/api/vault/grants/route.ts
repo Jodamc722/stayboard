@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ITEMS, GRANTS, LOG, accessFor, logAccess } from '@/lib/vault'
+import { snapshotVault } from '@/lib/vault-backup'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 20
@@ -75,6 +76,7 @@ export async function POST(req: NextRequest) {
       if (retry.error) return NextResponse.json({ ok: false, error: retry.error.message }, { status: 500 })
     }
     await logAccess({ itemId: id, email: me, action: 'grant', detail: who + ' (' + level + ')', ip: ipOf(req) })
+    await snapshotVault('grant', me)
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
@@ -100,6 +102,7 @@ export async function DELETE(req: NextRequest) {
     const { error } = await db.from(GRANTS).delete().eq('item_id', id).ilike('email', who)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     await logAccess({ itemId: id, email: me, action: 'revoke', detail: who, ip: ipOf(req) })
+    await snapshotVault('revoke', me)
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
