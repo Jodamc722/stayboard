@@ -244,6 +244,42 @@ async function worthKnowing(ids: Set<string> | null, today: string, unitName: (l
 }
 
 /**
+ * WHO A JOB CAN GO TO (Jon, 2026-08-25: "need to be able to assign and pick a date").
+ *
+ * Breezeway's people list, narrowed to the crews that actually work this board. A cleaner filing a
+ * leak should see the handful of names they know, not 300 rows — so the list is ordered: people on
+ * shift in this market today first (they can pick it up now), then everyone else on the right team.
+ *
+ * The department filter is applied in the BROWSER, not here, so switching Team on the form
+ * re-narrows the list without another round trip.
+ */
+async function assignablePeople(scopeWords: string[]) {
+  try {
+    const { listBreezewayPeople } = await import('./breezeway')
+    const people = await listBreezewayPeople()
+    if (!people.length) return []
+    // Who is on shift right now — those names float to the top of the picker.
+    let onShift: string[] = []
+    try {
+      const shifts = await getShifts(ymdET(new Date()))
+      onShift = (shifts || []).map((sh: any) => str(sh.name || sh.employee || '')).filter(Boolean)
+    } catch { /* the picker still works, just unsorted by presence */ }
+    const words = scopeWords.map(w => str(w).toLowerCase()).filter(Boolean)
+    const near = (p: any) => !words.length || words.some(w =>
+      str(p.region).toLowerCase().includes(w) || str(p.role).toLowerCase().includes(w))
+    return people
+      .map(p => ({
+        id: p.id, name: p.name, departments: p.departments || [],
+        region: p.region || '',
+        here: onShift.some(n => nameMatches(n, p.name)),
+        near: near(p),
+      }))
+      .sort((a, b) => Number(b.here) - Number(a.here) || Number(b.near) - Number(a.near) || a.name.localeCompare(b.name))
+      .slice(0, 200)
+  } catch { return [] }
+}
+
+/**
  * GUEST ORDERS & REQUESTS (Jon, 2026-08-25: "should also have guest orders / requests tab there").
  *
  * Two different things the crew is asked to carry, on one tab because from the field they feel the
@@ -415,6 +451,10 @@ export async function buildFieldBoard(link: BoardLink) {
   const notable = (sections.today || sections.units)
     ? await worthKnowing(ids, today, (lid) => nameOfUnit[lid] || 'Unit').catch(() => ({ big: [], watch: [] }))
     : { big: [], watch: [] }
+  // The picker for Add — only built when the board can actually file work.
+  const people = sections.add
+    ? await assignablePeople(link.scope_type === 'listing' ? [] : link.scope_ids).catch(() => [])
+    : []
   const asks = sections.requests
     ? await guestRequests(ids, today).catch(() => ({ orders: [], requests: [] }))
     : { orders: [], requests: [] }
@@ -447,6 +487,7 @@ export async function buildFieldBoard(link: BoardLink) {
     priorities: sections.today ? boardPriorities(sheet, keep) : [],
     bigBookings: notable.big,
     watchUnits: notable.watch,
+    people,
     orders: asks.orders,
     requests: asks.requests,
     unitRows: sections.units ? unitRows(sheet, keep, nameOfUnit, buildingOfUnit) : [],
