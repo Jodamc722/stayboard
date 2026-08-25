@@ -18,7 +18,7 @@ import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createBreezewayTask } from '@/lib/breezeway'
+import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
 import { getBoardLink, buildFieldBoard } from '@/lib/field-board'
 
 export const dynamic = 'force-dynamic'
@@ -63,7 +63,30 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
 
   const department = DEPTS.indexOf(String(body?.department)) >= 0 ? String(body.department) : 'maintenance'
   const priority = PRIOS.indexOf(String(body?.priority)) >= 0 ? String(body.priority) : 'normal'
-  const date = todayET()
+
+  // WHEN. Free choice, but bounded: never in the past (a job scheduled yesterday is invisible on
+  // every board that matters) and never more than 90 days out (a typo of the year should not
+  // silently park work in 2027). Anything unparseable falls back to today rather than erroring —
+  // the person is standing in the unit and the job matters more than the date.
+  const wanted = String(body?.date || '').slice(0, 10)
+  const today = todayET()
+  const horizon = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+    .format(new Date(Date.now() + 90 * 86400000))
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(wanted) && wanted >= today && wanted <= horizon ? wanted : today
+
+  // WHO. Person ids from the board's own picker, re-checked against the live Breezeway list so a
+  // hand-edited request cannot assign work to somebody outside the crew.
+  const wantIds = (Array.isArray(body?.assignees) ? body.assignees : [])
+    .map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0).slice(0, 5)
+  let assignIds: number[] = []
+  let assignNames: string[] = []
+  if (wantIds.length) {
+    const roster: any[] = (board.people || [])
+    for (const id of wantIds) {
+      const hit = roster.find((p: any) => Number(p.id) === id)
+      if (hit) { assignIds.push(id); assignNames.push(String(hit.name)) }
+    }
+  }
   const note = String(body?.description || '').slice(0, 800)
   const description = (note ? note + '\n\n' : '')
     + 'Added from the ' + (link.label || 'field') + ' board' + (who ? ' by ' + who : '') + ' on ' + date + '.'
@@ -73,18 +96,39 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
     const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
     const homeId = Number(((props || [])[0] || {}).home_id)
     const payload: Record<string, any> = { name: title, type_department: department, type_priority: priority, scheduled_date: date, description }
+    if (assignIds.length) payload.assignments = assignIds
     if (Number.isFinite(homeId)) payload.home_id = homeId
     else payload.reference_property_id = listingId
     const r = await createBreezewayTask(payload)
     if (!r.ok || !r.data?.id) return NextResponse.json({ ok: false, error: 'Breezeway did not accept it (' + r.status + ').' }, { status: 502 })
+    // SECOND PASS ON THE ASSIGNEES. Create does not always honour `assignments` in the same call —
+    // when it comes back unassigned we PATCH it, because a task nobody owns is the thing this
+    // whole feature exists to prevent. A failed patch is reported, never swallowed: the job is
+    // real either way and the field is told to have the office assign it.
+    let assignWarning = ''
+    if (assignIds.length) {
+      const got = Array.isArray(r.data?.assignments) ? r.data.assignments.length : 0
+      if (!got) {
+        const up = await updateBreezewayTask(String(r.data.id), { assignments: assignIds }).catch(() => null)
+        if (!up || !up.ok) assignWarning = 'Breezeway would not take the assignment — ask the office to put a name on it.'
+      }
+    }
     try {
       await db.from('breezeway_tasks_sync').upsert({
         id: String(r.data.id), reference_property_id: listingId, name: title, status: 'created',
-        scheduled_date: date, type_department: department, assignees: [],
+        scheduled_date: date, type_department: department,
+        assignees: assignWarning ? [] : assignNames,
+        report_url: r.data?.report_url || null,
         raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
     } catch { /* the sync catches up */ }
-    return NextResponse.json({ ok: true, taskId: String(r.data.id), unit: unitName })
+    return NextResponse.json({
+      ok: true, taskId: String(r.data.id), unit: unitName, listingId, date,
+      assigned: assignWarning ? [] : assignNames,
+      warning: assignWarning || undefined,
+      // What the field taps to open the job itself.
+      reportUrl: r.data?.report_url || null,
+    })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
