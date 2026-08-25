@@ -77,8 +77,8 @@ export type GuestOrdersCfg = {
 }
 export type Hub = { id: string; label: string; buildings: string[] }
 /** What can differ by building / location (Jon, 2026-08-24: "customizable by building and by location"). */
-export type ScopeRule = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number }
-export type Timing = { enabled: boolean; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number; checkInHour: number; source: string }
+export type ScopeRule = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number; taxPct?: number }
+export type Timing = { enabled: boolean; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number; checkInHour: number; taxPct: number; source: string; taxSource: string }
 
 export const GUEST_ORDERS_DEFAULTS: GuestOrdersCfg = {
   enabled: false,
@@ -110,10 +110,11 @@ const optNum = (v: any, lo: number, hi: number): number | undefined => { if (v =
 function normScope(o: any): ScopeRule | null {
   if (!o || typeof o !== 'object') return null
   const r: ScopeRule = {}
-  if (o.enabled === false) r.enabled = false
+  if (typeof o.enabled === 'boolean') r.enabled = o.enabled
   const a = optNum(o.orderByHoursBefore, 0, 240); if (a !== undefined) r.orderByHoursBefore = a
   const b = optNum(o.leadHours, 0, 168); if (b !== undefined) r.leadHours = b
   const c = optNum(o.sameDayCutoffHour, 0, 23); if (c !== undefined) r.sameDayCutoffHour = c
+  const t = optNum(o.taxPct, 0, 30); if (t !== undefined) r.taxPct = t
   return Object.keys(r).length ? r : null
 }
 function normScopes(m: any, allowed: string[]): Record<string, ScopeRule> {
@@ -193,14 +194,20 @@ export function timingFor(cfg: GuestOrdersCfg, building: string | null | undefin
   const m = market ? cfg.marketRules[market] : undefined
   const pick = <K extends keyof ScopeRule>(k: K, fb: NonNullable<ScopeRule[K]>): NonNullable<ScopeRule[K]> =>
     (b && b[k] !== undefined ? b[k] : h && h[k] !== undefined ? h[k] : m && m[k] !== undefined ? m[k] : fb) as NonNullable<ScopeRule[K]>
-  const enabled = b && b.enabled === false ? false : h && h.enabled === false ? false : m && m.enabled === false ? false : true
+  // SAME PRECEDENCE FOR EVERY FIELD — building beats hub beats market beats global. `enabled` used
+  // to be "any level may veto", which meant a single-building pilot inside a switched-off market
+  // was impossible: the building could not switch itself back on.
+  const enabled = b && b.enabled !== undefined ? b.enabled : h && h.enabled !== undefined ? h.enabled : m && m.enabled !== undefined ? m.enabled : true
+  const taxFrom = b && b.taxPct !== undefined ? 'building' : h && h.taxPct !== undefined ? 'hub (' + (hub ? hub.label : '') + ')' : m && m.taxPct !== undefined ? 'market' : 'default'
   return {
     enabled,
     orderByHoursBefore: pick('orderByHoursBefore', cfg.orderByHoursBefore),
     leadHours: pick('leadHours', cfg.leadHours),
     sameDayCutoffHour: pick('sameDayCutoffHour', cfg.sameDayCutoffHour),
     checkInHour: cfg.checkInHour,
+    taxPct: pick('taxPct', cfg.taxPct),
     source: b && Object.keys(b).length ? 'building rule' : h && Object.keys(h).length ? 'hub rule (' + (hub ? hub.label : '') + ')' : m && Object.keys(m).length ? 'market rule' : 'default',
+    taxSource: taxFrom,
   }
 }
 
@@ -433,7 +440,8 @@ export async function consumeStockFor(order: OrderRow, actor: string): Promise<v
 
 export type OrderLine = { sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; fee_code: string; unit_label?: string | null }
 
-export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], cfg: GuestOrdersCfg): { lines: OrderLine[]; subtotal: number; tax: number; total: number; problems: string[] } {
+/** `taxPct` is the rate that APPLIES TO THIS STAY (timingFor().taxPct) — never the global default. */
+export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], taxPct: number): { lines: OrderLine[]; subtotal: number; tax: number; total: number; problems: string[] } {
   const lines: OrderLine[] = []
   const problems: string[] = []
   for (const b of basket) {
@@ -447,7 +455,7 @@ export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: 
     lines.push({ sku: item.sku, name: item.name, qty, unit_price_usd: item.price_usd, line_total_usd: line, fee_code: item.fee_code || 'GUEST_SERVICE', unit_label: item.unit_label })
   }
   const subtotal = Math.round(lines.reduce((n, l) => n + l.line_total_usd, 0) * 100) / 100
-  const tax = Math.round(subtotal * (cfg.taxPct / 100) * 100) / 100
+  const tax = Math.round(subtotal * (Number(taxPct) || 0) / 100 * 100) / 100
   const total = Math.round((subtotal + tax) * 100) / 100
   return { lines, subtotal, tax, total, problems }
 }
@@ -592,6 +600,7 @@ export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Pr
 // ── Orders ────────────────────────────────────────────────────────────────────────────────────
 
 export type DeliveryMode = 'auto' | 'asap' | 'arrival' | 'date'
+export type CollectMethod = 'card_on_file' | 'payment_link' | 'airbnb_resolution'
 export type OrderStatus = 'submitted' | 'approved' | 'paid' | 'awaiting_payment' | 'payment_failed' | 'pushed' | 'delivered' | 'declined' | 'cancelled'
 
 export const STATUS_LABEL: Record<OrderStatus, string> = {
@@ -606,6 +615,8 @@ export type OrderRow = {
   submitted_at: string; approve_token: string | null; approved_at: string | null; approved_by: string | null
   declined_at: string | null; declined_by: string | null; decline_reason: string | null
   paid_at: string | null; paid_via: string | null; payment_note: string | null; guesty_payment_id: string | null; guesty_invoice_item_ids: string[]; folio_lines_done: number; folio_note: string | null; charge_error: string | null
+  /** How the money is meant to be collected — set on approval so the board can show one clear action. */
+  collect_method: CollectMethod | null; collect_card: string | null
   delivery_date: string | null; delivery_note: string | null; requested_delivery: DeliveryMode; requested_date: string | null; stock_scope: string | null; stock_note: string | null; pushed_at: string | null; breezeway_task_id: string | null
   assignee_names: string[]; assignee_ids: number[]; assign_note: string | null; slack_outbox_id: string | null; push_error: string | null
   email_sent_at: string | null; delivered_at: string | null; delivered_by: string | null; cancelled_at: string | null; cancelled_by: string | null
@@ -614,7 +625,7 @@ export type OrderRow = {
 
 function normOrder(r: any): OrderRow {
   return { ...r, items: Array.isArray(r.items) ? r.items : [], subtotal_usd: Number(r.subtotal_usd) || 0, tax_usd: Number(r.tax_usd) || 0, total_usd: Number(r.total_usd) || 0,
-    guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, stock_scope: r.stock_scope || null, stock_note: r.stock_note || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
+    guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, stock_scope: r.stock_scope || null, stock_note: r.stock_note || null, collect_method: r.collect_method || null, collect_card: r.collect_card || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
 }
 
 export async function getOrder(id: string): Promise<OrderRow | null> {
@@ -635,7 +646,8 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
   const cfg = await getGuestOrdersCfg()
   const hub = hubOf(cfg, link.building)
   const catalog = await loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true })
-  const priced = priceBasket(catalog, basket, cfg)
+  // Tax is the rate for THIS building's area (Broward ≠ Miami), resolved the same way as timing.
+  const priced = priceBasket(catalog, basket, timingFor(cfg, link.building, link.market).taxPct)
   if (priced.problems.length) return { ok: false, error: priced.problems.join(' · ') }
   if (!priced.lines.length) return { ok: false, error: 'Pick at least one item.' }
   const db = supabaseAdmin()
@@ -655,6 +667,13 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
 }
 
 function money(n: number): string { return '$' + (Math.round(n * 100) / 100).toFixed(2) }
+
+/** The tax rate an order was PRICED at, read back off its own totals — never re-resolved from
+ *  settings, so changing the rate tomorrow cannot rewrite an order placed today. */
+export function taxRateOf(o: { subtotal_usd: number; tax_usd: number }): number {
+  if (!o.subtotal_usd || !o.tax_usd) return 0
+  return Math.round((o.tax_usd / o.subtotal_usd) * 1000) / 10
+}
 
 /** Guest text goes into Slack mrkdwn — a note of "<!channel>" must not page a channel. */
 function slackSafe(s: string): string { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
@@ -714,37 +733,54 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
   const cfg = await getGuestOrdersCfg()
 
   if (cfg.chargeMode === 'manual') {
-    await patch(id, { status: 'awaiting_payment', charge_error: null, payment_note: 'Charge mode is manual — collect and mark paid.' })
+    // MANUAL COLLECTION (Jon, 2026-08-25: "we will manually have to charge for now"; "if they don't
+    // have card on file, need to send guesty payment link"). Lighthouse never touches the card here.
+    // It does the two things that make the human's next move a single click in Guesty: it puts the
+    // charge on the folio (both charging a saved card and a payment link bill that balance), and it
+    // names which of the two this booking needs.
+    const rate = taxRateOf(order)
+    const [who, folio] = await Promise.all([cardOnFile(order.reservation_id), postFolio(order, rate)])
+    const amount = money(order.total_usd)
+    const how = who.card
+      ? 'Charge ' + amount + ' to the ' + cardLabel(who.card) + ' on file — Guesty → this reservation → Payments.'
+      : who.airbnb
+        ? 'No card on file (Airbnb collects payment) — request ' + amount + ' through the Airbnb Resolution Center.'
+        : 'No card on file — send the guest a Guesty payment link for ' + amount + '. The charge is already on their folio.'
+    const folioNote = folio.ok
+      ? null
+      : 'Only ' + folio.done + ' of ' + folio.total + ' lines reached the Guesty folio (' + (folio.error || 'unknown error') + ') — add the rest by hand before charging, or the guest is billed short.'
+    await patch(id, {
+      status: 'awaiting_payment',
+      charge_error: who.error || null,
+      collect_method: who.card ? 'card_on_file' : who.airbnb ? 'airbnb_resolution' : 'payment_link',
+      collect_card: who.card ? cardLabel(who.card) : null,
+      payment_note: how,
+      folio_note: folioNote,
+    })
     return { ok: true, order: await getOrder(id) || undefined }
   }
 
   try {
     // 1. A card we can charge?
-    const { data: rs } = await db.from('guesty_reservations').select('guest_id,source').eq('id', order.reservation_id).limit(1)
-    const guestId = String(((rs || [])[0] || {}).guest_id || '')
-    const pm = await listPaymentMethods(guestId, order.reservation_id)
-    const card = pm.ok ? pickChargeable(pm.methods) : null
+    const who = await cardOnFile(order.reservation_id)
+    const card = who.card
     if (!card) {
-      const why = !pm.ok ? pm.error : 'No card on file in Guesty for this booking' + (/airbnb/i.test(String(((rs || [])[0] || {}).source || '')) ? ' (Airbnb collects payment — request it through the Resolution Center)' : '') + '.'
-      await patch(id, { status: 'awaiting_payment', charge_error: why, payment_note: 'Collect the ' + money(order.total_usd) + ' another way, then mark paid.' })
+      const why = who.error || 'No card on file in Guesty for this booking' + (who.airbnb ? ' (Airbnb collects payment — request it through the Resolution Center)' : '') + '.'
+      const f = await postFolio(order, taxRateOf(order))
+      await patch(id, {
+        status: 'awaiting_payment', charge_error: why,
+        collect_method: who.airbnb ? 'airbnb_resolution' : 'payment_link', collect_card: null,
+        payment_note: who.airbnb ? 'Request ' + money(order.total_usd) + ' through the Airbnb Resolution Center.' : 'Send the guest a Guesty payment link for ' + money(order.total_usd) + '. The charge is already on their folio.',
+        folio_note: f.ok ? null : 'Only ' + f.done + ' of ' + f.total + ' lines reached the folio (' + (f.error || 'unknown error') + ').',
+      })
       return { ok: true, order: await getOrder(id) || undefined }
     }
 
-    // 2. Folio lines — resumable. `folio_lines_done` is the number Guesty has accepted, so a retry
-    //    after a failed charge never re-posts a line and a partial failure picks up where it stopped.
-    const lines = order.items.map(l => ({ title: l.qty + '× ' + l.name, description: 'Guest order · ' + l.qty + ' × ' + money(l.unit_price_usd) + (l.unit_label ? ' (' + l.unit_label + ')' : ''), amount: l.line_total_usd, feeCode: l.fee_code }))
-    if (order.tax_usd > 0) lines.push({ title: 'Sales tax on guest order', description: cfg.taxPct + '% on ' + money(order.subtotal_usd), amount: order.tax_usd, feeCode: 'GUEST_SERVICE' })
-    let done = order.folio_lines_done || 0
-    let invoiceIds = order.guesty_invoice_item_ids || []
-    if (done < lines.length) {
-      const inv = await createInvoiceItems(order.reservation_id, lines.slice(done))
-      done += inv.created
-      invoiceIds = invoiceIds.concat(inv.ids)
-      await patch(id, { guesty_invoice_item_ids: invoiceIds, folio_lines_done: done })
-      if (!inv.ok) {
-        await patch(id, { status: 'payment_failed', charge_error: 'Could not add the order to the Guesty folio: ' + inv.error + ' (' + done + ' of ' + lines.length + ' lines are on it)' })
-        return { ok: false, order: await getOrder(id) || undefined, error: inv.error }
-      }
+    // 2. Folio lines — resumable, so a retry after a failed charge never re-posts a line.
+    const folio = await postFolio(order, taxRateOf(order))
+    if (!folio.ok) {
+      await patch(id, { status: 'payment_failed', charge_error: 'Could not add the order to the Guesty folio: ' + folio.error + ' (' + folio.done + ' of ' + folio.total + ' lines are on it)' })
+      return { ok: false, order: await getOrder(id) || undefined, error: folio.error }
     }
 
     // 3. The charge.
@@ -757,7 +793,7 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
     const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), order.requested_delivery, order.requested_date)
     await patch(id, {
       status: 'paid', paid_at: paidAt.toISOString(), paid_via: 'guesty:' + card.id, charge_error: null, charge_raw: ch.raw || null, guesty_payment_id: ch.paymentId || null,
-      payment_note: 'Charged ' + (card.brand ? card.brand + ' ' : '') + (card.last4 ? '•••• ' + card.last4 : 'card on file') + ' via Guesty (' + (ch.status || 'ok') + ')',
+      payment_note: 'Charged ' + cardLabel(card) + ' via Guesty (' + (ch.status || 'ok') + ')', collect_method: 'card_on_file', collect_card: cardLabel(card),
       delivery_date: dd.date, delivery_note: dd.note, folio_note: null,
     })
     try { const paid = await getOrder(id); if (paid) await reserveStockFor(paid, cfg, actor) } catch (e) { console.error('guest-orders: reserve failed', e) }
@@ -768,6 +804,37 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
     await patch(id, { status: 'payment_failed', charge_error: 'Charge attempt threw: ' + msg })
     return { ok: false, order: await getOrder(id) || undefined, error: msg }
   }
+}
+
+/** The order on the Guesty folio, resumable. `folio_lines_done` is how many lines Guesty has
+ *  accepted, so a retry never posts a line twice. Both charge modes need this: an auto charge
+ *  bills against the balance, and a manual "charge the card" or "send a payment link" in Guesty
+ *  needs a balance to bill against in the first place. */
+async function postFolio(order: OrderRow, taxPct: number): Promise<{ ok: boolean; error?: string; done: number; total: number; ids: string[] }> {
+  const lines = order.items.map(l => ({ title: l.qty + '× ' + l.name, description: 'Guest order · ' + l.qty + ' × ' + money(l.unit_price_usd) + (l.unit_label ? ' (' + l.unit_label + ')' : ''), amount: l.line_total_usd, feeCode: l.fee_code }))
+  if (order.tax_usd > 0) lines.push({ title: 'Sales tax on guest order', description: taxPct + '% on ' + money(order.subtotal_usd), amount: order.tax_usd, feeCode: 'GUEST_SERVICE' })
+  let done = order.folio_lines_done || 0
+  let ids = order.guesty_invoice_item_ids || []
+  if (done >= lines.length) return { ok: true, done, total: lines.length, ids }
+  const inv = await createInvoiceItems(order.reservation_id, lines.slice(done))
+  done += inv.created
+  ids = ids.concat(inv.ids)
+  await patch(order.id, { guesty_invoice_item_ids: ids, folio_lines_done: done })
+  return { ok: inv.ok, error: inv.error, done, total: lines.length, ids }
+}
+
+function cardLabel(c: { brand?: string | null; last4?: string | null }): string {
+  return (c.brand ? c.brand + ' ' : '') + (c.last4 ? '•••• ' + c.last4 : 'card on file')
+}
+
+/** The card Guesty holds for a booking, if any. */
+async function cardOnFile(reservationId: string): Promise<{ card: any | null; error: string; airbnb: boolean }> {
+  try {
+    const { data } = await supabaseAdmin().from('guesty_reservations').select('guest_id,source').eq('id', reservationId).limit(1)
+    const row: any = (data || [])[0] || {}
+    const pm = await listPaymentMethods(String(row.guest_id || ''), reservationId)
+    return { card: pm.ok ? pickChargeable(pm.methods) : null, error: pm.ok ? '' : (pm.error || 'could not read payment methods'), airbnb: /airbnb/i.test(String(row.source || '')) }
+  } catch (e: any) { return { card: null, error: String(e?.message || e).slice(0, 200), airbnb: false } }
 }
 
 async function checkInTimeFor(code: string): Promise<string | null> {
@@ -790,8 +857,17 @@ async function cleanFolio(order: OrderRow): Promise<string | null> {
   return note
 }
 
-/** A human collected the money elsewhere. Optionally records it on the Guesty folio. */
-export async function markPaid(id: string, actor: string, note: string, recordInGuesty: boolean): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
+/**
+ * A human collected the money. WHERE they collected it decides what we write back to Guesty:
+ *   'guesty'   — they charged the card / the payment link cleared IN Guesty. Guesty already knows;
+ *                writing anything would double-count. The folio lines are settled by that payment.
+ *   'external' — taken outside Guesty (cash, terminal, Airbnb resolution) and we record it against
+ *                the folio so the reservation balances.
+ *   'outside'  — taken outside Guesty and NOT recorded there. Open folio lines are then flagged,
+ *                because Guesty would otherwise chase the guest for a balance they already paid.
+ */
+export type Settle = 'guesty' | 'external' | 'outside'
+export async function markPaid(id: string, actor: string, note: string, settle: Settle): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
   const order = await getOrder(id)
   if (!order) return { ok: false, error: 'order not found' }
   if (['paid', 'pushed', 'delivered'].indexOf(order.status) >= 0) return { ok: true, order }
@@ -799,22 +875,23 @@ export async function markPaid(id: string, actor: string, note: string, recordIn
   const cfg = await getGuestOrdersCfg()
   const paidAt = new Date()
   // claim first so two "mark paid" taps cannot record the payment twice
-  const claim = await supabaseAdmin().from('guest_orders').update({ status: 'paid', paid_at: paidAt.toISOString(), paid_via: 'manual', updated_at: paidAt.toISOString() })
+  const claim = await supabaseAdmin().from('guest_orders').update({ status: 'paid', paid_at: paidAt.toISOString(), paid_via: settle === 'guesty' ? 'guesty:manual' : 'manual', updated_at: paidAt.toISOString() })
     .eq('id', id).in('status', ['submitted', 'approved', 'awaiting_payment', 'payment_failed']).select('id')
   if (claim.error || !claim.data || !claim.data.length) return { ok: false, error: 'already handled — refresh', order: await getOrder(id) || undefined }
-  let extra = ''
-  if (recordInGuesty) {
+  let extra = settle === 'guesty' ? ' · taken in Guesty' : ''
+  if (settle === 'external') {
     const r = await recordExternalPayment(order.reservation_id, order.total_usd, 'Guest order ' + summarizeLines(order.items) + (note ? ' · ' + note : ''))
     extra = r.ok ? ' · recorded in Guesty' : ' · NOT recorded in Guesty (' + (r.error || 'failed') + ')'
     if (r.ok && r.paymentId) await patch(id, { guesty_payment_id: r.paymentId })
   }
-  const folioLeft = (order.guesty_invoice_item_ids || []).length
+  // Only 'outside' can leave the folio chasing money that is already in hand.
+  const folioLeft = settle === 'outside' ? (order.guesty_invoice_item_ids || []).length : 0
   const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), order.requested_delivery, order.requested_date)
   await patch(id, {
     approved_at: order.approved_at || paidAt.toISOString(), approved_by: order.approved_by || actor,
     payment_note: 'Marked paid by ' + actor + (note ? ' — ' + note.slice(0, 200) : '') + extra, charge_error: null,
     delivery_date: dd.date, delivery_note: dd.note,
-    folio_note: folioLeft && !recordInGuesty ? folioLeft + ' folio line' + (folioLeft === 1 ? '' : 's') + ' on the Guesty reservation are still unpaid there — record the payment or remove them so Guesty does not collect twice' : null,
+    folio_note: folioLeft ? folioLeft + ' folio line' + (folioLeft === 1 ? '' : 's') + ' on the Guesty reservation are still unpaid there — record the payment or remove them so Guesty does not collect twice' : null,
   })
   try { const paid = await getOrder(id); if (paid) await reserveStockFor(paid, cfg, actor) } catch (e) { console.error('guest-orders: reserve failed', e) }
   return { ok: true, order: await getOrder(id) || undefined }
