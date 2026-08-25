@@ -104,6 +104,47 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
   return bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }
 
+// TASK TEMPLATES — the formats our team actually works to (preventative maintenance, field
+// report, the inspection checklists). GET /companies/templates, per Breezeway's public API:
+//   https://developer.breezeway.io/reference/list-available-templates
+// Templates are what makes a created task carry OUR checklist instead of a bare title, so the
+// Add-task sheet in Today in Ops reads this and passes template_id back on create.
+//
+// Cached in-module for 10 minutes: the list changes when somebody edits a template in Breezeway,
+// which is a monthly event, not a per-request one — and the ops board opens this on every mount.
+export type BzTemplate = { id: number; name: string; department: string; description: string }
+let TPL_CACHE: { at: number; list: BzTemplate[] } | null = null
+export async function listBreezewayTemplates(force = false): Promise<BzTemplate[]> {
+  if (!force && TPL_CACHE && Date.now() - TPL_CACHE.at < 10 * 60_000) return TPL_CACHE.list
+  const r = await bzApi('/companies/templates')
+  if (!r.ok) {
+    // Serve the last good list rather than an empty picker if Breezeway blips.
+    if (TPL_CACHE) return TPL_CACHE.list
+    return []
+  }
+  const d: any = r.data
+  const arr: any[] = Array.isArray(d) ? d : (Array.isArray(d?.results) ? d.results : (Array.isArray(d?.data) ? d.data : (Array.isArray(d?.templates) ? d.templates : [])))
+  const dept = (t: any) => {
+    const s = String(t?.type_department?.code ?? t?.type_department?.name ?? t?.type_department ?? t?.department ?? '').toLowerCase()
+    if (/housekeep|clean/.test(s)) return 'housekeeping'
+    if (/maint/.test(s)) return 'maintenance'
+    if (/inspect/.test(s)) return 'inspection'
+    if (/safe/.test(s)) return 'safety'
+    return ''
+  }
+  const list = arr
+    .map((t: any) => ({
+      id: Number(t?.id ?? t?.template_id),
+      name: String(t?.name ?? t?.title ?? t?.template_name ?? '').trim(),
+      department: dept(t),
+      description: String(t?.description ?? t?.details ?? '').trim().slice(0, 600),
+    }))
+    .filter((t: BzTemplate) => Number.isFinite(t.id) && !!t.name)
+    .sort((a: BzTemplate, b: BzTemplate) => a.name.localeCompare(b.name))
+  TPL_CACHE = { at: Date.now(), list }
+  return list
+}
+
 // Retrieve a single task by id (for status tracking / "action taken").
 export async function retrieveBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   return bzApi(`/task/${encodeURIComponent(String(taskId))}`)
